@@ -1,393 +1,280 @@
-//src/modules/supply-chain-management/traceability-compliance/product-tracing/ProductTracingModule.tsx
 "use client";
 
 import * as React from "react";
 import { ProductTracingFilters } from "./components/ProductTracingFilters";
 import { ProductTracingTable } from "./components/ProductTracingTable";
-import { PhysicalInventorySummary } from "./components/PhysicalInventorySummary";
-import { fetchBranches, fetchProductFamilies, fetchMovements, fetchFamilyRunningInventory } from "./providers/fetchProvider";
-import { ProductTracingFiltersType, ProductMovementRow, ProductFamilyRow } from "./types";
+import { ProductTracingSummaryCards } from "./components/ProductTracingSummaryCards";
+import {
+    fetchBranches,
+    fetchProductTypes,
+    fetchProducts,
+    fetchLots,
+    fetchUsers,
+    fetchMovements,
+    UserLookup
+} from "./providers/fetchProvider";
+import { computeMovementSummary, computeRunningBalances } from "./service";
+import { phtDateBoundaryToEpoch, phtTimestampToEpoch } from "../shared/pht-date";
+import {
+    ProductTracingFiltersType,
+    MMInventoryMovement,
+    BranchLookup,
+    ProductTypeLookup,
+    ProductLookup,
+    LotLookup,
+    MovementSummaryStats
+} from "./types";
 import {
     History as HistoryIcon,
-    Search as TracerSearchIcon
+    RefreshCw,
+    AlertTriangle,
+    RotateCcw
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const ProductTracingModule = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => {
     const [filters, setFilters] = React.useState<ProductTracingFiltersType>({
         branch_id: null,
-        parent_id: null,
-        ph_id: null,
-        startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
-        endDate: new Date().toISOString(),
-        dateRangeMode: 'manual',
+        product_type_id: null,
+        product_id: null,
+        lot_id: null,
+        batch_no: "",
+        transaction_type: "ALL",
+        movement_direction: "ALL",
+        inventory_condition: "ALL",
+        search_query: "",
+        startDate: null,
+        endDate: null,
+        datePreset: "all"
     });
 
-    const [branches, setBranches] = React.useState<Array<{ id: number; branch_name: string }>>([]);
-    const [families, setFamilies] = React.useState<ProductFamilyRow[]>([]);
-    const [movements, setMovements] = React.useState<ProductMovementRow[]>([]);
+    const [branches, setBranches] = React.useState<BranchLookup[]>([]);
+    const [productTypes, setProductTypes] = React.useState<ProductTypeLookup[]>([]);
+    const [products, setProducts] = React.useState<ProductLookup[]>([]);
+    const [lots, setLots] = React.useState<LotLookup[]>([]);
+    const [users, setUsers] = React.useState<UserLookup[]>([]);
+
+    const [movements, setMovements] = React.useState<MMInventoryMovement[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
-    const [familyRunningTotal, setFamilyRunningTotal] = React.useState<number>(0);
-    const [hasSearched, setHasSearched] = React.useState(false);
 
+    // Load lookup data on mount
     React.useEffect(() => {
         const loadInitialData = async () => {
             try {
-                const [b, f] = await Promise.all([fetchBranches(), fetchProductFamilies()]);
+                const [b, pt, pr, l, u] = await Promise.all([
+                    fetchBranches(),
+                    fetchProductTypes(),
+                    fetchProducts(),
+                    fetchLots(),
+                    fetchUsers()
+                ]);
                 setBranches(b || []);
-                setFamilies(f || []);
+                setProductTypes(pt || []);
+                setProducts(pr || []);
+                setLots(l || []);
+                setUsers(u || []);
             } catch (err) {
-                console.error("Failed to load initial data", err);
+                console.error("[ProductTracing] Failed to load initial lookup data:", err);
             }
         };
         loadInitialData();
     }, []);
 
-    const handleFilterChange = (newFilters: Partial<ProductTracingFiltersType>) => {
-        setFilters(prev => ({ ...prev, ...newFilters }));
-        setHasSearched(false);
-    };
-
-    const handleReset = () => {
-        setFilters({
-            branch_id: null,
-            parent_id: null,
-            ph_id: null,
-            startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
-            endDate: new Date().toISOString(),
-            dateRangeMode: 'manual',
-        });
-        setMovements([]);
-        setError(null);
-        setHasSearched(false);
-    };
-
-    const handleSearch = async () => {
-        if (!filters.branch_id || !filters.parent_id) return;
-
-        // Resolve names from loaded dropdown data for the optimized /date endpoint
-        const selectedBranch = branches.find(b => b.id === filters.branch_id);
-        const selectedFamily = families.find(f => f.parent_id === filters.parent_id);
-
+    // Perform Movements Query
+    const handleSearch = React.useCallback(async (overrideFilters?: ProductTracingFiltersType) => {
+        const activeFilters = overrideFilters || filters;
         setIsLoading(true);
         setError(null);
-        setHasSearched(true);
+
         try {
-            // Use the actual startDate and endDate formatted as YYYY-MM-DD for the optimized /date endpoint
-            const fetchFilters = {
-                ...filters,
-                startDate: null, // Always fetch from beginning to find the latest PH baseline
-                endDate: filters.endDate || null,
-                branchName: selectedBranch?.branch_name || null,
-                productName: selectedFamily?.product_name || null,
-            };
-            const [movementsData, familyInvTotal] = await Promise.all([
-                fetchMovements(fetchFilters),
-                fetchFamilyRunningInventory(
-                    selectedBranch?.branch_name || "",
-                    filters.parent_id!,
-                ),
-            ]);
-            setMovements(movementsData || []);
-            setFamilyRunningTotal(familyInvTotal);
+            const rawMovements = await fetchMovements(activeFilters);
+            const enriched = computeRunningBalances(rawMovements);
+            setMovements(enriched);
         } catch (err) {
-            setError("Failed to fetch data. Please try again.");
-            console.error(err);
+            const message = (err as Error).message || "Failed to fetch inventory movements from Spring Boot API";
+            setError(message);
+            setMovements([]);
+            toast.error(message, {
+                description: "Ensure the Spring Boot backend service is running and accessible.",
+                duration: 5000
+            });
+            console.error("[ProductTracing] Spring Boot API Error:", err);
         } finally {
             setIsLoading(false);
         }
+    }, [filters]);
+
+    // Initial search on mount once
+    React.useEffect(() => {
+        handleSearch();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleFilterChange = (newFilters: Partial<ProductTracingFiltersType>) => {
+        setFilters(prev => ({ ...prev, ...newFilters }));
     };
 
-    const stats = React.useMemo(() => {
-        if (!movements.length) return { totalIn: 0, totalOut: 0, netChange: 0 };
-
-        const start = filters.startDate ? new Date(filters.startDate) : null;
-        const end = filters.endDate ? new Date(filters.endDate) : null;
-
-        // Base filtering purely for product family, branch, and ending date
-        let validMovements = movements.filter(row => {
-            const rowDate = new Date(row.ts);
-            if (end && rowDate > end) return false;
-
-            if (filters.branch_id && row.branchId !== filters.branch_id) return false;
-
-            if (filters.parent_id) {
-                const matchesParent = row.productId === filters.parent_id || row.parentId === filters.parent_id;
-                if (!matchesParent) return false;
-            }
-
-            return true;
-        }).map(row => ({ ...row })); // Clone objects to prevent mutating state!
-
-        // Sort chronologically so that firstPHIndex correctly identifies the very first historical Phase
-        validMovements.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-
-        const getMovement = (row: ProductMovementRow) => {
-            const isPH = row.docType === "Physical Inventory" || row.docNo?.startsWith("PH");
-            if (isPH) {
-                // Handle both camelCase and snake_case for API compatibility
-                const phys = row.physical_count !== undefined ? row.physical_count : row.physicalCount;
-                const sys = row.system_count !== undefined ? row.system_count : row.systemCount;
-                // Use API variance if injected, otherwise calculate
-                const calcVariance = row.variance ?? ((phys || 0) - (sys || 0));
-                return calcVariance * (row.unitCount || 1);
-            }
-            return ((row.inBase || 0) - (row.outBase || 0));
+    const handleReset = () => {
+        const resetState: ProductTracingFiltersType = {
+            branch_id: null,
+            product_type_id: null,
+            product_id: null,
+            lot_id: null,
+            batch_no: "",
+            transaction_type: "ALL",
+            movement_direction: "ALL",
+            inventory_condition: "ALL",
+            search_query: "",
+            startDate: null,
+            endDate: null,
+            datePreset: "all"
         };
-
-        const firstPHIndex = validMovements.findIndex(row => {
-            const isPH = row.docType === "Physical Inventory" || row.docNo?.toUpperCase().startsWith("PH");
-            if (!isPH) return false;
-            // Ensure the PH record is a historical anchor (occurred strictly before the selected start date).
-            // If the PH occurred during the selected date range, it is a current period transaction, not a historical anchor.
-            if (start && new Date(row.ts) >= start) return false;
-            return true;
-        });
-
-        // ── Global Family Balance Consolidation ──
-        // Instead of retroactively applying deltas in the UI (which breaks when date filters hide the present),
-        // we compute the missing family inventory delta from the FULL ledger and apply it to the absolute beginning balance.
-        let fullLedgerDelta = 0;
-        if (familyRunningTotal > 0 && movements.length > 0) {
-            let fullLedger = movements.filter(row => {
-                if (filters.branch_id && row.branchId !== filters.branch_id) return false;
-                if (filters.parent_id && row.productId !== filters.parent_id && row.parentId !== filters.parent_id) return false;
-                return true;
-            }).map(row => ({ ...row }));
-            
-            fullLedger.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-            
-            // 1. Calculate delta across the FULL ledger, before any history is dropped for PH overrides
-            let unpatchedLedgerTotal = 0;
-            fullLedger.forEach(row => {
-                unpatchedLedgerTotal += getMovement(row) - (row.patchDeltaBase || 0);
-            });
-            
-            const delta = familyRunningTotal - unpatchedLedgerTotal;
-            if (Math.abs(delta) >= 1) fullLedgerDelta = delta;
-
-            const fullFirstPH = fullLedger.findIndex(row => row.docType === "Physical Inventory" || row.docNo?.toUpperCase().startsWith("PH"));
-            
-            if (fullFirstPH > -1) {
-                let dropCount = 0;
-                for (let i = 0; i < fullFirstPH; i++) dropCount += getMovement(fullLedger[i]);
-                fullLedger = fullLedger.slice(fullFirstPH);
-                let injected = false;
-                const fDoc = fullLedger[0].docNo;
-                fullLedger.forEach(row => {
-                    if (row.docNo === fDoc) {
-                        const phys = row.physical_count !== undefined ? row.physical_count : row.physicalCount;
-                        const sys = row.system_count !== undefined ? row.system_count : row.systemCount;
-                        const originalVariance = row.variance ?? ((phys || 0) - (sys || 0));
-                        if (!injected) {
-                            row.variance = originalVariance + (dropCount / (row.unitCount || 1));
-                            injected = true;
-                        } else {
-                            row.variance = originalVariance;
-                        }
-                    }
-                });
-            }
-        }
-
-        if (firstPHIndex > -1) {
-            // Calculate the total system count (in base units) that we are about to drop
-            let droppedSystemCountBase = 0;
-            for (let i = 0; i < firstPHIndex; i++) {
-                droppedSystemCountBase += getMovement(validMovements[i]);
-            }
-
-            validMovements = validMovements.slice(firstPHIndex);
-            
-            // Override the variance for the first PH since its baseline system count is no longer valid
-            // due to us dropping the prior history. Its variance should mathematically absorb the dropped history.
-            const firstPHDocNo = validMovements[0].docNo;
-            let injected = false;
-
-            validMovements.forEach(row => {
-                if (row.docNo === firstPHDocNo) {
-                    const phys = row.physical_count !== undefined ? row.physical_count : row.physicalCount;
-                    const sys = row.system_count !== undefined ? row.system_count : row.systemCount;
-                    const originalVariance = row.variance ?? ((phys || 0) - (sys || 0));
-                    
-                    let newVariance = originalVariance;
-                    
-                    if (!injected) {
-                        const unitCount = row.unitCount || 1;
-                        newVariance = originalVariance + (droppedSystemCountBase / unitCount);
-                        injected = true;
-                    }
-                    
-                    row.variance = newVariance;
-                    row.system_count = 0;
-                    row.systemCount = 0;
-                    row.physical_count = newVariance;
-                    row.physicalCount = newVariance;
-                }
-            });
-        }
-
-        // Split into "before" (for beginning balance) and "filtered" (for current period stats)
-        const filtered: typeof movements = [];
-
-        validMovements.forEach(row => {
-            const rowDate = new Date(row.ts);
-            if (!start || rowDate >= start) {
-                filtered.push(row);
-            }
-        });
-
-        const divisor = validMovements[0]?.familyUnitCount || 1;
-
-        const totalInBase = filtered.reduce((acc, row) => {
-            const m = getMovement(row);
-            return acc + (m > 0 ? m : 0);
-        }, 0);
-
-        const totalOutBase = filtered.reduce((acc, row) => {
-            const m = getMovement(row);
-            return acc + (m < 0 ? Math.abs(m) : 0);
-        }, 0);
-
-        const netChangeBase = totalInBase - totalOutBase;
-
-        // Breakdown per UOM as requested
-        const breakdown: Record<string, { beginning: number, in: number, out: number }> = {};
-        let beginningBaseBalance = 0;
-
-        // 1. Get all historical movements (strictly BEFORE start date)
-        const historical = validMovements
-            .filter(row => start && new Date(row.ts) < start);
-
-        // 2. Sum up ALL historical movements to get the true beginning balance
-        historical.forEach(row => {
-            beginningBaseBalance += getMovement(row);
-        });
-
-        // 3. Apply the global family inventory offset so the history perfectly aligns with reality
-        beginningBaseBalance += fullLedgerDelta;
-
-        // Initialize breakdown for display
-        validMovements.forEach(row => {
-            const unit = row.unit || "Base";
-            if (!breakdown[unit]) breakdown[unit] = { beginning: 0, in: 0, out: 0 };
-            const div = row.unitCount && row.unitCount > 0 ? row.unitCount : 1;
-            const m = getMovement(row);
-
-            if (start && new Date(row.ts) < start) {
-                // It's historical, so add to beginning balance breakdown
-                breakdown[unit].beginning += m / div;
-            } else {
-                // It's in the current period, add to in/out
-                if (m > 0) breakdown[unit].in += m / div;
-                if (m < 0) breakdown[unit].out += Math.abs(m) / div;
-            }
-        });
-
-        const isLiveRange = (() => {
-            if (filters.dateRangeMode === 'ph') return false;
-            if (!filters.endDate) return true;
-            const end = new Date(filters.endDate);
-            const now = new Date();
-            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-            return end.getTime() >= startOfToday;
-        })();
-
-    return {
-        totalInBase,
-        totalOutBase,
-        netChangeBase,
-        breakdown,
-        beginningBaseBalance,
-        filtered,
-        divisor: divisor || 1,
-        unit: validMovements.find(r => r.unitCount === (divisor || 1))?.unit || validMovements[0]?.familyUnit || "Box",
-        isLiveRange
+        setFilters(resetState);
+        handleSearch(resetState);
     };
-}, [movements, familyRunningTotal, filters.startDate, filters.endDate, filters.branch_id, filters.parent_id, filters.dateRangeMode]);
 
-    const currentUnit = stats?.unit || "Units";
-    const currentDivisor = stats?.divisor || 1;
+    // Client-side date filtering & computed KPI summaries
+    const filteredMovements = React.useMemo(() => {
+        let list = movements;
+
+        if (filters.startDate) {
+            const start = phtDateBoundaryToEpoch(filters.startDate);
+            list = list.filter(m => {
+                const itemTime = phtTimestampToEpoch(m.transactionDate || m.postedAt);
+                return itemTime >= start;
+            });
+        }
+
+        if (filters.endDate) {
+            const end = phtDateBoundaryToEpoch(filters.endDate, true);
+            list = list.filter(m => {
+                const itemTime = phtTimestampToEpoch(m.transactionDate || m.postedAt);
+                return itemTime <= end;
+            });
+        }
+
+        if (filters.inventory_condition && filters.inventory_condition !== "ALL") {
+            const cond = filters.inventory_condition.toUpperCase();
+            list = list.filter(m => (m.inventoryCondition || "GOOD").toUpperCase() === cond);
+        }
+
+        return list;
+    }, [movements, filters.startDate, filters.endDate, filters.inventory_condition]);
+
+    const stats: MovementSummaryStats = React.useMemo(() => {
+        return computeMovementSummary(filteredMovements);
+    }, [filteredMovements]);
+
+    const activeBranchName = React.useMemo(() => {
+        if (!filters.branch_id) return "All Branches";
+        const found = branches.find(b => b.id === filters.branch_id);
+        return found ? (found.branchName || found.branch_name) : `Branch #${filters.branch_id}`;
+    }, [filters.branch_id, branches]);
+
+    const activeProductTypeName = React.useMemo(() => {
+        if (!filters.product_type_id) return "All Categories";
+        const found = productTypes.find(pt => Number(pt.id) === filters.product_type_id);
+        return found ? (found.name || found.type_name) : `Type #${filters.product_type_id}`;
+    }, [filters.product_type_id, productTypes]);
 
     return (
-        <div ref={ref} className={cn("space-y-6 max-w-[1600px] mx-auto pb-10", props.className)} {...props}>
-            <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-primary/10 rounded-2xl">
-                        <HistoryIcon className="h-6 w-6 text-primary" />
+        <div ref={ref} className={cn("space-y-6 max-w-[1600px] mx-auto pb-12", props.className)} {...props}>
+            {/* Page Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                    <div className="p-3 bg-primary/10 rounded-2xl text-primary shadow-xs">
+                        <HistoryIcon className="h-6 w-6" />
                     </div>
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Product Tracing Report</h1>
-                        <p className="text-muted-foreground text-sm">Detailed product movement history and ledger.</p>
+                        <h1 className="text-2xl font-black tracking-tight text-foreground">
+                            Product Movement & Tracing
+                        </h1>
+                        <p className="text-muted-foreground text-xs mt-0.5">
+                            Real-time audit trail, batch provenance, and inventory movements ledger.
+                        </p>
                     </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-9 rounded-xl px-3.5 text-xs font-bold gap-2 text-muted-foreground hover:text-foreground"
+                        onClick={() => handleSearch()}
+                        disabled={isLoading}
+                    >
+                        <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                        Refresh
+                    </Button>
                 </div>
             </div>
 
+            {/* Error Banner when Spring Boot is down */}
+            {error && (
+                <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/5 text-destructive flex items-center justify-between gap-4 animate-in fade-in duration-300">
+                    <div className="flex items-center gap-3">
+                        <AlertTriangle className="h-5 w-5 shrink-0" />
+                        <div>
+                            <p className="text-xs font-bold">Spring Boot Inventory Movement API Error</p>
+                            <p className="text-xs opacity-90">{error}</p>
+                        </div>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-8 rounded-xl px-4 text-xs font-bold shrink-0"
+                        onClick={() => handleSearch()}
+                    >
+                        <RotateCcw className="h-3 w-3 mr-1.5" />
+                        Retry
+                    </Button>
+                </div>
+            )}
+
+            {/* Top KPI Metrics Cards */}
+            <ProductTracingSummaryCards stats={stats} />
+
+            {/* Filters Toolbar */}
             <ProductTracingFilters
                 filters={filters}
                 branches={branches}
-                families={families}
+                productTypes={productTypes}
+                products={products}
+                lots={lots}
                 onFilterChange={handleFilterChange}
                 onReset={handleReset}
-                onSearch={handleSearch}
+                onSearch={() => handleSearch()}
                 isLoading={isLoading}
             />
 
-            {error && (
-                <div className="p-4 rounded-xl border border-destructive/20 bg-destructive/5 text-destructive text-sm font-medium">
-                    {error}
+            {/* Movement Ledger Table */}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                    <h2 className="text-base font-black tracking-tight text-foreground">
+                        Movement Ledger
+                    </h2>
+                    <span className="text-xs text-muted-foreground px-2.5 py-1 bg-muted/60 rounded-full font-bold">
+                        {filteredMovements.length} {filteredMovements.length === 1 ? "Record" : "Records"}
+                    </span>
                 </div>
-            )}
 
-            {(hasSearched || isLoading) && (
-                <div className="space-y-6">
-                    {stats.filtered && stats.filtered.some(m => m.docNo.toUpperCase().startsWith("PH") || m.docType?.toUpperCase() === "PHYSICAL INVENTORY") && (
-                        <PhysicalInventorySummary
-                            movements={stats.filtered}
-                            baseUnitName={currentUnit}
-                            baseUnitDivisor={currentDivisor}
-                            costPerUnit={families.find(f => f.parent_id === filters.parent_id)?.cost_per_unit || null}
-                            beginningBaseBalance={stats.beginningBaseBalance || 0}
-                            familyRunningTotal={stats.isLiveRange ? familyRunningTotal : undefined}
-                        />
-                    )}
-
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h2 className="text-lg font-semibold tracking-tight">Movement Ledger</h2>
-                            <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded-full font-medium">
-                                {(stats.filtered?.length || movements.length)} records
-                            </span>
-                        </div>
-                        <ProductTracingTable
-                            data={stats.filtered || movements}
-                            isLoading={isLoading}
-                            familyDivisor={stats.divisor || 1}
-                            familyUnitName={stats.unit || "Box"}
-                            costPerUnit={families.find(f => f.parent_id === filters.parent_id)?.cost_per_unit || null}
-                            beginningBaseBalance={stats.beginningBaseBalance || 0}
-                            familyRunningTotal={stats.isLiveRange ? familyRunningTotal : undefined}
-                            branchName={branches.find(b => b.id === filters.branch_id)?.branch_name}
-                            productName={families.find(f => f.parent_id === filters.parent_id)?.product_name}
-                            startDate={filters.startDate}
-                            endDate={filters.endDate}
-                        />
-                    </div>
-                </div>
-            )}
-
-            {!hasSearched && !isLoading && !error && (
-                <div className="flex flex-col items-center justify-center py-32 text-center border-2 border-dashed rounded-[2rem] bg-muted/5 animate-in zoom-in-95 duration-500">
-                    <div className="h-20 w-20 bg-muted/10 rounded-full flex items-center justify-center mb-6">
-                        <TracerSearchIcon className="h-10 w-10 text-muted-foreground/40" />
-                    </div>
-                    <h3 className="text-xl font-semibold text-muted-foreground">Ready to Trace?</h3>
-                    <p className="text-muted-foreground max-w-sm mt-2">
-                        Select a branch, product family and date range to begin tracing movements.
-                    </p>
-                </div>
-            )}
+                <ProductTracingTable
+                    data={filteredMovements}
+                    isLoading={isLoading}
+                    branchName={activeBranchName}
+                    productTypeName={activeProductTypeName}
+                    startDate={filters.startDate}
+                    endDate={filters.endDate}
+                    branches={branches}
+                    products={products}
+                    lots={lots}
+                    productTypes={productTypes}
+                    users={users}
+                />
+            </div>
         </div>
     );
 });

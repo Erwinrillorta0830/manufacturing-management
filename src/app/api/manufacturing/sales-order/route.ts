@@ -7,6 +7,7 @@ import {
     enrichSalesOrderReadModel,
     fetchDetailsForOrders,
     findScheduledDetailIds,
+    isPlanningVisibleDetail,
     SALES_ORDER_FIELDS
 } from "./_read";
 import {
@@ -508,6 +509,9 @@ export async function GET(request: Request) {
                     id: customer.id,
                     customer_name: customer.customer_name,
                     customer_code: customer.customer_code,
+                    payment_term: Number.isSafeInteger(paymentTermId) && paymentTermId > 0
+                        ? paymentTermId
+                        : null,
                     payment_term_id: Number.isSafeInteger(paymentTermId) && paymentTermId > 0
                         ? paymentTermId
                         : null
@@ -581,7 +585,7 @@ export async function GET(request: Request) {
 
         const filters = {
             search,
-            status: excludeHasJo ? "For Picking" : status,
+            status: excludeHasJo ? "For Production,In Production" : status,
             customerCode,
             dateFrom,
             dateTo
@@ -618,6 +622,7 @@ export async function GET(request: Request) {
 
                 const candidateDetails = await fetchDetailsForOrders(read, candidates.map((order: any) => Number(order.order_id)));
                 const chunkScheduledIds = await findScheduledDetailIds(read, candidateDetails);
+                chunkScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
                 const detailsByOrder = new Map<number, any[]>();
                 for (const detail of candidateDetails) {
                     const detailOrderId = Number(detail.order_id);
@@ -627,15 +632,13 @@ export async function GET(request: Request) {
                 }
                 for (const candidate of candidates) {
                     const orderDetails = detailsByOrder.get(Number(candidate.order_id)) || [];
-                    const unscheduled = orderDetails.filter((detail) => {
+                    const eligibleOrderDetails = orderDetails.filter((detail) => {
                         const isScheduled = chunkScheduledIds.has(Number(detail.detail_id || detail.id));
-                        const ordered = Number(detail.ordered_quantity || 0);
-                        const alloc = Number(detail.allocated_quantity || 0);
-                        return !isScheduled && alloc < ordered;
+                        return isPlanningVisibleDetail(detail, candidate.order_status, isScheduled);
                     });
-                    if (orderDetails.length === 0 || unscheduled.length > 0) {
+                    if (eligibleOrderDetails.length > 0) {
                         eligibleOrders.push(candidate);
-                        eligibleDetails.push(...unscheduled);
+                        eligibleDetails.push(...eligibleOrderDetails);
                     }
                 }
                 inspectedCount += candidates.length;
@@ -686,14 +689,17 @@ export async function GET(request: Request) {
             ? [...prefetchedDetails, ...(missingSelectedIds.length > 0 ? await fetchDetailsForOrders(read, missingSelectedIds) : [])]
             : await fetchDetailsForOrders(read, [...orderIdsToFetch]);
         if (excludeHasJo) {
+            const discoveredScheduledIds = await findScheduledDetailIds(read, details);
+            discoveredScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
+            const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
             details = details.filter((detail: any) => {
-                const ordered = Number(detail.ordered_quantity || 0);
-                const alloc = Number(detail.allocated_quantity || 0);
-                return alloc < ordered;
+                const order = orderById.get(Number(detail.order_id));
+                return isPlanningVisibleDetail(
+                    detail,
+                    order?.order_status,
+                    scheduledDetailIds.has(Number(detail.detail_id || detail.id))
+                );
             });
-        }
-        if (excludeHasJo && missingSelectedIds.length > 0) {
-            scheduledDetailIds = await findScheduledDetailIds(read, details);
         }
         const detailsMap = await enrichSalesOrderReadModel(read, contextOrders, details, scheduledDetailIds);
 
@@ -898,9 +904,9 @@ export async function POST(request: Request) {
         }
 
         // Resolve an explicit customer override, then Standard BOM Version 1, then a legacy active version.
-        const quoteProductIds = quoteItems.map((item: any) => Number(item.product_id));
+        const quoteParentIds = quoteItems.map((item: any) => Number(item.parent_id || item.product_id));
         const quoteProductParams = new URLSearchParams({
-            "filter[product_id][_in]": quoteProductIds.join(","),
+            "filter[product_id][_in]": quoteParentIds.join(","),
             fields: "product_id,product_name",
             limit: "-1"
         });
@@ -908,13 +914,13 @@ export async function POST(request: Request) {
         const quoteProductsData = quoteProductRes.ok ? (await quoteProductRes.json()).data || [] : [];
         const quoteProductMap = new Map<number, any>(quoteProductsData.map((p: any) => [Number(p.product_id), p]));
 
-        const quoteVersionMap = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteProductIds);
+        const quoteVersionMap = await resolveCustomerProductVersions(actualQuoteCustomerId, quoteParentIds);
 
         const missingQuoteVersionProductNames: string[] = [];
-        for (const productId of quoteProductIds) {
-            if (!quoteVersionMap.has(productId)) {
-                const p = quoteProductMap.get(productId);
-                missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${productId}`);
+        for (const parentId of quoteParentIds) {
+            if (!quoteVersionMap.has(parentId)) {
+                const p = quoteProductMap.get(parentId);
+                missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${parentId}`);
             }
         }
         if (missingQuoteVersionProductNames.length > 0) {
@@ -940,6 +946,7 @@ export async function POST(request: Request) {
         const salesOrderPayload = {
             order_no: orderNo,
             po_no: poNo,
+            quotation_id: quotationId,
             customer_code: customerCode,
             order_status: body.submitForApproval ? "For Approval" : "Draft", // Start as Draft or Submit
             total_amount: quoteTotal,
@@ -960,9 +967,10 @@ export async function POST(request: Request) {
             const unitPrice = Number(item.frozen_total_cost_php);
             const quantity = Number(item.quantity);
             const productId = Number(item.product_id);
+            const parentId = Number(item.parent_id || item.product_id);
             return {
                 product_id: productId,
-                bom_version_id: quoteVersionMap.get(productId),
+                bom_version_id: quoteVersionMap.get(parentId),
                 unit_price: unitPrice,
                 ordered_quantity: quantity,
                 allocated_quantity: 0,
@@ -987,6 +995,17 @@ export async function POST(request: Request) {
             });
             if (!quoteUpdateRes.ok) {
                 throw new Error(`quotation update returned ${quoteUpdateRes.status}`);
+            }
+
+            if (quote.project_id) {
+                const projectUpdateRes = await fetch(`${DIRECTUS_URL}/items/projects/${quote.project_id}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ status: "Executed", modified_by: encoderId })
+                });
+                if (!projectUpdateRes.ok) {
+                    console.warn(`Failed to mark project ${quote.project_id} as Executed. Status: ${projectUpdateRes.status}`);
+                }
             }
         } catch (error) {
             const cleanupFailures: string[] = [];
@@ -1205,12 +1224,12 @@ export async function PATCH(request: Request) {
             }
 
             const isApprovalDecision = (current === "For Approval" || current === "On Hold")
-                && (target === "For Invoicing" || target === "Draft" || target === "On Hold" || target === "Cancelled");
+                && (target === "For Consolidation" || target === "Draft" || target === "On Hold" || target === "Cancelled");
             if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
                 throw new ApiError(403, "Sales-order approval access is required for this transition.");
             }
 
-            if (target === "For Invoicing") {
+            if (target === "For Consolidation") {
                 if (allDetails.length === 0) {
                     throw new ApiError(400, "Approval blocked: Sales Order has no item details.");
                 }
@@ -1283,6 +1302,9 @@ export async function PATCH(request: Request) {
             }
 
             const updatePayload: Record<string, any> = { order_status: target };
+            if (target === "For Invoicing") {
+                updatePayload.for_invoicing_at = new Date().toISOString();
+            }
             if (creditLimitExceeded && warningString) {
                 // If warning is not already in the remarks, append it
                 const currentRemarks = order.remarks || "";

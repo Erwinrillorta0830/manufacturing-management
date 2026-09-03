@@ -34,7 +34,10 @@ function errMsg(data: unknown): string {
 export async function listCOA(params: COAListParams): Promise<DirectusListResponse<COARow>> {
   const sp = new URLSearchParams();
   sp.set("resource", "chart_of_accounts");
-  sp.set("q", params.q || "");
+  if (params.glCode) sp.set("glCode", params.glCode);
+  if (params.accountTitle) sp.set("accountTitle", params.accountTitle);
+  if (params.accountType) sp.set("accountType", params.accountType);
+  if (params.balanceType) sp.set("balanceType", params.balanceType);
   sp.set("page", String(params.page));
   sp.set("pageSize", String(params.pageSize));
 
@@ -42,6 +45,13 @@ export async function listCOA(params: COAListParams): Promise<DirectusListRespon
   const data = await safeJson(res);
   if (!res.ok) throw new Error(errMsg(data));
   return data as DirectusListResponse<COARow>;
+}
+
+export async function listAccountTitles(): Promise<string[]> {
+  const res = await fetch(`${API}?resource=account_titles`, { cache: "no-store" });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(errMsg(data));
+  return (data?.data ?? []).map((x: { account_title?: string }) => x.account_title).filter(Boolean) as string[];
 }
 
 export async function createCOA(payload: COACreatePayload): Promise<DirectusSingleResponse<COARow>> {

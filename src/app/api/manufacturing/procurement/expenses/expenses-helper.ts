@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { DirectusShipmentExpense } from "@/modules/manufacturing-management/procurement/types";
 import { fetchShipmentLineItems } from "../shipments/shipments-helper";
 import { calculateHybridLandedCostAllocation } from "./hybrid-landed-cost";
@@ -228,7 +229,8 @@ export async function processShipmentLandedCosts(
     status: string,
     expenses: Array<Partial<DirectusShipmentExpense>>,
     allocationMethodInput: string,
-    lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>
+    lineItemUpdates?: Array<{ line_id: number; quantity_received: number }>,
+    userId?: number | null
 ): Promise<{ success: true; deferredInventoryUpdates: number }> {
     await assertLandedCostPostingEligible(shipmentId);
     void status;
@@ -345,7 +347,8 @@ export async function processShipmentLandedCosts(
                 headers,
                 body: JSON.stringify({
                     cost_per_unit: allocation.finalLandedUnitCost,
-                    estimated_unit_cost: allocation.finalLandedUnitCost
+                    estimated_unit_cost: allocation.finalLandedUnitCost,
+                    ...productUpdateAuditFields(userId)
                 })
             });
             if (!productUpdateResponse.ok) throw new Error(`Failed to update landed cost for product ${productId}.`);
@@ -356,7 +359,12 @@ export async function processShipmentLandedCosts(
         let rollbackFailed = false;
         for (const [productId, previous] of [...updatedProductCosts.entries()].reverse()) {
             const response = await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
-                method: "PATCH", headers, body: JSON.stringify(previous)
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({
+                    ...previous,
+                    ...productUpdateAuditFields(userId)
+                })
             }).catch(() => null);
             if (!response?.ok) rollbackFailed = true;
         }

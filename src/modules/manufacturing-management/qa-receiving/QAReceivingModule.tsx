@@ -10,12 +10,13 @@ import FIFOInventoryList from "./components/FIFOInventoryList";
 import MovementPayloadModal from "./components/MovementPayloadModal";
 import QuarantineDispositions from "./components/QuarantineDispositions";
 
-export default function QAReceivingModule() {
+export default function QAReceivingModule({ initialShipmentId }: { initialShipmentId?: number }) {
     const {
         activeTab,
         setActiveTab,
         branches,
         storageLotsByProductId,
+        rejectedStorageLotsByProductId,
         loadStorageLotBatches,
         loadingShipments,
         selectedShipment,
@@ -92,7 +93,7 @@ export default function QAReceivingModule() {
         handleCreateQuarantineDisposition,
         handleProcessQuarantineReturn,
         handleCancelQuarantineDisposition
-    } = useQAReceiving();
+    } = useQAReceiving(initialShipmentId);
 
     const [isQueueCollapsed, setIsQueueCollapsed] = React.useState(false);
     const queueIsCollapsed = Boolean(selectedShipment && isQueueCollapsed);
@@ -222,6 +223,7 @@ export default function QAReceivingModule() {
                                     lineItems={lineItems}
                                     branches={branches}
                                     storageLotsByProductId={storageLotsByProductId}
+                                    rejectedStorageLotsByProductId={rejectedStorageLotsByProductId}
                                     loadStorageLotBatches={loadStorageLotBatches}
                                     receivingTicketNumber={receivingTicketNumber}
                                     onReceiptNumberChange={handleReceiptNumberChange}

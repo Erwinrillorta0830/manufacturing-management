@@ -2,6 +2,7 @@ export interface SalesOrder {
     order_id: number;
     order_no: string;
     po_no?: string;
+    quotation_id?: number;
     customer_code: string;
     customer_name?: string;
     order_date: string;
@@ -60,6 +61,7 @@ export interface CreateSalesOrderPayload {
     deliveryDate: string;
     dueDate: string;
     salesmanId?: number;
+    quotationId?: number;
     remarks?: string;
     items: DirectOrderItemPayload[];
     submitForApproval?: boolean;

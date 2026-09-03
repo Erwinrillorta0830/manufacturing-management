@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
@@ -229,38 +230,48 @@ export function VersionManagementTab({
                 </button>
             </div>
 
-            {versionSubTab === "routes_bom" ? (
-                <RoutesBOMTab
-                    editedRoutes={editedRoutes}
-                    setEditedRoutes={setEditedRoutes}
-                    operationTypes={operationTypes}
-                    workCenters={workCenters}
-                    qaTemplates={qaTemplates}
-                    units={units}
-                    catalogProducts={allCatalogProducts}
-                    setHasUnsavedChanges={setHasUnsavedChanges}
-                    setOperationTypes={setOperationTypes}
-                    editedVersionDetails={editedVersionDetails}
-                    setEditedVersionDetails={setEditedVersionDetails}
-                    isVersionLocked={isVersionLocked}
-                />
-            ) : versionSubTab === "direct_labor" ? (
-                <DirectLaborStandardsTab
-                    editedVersionDetails={editedVersionDetails}
-                    setEditedVersionDetails={setEditedVersionDetails}
-                    setHasUnsavedChanges={setHasUnsavedChanges}
-                    isVersionLocked={isVersionLocked}
-                />
-            ) : (
-                <OverheadManagementTab
-                    overheadTypes={overheadTypes}
-                    setOverheadTypes={setOverheadTypes}
-                    editedVersionDetails={editedVersionDetails}
-                    setEditedVersionDetails={setEditedVersionDetails}
-                    setHasUnsavedChanges={setHasUnsavedChanges}
-                    isVersionLocked={isVersionLocked}
-                />
-            )}
+            <AnimatePresence mode="wait">
+                <motion.div
+                    key={versionSubTab}
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    transition={{ duration: 0.14, ease: "easeOut" }}
+                >
+                    {versionSubTab === "routes_bom" ? (
+                        <RoutesBOMTab
+                            editedRoutes={editedRoutes}
+                            setEditedRoutes={setEditedRoutes}
+                            operationTypes={operationTypes}
+                            workCenters={workCenters}
+                            qaTemplates={qaTemplates}
+                            units={units}
+                            catalogProducts={allCatalogProducts}
+                            setHasUnsavedChanges={setHasUnsavedChanges}
+                            setOperationTypes={setOperationTypes}
+                            editedVersionDetails={editedVersionDetails}
+                            setEditedVersionDetails={setEditedVersionDetails}
+                            isVersionLocked={isVersionLocked}
+                        />
+                    ) : versionSubTab === "direct_labor" ? (
+                        <DirectLaborStandardsTab
+                            editedVersionDetails={editedVersionDetails}
+                            setEditedVersionDetails={setEditedVersionDetails}
+                            setHasUnsavedChanges={setHasUnsavedChanges}
+                            isVersionLocked={isVersionLocked}
+                        />
+                    ) : (
+                        <OverheadManagementTab
+                            overheadTypes={overheadTypes}
+                            setOverheadTypes={setOverheadTypes}
+                            editedVersionDetails={editedVersionDetails}
+                            setEditedVersionDetails={setEditedVersionDetails}
+                            setHasUnsavedChanges={setHasUnsavedChanges}
+                            isVersionLocked={isVersionLocked}
+                        />
+                    )}
+                </motion.div>
+            </AnimatePresence>
         </div>
     );
 }

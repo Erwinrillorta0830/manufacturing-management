@@ -31,8 +31,6 @@ export type ProductRef = {
     priceD?: number | string | null;
     priceE?: number | string | null;
     cost_per_unit?: number | string | null;
-    version_id?: number | string | null;
-    version_name?: string | null;
 };
 
 export type PriceChangeRequestRow = {
@@ -73,7 +71,6 @@ export type PriceChangeRequestRow = {
     remarks?: string | null;
     reference_no?: string | null;
     current_price?: number | null;
-    version_id?: number | null;
 };
 
 export type PriceChangeBatchStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -83,7 +80,6 @@ export type PriceChangeBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_name?: string | null;
     price_type_id: number;
     price_type_name: string;
     current_price: number | null;
@@ -93,6 +89,8 @@ export type PriceChangeBatchLine = {
     status: PriceChangeBatchStatus | PCRStatus | string;
     supplier_name?: string | null;
     unit_name?: string | null;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     effective_at?: string | null;
     application_status?: PriceChangeApplicationStatus | string | null;
     applied_at?: string | null;
@@ -102,8 +100,6 @@ export type PriceChangeBatchLine = {
 export type PriceChangeBatchHeader = {
     id: number;
     header_id: number;
-    supplier_id: number | null;
-    supplier_name?: string;
     reference_no?: string;
     remarks?: string;
     status: PriceChangeBatchStatus;
@@ -123,6 +119,7 @@ export type PriceChangeBatchHeader = {
     applied_by?: number | string | null;
     applied_by_name?: string | null;
     line_count?: number;
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type PriceChangeBatchDetail = PriceChangeBatchHeader & {
@@ -153,7 +150,6 @@ export type CostChangeRequestRow = {
     applied_at?: string | null;
     applied_by?: number | string | null;
     applied_by_name?: string | null;
-    version_id?: number | null;
 };
 
 export type ListCostBatchStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -163,7 +159,6 @@ export type ListCostBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_name?: string | null;
     current_cost: number | null;
     proposed_cost: number | null;
     delta: number | null;
@@ -171,6 +166,8 @@ export type ListCostBatchLine = {
     status: ListCostBatchStatus | PCRStatus | string;
     supplier_name?: string | null;
     unit_name?: string | null;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     effective_at?: string | null;
     application_status?: PriceChangeApplicationStatus | string | null;
     applied_at?: string | null;
@@ -199,6 +196,7 @@ export type ListCostBatchHeader = {
     applied_by?: number | string | null;
     applied_by_name?: string | null;
     line_count?: number;
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type ListCostBatchDetail = ListCostBatchHeader & {
@@ -211,10 +209,13 @@ export type UnifiedBatchLine = {
     product_id: number;
     product_name: string;
     product_code?: string;
-    version_name?: string | null;
     unit_name?: string;
+    supplier_id?: number | null;
+    supplier_name?: string | null;
     price_type_id?: number;
     price_type_name?: string;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     current_price?: number | null;
     proposed_price?: number | null;
     current_cost?: number | null;
@@ -233,8 +234,6 @@ export type UnifiedBatchLine = {
 export type UnifiedBatchDetail = {
     id: number;
     header_id: number;
-    supplier_id: number | null;
-    supplier_name: string;
     reference_no: string;
     remarks: string;
     status: string;
@@ -258,6 +257,7 @@ export type UnifiedBatchDetail = {
     batch_types: Array<"PRICE_TYPE" | "LIST_COST">;
     price_details: UnifiedBatchLine[];
     cost_details: UnifiedBatchLine[];
+    product_types?: Array<{ id: number; name: string }>;
 };
 
 export type PriceTypeUnifiedApprovalRow = PriceChangeRequestRow & {
@@ -395,6 +395,7 @@ export type ListQuery = {
     q?: string;
     product_id?: number | "";
     supplier_ids?: number[];
+    product_type_ids?: number[];
     price_type_id?: number | "";
     requested_by?: number | "";
     date_from?: string | "";

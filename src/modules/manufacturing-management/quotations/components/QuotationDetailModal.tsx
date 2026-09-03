@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight, Printer } from "lucide-react";
 import { QuotationHeader, QuotationSnapshotNode } from "../types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -12,7 +12,9 @@ interface QuotationDetailModalProps {
     loadingSnapshots: boolean;
     setIsDetailModalOpen: (open: boolean) => void;
     reviseQuotation: (quote: QuotationHeader) => void;
+    handlePrintQuotation: () => void;
     loadQuotes?: () => void;
+    projectQuoteHistory?: QuotationHeader[];
 }
 
 export function QuotationDetailModal({
@@ -22,34 +24,75 @@ export function QuotationDetailModal({
     loadingSnapshots,
     setIsDetailModalOpen,
     reviseQuotation,
-    loadQuotes
+    handlePrintQuotation,
+    loadQuotes,
+    projectQuoteHistory = []
 }: QuotationDetailModalProps) {
     const router = useRouter();
     const [rejecting, setRejecting] = useState(false);
     const [routing, setRouting] = useState(false);
+    const [isRejectConfirmOpen, setIsRejectConfirmOpen] = useState(false);
+
+    const [activeHistoryQuoteId, setActiveHistoryQuoteId] = useState<number | null>(null);
+    const [historySnapshots, setHistorySnapshots] = useState<QuotationSnapshotNode[]>([]);
+
+    React.useEffect(() => {
+        if (selectedQuote) {
+            setActiveHistoryQuoteId(selectedQuote.id);
+            setHistorySnapshots([]);
+        }
+    }, [selectedQuote]);
+
+    React.useEffect(() => {
+        if (!activeHistoryQuoteId || !selectedQuote) return;
+        if (activeHistoryQuoteId === selectedQuote.id) return; // We use the passed `snapshots` prop
+
+        let isMounted = true;
+        fetch(`/api/manufacturing/finished-goods/quotes/snapshots?quoteId=${activeHistoryQuoteId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (isMounted) {
+                    setHistorySnapshots(data);
+                }
+            })
+            .catch(err => {
+                console.error("Failed to load historical snapshots", err);
+            });
+        return () => { isMounted = false; };
+    }, [activeHistoryQuoteId, selectedQuote]);
 
     const handleRejectProject = async () => {
         if (!selectedQuote) return;
-        if (!window.confirm("Are you sure you want to reject this quote?")) return;
-        
+        setIsRejectConfirmOpen(true);
+    };
+
+    const confirmRejectProject = async () => {
+        if (!selectedQuote) return;
+
         setRejecting(true);
         try {
+            const projectId = selectedQuote.project_id && typeof selectedQuote.project_id === "object"
+                ? (selectedQuote.project_id as { id: number }).id
+                : selectedQuote.project_id;
+
             const res = await fetch("/api/manufacturing/finished-goods/quotes", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     quoteId: selectedQuote.id,
+                    projectId: projectId,
                     status: "Rejected"
                 })
             });
-            
+
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to reject quote");
-            
+
             toast.success("Quote rejected successfully");
+            setIsRejectConfirmOpen(false);
             setIsDetailModalOpen(false);
             if (loadQuotes) loadQuotes();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
             console.error(e);
             toast.error(e.message || "Failed to reject quote");
@@ -63,13 +106,15 @@ export function QuotationDetailModal({
         setRouting(true);
         try {
             const payload = {
-                customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null 
-                    ? (selectedQuote.customer_id as {id: number}).id 
+                customer: typeof selectedQuote.customer_id === 'object' && selectedQuote.customer_id !== null
+                    ? (selectedQuote.customer_id as { id: number }).id
                     : selectedQuote.customer_id,
                 quoteId: selectedQuote.id,
                 quoteNumber: selectedQuote.quote_number,
                 snapshots: snapshots.map(s => ({
                     productId: s.product_id,
+                    parentId: s.parent_id,
+                    productTypeId: s.product_type_id,
                     versionId: s.version_id,
                     productName: s.node_name,
                     quantity: s.quantity,
@@ -89,22 +134,67 @@ export function QuotationDetailModal({
 
     if (!isDetailModalOpen || !selectedQuote) return null;
 
-    const simulatedCost = Number(selectedQuote.total_simulated_cost || 0);
-    const sellingPrice = Number(selectedQuote.total_selling_price || 0);
+    const displayQuote = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
+        ? projectQuoteHistory.find(q => q.id === activeHistoryQuoteId) || selectedQuote
+        : selectedQuote;
+    
+    const displaySnapshots = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
+        ? historySnapshots
+        : snapshots;
+    
+    const isHistoryView = displayQuote.id !== selectedQuote.id;
+    const hasNoQuote = !selectedQuote.id || selectedQuote.id === 0;
+
+    const simulatedCost = Number(displayQuote.total_simulated_cost || 0);
+    const sellingPrice = Number(displayQuote.total_selling_price || 0);
     const netMargin = sellingPrice - simulatedCost;
     const marginPct = sellingPrice > 0 ? (netMargin / sellingPrice) * 100 : 0;
 
     return (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-card border rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-card border rounded-xl shadow-xl w-full max-w-[90vw] h-auto max-h-[95vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
                 {/* Header */}
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-muted/10">
                     <div>
-                        <h3 className="text-base font-bold text-foreground">Quote Snapshot Detail</h3>
-                        <p className="text-xs text-muted-foreground">Quote Number: <strong className="text-foreground">{selectedQuote.quote_number}</strong> | Status: <span className="font-bold text-primary">{selectedQuote.status || "Draft"}</span></p>
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className="text-base font-bold text-foreground">Quote Snapshot Detail</h3>
+                            {displayQuote.status === "Converted to SO" && (
+                                <span className="text-[10px] bg-teal-500/10 text-teal-600 px-2 py-0.5 rounded-full font-bold border border-teal-500/20">
+                                    🔒 Approved & Converted
+                                </span>
+                            )}
+                            {isHistoryView && (
+                                <span className="text-[10px] bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded-full font-bold border border-amber-500/20">
+                                    Viewing Previous Revision (Read-only)
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">Quote Number:</span>
+                            <select 
+                                value={activeHistoryQuoteId || selectedQuote.id}
+                                onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
+                                disabled={projectQuoteHistory.length <= 1}
+                                className="text-[11px] border border-slate-200 dark:border-slate-800 rounded px-2 py-1 bg-background text-foreground font-bold outline-none focus:ring-1 focus:ring-primary shadow-sm cursor-pointer disabled:opacity-70 disabled:cursor-default"
+                            >
+                                {projectQuoteHistory.length > 0 ? (
+                                    projectQuoteHistory.map(q => (
+                                        <option key={q.id} value={q.id}>
+                                            {q.quote_number} {q.id === selectedQuote.id ? "(Latest)" : ""}
+                                        </option>
+                                    ))
+                                ) : (
+                                    <option value={selectedQuote.id}>
+                                        {selectedQuote.quote_number} (Latest)
+                                    </option>
+                                )}
+                            </select>
+                            <span className="text-xs text-muted-foreground ml-1">| Status:</span>
+                            <span className="text-xs font-bold text-primary">{displayQuote.status || "Draft"}</span>
+                        </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {selectedQuote.status !== "Converted to SO" && selectedQuote.status !== "Rejected" && (
+                        {!isHistoryView && displayQuote.status !== "Converted to SO" && displayQuote.status !== "Rejected" && (
                             <>
                                 <button
                                     disabled={rejecting || routing}
@@ -115,9 +205,10 @@ export function QuotationDetailModal({
                                     Reject Project
                                 </button>
                                 <button
-                                    disabled={rejecting || routing}
+                                    disabled={rejecting || routing || hasNoQuote}
+                                    title={hasNoQuote ? "This project has no saved quotation yet. Create and save a quote first." : undefined}
                                     onClick={handleApproveAndRoute}
-                                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 animate-pulse"
+                                    className={`bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1 ${!hasNoQuote && !routing && !rejecting ? 'animate-pulse' : ''}`}
                                 >
                                     {routing ? (
                                         <>
@@ -134,14 +225,23 @@ export function QuotationDetailModal({
                             </>
                         )}
                         <button
-                            onClick={() => {
-                                reviseQuotation(selectedQuote);
-                                setIsDetailModalOpen(false);
-                            }}
-                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs"
+                            onClick={handlePrintQuotation}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs flex items-center gap-1.5"
                         >
-                            Revise Quote
+                            <Printer className="w-3.5 h-3.5" />
+                            Print Report
                         </button>
+                        {!isHistoryView && displayQuote.status !== "Converted to SO" && displayQuote.status !== "Rejected" && (
+                            <button
+                                onClick={() => {
+                                    reviseQuotation(displayQuote);
+                                    setIsDetailModalOpen(false);
+                                }}
+                                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors shadow-xs"
+                            >
+                                Revise Quote
+                            </button>
+                        )}
                         <button
                             onClick={() => setIsDetailModalOpen(false)}
                             className="text-muted-foreground hover:text-foreground text-xs font-semibold rounded-lg border px-3 py-1.5 hover:bg-muted"
@@ -185,27 +285,27 @@ export function QuotationDetailModal({
                             <div className="rounded-xl border shadow-sm overflow-hidden">
                                 <div className="bg-muted/30 px-4 py-3 border-b flex items-center justify-between">
                                     <h4 className="text-sm font-bold text-foreground">Frozen Quotation Items</h4>
-                                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{snapshots.length} item(s)</span>
+                                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full">{displaySnapshots.length} item(s)</span>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-xs text-left">
                                         <thead className="bg-muted/20 text-muted-foreground font-bold">
                                             <tr>
                                                 <th className="p-2.5 uppercase">Product / Node Name</th>
-                                                <th className="p-2.5 text-right uppercase">Qty</th>
+                                                <th className="p-2.5 uppercase text-left">Version</th>
                                                 <th className="p-2.5 uppercase">UOM</th>
-                                                <th className="p-2.5 text-right uppercase">Unit Cost (₱)</th>
-                                                <th className="p-2.5 text-right uppercase">Ext Cost (₱)</th>
+                                                <th className="p-2.5 uppercase text-right">Unit Cost (₱)</th>
+                                                <th className="p-2.5 uppercase text-right">Ext Cost (₱)</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y">
-                                            {snapshots.map(item => {
+                                            {displaySnapshots.map((item) => {
                                                 const unitCost = Number(item.frozen_unit_cost_php || 0);
                                                 const totalCost = Number(item.frozen_total_cost_php || 0);
                                                 return (
                                                     <tr key={item.id} className="hover:bg-muted/10">
                                                         <td className="p-2.5 font-medium text-foreground">{item.node_name}</td>
-                                                        <td className="p-2.5 text-right font-medium">{item.quantity}</td>
+                                                        <td className="p-2.5 text-left font-medium text-muted-foreground">{item.version_name || "N/A"}</td>
                                                         <td className="p-2.5 text-muted-foreground">{item.uom}</td>
                                                         <td className="p-2.5 text-right font-semibold text-muted-foreground">{formatCurrency(unitCost)}</td>
                                                         <td className="p-2.5 text-right font-bold text-primary">{formatCurrency(totalCost)}</td>
@@ -220,6 +320,39 @@ export function QuotationDetailModal({
                     )}
                 </div>
             </div>
+
+            {/* Custom Reject Confirmation Modal */}
+            {isRejectConfirmOpen && (
+                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+                    <div className="bg-card border rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b bg-destructive/10 text-destructive">
+                            <h3 className="text-base font-bold">Confirm Rejection</h3>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-sm text-foreground/80 mb-6">
+                                Are you sure you want to reject this quote? This action cannot be undone and will mark the quotation as voided.
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    onClick={() => setIsRejectConfirmOpen(false)}
+                                    disabled={rejecting}
+                                    className="px-4 py-2 rounded-lg text-xs font-semibold border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmRejectProject}
+                                    disabled={rejecting}
+                                    className="px-4 py-2 rounded-lg text-xs font-semibold bg-destructive hover:bg-destructive/90 text-white transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {rejecting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                                    Confirm Rejection
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

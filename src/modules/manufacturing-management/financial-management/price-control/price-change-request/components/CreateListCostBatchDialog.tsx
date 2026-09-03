@@ -83,7 +83,7 @@ export function CreateListCostBatchDialog({
                     proposed_cost: line.proposed_cost,
                     current_cost: line.current_cost,
                 })),
-                supplier_id: importPrefill.supplierId,
+
                 reference_no: referenceNo.trim() || undefined,
                 remarks: trimmedRemarks,
             });

@@ -1,0 +1,250 @@
+// src/modules/sales-returnv3/type.ts
+
+// --- RETURN TYPES ---
+export type ReturnType = "Good Order" | "Bad Order" | "Expired" | string;
+export type ReturnStatus = "Pending" | "Approved" | "Rejected" | "Received";
+
+export interface SalesReturnItem {
+  id?: number | string; // Use string for temp IDs, number for DB IDs
+  tempId?: string; // For frontend-only tracking
+  productId: number;
+  product_id?: number; // DB compatibility
+  code: string;
+  description: string;
+  unit: string;
+  unit_id?: number;
+  quantity: number;
+  unitPrice: number;
+  grossAmount: number;
+  discountType: string | number | null;
+  discountAmount: number;
+  totalAmount: number;
+  lot_id?: number | null;
+  inventory_lot_id?: number | null;
+  batch?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  reason?: string;
+  returnType?: string;
+  rfidTags?: string[];
+  agreedPrice?: number;
+  priceVariance?: number;
+  // 🟢 Fields for Price Type Recalculation
+  availablePrices?: ProductPerPriceType[];
+  unitMultiplier?: number;
+  priceA?: number;
+  priceB?: number;
+  priceC?: number;
+  priceD?: number;
+  priceE?: number;
+}
+
+export interface SalesReturn {
+  id: number;
+  returnNo: string;
+  invoiceNo: string;
+  customerCode: string;
+  customerName?: string; // Existing
+  salesmanId: number;
+  salesmanName?: string; // 🟢 NEW: Add this field
+  returnDate: string;
+  totalAmount: number;
+  status: string;
+  remarks: string;
+  orderNo?: string;
+  isThirdParty?: boolean;
+  priceType?: string;
+  isReceived?: boolean;
+  receivedAt?: string;
+  createdDate?: string;
+  createdAt?: string;
+}
+
+// --- BASIC ENTITIES ---
+export interface Brand {
+  brand_id: number;
+  brand_name: string;
+}
+export interface Category {
+  category_id: number;
+  category_name: string;
+}
+export interface Supplier {
+  id: number;
+  supplier_name: string;
+}
+
+export interface Unit {
+  unit_id: number;
+  unit_name: string;
+  unit_shortcut: string;
+  order: number;
+}
+
+// src/modules/sales-returnv3/type.ts
+
+// ... existing imports ...
+
+export interface Product {
+  product_id: number;
+  isActive: number;
+  product_name: string;
+  barcode: string | null;
+  product_code: string | null;
+  product_image: string | null;
+  description: string;
+  product_brand: number;
+  product_category: number;
+
+  // Critical for Unit Logic
+  unit_of_measurement: number;
+  unit_of_measurement_count: number;
+
+  // Price fields from products table (A through E)
+  priceA: number;
+  priceB?: number;
+  priceC?: number;
+  priceD?: number;
+  priceE?: number;
+  
+  parent_id?: number | { product_id?: number; id?: number } | null;
+}
+
+// ... rest of the file ...
+
+export interface ProductSupplierConnection {
+  id: number;
+  supplier_id: number;
+  product_id: number;
+  discount_type: number | string | null;
+}
+
+export interface SupplierCategoryDiscount {
+  id: number;
+  customer_code: string;
+  supplier_id: number;
+  category_id: number;
+  discount_type: number | string | null;
+}
+
+export interface ProductPerPriceType {
+  id: number;
+  product_id: number;
+  price_type_id: number;
+  price: number;
+  status: string;
+}
+
+export interface ProductCatalog {
+  brands: Brand[];
+  categories: Category[];
+  suppliers: Supplier[];
+  units: Unit[];
+  connections: ProductSupplierConnection[];
+  products: Product[];
+  supplierCategoryDiscount?: SupplierCategoryDiscount[];
+  productPrices: ProductPerPriceType[];
+}
+
+// --- API LOOKUPS ---
+export interface API_LineDiscount {
+  id: number;
+  discount_type: string;
+  total_percent: string;
+}
+
+export interface API_SalesReturnType {
+  type_id: number;
+  type_name: string;
+  description: string;
+}
+
+// --- PRICE TYPE OPTIONS (from price_types table) ---
+export interface PriceTypeOption {
+  price_type_id: number;
+  price_type_name: string;
+  sort?: number;
+}
+
+export interface API_SalesReturnDetail {
+  detail_id: number;
+  return_no: string;
+  product_id: number;
+  quantity: number;
+  unit_price: string;
+  gross_amount: string;
+  discount_type: number;
+  discount_amount: string;
+  total_amount: string;
+  lot_id: number | null;
+  batch?: string | null;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  reason?: string | null;
+  sales_return_type_id: number;
+}
+
+// --- FORM OPTIONS ---
+export interface SalesmanOption {
+  id: number;
+  name: string;
+  code: string;
+  priceType: string;
+  branchId: number;
+  branchName?: string;
+}
+
+// type.ts
+export interface CustomerOption {
+  id: number;
+  name: string; // Changed from 'customer_name' to 'name'
+  code?: string; // Optional: Add this if your API returns a customer code
+  discountType?: number | string | null;
+  price_type_id?: number | string | null;
+}
+
+// If you need the full object elsewhere, we can keep a separate type for that,
+// but for the filter, we only need these two.
+
+export interface BranchOption {
+  id: number;
+  name: string;
+}
+
+// --- STATUS CARD DATA ---
+export interface SalesReturnStatusCard {
+  returnId: number;
+  isApplied: boolean;
+  dateApplied: string;
+  transactionStatus: string;
+  isPosted: boolean;
+  isReceived: boolean;
+  appliedTo: string;
+  appliedInvoiceId?: number | null;
+  isInvoicePosted?: boolean;
+}
+
+// 🟢 NEW: Add this interface for the Invoice Dropdown
+export interface InvoiceOption {
+  id: number | string;
+  invoice_no: string;
+  customerCode: string;
+  order_id: string; // 🟢 Added this line
+  salesman_id: number; // 🟢 Added this line
+  amount?: number;
+  isPosted?: boolean;
+}
+
+export interface LotOption {
+  lot_id: number;
+  lot_name: string;
+  branch_id: number;
+  unit_id: number;
+}
+
+export interface InvoiceLineItem {
+  detail_id: number;
+  product_id: number;
+  unit_price: number;
+  quantity: number;
+}

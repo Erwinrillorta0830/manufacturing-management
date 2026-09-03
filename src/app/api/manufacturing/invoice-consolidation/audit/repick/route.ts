@@ -3,6 +3,7 @@ import { DIRECTUS_URL, headers as directusHeaders } from "../../../directus-api"
 import { fetchSourceMovements, postMovements, type PostMovementPayload } from "../../inventory-movements-client";
 import { syncProductLedgerToTarget } from "../../product-ledger-client";
 import { getUserIdFromToken } from "../../_auth";
+import { getPhTimestamp } from "../../_time-utils";
 
 const TXN_TYPE_SALES_ISSUE = 4;
 
@@ -105,40 +106,53 @@ export async function POST(req: NextRequest) {
             ? ((await invoiceLinksRes.json()).data || []).map((row: { invoice_id: number }) => Number(row.invoice_id)).filter(Boolean)
             : [];
         if (invoiceIds.length > 0) {
-            const invoiceDetailsRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
-                { headers: directusHeaders, cache: "no-store" }
-            );
-            const invoiceDetailIds: number[] = invoiceDetailsRes.ok
-                ? ((await invoiceDetailsRes.json()).data || []).map((row: { detail_id: number }) => Number(row.detail_id)).filter(Boolean)
-                : [];
-
-            if (invoiceDetailIds.length > 0) {
-                const reservationRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_eq]=Consumed&fields=id,inventory_lot_id.id,inventory_lot_id.quantity,quantity&limit=-1`,
+            const [sodRes, sidRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
-                );
-                if (!reservationRes.ok) {
-                    return NextResponse.json({ message: "Movements compensated but consumed reservations could not be loaded" }, { status: 502 });
-                }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
+            const allDetailIds: number[] = [
+                ...(sodRes.ok ? ((await sodRes.json()).data || []).map((d: { detail_id: number }) => Number(d.detail_id)) : []),
+                ...(sidRes.ok ? ((await sidRes.json()).data || []).map((d: { detail_id: number }) => Number(d.detail_id)) : []),
+            ];
 
-                const consumedReservations: {
-                    id: number;
-                    inventory_lot_id: { id: number; quantity: number } | number;
-                    quantity: number;
-                }[] = (await reservationRes.json()).data || [];
-                // We do NOT patch the metadata table inventory_lots.quantity.
-                // Stock is fully restored in the ledger which was synchronised above.
-
+            if (allDetailIds.length > 0) {
                 const reservationNow = new Date().toISOString();
-                for (const reservation of consumedReservations) {
-                    const reservationPatchRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${reservation.id}`, {
-                        method: "PATCH",
-                        headers: directusHeaders,
-                        body: JSON.stringify({ status: "Reserved", updated_by: userId, updated_at: reservationNow }),
-                    });
-                    if (!reservationPatchRes.ok) {
-                        return NextResponse.json({ message: `Failed to reactivate reservation ${reservation.id}` }, { status: 502 });
+                const [soRes, siRes] = await Promise.all([
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Consumed&fields=reservation_id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Consumed&fields=id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                ]);
+
+                if (soRes.ok) {
+                    const soRows: { reservation_id?: number; id?: number }[] = (await soRes.json()).data || [];
+                    for (const r of soRows) {
+                        const id = Number(r.reservation_id || r.id);
+                        await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${id}`, {
+                            method: "PATCH",
+                            headers: directusHeaders,
+                            body: JSON.stringify({ status: "Reserved", updated_by: userId, updated_at: reservationNow }),
+                        }).catch(() => null);
+                    }
+                }
+                if (siRes.ok) {
+                    const siRows: { id: number }[] = (await siRes.json()).data || [];
+                    for (const r of siRows) {
+                        await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${r.id}`, {
+                            method: "PATCH",
+                            headers: directusHeaders,
+                            body: JSON.stringify({ status: "Reserved", updated_by: userId, updated_at: reservationNow }),
+                        }).catch(() => null);
                     }
                 }
             }
@@ -168,6 +182,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        const phNow = getPhTimestamp();
         // Revert status to Picking
         const patchRes = await fetch(`${DIRECTUS_URL}/items/consolidator/${batchId}`, {
             method: "PATCH",
@@ -175,11 +190,28 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
                 status: "Picking",
                 checked_by: null,
+                updated_at: phNow,
             }),
         });
 
         if (!patchRes.ok) {
             return NextResponse.json({ message: "Status revert failed" }, { status: 502 });
+        }
+
+        // Revert linked sales orders to "For Picking"
+        if (invoiceIds.length > 0) {
+            for (const orderId of invoiceIds) {
+                await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                    method: "PATCH",
+                    headers: directusHeaders,
+                    body: JSON.stringify({
+                        order_status: "For Picking",
+                        modified_date: phNow,
+                        modified_by: userId,
+                        updated_at: phNow,
+                    }),
+                }).catch(() => null);
+            }
         }
 
         const msg = compensatedCount > 0

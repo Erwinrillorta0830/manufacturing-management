@@ -20,6 +20,7 @@ function parameterFor(specification: PurchaseQaSpecificationInput, parameters: P
 export function PurchaseQaEditor({ config, parameters, loading, error, onChange }: PurchaseQaEditorProps) {
     const usedParameterIds = new Set(config.specifications.map(specification => specification.parameterId));
     const availableParameters = parameters.filter(parameter => !usedParameterIds.has(parameter.parameterId));
+    const hasValidationError = Boolean(error);
 
     const updateSpecification = (index: number, patch: Partial<PurchaseQaSpecificationInput>) => {
         onChange({
@@ -49,7 +50,7 @@ export function PurchaseQaEditor({ config, parameters, loading, error, onChange 
     };
 
     return (
-        <div className="space-y-2 rounded-xl border bg-muted/10 p-3">
+        <div className={`space-y-2 rounded-xl border bg-muted/10 p-3 ${hasValidationError ? "border-rose-500" : ""}`}>
             <div className="flex items-center justify-between gap-2">
                 <div>
                     <p className="text-[10px] font-extrabold uppercase tracking-wider text-foreground">PO Inspection QA</p>
@@ -78,7 +79,7 @@ export function PurchaseQaEditor({ config, parameters, loading, error, onChange 
                     {config.specifications.map((specification, index) => {
                         const parameter = parameterFor(specification, parameters);
                         return (
-                            <div key={specification.specId || `${specification.parameterId}-${index}`} className="space-y-2 rounded-lg border bg-background p-2">
+                            <div key={specification.specId || `${specification.parameterId}-${index}`} className={`space-y-2 rounded-lg border bg-background p-2 ${hasValidationError ? "border-rose-500/70" : ""}`}>
                                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.4fr_1fr_auto] sm:items-end">
                                     <label className="space-y-1">
                                         <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">QA Parameter *</span>

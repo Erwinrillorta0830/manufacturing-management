@@ -20,6 +20,7 @@ export interface VersionApprovalItem {
     category: string;
     version_name: string;
     base_quantity: number;
+    uom?: string;
     expected_yield_percentage: number;
     created_by: string;
     created_at: string;
@@ -67,6 +68,7 @@ export interface VersionComparisonData {
         version_id: number;
         version_name: string;
         base_quantity: number;
+        uom?: string;
         expected_yield_percentage: number;
         status: string;
         created_by?: string;
@@ -76,6 +78,7 @@ export interface VersionComparisonData {
         version_id: number;
         version_name: string;
         base_quantity: number;
+        uom?: string;
         expected_yield_percentage: number;
         status: string;
     };

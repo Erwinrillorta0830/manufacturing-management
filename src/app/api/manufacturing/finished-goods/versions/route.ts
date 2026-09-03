@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion } from "./versions-helper";
 
@@ -29,7 +31,12 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
         }
 
-        const url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
+        const statusFilter = searchParams.get("status");
+
+        let url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
+        if (statusFilter) {
+            url += `&filter[status][_eq]=${encodeURIComponent(statusFilter)}`;
+        }
         let res: Response | null = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {
             res = await fetch(url, { headers, cache: "no-store" });
@@ -580,10 +587,15 @@ export async function PATCH(request: Request) {
             if (!actRes.ok) throw new Error("Failed to set version as primary");
 
             // 3. Automatically ensure the product master record is set to Active
+            const userId = await getUserIdFromToken();
             await fetch(`${DIRECTUS_URL}/items/products/${numericProductId}`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify({ status: "Active", isActive: true })
+                body: JSON.stringify({
+                    status: "Active",
+                    isActive: true,
+                    ...productUpdateAuditFields(userId)
+                })
             }).catch(() => {});
 
             return NextResponse.json({ success: true });

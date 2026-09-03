@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { 
     fetchQuotations, 
     saveQuotation 
@@ -43,6 +45,12 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Each quotation snapshot must contain valid product, BOM version, node, quantity, UOM, and cost values" }, { status: 400 });
         }
 
+        const userId = await getUserIdFromToken().catch(() => null);
+        const serverTime = await getISOStringInConfiguredTimezone();
+
+        header.created_by = userId;
+        header.created_at = serverTime.substring(0, 19).replace('T', ' ');
+
         const result = await saveQuotation(header, snapshots);
         return NextResponse.json(result);
     } catch (e) {
@@ -54,10 +62,14 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
     try {
         const body = await request.json();
-        const { quoteId, status } = body;
+        const { quoteId, projectId, status } = body;
 
-        if (!quoteId || !status) {
-            return NextResponse.json({ error: "Missing quoteId or status" }, { status: 400 });
+        if (!status) {
+            return NextResponse.json({ error: "Missing status" }, { status: 400 });
+        }
+        
+        if (!quoteId && !projectId) {
+            return NextResponse.json({ error: "Missing quoteId or projectId" }, { status: 400 });
         }
 
         const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -68,15 +80,35 @@ export async function PATCH(request: Request) {
         if (DIRECTUS_STATIC_TOKEN) {
             reqHeaders["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
         }
-        const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
-            method: "PATCH",
-            headers: reqHeaders,
-            body: JSON.stringify({ status })
-        });
+        
+        const userId = await getUserIdFromToken().catch(() => null);
 
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+        // Update the quotation header status if quoteId is provided
+        if (quoteId) {
+            const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
+                method: "PATCH",
+                headers: reqHeaders,
+                body: JSON.stringify({ status, modified_by: userId })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Failed to update quotation status: ${res.status} - ${errText}`);
+            }
+        }
+
+        // Also update the parent project status if projectId is provided and status is "Rejected"
+        if (projectId && status === "Rejected") {
+            const projectRes = await fetch(`${DIRECTUS_URL}/items/projects/${projectId}`, {
+                method: "PATCH",
+                headers: reqHeaders,
+                body: JSON.stringify({ status, modified_by: userId })
+            });
+
+            if (!projectRes.ok) {
+                const errText = await projectRes.text();
+                throw new Error(`Failed to update parent project status: ${projectRes.status} - ${errText}`);
+            }
         }
 
         return NextResponse.json({ success: true });

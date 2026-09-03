@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle, FileText, User, Receipt, CreditCard, Layers, Printer } from "lucide-react";
-import { fetchDetailedMemo, approveMemo } from "../service";
+import { fetchDetailedMemo, approveMemo, rejectMemo } from "../service";
 import { DetailedMemo, CompanyProfile } from "../types";
 import { toast } from "sonner";
 import { PrintMemoSettingsDialog } from "./PrintMemoSettingsDialog";
@@ -31,6 +31,7 @@ export function ApprovalDetailModal({ memoId, open, onOpenChange, onApproved, re
     const [company, setCompany] = useState<CompanyProfile | null>(null);
     const [loading, setLoading] = useState(false);
     const [approving, setApproving] = useState(false);
+    const [rejecting, setRejecting] = useState(false);
     const [printSettingsOpen, setPrintSettingsOpen] = useState(false);
 
     useEffect(() => {
@@ -76,6 +77,25 @@ export function ApprovalDetailModal({ memoId, open, onOpenChange, onApproved, re
             toast.error("Network error during approval.");
         } finally {
             setApproving(false);
+        }
+    };
+
+    const handleReject = async () => {
+        if (!memoId) return;
+        setRejecting(true);
+        try {
+            const res = await rejectMemo(memoId);
+            if (res.success) {
+                toast.success("Customer Credit Memo has been rejected.");
+                onApproved?.(); // Triggers a list refresh
+                onOpenChange(false);
+            } else {
+                toast.error(res.error || "Rejection failed.");
+            }
+        } catch {
+            toast.error("Network error during rejection.");
+        } finally {
+            setRejecting(false);
         }
     };
 
@@ -161,15 +181,16 @@ export function ApprovalDetailModal({ memoId, open, onOpenChange, onApproved, re
                                 </div>
                                 <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
                                     <div className="space-y-4">
-                                        <DetailItem label="Customer" value={details.header.customer_id.customer_name} />
-                                        <DetailItem label="Supplier" value={details.header.supplier_id.supplier_name} />
-                                        <DetailItem label="Salesman" value={`${details.header.salesman_id.salesman_code} - ${details.header.salesman_id.salesman_name}`} />
+                                        <DetailItem label="Customer" value={details.header.customer_id?.customer_name || "Unknown Customer"} />
+                                        <DetailItem label="Supplier" value={details.header.supplier_id?.supplier_name || "Unknown Supplier"} />
+                                        <DetailItem label="Salesman" value={`${details.header.salesman_id?.salesman_code || "N/A"} - ${details.header.salesman_id?.salesman_name || "Unknown Salesman"}`} />
                                         <DetailItem label="Memo Type" value={details.header.type === 1 ? "Credit Memo" : details.header.type === 2 ? "Debit Memo" : "Unknown"} />
                                     </div>
                                     <div className="space-y-4">
-                                        <DetailItem label="GL Account" value={details.header.chart_of_account.account_title} />
+                                        <DetailItem label="GL Account" value={details.header.chart_of_account?.account_title || "Unknown Account"} />
                                         <DetailItem label="Reason" value={details.header.reason || "No reason provided"} />
                                         <DetailItem label="Date Created" value={new Date(details.header.created_at).toLocaleString()} />
+                                        <DetailItem label="Collection Reference(s)" value={details.header.collection_references?.join(', ') || "N/A"} />
                                     </div>
                                 </div>
                             </div>
@@ -198,20 +219,36 @@ export function ApprovalDetailModal({ memoId, open, onOpenChange, onApproved, re
                         </Button>
                     )}
                     {(!readOnly && details?.header.status === "FOR APPROVAL") && (
-                        <Button 
-                            onClick={handleApprove} 
-                            disabled={approving || loading}
-                            className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-8 font-black tracking-tight shadow-lg shadow-blue-500/20 active:scale-95 transition-all h-11"
-                        >
-                            {approving ? (
-                                <div className="flex items-center gap-2">
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                    <span>Approving...</span>
-                                </div>
-                            ) : (
-                                "Approve Memo"
-                            )}
-                        </Button>
+                        <>
+                            <Button 
+                                onClick={handleReject} 
+                                disabled={rejecting || loading || approving}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 rounded-xl px-6 font-bold tracking-tight border border-red-200 shadow-sm active:scale-95 transition-all h-11"
+                            >
+                                {rejecting ? (
+                                    <div className="flex items-center gap-2">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        <span>Rejecting...</span>
+                                    </div>
+                                ) : (
+                                    "Reject Memo"
+                                )}
+                            </Button>
+                            <Button 
+                                onClick={handleApprove} 
+                                disabled={approving || loading || rejecting}
+                                className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-8 font-black tracking-tight shadow-lg shadow-blue-500/20 active:scale-95 transition-all h-11"
+                            >
+                                {approving ? (
+                                    <div className="flex items-center gap-2">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        <span>Approving...</span>
+                                    </div>
+                                ) : (
+                                    "Approve Memo"
+                                )}
+                            </Button>
+                        </>
                     )}
                 </DialogFooter>
             </DialogContent>

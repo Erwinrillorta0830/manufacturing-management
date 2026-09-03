@@ -1,59 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
-import { fetchSourceMovements, movementsExistForSource } from "../inventory-movements-client";
-import { productLedgerMatchesQuantities } from "../product-ledger-client";
 import { getUserIdFromToken } from "../_auth";
+import { getPhTimestamp } from "../_time-utils";
 
-const TXN_TYPE_SALES_ISSUE = 4;
-
-async function transitionSalesOrderToForLoading(invoiceIds: number[]): Promise<{ updated: number; errors: string[] }> {
+async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?: number): Promise<{ updated: number; errors: string[] }> {
     const errors: string[] = [];
-    const siRes = await fetch(
-        `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&fields=invoice_id,order_id,sales_order_id,isDispatched&limit=-1`,
-        { headers: directusHeaders, cache: "no-store" }
-    );
-    if (!siRes.ok) return { updated: 0, errors: [`Failed to fetch invoices: HTTP ${siRes.status}`] };
-    const invoices: { invoice_id: number; order_id: number | null; sales_order_id: number | null; isDispatched: boolean | null }[] = (await siRes.json()).data || [];
-
-    const orderIds = [...new Set(invoices.map((inv) => Number(inv.order_id || inv.sales_order_id || 0)).filter(Boolean))];
+    const orderIds = [...new Set(documentIds.map((id) => Number(id)).filter(Boolean))];
     if (orderIds.length === 0) return { updated: 0, errors: [] };
 
     let updated = 0;
+    const phNow = getPhTimestamp();
     for (const orderId of orderIds) {
-        const orderRes = await fetch(
-            `${DIRECTUS_URL}/items/sales_order/${orderId}?fields=order_id,order_status`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!orderRes.ok) {
-            errors.push(`Order ${orderId}: fetch failed HTTP ${orderRes.status}`);
-            continue;
-        }
-        const order: { order_id: number; order_status: string } = (await orderRes.json()).data;
-        if (order.order_status !== "For Picking") continue;
-
-        const allActive = await fetch(
-            `${DIRECTUS_URL}/items/sales_invoice?filter[_or][0][order_id][_eq]=${orderId}&filter[_or][1][sales_order_id][_eq]=${orderId}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id,isDispatched&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!allActive.ok) {
-            errors.push(`Order ${orderId}: active-invoice query failed HTTP ${allActive.status}`);
-            continue;
-        }
-        const activeInvoices: { invoice_id: number; isDispatched: boolean | null }[] = (await allActive.json()).data || [];
-        if (activeInvoices.length === 0) continue;
-        const allDispatched = activeInvoices.every((inv) => inv.isDispatched === true);
-
-        if (allDispatched) {
-            const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
-                method: "PATCH",
-                headers: directusHeaders,
-                body: JSON.stringify({ order_status: "For Loading" }),
-            });
-            if (patchRes.ok) {
-                updated++;
-            } else {
-                errors.push(`Order ${orderId}: status update failed HTTP ${patchRes.status}`);
-            }
+        const patchRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+            method: "PATCH",
+            headers: directusHeaders,
+            body: JSON.stringify({
+                order_status: "For Invoicing",
+                for_invoicing_at: phNow,
+                modified_date: phNow,
+                modified_by: userId,
+                updated_at: phNow,
+            }),
+        });
+        if (patchRes.ok) {
+            updated++;
+        } else {
+            errors.push(`Order ${orderId}: status update failed HTTP ${patchRes.status}`);
         }
     }
     return { updated, errors };
@@ -93,32 +65,39 @@ export async function POST(req: NextRequest) {
             );
             const junctions: { invoice_id: number }[] = junctionRes.ok ? (await junctionRes.json()).data || [] : [];
             if (junctions.length > 0) {
-                const result = await transitionSalesOrderToForLoading(junctions.map((j) => j.invoice_id));
+                const invoiceIds = junctions.map((j) => j.invoice_id);
+                const result = await transitionSalesOrderToForInvoicing(invoiceIds, userId);
                 if (result.errors.length > 0) {
                     console.error("[audit retry] SO transition errors:", result.errors);
                 }
+                const sodRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                const allDetailIds = sodRes.ok ? ((await sodRes.json()).data || []).map((d: { detail_id: number }) => Number(d.detail_id)) : [];
+                if (allDetailIds.length > 0) {
+                    const phNow = getPhTimestamp();
+                    const soRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=reservation_id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (soRes.ok) {
+                        const soRows = (await soRes.json()).data || [];
+                        for (const r of soRows) {
+                            const id = Number(r.reservation_id || r.id);
+                            await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${id}`, {
+                                method: "PATCH",
+                                headers: directusHeaders,
+                                body: JSON.stringify({ status: "Consumed", updated_by: userId, updated_at: phNow }),
+                            }).catch(() => null);
+                        }
+                    }
+                }
             }
-            return NextResponse.json({ success: true, message: "Batch is already audited" });
+            return NextResponse.json({ success: true, message: "Batch is already audited and synced" });
         }
         if (consolidator.status !== "Picked") {
             return NextResponse.json({ message: "Batch must be in Picked status before audit" }, { status: 400 });
-        }
-
-        // Verify inventory movements have been posted before allowing audit
-        const hasMovements = await movementsExistForSource(batchId, TXN_TYPE_SALES_ISSUE);
-        if (!hasMovements) {
-            return NextResponse.json({ message: "Cannot audit: no inventory movements posted for this batch. Complete picking first." }, { status: 400 });
-        }
-        const movements = await fetchSourceMovements(batchId, TXN_TYPE_SALES_ISSUE);
-        const movementByProduct = new Map<number, number>();
-        for (const movement of movements) {
-            movementByProduct.set(
-                Number(movement.product_id),
-                (movementByProduct.get(Number(movement.product_id)) || 0) + Number(movement.quantity || 0)
-            );
-        }
-        if (!await productLedgerMatchesQuantities(consolidator.consolidator_no, movementByProduct)) {
-            return NextResponse.json({ message: "Cannot audit: product ledger does not match inventory movements" }, { status: 409 });
         }
 
         const [invRes, detRes] = await Promise.all([
@@ -177,52 +156,71 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ message: `Failed to dispatch invoices (HTTP ${bulkRes.status})` }, { status: bulkRes.status });
             }
 
-            const invoiceDetailsRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
-                { headers: directusHeaders, cache: "no-store" }
-            );
-            if (!invoiceDetailsRes.ok) {
-                return NextResponse.json({ message: "Failed to load invoice reservations for audit" }, { status: 502 });
-            }
-            const invoiceDetailIds: number[] = ((await invoiceDetailsRes.json()).data || [])
-                .map((row: { detail_id: number }) => Number(row.detail_id))
-                .filter(Boolean);
-            if (invoiceDetailIds.length > 0) {
-                const reservationRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_eq]=Reserved&fields=id&limit=-1`,
+            const [sodRes, sidRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
-                );
-                if (!reservationRes.ok) {
-                    return NextResponse.json({ message: "Failed to load unused invoice reservations" }, { status: 502 });
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
+            const allDetailIds: number[] = [
+                ...(sodRes.ok ? ((await sodRes.json()).data || []).map((d: { detail_id: number }) => Number(d.detail_id)) : []),
+                ...(sidRes.ok ? ((await sidRes.json()).data || []).map((d: { detail_id: number }) => Number(d.detail_id)) : []),
+            ];
+
+            if (allDetailIds.length > 0) {
+                const phNow = getPhTimestamp();
+                const [soRes, siRes] = await Promise.all([
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=reservation_id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                    fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    ),
+                ]);
+                if (soRes.ok) {
+                    const soRows: { reservation_id?: number; id?: number }[] = (await soRes.json()).data || [];
+                    for (const r of soRows) {
+                        const id = Number(r.reservation_id || r.id);
+                        await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${id}`, {
+                            method: "PATCH",
+                            headers: directusHeaders,
+                            body: JSON.stringify({ status: "Consumed", updated_by: userId, updated_at: phNow }),
+                        }).catch(() => null);
+                    }
                 }
-                const unusedReservations: { id: number }[] = (await reservationRes.json()).data || [];
-                const now = new Date().toISOString();
-                for (const reservation of unusedReservations) {
-                    const releaseRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${reservation.id}`, {
-                        method: "PATCH",
-                        headers: directusHeaders,
-                        body: JSON.stringify({ status: "Released", updated_by: userId, updated_at: now }),
-                    });
-                    if (!releaseRes.ok) {
-                        return NextResponse.json({ message: `Failed to release reservation ${reservation.id}` }, { status: 502 });
+                if (siRes.ok) {
+                    const siRows: { id: number }[] = (await siRes.json()).data || [];
+                    for (const r of siRows) {
+                        await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${r.id}`, {
+                            method: "PATCH",
+                            headers: directusHeaders,
+                            body: JSON.stringify({ status: "Consumed", updated_by: userId, updated_at: phNow }),
+                        }).catch(() => null);
                     }
                 }
             }
         }
 
+        const phNow = getPhTimestamp();
         const patchRes = await fetch(`${DIRECTUS_URL}/items/consolidator/${batchId}`, {
             method: "PATCH",
             headers: directusHeaders,
-            body: JSON.stringify({ status: "Audited", checked_by: userId }),
+            body: JSON.stringify({ status: "Audited", checked_by: userId, updated_at: phNow }),
         });
         if (!patchRes.ok) {
             return NextResponse.json({ message: `Failed to update batch status (HTTP ${patchRes.status})` }, { status: patchRes.status });
         }
 
-        // Transition linked sales orders from For Picking to For Loading
+        // Transition linked sales orders from Picked to For Invoicing
         let transitionErrors: string[] = [];
         if (junctions.length > 0) {
-            const result = await transitionSalesOrderToForLoading(junctions.map((j: { invoice_id: number }) => j.invoice_id));
+            const result = await transitionSalesOrderToForInvoicing(junctions.map((j: { invoice_id: number }) => j.invoice_id), userId);
             transitionErrors = result.errors;
             if (transitionErrors.length > 0) {
                 console.error("[audit] SO transition errors:", transitionErrors);

@@ -5,12 +5,16 @@ import { BranchGroupedBatches, RawMaterialItem } from "../types/raw-materials.ty
 interface BatchLocationsTreeProps {
     material: RawMaterialItem;
     loadingBatches: boolean;
+    inventoryDetailsError: string | null;
+    onRetry: () => void;
     groupedByBranch: BranchGroupedBatches[];
 }
 
 export function BatchLocationsTree({
     material,
     loadingBatches,
+    inventoryDetailsError,
+    onRetry,
     groupedByBranch
 }: BatchLocationsTreeProps) {
     const getExpirationStatus = (expDate?: string | null) => {
@@ -37,6 +41,20 @@ export function BatchLocationsTree({
 
             {loadingBatches ? (
                 <div className="text-center py-4 text-xs text-muted-foreground">Loading stock logs...</div>
+            ) : inventoryDetailsError ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-4 text-center text-xs text-destructive" role="alert">
+                    <div className="flex items-center gap-1.5 font-semibold">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {inventoryDetailsError}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onRetry}
+                        className="rounded-md border border-destructive/30 px-2.5 py-1 text-[10px] font-bold text-destructive transition-colors hover:bg-destructive/10"
+                    >
+                        Retry
+                    </button>
+                </div>
             ) : groupedByBranch.length === 0 ? (
                 <div className="text-center py-4 text-xs text-muted-foreground italic flex items-center justify-center gap-1.5">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />

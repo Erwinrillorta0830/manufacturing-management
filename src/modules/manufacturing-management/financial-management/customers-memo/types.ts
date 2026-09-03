@@ -119,6 +119,7 @@ export interface MemoApprovalRow {
     chart_of_account: { coa_id: number, gl_code: string, account_title: string };
     encoder_id: { user_fname: string, user_lname: string } | null;
     type: number;
+    collection_references?: string[];
 }
 
 export interface DetailedMemoInvoice {

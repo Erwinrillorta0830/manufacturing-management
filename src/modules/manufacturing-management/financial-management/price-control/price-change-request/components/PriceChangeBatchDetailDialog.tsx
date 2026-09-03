@@ -30,6 +30,7 @@ import type { PriceChangeBatchDetail, PriceChangeBatchLine } from "../types";
 import { DecisionConfirmationDialog } from "./DecisionConfirmationDialog";
 import { BatchDecisionSummaryFields } from "./BatchDecisionSummaryFields";
 import { getPriceChangeBatch } from "../providers/pcrApi";
+import { getProductTypeBadgeProps } from "../utils/productTypeLabels";
 import { decisionUserLabel } from "../utils/labels";
 import { displayPcrStatus, pcrApproveButtonClass, pcrRejectButtonClass, pcrStatusBadgeClass } from "../utils/pcrStatusStyles";
 
@@ -101,6 +102,7 @@ function buildLineSummary(lines: PriceChangeBatchLine[]) {
         priceTypeCount: priceTypeIds.size,
         increaseCount,
         decreaseCount,
+        isFGBatch: false,
     };
 }
 
@@ -169,7 +171,11 @@ export function PriceChangeBatchDetailDialog({
     const canRetryApplication =
         !readOnly && detail?.application_status === "FAILED" && headerId > 0 && onRetryApplication != null;
     const displayStatus = detail ? displayPcrStatus(detail.status, detail.application_status, detail.effective_at) : "";
-    const lineSummary = React.useMemo(() => buildLineSummary(lines), [lines]);
+    const lineSummary = React.useMemo(() => {
+        const summary = buildLineSummary(lines);
+        summary.isFGBatch = detail?.product_types?.every((t) => t.name === "FG") ?? false;
+        return summary;
+    }, [lines, detail]);
 
     const handleOpenChange = React.useCallback(
         (nextOpen: boolean) => {
@@ -241,10 +247,6 @@ export function PriceChangeBatchDetailDialog({
                     <div className="flex flex-col gap-4">
                         <div className="grid gap-3 rounded-md border bg-muted/30 p-3 text-sm sm:grid-cols-4">
                             <div>
-                                <div className="text-xs font-medium uppercase text-muted-foreground">Supplier</div>
-                                <div className="mt-1 break-words font-medium">{detail.supplier_name || "-"}</div>
-                            </div>
-                            <div>
                                 <div className="text-xs font-medium uppercase text-muted-foreground">Status</div>
                                 <div className="mt-1">
                                     <Badge variant="outline" className={pcrStatusBadgeClass(String(displayStatus))}>
@@ -266,6 +268,27 @@ export function PriceChangeBatchDetailDialog({
                                 <div className="text-xs font-medium uppercase text-muted-foreground">Lines</div>
                                 <div className="mt-1 font-medium">{lines.length.toLocaleString()}</div>
                             </div>
+                            <div>
+                                <div className="text-xs font-medium uppercase text-muted-foreground">Product Type</div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                    {detail.product_types && detail.product_types.length > 0 ? (
+                                        detail.product_types.map((type) => {
+                                            const badgeProps = getProductTypeBadgeProps(type.name);
+                                            return (
+                                                <Badge
+                                                    key={type.id}
+                                                    variant="outline"
+                                                    className={badgeProps.className}
+                                                >
+                                                    {badgeProps.label}
+                                                </Badge>
+                                            );
+                                        })
+                                    ) : (
+                                        <span className="font-medium">-</span>
+                                    )}
+                                </div>
+                            </div>
                             <div className="sm:col-span-2">
                                 <div className="text-xs font-medium uppercase text-muted-foreground">Reference No.</div>
                                 <div className="mt-1 font-medium">{detail.reference_no || "-"}</div>
@@ -282,7 +305,7 @@ export function PriceChangeBatchDetailDialog({
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Product</TableHead>
-                                        <TableHead className="w-[130px]">Supplier</TableHead>
+                                        {lineSummary.isFGBatch ? null : <TableHead className="w-[130px]">Supplier</TableHead>}
                                         <TableHead className="w-[72px]">Unit</TableHead>
                                         <TableHead className="w-[110px]">Price Type</TableHead>
                                         <TableHead className="w-[140px] text-right">Current</TableHead>
@@ -300,9 +323,11 @@ export function PriceChangeBatchDetailDialog({
                                                     <div className="whitespace-normal break-words text-xs text-muted-foreground">{line.product_code}</div>
                                                 ) : null}
                                             </TableCell>
-                                            <TableCell className="min-w-[180px] max-w-[280px] whitespace-normal break-words align-top">
-                                                {detail.supplier_name || "-"}
-                                            </TableCell>
+                                            {lineSummary.isFGBatch ? null : (
+                                                <TableCell className="min-w-[180px] max-w-[280px] whitespace-normal break-words align-top">
+                                                    {line.supplier_name || "-"}
+                                                </TableCell>
+                                            )}
                                             <TableCell>
                                                 {line.unit_name ?? "-"}
                                             </TableCell>
@@ -325,7 +350,7 @@ export function PriceChangeBatchDetailDialog({
                                         </TableRow>
                                     ) : (
                                         <TableRow>
-                                            <TableCell colSpan={2} className="font-medium">
+                                            <TableCell colSpan={lineSummary.isFGBatch ? 1 : 2} className="font-medium">
                                                 Summary
                                             </TableCell>
                                             <TableCell colSpan={6} className="text-sm text-muted-foreground">

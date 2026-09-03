@@ -28,13 +28,14 @@ export function PriceTypeTable({ priceTypes, onEdit, onDelete }: PriceTypeTableP
                         <TableHead className="w-[100px]">ID</TableHead>
                         <TableHead>Price Type Name</TableHead>
                         <TableHead>Sort Order</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
                     {priceTypes.length === 0 ? (
                         <TableRow>
-                            <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                            <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                                 No price types found.
                             </TableCell>
                         </TableRow>
@@ -44,6 +45,11 @@ export function PriceTypeTable({ priceTypes, onEdit, onDelete }: PriceTypeTableP
                                 <TableCell className="font-mono text-xs">{pt.price_type_id}</TableCell>
                                 <TableCell className="font-medium text-primary">{pt.price_type_name}</TableCell>
                                 <TableCell>{pt.sort ?? "—"}</TableCell>
+                                <TableCell>
+                                    {pt.is_active === undefined || pt.is_active === null || pt.is_active === true || pt.is_active === 1 || pt.is_active === "1" || pt.is_active === "true"
+                                        ? "Active"
+                                        : "Inactive"}
+                                </TableCell>
                                 <TableCell className="text-right">
                                     <div className="flex justify-end gap-2">
                                         <Button

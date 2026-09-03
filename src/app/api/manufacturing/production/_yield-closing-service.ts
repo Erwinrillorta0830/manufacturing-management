@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import {
     calculateIncrementalMaterialConsumption,
     loadYieldMaterials,
@@ -9,6 +9,10 @@ import {
     verifyZeroComponentBOM
 } from "./_yield-materials";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -114,6 +118,8 @@ function recordId(value: unknown): number {
             ?? record.lot_id
             ?? record.history_id
             ?? record.jo_material_id
+            ?? record.detail_id
+            ?? record.order_id
             ?? record.job_order_id
             ?? 0
         );
@@ -312,16 +318,10 @@ function stockLotKey(lotId: number, lotNumber: string): string {
 }
 
 async function loadStockLots(productId: number, branchId: number): Promise<StockLot[]> {
-    const movementFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _eq: productId } },
-            { branch_id: { _eq: branchId } }
-        ]
-    }));
-    const movements = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${movementFilter}&limit=-1`,
-        `Inventory movement lookup for component ${productId}`
-    );
+    const movements = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId
+    });
     const receipts = await directusRows<any>(
         `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${encodeURIComponent(String(productId))}&filter[branch_id][_eq]=${encodeURIComponent(String(branchId))}&limit=-1`,
         `Receiving lookup for component ${productId}`
@@ -339,7 +339,7 @@ async function loadStockLots(productId: number, branchId: number): Promise<Stock
 
     const stock = new Map<string, StockLot>();
     movements.forEach(movement => {
-        const batchNumber = String(movement.batch_no || movement.lot_number || "LOT-N/A").trim() || "LOT-N/A";
+        const batchNumber = String(movement.batch_no || "LOT-N/A").trim() || "LOT-N/A";
         const lotId = numericRelationId(movement.lot_id);
         const key = stockLotKey(lotId, batchNumber);
         const existing = stock.get(key);
@@ -467,6 +467,10 @@ function isTerminalJobOrderStatus(status: unknown): boolean {
     return ["completed", "finished", "closed"].includes(String(status ?? "").trim().toLowerCase());
 }
 
+function isCancelledStatus(status: unknown): boolean {
+    return String(status ?? "").trim().toLowerCase() === "cancelled";
+}
+
 async function findExistingFinishedMovements(
     productId: number,
     branchId: number,
@@ -474,30 +478,26 @@ async function findExistingFinishedMovements(
     joNo: string,
     lotNumber: string
 ): Promise<any[]> {
-    const baseConditions = [
-        { product_id: { _eq: productId } },
-        { branch_id: { _eq: branchId } },
-        { batch_no: { _eq: lotNumber } },
-        { transaction_type_id: { _eq: 2 } },
-        { quantity: { _gt: 0 } }
-    ];
-
     // New records are linked by the numeric job-order ID. Only fall back to
     // the document number for legacy movements that have no source ID.
-    const bySourceId = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-            _and: [...baseConditions, { source_document_id: { _eq: jobOrderId } }]
-        }))}&limit=-1`,
-        `Existing finished-goods movement lookup for ${joNo}`
-    );
+    const bySourceId = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId,
+        batchNo: lotNumber,
+        transactionTypeId: 2,
+        movementDirection: "IN",
+        referenceId: jobOrderId
+    });
     if (bySourceId.length > 0) return bySourceId;
 
-    const legacyRows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-            _and: [...baseConditions, { source_document_no: { _eq: joNo } }]
-        }))}&limit=-1`,
-        `Legacy finished-goods movement lookup for ${joNo}`
-    );
+    const legacyRows = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId,
+        batchNo: lotNumber,
+        transactionTypeId: 2,
+        movementDirection: "IN",
+        referenceNo: joNo
+    });
     return legacyRows.filter(row => numericRelationId(row.source_document_id) <= 0);
 }
 
@@ -618,28 +618,48 @@ async function processSalesOrderAllocations(
     jobOrder: ResolvedYieldJobOrder,
     quantityProduced: number
 ): Promise<SalesAllocationExpectation[]> {
-    const expectations: SalesAllocationExpectation[] = [];
-    const links = await directusRows<any>(
-        `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrder.jobOrderId))}&limit=-1`,
-        `Job-order allocation lookup for ${jobOrder.jobOrderNo}`
-    );
-
-    for (const link of links) {
+    const allocationLabel = `Job-order allocation lookup for ${jobOrder.jobOrderNo}`;
+    let rawLinks: any[];
+    try {
+        rawLinks = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrder.jobOrderId))}&fields=sales_order_detail_id,allocated_quantity,status&limit=-1`,
+            allocationLabel
+        );
+    } catch (error) {
+        // Older Dummy schemas do not expose allocation status. Preserve the
+        // cancellation-aware path where available and fall back only for a
+        // Directus field/permission response.
+        if (!(error instanceof YieldCompletionError) || !/HTTP (400|403)/.test(error.message)) throw error;
+        rawLinks = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrder.jobOrderId))}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
+            allocationLabel
+        );
+    }
+    const linksByDetail = new Map<number, number>();
+    for (const link of rawLinks) {
+        if (isCancelledStatus(link.status)) continue;
         const detailId = numericRelationId(link.sales_order_detail_id);
         if (!Number.isFinite(detailId) || detailId <= 0) continue;
+        const linkedQuantity = finiteNumber(link.allocated_quantity ?? 0, "Sales-order allocation quantity", { nonNegative: true });
+        linksByDetail.set(detailId, (linksByDetail.get(detailId) || 0) + linkedQuantity);
+    }
 
+    const expectations: SalesAllocationExpectation[] = [];
+    const parentOrderIds = new Set<number>();
+
+    for (const [detailId, linkedQuantity] of linksByDetail) {
         const detail = await directusJson<any>(
             `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(detailId))}`,
             `Sales-order detail lookup for allocation ${detailId}`
         );
-        const linkedQuantity = finiteNumber(link.allocated_quantity ?? 0, "Sales-order allocation quantity", { nonNegative: true });
         const targetQuantity = jobOrder.targetQuantity;
         const proportionalQuantity = quantityProduced < targetQuantity
             ? (linkedQuantity * quantityProduced) / targetQuantity
             : linkedQuantity;
         const currentAllocated = finiteNumber(detail.allocated_quantity ?? 0, "Current sales-order allocated quantity", { nonNegative: true });
+        const orderedQuantity = finiteNumber(detail.ordered_quantity ?? 0, "Sales-order ordered quantity", { positive: true });
         const unitPrice = finiteNumber(detail.unit_price ?? 0, "Sales-order unit price", { nonNegative: true });
-        const allocatedQuantity = currentAllocated + proportionalQuantity;
+        const allocatedQuantity = Math.min(orderedQuantity, currentAllocated + proportionalQuantity);
         const allocatedAmount = allocatedQuantity * unitPrice;
 
         await journal.patch(
@@ -657,31 +677,54 @@ async function processSalesOrderAllocations(
             expectations.push({ detailId, allocatedQuantity, allocatedAmount, parentOrderId: null });
             continue;
         }
+        expectations.push({
+            detailId,
+            allocatedQuantity,
+            allocatedAmount,
+            parentOrderId
+        });
+        parentOrderIds.add(parentOrderId);
+    }
 
+    // Reconcile each parent once, after all of its linked detail lines have
+    // been updated. This prevents a multi-line or multi-JO order from being
+    // promoted based on an incomplete intermediate read.
+    const expectedStatusByParent = new Map<number, string>();
+    for (const parentOrderId of parentOrderIds) {
+        const parentOrder = await directusJson<any>(
+            `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}?fields=order_id,order_status`,
+            `Sales-order status lookup for ${parentOrderId}`
+        );
+        const currentStatus = String(parentOrder.order_status || "").trim();
         const allDetails = await directusRows<any>(
-            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&limit=-1`,
+            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&fields=detail_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
             `Sales-order detail allocation verification for ${parentOrderId}`
         );
-        const allFullyAllocated = allDetails.every(orderDetail =>
-            finiteNumber(orderDetail.allocated_quantity ?? 0, "Sales-order allocated quantity", { nonNegative: true })
-            >= finiteNumber(orderDetail.ordered_quantity ?? 0, "Sales-order ordered quantity", { nonNegative: true })
-        );
-        if (allFullyAllocated) {
+        const allFullyFulfilled = allDetails.length > 0 && allDetails.every(orderDetail => {
+            const ordered = finiteNumber(orderDetail.ordered_quantity ?? 0, "Sales-order ordered quantity", { positive: true });
+            const allocated = finiteNumber(orderDetail.allocated_quantity ?? 0, "Sales-order allocated quantity", { nonNegative: true });
+            const served = finiteNumber(orderDetail.served_quantity ?? 0, "Sales-order served quantity", { nonNegative: true });
+            return Math.max(allocated, served) >= ordered;
+        });
+
+        if (currentStatus === "In Production" && allFullyFulfilled) {
             await journal.patch(
                 "sales_order",
                 parentOrderId,
                 { order_status: "For Invoicing" },
                 `Update sales-order status ${parentOrderId}`
             );
+            expectedStatusByParent.set(parentOrderId, "For Invoicing");
+        } else if (currentStatus === "In Production") {
+            expectedStatusByParent.set(parentOrderId, "In Production");
         }
+    }
 
-        expectations.push({
-            detailId,
-            allocatedQuantity,
-            allocatedAmount,
-            parentOrderId,
-            ...(allFullyAllocated ? { parentStatus: "For Invoicing" } : {})
-        });
+    for (const expectation of expectations) {
+        if (expectation.parentOrderId) {
+            const expectedStatus = expectedStatusByParent.get(expectation.parentOrderId);
+            if (expectedStatus) expectation.parentStatus = expectedStatus;
+        }
     }
 
     return expectations;
@@ -860,19 +903,17 @@ async function verifyPersistedCompletion(options: {
         }
 
         for (const lot of plan.lots) {
-            const componentMovements = await directusRows<any>(
-                `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { source_document_id: { _eq: jobOrder.jobOrderId } },
-                        { transaction_type_id: { _eq: 1 } },
-                        { product_id: { _eq: plan.material.productId } },
-                        { batch_no: { _eq: lot.lotNumber } },
-                        { quantity: { _eq: -lot.quantity } }
-                    ]
-                }))}&limit=-1`,
-                `Component movement verification for ${lot.lotNumber}`
-            );
-            if (componentMovements.length === 0) {
+            const componentMovements = await fetchMmInventoryMovements({
+                referenceId: jobOrder.jobOrderId,
+                branch: branchId,
+                product: plan.material.productId,
+                batchNo: lot.lotNumber,
+                transactionTypeId: 1,
+                movementDirection: "OUT"
+            });
+            if (!componentMovements.some(movement =>
+                Math.abs(Number(movement.quantity) + lot.quantity) <= EPSILON
+            )) {
                 throw new YieldCompletionError(
                     502,
                     "PERSISTENCE_VERIFICATION_FAILED",
@@ -1089,6 +1130,7 @@ async function completeYieldClosingInternal(
         }
 
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
+        const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
         const finishedLotId = await resolveMasterLotId(lotNumber, 2, journal);
         const finishedMovement = await journal.create<any>(
@@ -1180,7 +1222,7 @@ async function completeYieldClosingInternal(
                         component_lot_id: consumedLotId,
                         component_batch_no: lot.lotNumber,
                         consumed_quantity: lot.quantity,
-                        created_at: new Date().toISOString()
+                        created_at: phtMovementTimestamp
                     },
                     `Create material genealogy for ${plan.material.productName}`
                 );
@@ -1315,6 +1357,15 @@ async function completeYieldClosingInternal(
             const materialsError = new YieldCompletionError(error.status, error.code, error.message);
             materialsError.operationKey = operationKey;
             throw materialsError;
+        }
+        if (error instanceof MmInventoryMovementError) {
+            const movementError = new YieldCompletionError(
+                error.status,
+                "INVENTORY_MOVEMENT_LOOKUP_FAILED",
+                error.message
+            );
+            movementError.operationKey = operationKey;
+            throw movementError;
         }
         const closingError = new YieldCompletionError(502, "YIELD_CLOSING_FAILED", "Yield closing could not be completed.");
         closingError.operationKey = operationKey;

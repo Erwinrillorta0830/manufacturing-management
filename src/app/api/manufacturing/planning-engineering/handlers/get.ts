@@ -12,6 +12,7 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredAct
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
+import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -60,14 +61,10 @@ export async function handleGET(request: Request) {
             }
 
             // Fetch inventory movements to calculate the true ledger stock
-            const movFilter = encodeURIComponent(JSON.stringify({
-                _and: [
-                    { product_id: { _eq: prodId } },
-                    { branch_id: { _eq: branchId } }
-                ]
-            }));
-            const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-            const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+            const movements = await fetchMmInventoryMovements({
+                branch: branchId,
+                product: prodId
+            });
             const movementStockMap = new Map<string, number>();
             movements.forEach((mov: any) => {
                 const batchNo = mov.batch_no || "LOT-N/A";
@@ -389,25 +386,20 @@ export async function handleGET(request: Request) {
             let movements: any[] = [];
 
             if (pIds.length > 0) {
-                const movFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { product_id: { _in: pIds } },
-                        { branch_id: { _eq: branchId } }
-                    ]
-                }));
-                const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                if (movRes.ok) {
-                    movements = (await movRes.json()).data || [];
-                    movementStockMap = sumMovementQuantitiesByStock(movements);
-                    movements.forEach((movement: any) => {
-                        const productId = Number(movement.product_id?.product_id || movement.product_id);
-                        const batchNumber = movement.batch_no || "LOT-N/A";
-                        const key = `${productId}:${batchNumber}`;
-                        movementBatchStockMap.set(key, (movementBatchStockMap.get(key) || 0) + Number(movement.quantity || 0));
-                    });
+                movements = (await fetchMmInventoryMovements({
+                    branch: branchId,
+                    product: pIds.length === 1 ? pIds[0] : null
+                })).filter((movement) => pIds.includes(Number(movement.product_id || movement.productId || 0)));
+                movementStockMap = sumMovementQuantitiesByStock(movements);
+                movements.forEach((movement: any) => {
+                    const productId = Number(movement.product_id?.product_id || movement.product_id);
+                    const batchNumber = movement.batch_no || "LOT-N/A";
+                    const key = `${productId}:${batchNumber}`;
+                    movementBatchStockMap.set(key, (movementBatchStockMap.get(key) || 0) + Number(movement.quantity || 0));
+                });
 
-                    // Aggregate stock maps based on QA Status from batchStatusMap (bypassing inventory_lots)
-                    movementStockMap.forEach((qty, key) => {
+                // Aggregate stock maps based on QA Status from batchStatusMap (bypassing inventory_lots)
+                movementStockMap.forEach((qty, key) => {
                         if (qty > 0) {
                             const parts = key.split(":");
                             const prodId = Number(parts[0]);
@@ -425,8 +417,7 @@ export async function handleGET(request: Request) {
                                 unclassifiedMap.set(prodId, (unclassifiedMap.get(prodId) || 0) + qty);
                             }
                         }
-                    });
-                }
+                });
             }
 
             // Fetch reservations linked to these Job Order materials
@@ -1351,6 +1342,9 @@ export async function handleGET(request: Request) {
         }
     } catch (e) {
         console.error("API Error in planning-engineering GET:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to process planning request" }, { status: 500 });
+        return NextResponse.json(
+            { error: (e as { message?: string }).message || "Failed to process planning request" },
+            { status: movementErrorStatus(e) }
+        );
     }
 }

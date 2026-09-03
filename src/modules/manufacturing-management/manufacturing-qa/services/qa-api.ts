@@ -31,10 +31,38 @@ export async function fetchJobOrders(): Promise<JobOrder[]> {
 }
 
 export async function fetchBranchesList(): Promise<Branch[]> {
-    const res = await fetch("/api/manufacturing/inventory");
-    if (!res.ok) throw new Error("Failed to load branches");
-    const data = await res.json();
-    return data.branches || [];
+    const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
+    const payload: unknown = await res.json().catch(() => null);
+
+    if (!res.ok) {
+        const message = typeof payload === "object" && payload !== null && "message" in payload
+            ? String(payload.message)
+            : "Failed to load branches";
+        throw new Error(message);
+    }
+
+    if (!Array.isArray(payload)) {
+        throw new Error("Branches endpoint returned an invalid response");
+    }
+
+    return payload
+        .map((row: {
+            id?: number | string;
+            branch_id?: number | string;
+            branchName?: string | null;
+            branch_name?: string | null;
+            name?: string | null;
+        }): Branch => {
+            const id = Number(row.id ?? row.branch_id);
+            const name = String(row.branchName ?? row.branch_name ?? row.name ?? "").trim();
+            return {
+                id,
+                branch_id: id,
+                name,
+                branch_name: name,
+            };
+        })
+        .filter((branch) => Number.isFinite(branch.id) && Number(branch.id) > 0 && Boolean(branch.branch_name));
 }
 
 export async function fetchJobOrderMaterials(joId: string): Promise<YieldJobOrderMaterial[]> {

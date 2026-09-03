@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { Check, ChevronsUpDown, Search, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,28 +12,34 @@ import {
 import { UnitOfMeasure } from "../types";
 
 interface SearchableUomSelectProps {
-    uoms: UnitOfMeasure[];
-    value: number | "";
-    onValueChange: (val: number) => void;
+    uoms?: UnitOfMeasure[];
+    value: number | "ALL" | "";
+    onValueChange: (val: number | "ALL") => void;
     disabled?: boolean;
     hasError?: boolean;
     placeholder?: string;
+    allowAll?: boolean;
+    allLabel?: string;
+    className?: string;
 }
 
 export function SearchableUomSelect({
-    uoms,
+    uoms = [],
     value,
     onValueChange,
     disabled = false,
     hasError = false,
-    placeholder = "Select unit of measure..."
+    placeholder = "All Units (UOM)",
+    allowAll = true,
+    allLabel = "All Units (UOM)",
+    className
 }: SearchableUomSelectProps) {
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
 
     const selectedUom = React.useMemo(() => {
-        if (value === "") return null;
-        return uoms.find((u) => u.unitId === Number(value));
+        if (value === "" || value === "ALL") return null;
+        return uoms.find((u) => Number(u.unitId) === Number(value));
     }, [uoms, value]);
 
     const filteredUoms = React.useMemo(() => {
@@ -42,8 +48,8 @@ export function SearchableUomSelect({
         return uoms.filter((u) => {
             const nameMatch = u.unitName?.toLowerCase().includes(query);
             const shortcutMatch = u.unitShortcut?.toLowerCase().includes(query);
-            const skuMatch = u.skuCode?.toLowerCase().includes(query);
-            return nameMatch || shortcutMatch || skuMatch;
+            const idMatch = String(u.unitId).includes(query);
+            return nameMatch || shortcutMatch || idMatch;
         });
     }, [uoms, searchQuery]);
 
@@ -63,69 +69,80 @@ export function SearchableUomSelect({
                     aria-expanded={open}
                     disabled={disabled}
                     className={cn(
-                        "w-full justify-between font-normal text-left h-9 px-3",
-                        !selectedUom && "text-muted-foreground",
-                        hasError && "border-destructive focus-visible:ring-destructive text-destructive"
+                        "w-full justify-between font-normal text-left h-8.5 px-3 bg-background border-border shadow-2xs hover:bg-accent/40",
+                        !selectedUom && value !== "ALL" && "text-muted-foreground",
+                        hasError && "border-destructive focus-visible:ring-destructive text-destructive",
+                        className
                     )}
                 >
-                    <span className="truncate">
-                        {selectedUom ? (
-                            <span className="flex items-center gap-2">
-                                <span className="font-medium text-foreground">{selectedUom.unitName}</span>
+                    <span className="truncate flex items-center gap-2 min-w-0">
+                        <Scale className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        {value === "ALL" ? (
+                            <span className="font-bold text-foreground text-xs truncate">{allLabel}</span>
+                        ) : selectedUom ? (
+                            <span className="flex items-center gap-1.5 truncate">
+                                <span className="font-medium text-foreground text-xs truncate">
+                                    {selectedUom.unitName}
+                                </span>
                                 {selectedUom.unitShortcut && (
-                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-muted text-muted-foreground uppercase border border-border/60">
+                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold uppercase bg-muted text-muted-foreground border border-border/60 shrink-0">
                                         {selectedUom.unitShortcut}
                                     </span>
                                 )}
                             </span>
                         ) : (
-                            placeholder
+                            <span className="text-xs">{placeholder}</span>
                         )}
                     </span>
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent
-                className="w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-trigger-width)] p-0 shadow-lg border border-border bg-popover z-[9999]"
-                style={{ width: "var(--radix-popover-trigger-width)" }}
+                className="w-[240px] p-0 shadow-xl border border-border bg-popover z-[9999] rounded-xl overflow-hidden"
                 align="start"
-                sideOffset={4}
-                onWheel={(e) => e.stopPropagation()}
+                sideOffset={6}
             >
-                {/* Search Input Bar */}
-                <div className="flex items-center gap-2 px-2.5 py-2 border-b border-border bg-muted/30">
-                    <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search unit name or shortcut..."
-                        className="w-full bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
-                        autoFocus
-                    />
-                    {searchQuery && (
-                        <button
-                            type="button"
-                            onClick={() => setSearchQuery("")}
-                            className="text-[10px] text-muted-foreground hover:text-foreground px-1"
-                        >
-                            Clear
-                        </button>
-                    )}
+                <div className="p-2 border-b border-border/60 bg-muted/20">
+                    <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                        <input
+                            type="text"
+                            placeholder="Search UOM..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-8 pr-3 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-hidden focus:ring-1 focus:ring-primary text-foreground"
+                            autoFocus
+                        />
+                    </div>
                 </div>
 
-                {/* Scrollable List */}
-                <div
-                    className="max-h-56 overflow-y-auto overscroll-contain p-1 space-y-0.5 text-xs"
-                    onWheel={(e) => e.stopPropagation()}
-                >
+                <div className="max-h-[220px] overflow-y-auto p-1 space-y-0.5">
+                    {allowAll && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onValueChange("ALL");
+                                setOpen(false);
+                            }}
+                            className={cn(
+                                "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors text-left",
+                                value === "ALL"
+                                    ? "bg-primary/10 text-primary font-bold"
+                                    : "hover:bg-muted text-foreground"
+                            )}
+                        >
+                            <span>{allLabel}</span>
+                            {value === "ALL" && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                        </button>
+                    )}
+
                     {filteredUoms.length === 0 ? (
-                        <div className="py-6 text-center text-xs text-muted-foreground">
-                            No unit of measure found.
+                        <div className="p-3 text-center text-xs text-muted-foreground">
+                            No units found matching &quot;{searchQuery}&quot;
                         </div>
                     ) : (
                         filteredUoms.map((u) => {
-                            const isSelected = selectedUom?.unitId === u.unitId;
+                            const isSelected = Number(value) === Number(u.unitId);
                             return (
                                 <button
                                     key={u.unitId}
@@ -133,29 +150,23 @@ export function SearchableUomSelect({
                                     onClick={() => {
                                         onValueChange(u.unitId);
                                         setOpen(false);
-                                        setSearchQuery("");
                                     }}
                                     className={cn(
-                                        "w-full flex items-center justify-between px-2.5 py-2 rounded-sm text-left transition-colors cursor-pointer",
+                                        "w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors text-left",
                                         isSelected
-                                            ? "bg-primary/10 text-primary font-medium"
-                                            : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                                            ? "bg-primary/10 text-primary font-bold"
+                                            : "hover:bg-muted text-foreground"
                                     )}
                                 >
-                                    <div className="flex items-center gap-2 truncate">
-                                        <Check
-                                            className={cn(
-                                                "h-3.5 w-3.5 shrink-0",
-                                                isSelected ? "opacity-100 text-primary" : "opacity-0"
-                                            )}
-                                        />
+                                    <div className="flex items-center gap-2 truncate min-w-0">
                                         <span className="truncate">{u.unitName}</span>
+                                        {u.unitShortcut && (
+                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold uppercase bg-muted text-muted-foreground border border-border/60 shrink-0">
+                                                {u.unitShortcut}
+                                            </span>
+                                        )}
                                     </div>
-                                    {u.unitShortcut && (
-                                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground uppercase border border-border/50 ml-2">
-                                            {u.unitShortcut}
-                                        </span>
-                                    )}
+                                    {isSelected && <Check className="h-3.5 w-3.5 text-primary shrink-0 ml-1.5" />}
                                 </button>
                             );
                         })

@@ -149,7 +149,7 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                         <TableRow className="border-b border-border hover:bg-transparent">
                             <TableHead className="text-muted-foreground uppercase text-xs">Product</TableHead>
                             <TableHead className="text-muted-foreground uppercase text-xs">Version Name</TableHead>
-                            <TableHead className="text-muted-foreground uppercase text-xs">Base Qty</TableHead>
+                            <TableHead className="text-muted-foreground uppercase text-xs">Base Qty / UOM</TableHead>
                             <TableHead className="text-muted-foreground uppercase text-xs">Yield %</TableHead>
                             <TableHead className="text-muted-foreground uppercase text-xs">Created By & Date</TableHead>
                             <TableHead className="text-muted-foreground uppercase text-xs">Status</TableHead>
@@ -175,7 +175,7 @@ export const VersionApprovalTable: React.FC<VersionApprovalTableProps> = ({
                                 </TableCell>
                                 <TableCell>
                                     <span className="font-mono text-foreground">
-                                        {item.base_quantity.toLocaleString()}
+                                        {item.base_quantity.toLocaleString()} {item.uom || 'pcs'}
                                     </span>
                                 </TableCell>
                                 <TableCell>

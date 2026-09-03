@@ -80,6 +80,15 @@ export async function approveMemo(id: number) {
     return res.json();
 }
 
+export async function rejectMemo(id: number) {
+    const res = await fetch(API_BASE, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "REJECTED" })
+    });
+    return res.json();
+}
+
 export async function bulkApproveMemos(ids: number[]) {
     const res = await fetch(API_BASE, {
         method: "PATCH",

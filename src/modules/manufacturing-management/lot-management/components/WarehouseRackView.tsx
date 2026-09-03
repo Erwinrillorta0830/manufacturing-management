@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp } from "lucide-react";
+import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp, Building2 } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -9,8 +10,14 @@ interface WarehouseRackViewProps {
     lots: Lot[];
     batches: Batch[];
     loading: boolean;
+    selectedBranchId?: number | "ALL";
+    selectedProductType?: string | "ALL";
+    selectedUomId?: number | "ALL";
     selectedProductId?: number | "ALL";
-    onEditLot: (lot: Lot) => void;
+    selectedLotId?: number | "ALL";
+    selectedBatchId?: number | "ALL";
+    searchQuery?: string;
+    onEditLot?: (lot: Lot) => void;
     onAddBatchToLot?: (lotId: number) => void;
     onEditBatch?: (batch: Batch) => void;
     onViewBatchMovements?: (batch: Batch) => void;
@@ -21,7 +28,13 @@ export default function WarehouseRackView({
     lots,
     batches,
     loading,
+    selectedBranchId = "ALL",
+    selectedProductType = "ALL",
+    selectedUomId = "ALL",
     selectedProductId = "ALL",
+    selectedLotId = "ALL",
+    selectedBatchId = "ALL",
+    searchQuery = "",
     onEditLot,
     onViewBatchMovements,
     onViewLotMovements
@@ -40,8 +53,56 @@ export default function WarehouseRackView({
     }, [batches, selectedProductId]);
 
     const sortedLots = React.useMemo(() => {
-        return sortLotsByFefoExpiry(lots, batches, selectedProductId);
-    }, [lots, batches, selectedProductId]);
+        let baseLots = lots;
+        if (selectedBranchId !== "ALL") {
+            baseLots = baseLots.filter((lot) => Number(lot.branchId) === Number(selectedBranchId));
+        }
+        if (selectedUomId !== "ALL") {
+            baseLots = baseLots.filter((lot) => Number(lot.uomId) === Number(selectedUomId));
+        }
+        if (selectedLotId !== "ALL") {
+            baseLots = baseLots.filter((lot) => Number(lot.lotId) === Number(selectedLotId));
+        }
+
+        const query = (searchQuery || "").toLowerCase().trim();
+
+        const matchingLots = baseLots.filter((lot) => {
+            const lotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+
+            if (selectedProductType !== "ALL") {
+                const hasMatchingType = lotBatches.some(
+                    (b) => resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName).code === selectedProductType
+                );
+                if (!hasMatchingType) return false;
+            }
+
+            if (selectedProductId !== "ALL") {
+                const hasProduct = lotBatches.some((b) => Number(b.productId) === Number(selectedProductId));
+                if (!hasProduct) return false;
+            }
+
+            if (selectedBatchId !== "ALL") {
+                const hasBatch = lotBatches.some((b) => Number(b.batchId) === Number(selectedBatchId));
+                if (!hasBatch) return false;
+            }
+
+            if (query) {
+                const lotNameMatches = lot.lotName?.toLowerCase().includes(query);
+                const hasMatchingBatch = lotBatches.some(
+                    (b) =>
+                        b.batchNumber?.toLowerCase().includes(query) ||
+                        b.productName?.toLowerCase().includes(query) ||
+                        b.itemCode?.toLowerCase().includes(query) ||
+                        b.remarks?.toLowerCase().includes(query)
+                );
+                if (!lotNameMatches && !hasMatchingBatch) return false;
+            }
+
+            return true;
+        });
+
+        return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
+    }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, searchQuery, selectedProductId]);
 
     if (loading) {
         return (
@@ -58,7 +119,28 @@ export default function WarehouseRackView({
                 <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
                 <span className="text-base font-bold text-foreground">No Warehouse Storage Racks Configured</span>
                 <p className="text-xs max-w-sm mt-1">
-                    Click &quot;Add Rack / Lot&quot; above to create your first warehouse rack bay.
+                    Configure warehouse storage locations and racks in the Lot Registry module.
+                </p>
+            </div>
+        );
+    }
+
+    const hasActiveFilter =
+        selectedBranchId !== "ALL" ||
+        selectedProductType !== "ALL" ||
+        selectedUomId !== "ALL" ||
+        selectedProductId !== "ALL" ||
+        selectedLotId !== "ALL" ||
+        selectedBatchId !== "ALL" ||
+        !!searchQuery.trim();
+
+    if (sortedLots.length === 0 && hasActiveFilter) {
+        return (
+            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card rounded-xl border border-border">
+                <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
+                <span className="text-base font-bold text-foreground">No Storage Racks Matching Selected Filters</span>
+                <p className="text-xs max-w-sm mt-1">
+                    There are currently no registered batches or storage racks matching your filter criteria.
                 </p>
             </div>
         );
@@ -68,15 +150,44 @@ export default function WarehouseRackView({
         <TooltipProvider>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {sortedLots.map((lot) => {
-                    const rawLotBatches = batches.filter((b) => b.lotId === lot.lotId);
+                    const rawLotBatches = batches.filter((b) => {
+                        if (Number(b.lotId) !== Number(lot.lotId)) return false;
+                        if (selectedProductType !== "ALL") {
+                            const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
+                            if (cls.code !== selectedProductType) return false;
+                        }
+                        if (selectedUomId !== "ALL" && Number(b.uomId) !== Number(selectedUomId) && Number(lot.uomId) !== Number(selectedUomId)) {
+                            return false;
+                        }
+                        if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
+                            return false;
+                        }
+                        if (selectedBatchId !== "ALL" && Number(b.batchId) !== Number(selectedBatchId)) {
+                            return false;
+                        }
+                        if (searchQuery.trim()) {
+                            const q = searchQuery.toLowerCase().trim();
+                            const matches =
+                                lot.lotName?.toLowerCase().includes(q) ||
+                                b.batchNumber?.toLowerCase().includes(q) ||
+                                b.productName?.toLowerCase().includes(q) ||
+                                b.itemCode?.toLowerCase().includes(q) ||
+                                b.remarks?.toLowerCase().includes(q);
+                            if (!matches) return false;
+                        }
+                        return true;
+                    });
                     const fefoSortedBatches = sortBatchesByFefo(rawLotBatches);
                     const isExpanded = !!expandedLots[lot.lotId];
                     const visibleBatches = isExpanded ? fefoSortedBatches : fefoSortedBatches.slice(0, 5);
                     const hasMoreThan5 = fefoSortedBatches.length > 5;
-                    const totalQty = rawLotBatches.reduce((sum, b) => sum + (b.quantity || 0), 0);
+
+                    // Physical rack occupancy and capacity reflect all inventory stored in this rack (unaffected by active product/batch filters)
+                    const allLotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+                    const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
                     const capacityPercent = Math.min(
                         100,
-                        lot.maxBatchCapacity > 0 ? Math.round((totalQty / lot.maxBatchCapacity) * 100) : 0
+                        lot.maxBatchCapacity > 0 ? Math.round((totalRackOccupancy / lot.maxBatchCapacity) * 100) : 0
                     );
 
                     // Capacity status color
@@ -92,6 +203,30 @@ export default function WarehouseRackView({
 
                     const uomLabel = lot.uomShortcut || lot.uomName || "";
 
+                    // Calculate stored inventory types in this lot
+                    const storedClassifications = (() => {
+                        if (allLotBatches.length === 0) {
+                            return [{ code: "EMPTY", label: "Empty / Vacant", className: "bg-muted text-muted-foreground border-border/80" }];
+                        }
+                        const map = new Map<string, { code: string; label: string; className: string }>();
+                        allLotBatches.forEach((b) => {
+                            const cls = resolveProductClassification(
+                                b.productType,
+                                b.productCategory,
+                                b.itemCode,
+                                b.productName
+                            );
+                            if (!map.has(cls.code)) {
+                                let className = "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
+                                if (cls.code === "RM") className = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+                                if (cls.code === "PKG") className = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+                                if (cls.code === "FG") className = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+                                map.set(cls.code, { code: cls.code, label: cls.label, className });
+                            }
+                        });
+                        return Array.from(map.values());
+                    })();
+
                     return (
                         <div
                             key={lot.lotId}
@@ -100,22 +235,55 @@ export default function WarehouseRackView({
                             {/* Metallic Industrial Rack Header */}
                             <div className="p-4 border-b border-border/60 bg-gradient-to-r from-muted/40 via-card to-muted/20">
                                 <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
+                                    <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
                                             <span className="h-2.5 w-2.5 rounded-full bg-primary shrink-0 animate-pulse" />
                                             <h4 className="font-extrabold text-foreground text-base truncate">
                                                 {lot.lotName}
                                             </h4>
                                         </div>
-                                        <div className="flex items-center gap-2 mt-1">
+                                        
+                                        {/* Same Row: UOM, Max Capacity, Branch badge, Stored Type badges */}
+                                        <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
                                             {uomLabel && (
-                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase border border-border">
+                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase border border-border shrink-0">
                                                     {uomLabel}
                                                 </span>
                                             )}
-                                            <span className="text-xs text-muted-foreground">
+                                            {/* <span className="text-xs text-muted-foreground shrink-0 mr-0.5">
                                                 Max Cap: <strong className="text-foreground">{lot.maxBatchCapacity.toLocaleString()}</strong>
+                                            </span> */}
+
+                                            {/* Branch Location Badge */}
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-muted/80 text-foreground border border-border/80 shadow-2xs shrink-0">
+                                                <Building2 className="h-3 w-3 text-primary shrink-0" />
+                                                <span className="truncate max-w-[120px]" title={lot.branchName || `Branch #${lot.branchId}`}>
+                                                    {lot.branchName || `Branch #${lot.branchId}`}
+                                                </span>
+                                                {lot.branchCode && (
+                                                    <span className="text-[9px] font-mono font-bold text-muted-foreground ml-0.5">
+                                                        ({lot.branchCode})
+                                                    </span>
+                                                )}
                                             </span>
+
+                                            {/* Bad Stock Indicator if applicable */}
+                                            {(lot.isBadStock || lot.branchIsBadStock) && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shadow-2xs shrink-0">
+                                                    <ShieldAlert className="h-3 w-3 shrink-0" /> Bad Stock
+                                                </span>
+                                            )}
+
+                                            {/* Stored Type Badges */}
+                                            {storedClassifications.map((sc) => (
+                                                <span
+                                                    key={sc.code}
+                                                    className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border shadow-2xs shrink-0 ${sc.className}`}
+                                                >
+                                                    <Boxes className="h-3 w-3 shrink-0 opacity-80" />
+                                                    <span>{sc.label}</span>
+                                                </span>
+                                            ))}
                                         </div>
                                     </div>
                                     
@@ -131,23 +299,25 @@ export default function WarehouseRackView({
                                                 <History className="h-3.5 w-3.5" />
                                             </Button>
                                         )}
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => onEditLot(lot)}
-                                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                            title="Edit Rack Settings"
-                                        >
-                                            <Pencil className="h-3.5 w-3.5" />
-                                        </Button>
+                                        {onEditLot && (
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => onEditLot(lot)}
+                                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                                title="Edit Rack Settings"
+                                            >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
 
                                 {/* Capacity Fill Indicator */}
-                                <div className="mt-3.5 space-y-1.5">
+                                <div className="mt-3 space-y-1.5">
                                     <div className="flex items-center justify-between text-[11px]">
                                         <span className="font-semibold text-muted-foreground">
-                                            Occupancy: {totalQty.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
+                                            Occupancy: {totalRackOccupancy.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
                                         </span>
                                         <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] border ${progressBadgeClass}`}>
                                             {capacityPercent}%

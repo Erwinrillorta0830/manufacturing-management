@@ -106,16 +106,16 @@ export function SalesmanTable({
                                         <TableCell className="py-4 px-6 align-top">
                                             <div className="flex flex-col">
                                                 <span
-                                                    className="text-sm font-black text-slate-800 uppercase leading-none">
+                                                    className="text-sm font-black text-foreground uppercase leading-none">
                                                     {s.salesman_name}
                                                 </span>
                                                 <div className="flex items-center gap-2 mt-2">
                                                     <Badge variant="outline"
-                                                           className="text-[9px] font-bold px-1.5 h-4 border-slate-200 text-slate-500 bg-white">
+                                                           className="text-[9px] font-bold px-1.5 h-4 border-border text-muted-foreground bg-background">
                                                         {s.salesman_code}
                                                     </Badge>
                                                     <span
-                                                        className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                                                        className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">
                                                         EMP ID: {s.employee_id}
                                                     </span>
                                                 </div>
@@ -124,14 +124,14 @@ export function SalesmanTable({
 
                                         <TableCell className="py-4 align-top">
                                             <div className="flex flex-col gap-1.5">
-                                                <div className="flex items-center gap-1.5 text-slate-600">
+                                                <div className="flex items-center gap-1.5 text-muted-foreground">
                                                     <Building2 className="w-3 h-3 opacity-60"/>
                                                     <span
                                                         className="text-[10px] font-bold uppercase tracking-wider truncate max-w-[150px]">
                                                         {s.branch_code && typeof s.branch_code === "object" ? (s.branch_code as Branch).branch_name : "Central Office"}
                                                     </span>
                                                 </div>
-                                                <div className="flex items-center gap-1.5 text-slate-500">
+                                                <div className="flex items-center gap-1.5 text-muted-foreground">
                                                     <Briefcase className="w-3 h-3 opacity-50"/>
                                                     <span
                                                         className="text-[10px] font-bold uppercase tracking-tighter truncate max-w-[150px]">
@@ -139,7 +139,7 @@ export function SalesmanTable({
                                                     </span>
                                                 </div>
                                                 {s.operation && (
-                                                    <div className="flex items-center gap-1.5 text-slate-400">
+                                                    <div className="flex items-center gap-1.5 text-muted-foreground">
                                                         <ShieldCheck className="w-3 h-3 opacity-40"/>
                                                         <span
                                                             className="text-[9px] font-bold uppercase tracking-tighter truncate max-w-[150px]">
@@ -154,24 +154,24 @@ export function SalesmanTable({
                                             <div className="flex flex-col gap-2">
                                                 {s.isInventory ? (
                                                     <Badge
-                                                        className="bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 text-[9px] font-black w-fit px-1.5 py-0">
+                                                        className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20 text-[9px] font-black w-fit px-1.5 py-0">
                                                         <Package className="w-3 h-3 mr-1"/> Inventory Access
                                                     </Badge>
                                                 ) : (
                                                     <div
-                                                        className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                        className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">
                                                         <XCircle className="w-3 h-3"/> No Inventory
                                                     </div>
                                                 )}
 
                                                 {s.canCollect ? (
                                                     <Badge
-                                                        className="bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 text-[9px] font-black w-fit px-1.5 py-0">
+                                                        className="bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20 text-[9px] font-black w-fit px-1.5 py-0">
                                                         <Banknote className="w-3 h-3 mr-1"/> Collection Rights
                                                     </Badge>
                                                 ) : (
                                                     <div
-                                                        className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                        className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">
                                                         <XCircle className="w-3 h-3"/> No Collection
                                                     </div>
                                                 )}
@@ -183,16 +183,16 @@ export function SalesmanTable({
                                                 <div className="flex items-center gap-2">
                                                     <Truck className="w-3.5 h-3.5 text-primary opacity-60"/>
                                                     <span
-                                                        className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                                                        className="text-[11px] font-bold text-foreground uppercase tracking-wider">
                                                         {s.truck_plate || "No Truck Assigned"}
                                                     </span>
                                                     <Badge
-                                                        className="bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 text-[9px] font-black px-1.5 py-0 h-4 ml-1">
+                                                        className="bg-muted text-muted-foreground border-border hover:bg-muted/80 text-[9px] font-black px-1.5 py-0 h-4 ml-1">
                                                         P{s.price_type || "A"}
                                                     </Badge>
                                                 </div>
                                                 <div className="flex items-center gap-4 mt-1">
-                                                    <div className="flex items-center gap-1.5 text-slate-500">
+                                                    <div className="flex items-center gap-1.5 text-muted-foreground">
                                                         <Calendar className="w-3 h-3 opacity-50"/>
                                                         <span
                                                             className="text-[10px] font-bold uppercase tracking-tighter">
@@ -201,7 +201,7 @@ export function SalesmanTable({
                                                     </div>
                                                     {(s.company_code || s.supplier_code) && (
                                                         <div
-                                                            className="flex items-center gap-2 text-[9px] font-bold text-slate-400 tracking-tighter uppercase">
+                                                            className="flex items-center gap-2 text-[9px] font-bold text-muted-foreground tracking-tighter uppercase">
                                                             {s.company_code && <span>Co: {s.company_code}</span>}
                                                             {s.company_code && s.supplier_code && <span>|</span>}
                                                             {s.supplier_code && <span>Sup: {s.supplier_code}</span>}
@@ -219,7 +219,7 @@ export function SalesmanTable({
                                                     className="w-5 h-5"
                                                 />
                                                 <span
-                                                    className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-1">
+                                                    className="text-[8px] font-black uppercase text-muted-foreground tracking-widest mt-1">
                                                     {s.isActive ? "Active" : "Inactive"}
                                                 </span>
                                             </div>

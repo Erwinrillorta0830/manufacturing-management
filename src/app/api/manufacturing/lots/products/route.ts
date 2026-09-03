@@ -7,13 +7,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
     try {
         let res = await fetch(
-            `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost&_t=${Date.now()}`,
+            `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost,product_type,product_type.*,product_category.category_name&_t=${Date.now()}`,
             { headers, cache: "no-store" }
         ).catch(() => null);
 
         if (!res || !res.ok) {
             res = await fetch(
-                `${DIRECTUS_URL}/items/products?limit=-1`,
+                `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,description,product_name,product_code,barcode,cost_per_unit,price_per_unit,estimated_unit_cost,product_type,product_type.*,product_category.category_name`,
                 { headers, cache: "no-store" }
             );
         }
@@ -37,14 +37,23 @@ export async function GET() {
                 ? Number(rawCost)
                 : 0;
 
+            const categoryName = typeof p.product_category === "object" && p.product_category !== null
+                ? (p.product_category as { category_name?: string }).category_name
+                : undefined;
+
             return {
                 productId,
                 productName,
+                description: desc || pName || productName,
                 skuCode,
                 unitCost,
                 cost_per_unit: unitCost,
                 price_per_unit: p.price_per_unit != null ? Number(p.price_per_unit) : unitCost,
-                estimated_unit_cost: p.estimated_unit_cost != null ? Number(p.estimated_unit_cost) : undefined
+                estimated_unit_cost: p.estimated_unit_cost != null ? Number(p.estimated_unit_cost) : undefined,
+                product_type: p.product_type,
+                productType: p.product_type,
+                category_name: categoryName,
+                productCategory: categoryName
             };
         }).filter((p: { productId: number }) => p.productId > 0);
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromToken } from "../invoice-consolidation/_auth";
 import { allocateInvoicesForConsolidation, releaseReservationIds } from "../invoice-consolidation/_reservation-service";
-import { DIRECTUS_URL, headers } from "../directus-api";
+import { DIRECTUS_URL, getISOStringInConfiguredTimezone, headers } from "@/app/api/manufacturing/directus-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,11 +70,14 @@ export async function POST(request: Request) {
             const maxLength = Number(invoiceType.max_length || 0);
             if (maxLength > 0 && invoiceNo.length > maxLength) throw new ApiError(400, `Receipt number cannot exceed ${maxLength} characters.`);
             const orderResponse = await fetch(
-                `${DIRECTUS_URL}/items/sales_order/${salesOrderId}?fields=order_id,order_no,order_status,customer_code,branch_id,salesman_id,payment_terms,discount_amount`,
+                `${DIRECTUS_URL}/items/sales_order/${salesOrderId}?fields=order_id,order_no,order_status,customer_code,branch_id,salesman_id,payment_terms,discount_amount,sales_type,receipt_type,delivery_date`,
                 { headers, cache: "no-store" },
             );
             if (orderResponse.status === 404) throw new ApiError(404, "Sales order not found.");
-            if (!orderResponse.ok) throw new ApiError(503, "Unable to reload the sales order.");
+            if (!orderResponse.ok) {
+                const errText = await orderResponse.text().catch(() => "");
+                throw new ApiError(503, `Unable to reload the sales order (HTTP ${orderResponse.status}): ${errText}`);
+            }
             const order = (await orderResponse.json()).data as Row;
             if (order.order_status !== "For Invoicing") throw new ApiError(409, "Sales order must be For Invoicing.");
             const branchId = Number(order.branch_id);
@@ -125,19 +128,24 @@ export async function POST(request: Request) {
             const detailIds: number[] = [];
             let reservationIds: number[] = [];
             try {
+                const nowIso = await getISOStringInConfiguredTimezone();
+                const invDateIso = invoiceDate ? new Date(invoiceDate).toISOString() : nowIso;
+                const dueDateIso = dueDate ? new Date(dueDate).toISOString() : nowIso;
                 const headerResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
                     method: "POST",
                     headers,
                     body: JSON.stringify({
                         invoice_no: invoiceNo,
-                        invoice_date: invoiceDate,
-                        due_date: dueDate,
-                        created_date: new Date().toISOString(),
+                        invoice_date: invDateIso,
+                        dispatch_date: nowIso,
+                        due_date: dueDateIso,
+                        created_date: nowIso,
                         customer_code: order.customer_code,
-                        order_id: salesOrderId,
+                        order_id: String(salesOrderId),
                         salesman_id: order.salesman_id || null,
                         branch_id: branchId,
                         payment_terms: order.payment_terms || null,
+                        sales_type: order.sales_type || null,
                         invoice_type: invoiceTypeId,
                         transaction_status: "Prepared",
                         payment_status: "Unpaid",
@@ -146,10 +154,21 @@ export async function POST(request: Request) {
                         discount_amount: discount,
                         vat_amount: 0,
                         net_amount: gross - discount,
+                        created_by: userId,
+                        modified_by: userId,
+                        modified_date: nowIso,
                         remarks,
+                        isReceipt: invoiceType?.isOfficial ? 1 : 0,
+                        isPosted: 0,
+                        isDispatched: 1,
+                        isRemitted: 0,
+                        isReplaced: 0,
                     }),
                 });
-                if (!headerResponse.ok) throw new Error(`invoice header returned ${headerResponse.status}`);
+                if (!headerResponse.ok) {
+                    const errText = await headerResponse.text().catch(() => "");
+                    throw new Error(`invoice header returned ${headerResponse.status}: ${errText}`);
+                }
                 invoiceId = Number((await headerResponse.json()).data?.invoice_id);
                 if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) throw new Error("invoice header returned no valid ID");
 

@@ -4,27 +4,10 @@ import { X, Save, User, MapPin, ChevronDown, Loader2, Search, Sliders, Building,
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Customer, PaymentTerm, StoreType } from "../types";
+import { ClientFormData, Customer, PaymentTerm, PriceType, StoreType } from "../types";
 import { toast } from "sonner";
 import CustomerMapSelector from "./CustomerMapSelector";
 import { ClientProduct, ClientProductVersion } from "../hooks/useClients";
-
-export interface ClientFormData {
-    customer_code: string;
-    customer_name: string;
-    customer_tin: string;
-    contact_number: string;
-    customer_email: string;
-    store_name: string;
-    store_type_id: string;
-    payment_term: string;
-    province: string;
-    city: string;
-    brgy: string;
-    latitude: string;
-    longitude: string;
-    isActive: boolean;
-}
 
 export type ClientModalMode = "create" | "view" | "edit";
 
@@ -38,6 +21,7 @@ interface ClientFormModalProps {
     setFormData: React.Dispatch<React.SetStateAction<ClientFormData>>;
     storeTypes: StoreType[];
     setStoreTypes?: React.Dispatch<React.SetStateAction<StoreType[]>>;
+    priceTypes: PriceType[];
     provinces: { code: string; name: string }[];
     cities: { code: string; name: string; provinceCode: string | boolean }[];
     barangays: { code: string; name: string; cityCode: string }[];
@@ -47,6 +31,7 @@ interface ClientFormModalProps {
     selectedCityCode: string;
     setSelectedCityCode: (v: string) => void;
     onSave: (e: React.FormEvent) => void;
+    formErrors?: Record<string, string>;
     saving?: boolean;
     onNameChange: (val: string) => void;
 
@@ -63,6 +48,7 @@ interface SearchableOption {
     value: string;
     label: string;
     description?: string;
+    disabled?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -114,7 +100,9 @@ function SearchableSelect({
                                 <CommandItem
                                     key={option.value}
                                     value={`${option.label} ${option.value}`}
+                                    disabled={option.disabled}
                                     onSelect={() => {
+                                        if (option.disabled) return;
                                         onSelect(option.value);
                                         setOpen(false);
                                     }}
@@ -146,6 +134,7 @@ export default function ClientFormModal({
     setFormData,
     storeTypes,
     setStoreTypes,
+    priceTypes,
     provinces,
     cities,
     barangays,
@@ -155,6 +144,7 @@ export default function ClientFormModal({
     selectedCityCode,
     setSelectedCityCode,
     onSave,
+    formErrors = {},
     saving = false,
     onNameChange,
     products = [],
@@ -219,6 +209,44 @@ export default function ClientFormModal({
             (st.store_type || "").toLowerCase().includes(storeTypeQuery.toLowerCase())
         );
     }, [storeTypes, storeTypeQuery]);
+
+    const activePriceTypes = useMemo(() => {
+        return priceTypes.filter((priceType) => {
+            const value = priceType.is_active;
+            return value === undefined || value === null || value === true || value === 1 || value === "1"
+                || (typeof value === "string" && value.trim().toLowerCase() === "true");
+        });
+    }, [priceTypes]);
+
+    const currentPriceTypeId = editingCustomer?.price_type_id && typeof editingCustomer.price_type_id === "object"
+        ? String(editingCustomer.price_type_id.price_type_id ?? editingCustomer.price_type_id.id ?? "")
+        : editingCustomer?.price_type_id
+            ? String(editingCustomer.price_type_id)
+            : "";
+
+    const priceTypeOptions = useMemo(() => {
+        const options: SearchableOption[] = activePriceTypes.map((priceType) => ({
+            value: String(priceType.price_type_id),
+            label: priceType.price_type_name,
+        }));
+
+        if (currentPriceTypeId && !options.some((option) => option.value === currentPriceTypeId)) {
+            options.unshift({
+                value: currentPriceTypeId,
+                label: editingCustomer?.price_type_name || editingCustomer?.price_type || `Inactive Price Type #${currentPriceTypeId}`,
+                description: "Inactive legacy assignment. Select an active replacement.",
+                disabled: true,
+            });
+        }
+
+        return options;
+    }, [activePriceTypes, currentPriceTypeId, editingCustomer?.price_type, editingCustomer?.price_type_name]);
+
+    const fieldError = (field: string) => formErrors[field];
+    const inputClass = (field: string) => cn(
+        "w-full bg-background border rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold transition-all",
+        fieldError(field) && "border-destructive focus:ring-destructive focus:border-destructive"
+    );
 
     const handleGetCurrentLocation = () => {
         if (!window.isSecureContext) {
@@ -604,6 +632,27 @@ export default function ClientFormModal({
                                     </div>
                                 </div>
                             </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                        Store Signage
+                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={formData.store_signage}
+                                        onChange={(e) => setFormData((prev: ClientFormData) => ({ ...prev, store_signage: e.target.value }))}
+                                        placeholder="e.g. Super Shopping"
+                                        aria-invalid={Boolean(fieldError("store_signage"))}
+                                        className={inputClass("store_signage")}
+                                    />
+                                    {fieldError("store_signage") ? (
+                                        <p className="text-[10px] text-destructive">{fieldError("store_signage")}</p>
+                                    ) : null}
+                                </div>
+                            </div>
                         </div>
 
                         {/* section 2: Contact Info */}
@@ -618,7 +667,7 @@ export default function ClientFormModal({
                                 </div>
                             </div>
                             
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div className="space-y-1.5">
                                     <label className="text-[10px] font-bold text-muted-foreground uppercase">Email Address</label>
                                     <input
@@ -631,18 +680,41 @@ export default function ClientFormModal({
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Contact Number</label>
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                        Telephone Number
+                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                    </label>
+                                    <input
+                                        type="tel"
+                                        required
+                                        value={formData.tel_number}
+                                        onChange={(e) => setFormData((prev: ClientFormData) => ({ ...prev, tel_number: e.target.value }))}
+                                        placeholder="e.g. 0917-123-4567 or 8888-8888"
+                                        aria-invalid={Boolean(fieldError("tel_number"))}
+                                        className={cn(inputClass("tel_number"), "font-mono")}
+                                    />
+                                    {fieldError("tel_number") ? (
+                                        <p className="text-[10px] text-destructive">{fieldError("tel_number")}</p>
+                                    ) : null}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                        Bank Details
+                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                    </label>
                                     <input
                                         type="text"
-                                        value={formData.contact_number}
-                                        onChange={(e) => {
-                                            const raw = e.target.value.replace(/\D/g, "");
-                                            const limited = raw.slice(0, 11);
-                                            setFormData((prev: ClientFormData) => ({ ...prev, contact_number: limited }));
-                                        }}
-                                        placeholder="e.g. 0917-123-4567 or 8888-8888"
-                                        className="w-full bg-background border rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary focus:border-primary font-mono font-semibold transition-all font-semibold"
+                                        required
+                                        value={formData.bank_details}
+                                        onChange={(e) => setFormData((prev: ClientFormData) => ({ ...prev, bank_details: e.target.value }))}
+                                        placeholder="Bank, account name, or routing details"
+                                        aria-invalid={Boolean(fieldError("bank_details"))}
+                                        className={inputClass("bank_details")}
                                     />
+                                    {fieldError("bank_details") ? (
+                                        <p className="text-[10px] text-destructive">{fieldError("bank_details")}</p>
+                                    ) : null}
                                 </div>
                             </div>
                         </div>
@@ -777,27 +849,71 @@ export default function ClientFormModal({
 
                         {/* section 4: Settings */}
                         <div className="bg-card border rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                        Price Type
+                                        <span className="text-destructive font-bold text-[11px]">*</span>
+                                    </label>
+                                    <SearchableSelect
+                                        options={priceTypeOptions}
+                                        value={formData.price_type_id}
+                                        placeholder="Select Price Type..."
+                                        searchPlaceholder="Search active price templates..."
+                                        emptyText="No active price types found."
+                                        disabled={priceTypeOptions.length === 0}
+                                        onSelect={(value) => {
+                                            setFormData((prev: ClientFormData) => ({ ...prev, price_type_id: value }));
+                                        }}
+                                    />
+                                    {fieldError("price_type_id") ? (
+                                        <p className="text-[10px] text-destructive">{fieldError("price_type_id")}</p>
+                                    ) : priceTypes.length === 0 ? (
+                                        <p className="text-[10px] text-muted-foreground">Price types are unavailable.</p>
+                                    ) : null}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Terms</label>
+                                    <SearchableSelect
+                                        options={paymentTerms.map((term) => ({
+                                            value: String(term.id),
+                                            label: term.payment_name,
+                                            description: term.payment_days !== null && term.payment_days !== undefined
+                                                ? `${term.payment_days} day${term.payment_days === 1 ? "" : "s"}`
+                                                : undefined,
+                                        }))}
+                                        value={formData.payment_term}
+                                        placeholder="Select Payment Terms..."
+                                        searchPlaceholder="Search payment terms..."
+                                        emptyText="No payment terms found."
+                                        disabled={paymentTerms.length === 0}
+                                        onSelect={(value) => {
+                                            setFormData((prev: ClientFormData) => ({ ...prev, payment_term: value }));
+                                        }}
+                                    />
+                                    {paymentTerms.length === 0 ? (
+                                        <p className="text-[10px] text-muted-foreground">Payment terms are unavailable.</p>
+                                    ) : null}
+                                </div>
+                            </div>
+
                             <div className="mb-5 space-y-1.5">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Terms</label>
-                                <SearchableSelect
-                                    options={paymentTerms.map((term) => ({
-                                        value: String(term.id),
-                                        label: term.payment_name,
-                                        description: term.payment_days !== null && term.payment_days !== undefined
-                                            ? `${term.payment_days} day${term.payment_days === 1 ? "" : "s"}`
-                                            : undefined,
-                                    }))}
-                                    value={formData.payment_term}
-                                    placeholder="Select Payment Terms..."
-                                    searchPlaceholder="Search payment terms..."
-                                    emptyText="No payment terms found."
-                                    disabled={paymentTerms.length === 0}
-                                    onSelect={(value) => {
-                                        setFormData((prev: ClientFormData) => ({ ...prev, payment_term: value }));
-                                    }}
+                                <label className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+                                    Other Details / Description
+                                    <span className="text-destructive font-bold text-[11px]">*</span>
+                                </label>
+                                <textarea
+                                    required
+                                    rows={4}
+                                    value={formData.otherDetails}
+                                    onChange={(e) => setFormData((prev: ClientFormData) => ({ ...prev, otherDetails: e.target.value }))}
+                                    placeholder="Add customer details, billing notes, or routing instructions..."
+                                    aria-invalid={Boolean(fieldError("otherDetails"))}
+                                    className={cn(inputClass("otherDetails"), "min-h-24 resize-y")}
                                 />
-                                {paymentTerms.length === 0 ? (
-                                    <p className="text-[10px] text-muted-foreground">Payment terms are unavailable.</p>
+                                {fieldError("otherDetails") ? (
+                                    <p className="text-[10px] text-destructive">{fieldError("otherDetails")}</p>
                                 ) : null}
                             </div>
                             <div className="flex items-center justify-between">
@@ -823,6 +939,36 @@ export default function ClientFormModal({
                                 </label>
                             </div>
                         </div>
+
+                        {editingCustomer && (
+                            <div className="bg-card border rounded-2xl p-5 space-y-4 shadow-sm">
+                                <div className="flex items-center gap-2.5 border-b pb-3">
+                                    <span className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+                                        <User className="h-4 w-4" />
+                                    </span>
+                                    <div>
+                                        <h4 className="text-xs font-extrabold text-foreground uppercase tracking-wider">Audit Trail</h4>
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">Server-recorded profile modification details.</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Last Updated By</span>
+                                        <span className="block font-semibold text-foreground">
+                                            {editingCustomer.updated_by_name?.trim() || "Unavailable"}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Last Updated At</span>
+                                        <span className="block font-mono font-semibold text-foreground">
+                                            {editingCustomer.updated_at
+                                                ? editingCustomer.updated_at.replace("T", " ")
+                                                : "Never updated"}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         </fieldset>
                     </form>
                 )}

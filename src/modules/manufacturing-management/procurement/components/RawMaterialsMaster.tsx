@@ -8,8 +8,8 @@ interface RawMaterialsMasterProps {
     rawMaterials: RawMaterial[];
     suppliers: Supplier[];
     loadingItems: boolean;
-    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariant[]) => Promise<boolean>;
-    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariant[]) => Promise<boolean>;
+    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariant[]) => Promise<boolean>;
+    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariant[]) => Promise<boolean>;
 }
 
 export default function RawMaterialsMaster(props: RawMaterialsMasterProps) {

@@ -1,7 +1,19 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { useDebounce } from "use-debounce";
 import { QuotationHeader, QuotationSnapshotNode, CatalogProduct, SelectedQuoteProduct, Customer, Project } from "../types";
+
+import { generateQuotationPDF } from "../utils/exportQuotationPDF";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseCustomerLookupResponse(value: unknown): Customer[] {
+    if (Array.isArray(value)) return value as Customer[];
+    if (isRecord(value) && Array.isArray(value.data)) return value.data as Customer[];
+    return [];
+}
 
 export function useQuotation() {
     // List view vs Create view
@@ -20,15 +32,38 @@ export function useQuotation() {
     const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
     const [customerSearchText, setCustomerSearchText] = useState<string>("");
     const [quoteNumber, setQuoteNumber] = useState<string>("");
-    const [projectName, setProjectName] = useState<string>("");
+    const [projectName, setProjectName] = useState("");
     const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
     const [remarks, setRemarks] = useState<string>("");
+    const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+    
+    // Master data lookups
     const [priceTypes, setPriceTypes] = useState<{ price_type_id: number; price_type_name: string }[]>([]);
     const [selectedPriceTypeId, setSelectedPriceTypeId] = useState<string>("");
+    const [pendingPriceTypeId, setPendingPriceTypeId] = useState<string>("");
+    const [isPriceTypeWarningOpen, setIsPriceTypeWarningOpen] = useState(false);
     const [showValidationErrors, setShowValidationErrors] = useState(false);
     
     // Project portfolio database registry
-    const [localProjects, setLocalProjects] = useState<{ id: number; project_name: string; customer_id: number; customer_name: string; customer_code: string }[]>([]);
+    const [localProjects, setLocalProjects] = useState<{ id: number; project_name: string; customer_id: number; customer_name: string; customer_code: string; status?: string }[]>([]);
+    const customerLookupRequestId = useRef(0);
+
+    const mergeCustomer = (customer: Customer) => {
+        setCustomers(previous => {
+            const existing = previous.findIndex(item => String(item.id) === String(customer.id));
+            if (existing === -1) return [...previous, customer];
+            return previous.map((item, index) => index === existing ? customer : item);
+        });
+    };
+
+    const loadCustomerById = async (customerId: number | string): Promise<Customer | null> => {
+        const response = await fetch(`/api/manufacturing/finished-goods/customers/lookup?customerId=${encodeURIComponent(String(customerId))}&limit=1`);
+        if (!response.ok) return null;
+        const data = parseCustomerLookupResponse(await response.json());
+        const customer = data[0] || null;
+        if (customer) mergeCustomer(customer);
+        return customer;
+    };
 
     // Load master list of quotations
     const loadQuotes = async () => {
@@ -50,29 +85,39 @@ export function useQuotation() {
     useEffect(() => {
         loadQuotes();
         
-        // Fetch active customers initially
-        fetch("/api/manufacturing/finished-goods/customers")
-            .then(res => res.ok ? res.json() : [])
-            .then(data => {
-                setCustomers(data);
-                // After customers are loaded, fetch projects from the database to map them correctly!
-                fetch("/api/manufacturing/finished-goods/projects")
-                    .then(res => res.ok ? res.json() : [])
-                    .then(projData => {
-                        const mapped = (projData as Project[]).map(p => {
-                            const matchedCust = data.find((c: Customer) => c.customer_code === p.customer_code);
-                            return {
-                                id: p.id,
-                                project_name: p.project_name,
-                                customer_id: matchedCust ? Number(matchedCust.id) : 0,
-                                customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
-                                customer_code: p.customer_code
-                            };
-                        });
-                        setLocalProjects(mapped);
-                    });
+        // Fetch a bounded customer lookup and independently load projects. The
+        // project endpoint includes customer details so this no longer depends
+        // on a full customer-directory response.
+        Promise.all([
+            fetch("/api/manufacturing/finished-goods/customers/lookup?limit=10"),
+            fetch("/api/manufacturing/finished-goods/projects")
+        ])
+            .then(async ([customerRes, projectRes]) => {
+                const customerData = customerRes.ok
+                    ? parseCustomerLookupResponse(await customerRes.json())
+                    : [];
+                setCustomers(customerData);
+
+                if (!projectRes.ok) return;
+                const projectData: unknown = await projectRes.json();
+                const projects = Array.isArray(projectData) ? projectData as Project[] : [];
+                const mapped = projects.map(p => {
+                    const matchedCust = customerData.find(c => c.customer_code === p.customer_code);
+                    const projectCustomerId = p.customer_id !== undefined && p.customer_id !== null
+                        ? Number(p.customer_id)
+                        : matchedCust ? Number(matchedCust.id) : 0;
+                    return {
+                        id: p.id,
+                        project_name: p.project_name,
+                        customer_id: Number.isFinite(projectCustomerId) ? projectCustomerId : 0,
+                        customer_name: p.customer_name || matchedCust?.customer_name || `Code: ${p.customer_code}`,
+                        customer_code: p.customer_code,
+                        status: p.status
+                    };
+                });
+                setLocalProjects(mapped);
             })
-            .catch(e => console.error("Error fetching customers:", e));
+            .catch(e => console.error("Error fetching quotation customer metadata:", e));
 
         // Fetch price types
         fetch("/api/manufacturing/finished-goods/price-types")
@@ -82,21 +127,23 @@ export function useQuotation() {
             })
             .catch(e => console.error("Error fetching price types:", e));
 
-        // Fetch master catalog products
+        // Fetch product types and master catalog products
         setLoadingProducts(true);
-        fetch("/api/manufacturing/finished-goods/products?limit=250")
-            .then(res => res.ok ? res.json() : [])
-            .then(data => {
-                // QA Fix: Only pull finished goods (items with versions)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const fgOnly = data.filter((p: any) => p.has_versions === true);
-                setCatalogProducts(fgOnly);
-                setLoadingProducts(false);
-            })
-            .catch(e => {
-                console.error("Error fetching catalog:", e);
-                setLoadingProducts(false);
-            });
+        Promise.all([
+            fetch("/api/manufacturing/finished-goods/products?limit=-1").then(r => r.ok ? r.json() : []),
+            fetch("/api/manufacturing/sales-order?action=create-lookups").then(r => r.ok ? r.json() : {})
+        ]).then(([productsData, lookupsData]: [Record<string, unknown>[], Record<string, unknown>]) => {
+            const fgOnly = productsData.filter((p: Record<string, unknown>) => p.has_versions === true);
+            setCatalogProducts(fgOnly as unknown as CatalogProduct[]);
+            
+            if (lookupsData.products) setAllProducts(lookupsData.products as unknown as CatalogProduct[]);
+            if (lookupsData.productTypes) setProductTypes(lookupsData.productTypes as Record<string, unknown>[]);
+            
+            setLoadingProducts(false);
+        }).catch(e => {
+            console.error("Error fetching catalog:", e);
+            setLoadingProducts(false);
+        });
     }, []);
 
     // Load specific price sheets when Price Type selection changes
@@ -119,7 +166,7 @@ export function useQuotation() {
 
                 // Dynamically update preloaded rates on already selected items list
                 setSelectedProductsList(prev => prev.map(item => {
-                    const preloadedRate = map[item.product.product_id] || item.product.price_per_unit || 0;
+                    const preloadedRate = map[item.product?.product_id || 0] || item.product?.price_per_unit || 0;
                     return {
                         ...item,
                         priceTypePrice: preloadedRate,
@@ -170,12 +217,12 @@ export function useQuotation() {
         setQuoteNumber(`QT-${year}${month}${day}-${hour}${min}${sec}`);
     };
 
-    const startCreateQuoteForProject = (projName: string, customerId: number, projectId?: number) => {
+    const startCreateQuoteForProject = async (projName: string, customerId: number, projectId?: number) => {
         setView("create");
         setSelectedProductsList([]);
         setRemarks("");
         setProjectName(projName);
-        setSelectedCustomerId(String(customerId));
+        setSelectedCustomerId(customerId === 0 ? "" : String(customerId));
         setSelectedPriceTypeId("");
         setShowValidationErrors(false);
 
@@ -191,11 +238,22 @@ export function useQuotation() {
             }
         }
 
-        const matchedCust = customers.find(c => Number(c.id) === customerId);
+        let matchedCust = customers.find(c => Number(c.id) === customerId);
+        if (!matchedCust && customerId > 0) {
+            try {
+                matchedCust = await loadCustomerById(customerId) || undefined;
+            } catch (error) {
+                console.error("Error loading project customer:", error);
+            }
+        }
         if (matchedCust) {
             setCustomerSearchText(`${matchedCust.customer_name} (${matchedCust.customer_code})`);
+            // Auto-Fill the Price Type Template!
+            if (matchedCust.price_type_id) {
+                handlePriceTypeChange(String(matchedCust.price_type_id));
+            }
         } else {
-            setCustomerSearchText(`Customer ID: ${customerId}`);
+            setCustomerSearchText(customerId === 0 ? "" : `Customer ID: ${customerId}`);
         }
 
         // Generate QT-YYYYMMDD-HHMMSS
@@ -235,14 +293,19 @@ export function useQuotation() {
             const projRes = await fetch("/api/manufacturing/finished-goods/projects");
             if (projRes.ok) {
                 const projData = await projRes.json();
-                const mapped = (projData as Project[]).map(p => {
+                const projects = Array.isArray(projData) ? projData as Project[] : [];
+                const mapped = projects.map(p => {
                     const matchedCust = customers.find((c: Customer) => c.customer_code === p.customer_code);
+                    const projectCustomerId = p.customer_id !== undefined && p.customer_id !== null
+                        ? Number(p.customer_id)
+                        : matchedCust ? Number(matchedCust.id) : 0;
                     return {
                         id: p.id,
                         project_name: p.project_name,
-                        customer_id: matchedCust ? Number(matchedCust.id) : 0,
-                        customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
-                        customer_code: p.customer_code
+                        customer_id: Number.isFinite(projectCustomerId) ? projectCustomerId : 0,
+                        customer_name: p.customer_name || matchedCust?.customer_name || `Code: ${p.customer_code}`,
+                        customer_code: p.customer_code,
+                        status: p.status
                     };
                 });
                 setLocalProjects(mapped);
@@ -272,7 +335,7 @@ export function useQuotation() {
             
             // Map snapshots to SelectedQuoteProduct format
             const mappedProducts: SelectedQuoteProduct[] = snapshotItems.map(item => {
-                const prodMatch = catalogProducts.find(p => p.product_id === item.product_id);
+                const prodMatch = allProducts.find(p => String(p.product_id) === String(item.product_id)) || catalogProducts.find(p => String(p.product_id) === String(item.product_id));
                 const catalogProd: CatalogProduct = prodMatch || {
                     product_id: item.product_id,
                     product_name: item.node_name,
@@ -281,10 +344,32 @@ export function useQuotation() {
                     cost_per_unit: item.frozen_unit_cost_php,
                     unit_of_measurement: { unit_shortcut: item.uom }
                 };
+
+                let parentId = item.parent_id ? Number(item.parent_id) : (catalogProd.parent_product_id ? Number(catalogProd.parent_product_id) : undefined);
+                let productTypeId = item.product_type_id ? Number(item.product_type_id) : (catalogProd.product_type ? Number(catalogProd.product_type) : undefined);
+
+                // Fallback for parent ID if nested
+                if (!parentId && catalogProd.parent_id && (catalogProd.parent_id as Record<string, unknown>).id) {
+                    parentId = Number((catalogProd.parent_id as Record<string, unknown>).id);
+                }
+
+                // Inherit product_type from parent if missing on child
+                if (parentId && !productTypeId) {
+                    const parentProd = allProducts.find(p => String(p.product_id) === String(parentId)) || catalogProducts.find(p => String(p.product_id) === String(parentId));
+                    if (parentProd && parentProd.product_type) {
+                        productTypeId = Number(parentProd.product_type);
+                    }
+                }
+
                 return {
+                    line_id: Math.random(),
+                    product_type_id: productTypeId,
+                    parent_product_id: parentId,
                     product: catalogProd,
                     priceTypePrice: item.frozen_unit_cost_php,
-                    agreedPrice: item.frozen_total_cost_php
+                    agreedPrice: item.frozen_total_cost_php,
+                    versionId: item.version_id,
+                    versionName: item.version_name
                 };
             });
 
@@ -313,6 +398,18 @@ export function useQuotation() {
                 : `Cust ID: ${quote.customer_id}`;
             setCustomerSearchText(custNameStr);
 
+            // Fetch and set price type template if customer has one. The
+            // customer may not be in the bounded autocomplete result set.
+            let matchedCust = customers.find(c => String(c.id) === custIdStr);
+            if (!matchedCust && custIdStr && custIdStr !== "null") {
+                matchedCust = await loadCustomerById(custIdStr) || undefined;
+            }
+            if (matchedCust && matchedCust.price_type_id) {
+                handlePriceTypeChange(String(matchedCust.price_type_id));
+            } else {
+                setSelectedPriceTypeId("");
+            }
+
             setRemarks(quote.remarks || "");
             
             const quoteProj = quote.project_id && typeof quote.project_id === "object" ? quote.project_id as Project : null;
@@ -330,17 +427,30 @@ export function useQuotation() {
     
     // Catalog and selected products
     const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+    const [allProducts, setAllProducts] = useState<CatalogProduct[]>([]);
+    const [productTypes, setProductTypes] = useState<Record<string, unknown>[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
     const [selectedProductsList, setSelectedProductsList] = useState<SelectedQuoteProduct[]>([]);
-    const [searchQuery, setSearchQuery] = useState("");
-    const [debouncedSearchQuery] = useDebounce(searchQuery, 400);
-    const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 8;
-    const [priceTypeRatesMap, setPriceTypeRatesMap] = useState<Record<number, number>>({}); // Map: productId -> price
+    const nextLineIdRef = useRef(1);
+    const [priceTypeRatesMap, setPriceTypeRatesMap] = useState<Record<number, number>>({});
     const [savingQuote, setSavingQuote] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
+    const itemsPerPage = 10;
+    
+    // Helper to add an empty row to the grid
+    const addEmptyRow = () => {
+        setSelectedProductsList(prev => [...prev, {
+            line_id: nextLineIdRef.current++,
+            priceTypePrice: 0,
+            agreedPrice: 0
+        }]);
+    };
 
+    // Replace old addProductToQuote with one that supports the line_id if needed
     const addProductToQuote = (prod: CatalogProduct) => {
-        const alreadyExists = selectedProductsList.some(item => item.product.product_id === prod.product_id);
+        const alreadyExists = selectedProductsList.some(item => item.product?.product_id === prod.product_id);
         toast.dismiss();
         if (alreadyExists) {
             toast.info("Product already added to list");
@@ -348,6 +458,7 @@ export function useQuotation() {
         }
         const preloadedPrice = priceTypeRatesMap[prod.product_id] || prod.price_per_unit || 0;
         setSelectedProductsList(prev => [...prev, {
+            line_id: nextLineIdRef.current++,
             product: prod,
             priceTypePrice: preloadedPrice,
             agreedPrice: preloadedPrice
@@ -355,41 +466,101 @@ export function useQuotation() {
         toast.success(`Added ${prod.product_name} to quotation draft`);
     };
 
-    const removeProductFromQuote = (productId: number) => {
-        setSelectedProductsList(prev => prev.filter(item => item.product.product_id !== productId));
+    const updateRow = (lineId: number, field: string, value: unknown) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if (item.line_id === lineId) {
+                return { ...item, [field]: value };
+            }
+            return item;
+        }));
     };
 
-    const handleAgreedPriceChange = (productId: number, val: number) => {
-        setSelectedProductsList(prev => prev.map(item => 
-            item.product.product_id === productId ? { ...item, agreedPrice: val } : item
+    const handleRowProductSelect = (lineId: number, prod: CatalogProduct | null) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if (item.line_id === lineId) {
+                if (!prod) return { ...item, product: null };
+                const preloadedPrice = priceTypeRatesMap[prod.product_id] || prod.price_per_unit || 0;
+                return {
+                    ...item,
+                    product: prod,
+                    priceTypePrice: preloadedPrice,
+                    agreedPrice: preloadedPrice
+                };
+            }
+            return item;
+        }));
+    };
+
+    const removeProductFromQuote = (lineIdOrProductId: number) => {
+        setSelectedProductsList(prev => prev.filter(item => 
+            item.line_id !== lineIdOrProductId && 
+            item.product?.product_id !== lineIdOrProductId
         ));
     };
 
-    const changeProductVersion = (productId: number, versionId: number | null, versionName: string | null) => {
-        setSelectedProductsList(prev => prev.map(item => 
-            item.product.product_id === productId 
-                ? { ...item, versionId, versionName } 
-                : item
-        ));
+    const changeProductVersion = (lineIdOrProductId: number, versionId: number | null, versionName: string | null) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if ((item.line_id && item.line_id === lineIdOrProductId) || (item.product?.product_id === lineIdOrProductId)) {
+                return { ...item, versionId, versionName };
+            }
+            return item;
+        }));
+    };
+
+    const handleAgreedPriceChange = (lineIdOrProductId: number, val: number) => {
+        setSelectedProductsList(prev => prev.map(item => {
+            if ((item.line_id && item.line_id === lineIdOrProductId) || (item.product?.product_id === lineIdOrProductId)) {
+                return { ...item, agreedPrice: val };
+            }
+            return item;
+        }));
     };
 
     const handleSearchCustomers = async (searchVal: string) => {
         setCustomerSearchText(searchVal);
         setSelectedCustomerId(""); // Clear selection to allow display of lists
+        const requestId = customerLookupRequestId.current + 1;
+        customerLookupRequestId.current = requestId;
         try {
-            const res = await fetch(`/api/manufacturing/finished-goods/customers?search=${encodeURIComponent(searchVal)}`);
+            const res = await fetch(`/api/manufacturing/finished-goods/customers/lookup?search=${encodeURIComponent(searchVal)}&limit=10`);
             if (res.ok) {
-                const data = await res.json();
-                setCustomers(data);
+                const data = parseCustomerLookupResponse(await res.json());
+                if (requestId === customerLookupRequestId.current) setCustomers(data);
             }
         } catch (err) {
             console.error("Error querying customers:", err);
         }
     };
 
+    const handlePriceTypeChange = (priceTypeId: string) => {
+        if (selectedProductsList.length > 0) {
+            setPendingPriceTypeId(priceTypeId);
+            setIsPriceTypeWarningOpen(true);
+        } else {
+            setSelectedPriceTypeId(priceTypeId);
+        }
+    };
+
+    const confirmPriceTypeChange = () => {
+        setSelectedPriceTypeId(pendingPriceTypeId);
+        setIsPriceTypeWarningOpen(false);
+    };
+
+    const cancelPriceTypeChange = () => {
+        setPendingPriceTypeId("");
+        setIsPriceTypeWarningOpen(false);
+    };
+
     const selectCustomer = (id: string, nameCode: string) => {
         setSelectedCustomerId(id);
         setCustomerSearchText(nameCode);
+
+        // Customer-Driven Price Type Auto-Fill
+        const customer = customers.find(c => c.id.toString() === id);
+        const autoPriceTypeId = customer?.price_type_id || customer?.default_price_type_id;
+        if (autoPriceTypeId) {
+            handlePriceTypeChange(String(autoPriceTypeId));
+        }
     };
 
     const submitQuotation = async () => {
@@ -404,14 +575,23 @@ export function useQuotation() {
             return;
         }
 
-        // Save confirmation prompt
-        const confirmSave = window.confirm("Are you sure you want to lock and save this quotation snapshot? This will freeze the costs and simulated margins.");
-        if (!confirmSave) return;
+        const missingProducts = selectedProductsList.some(item => !item.product);
+        if (missingProducts) {
+            toast.error("Please ensure all rows have a selected product, or remove empty rows.");
+            return;
+        }
 
+        // Open custom save confirmation modal
+        setIsConfirmModalOpen(true);
+    };
+
+    const confirmSubmitQuotation = async () => {
+        setIsConfirmModalOpen(false);
         setSavingQuote(true);
         try {
             // Dynamically fetch and verify the COGS/BOM Cost for each selected product
             const productsWithLatestCost = await Promise.all(selectedProductsList.map(async (item) => {
+                if (!item.product) return null;
                 let latestCost = Number(item.product.cost_per_unit || 0);
                 try {
                     const url = item.versionId 
@@ -429,22 +609,37 @@ export function useQuotation() {
                 }
                 return {
                     ...item,
+                    product: item.product,
                     resolvedCost: latestCost
                 };
             }));
 
-            const totalSelling = productsWithLatestCost.reduce((sum, item) => sum + Number(item.agreedPrice || 0), 0);
-            const totalCost = productsWithLatestCost.reduce((sum, item) => sum + Number(item.resolvedCost || 0), 0);
+            const validProducts = productsWithLatestCost.filter(item => item !== null);
+
+            const totalSelling = validProducts.reduce((sum, item) => sum + Number(item.agreedPrice || 0), 0);
+            const totalCost = validProducts.reduce((sum, item) => sum + Number(item.resolvedCost || 0), 0);
 
             // Construct Philippine Time (PHT, UTC+8) date representation
             const dateUTC = new Date();
             const datePHT = new Date(dateUTC.getTime() + (8 * 60 * 60 * 1000));
             const quoteDateStr = datePHT.toISOString().replace(/Z$/, "");
 
+            let resolvedProjectId = selectedProjectId;
+            if (!resolvedProjectId && projectName.trim()) {
+                const matchedCust = customers.find(c => String(c.id) === selectedCustomerId);
+                const customerName = matchedCust ? matchedCust.customer_name : "";
+                const newProj = await registerNewProject(projectName.trim(), parseInt(selectedCustomerId), customerName);
+                if (newProj && newProj.id) {
+                    resolvedProjectId = newProj.id;
+                }
+            }
+
             const header = {
                 quote_number: quoteNumber.trim(),
                 customer_id: parseInt(selectedCustomerId),
-                project_id: selectedProjectId,
+                project_id: resolvedProjectId,
+                price_type_id: selectedPriceTypeId ? parseInt(selectedPriceTypeId) : null,
+                frozen_price_type_name: selectedPriceTypeId ? priceTypes.find(pt => String(pt.price_type_id) === selectedPriceTypeId)?.price_type_name || null : null,
                 total_selling_price: totalSelling,
                 total_simulated_cost: totalCost,
                 forex_rate_used: 61.39,
@@ -452,16 +647,34 @@ export function useQuotation() {
                 quote_date: quoteDateStr
             };
 
-            const snapshots = productsWithLatestCost.map(item => ({
-                product_id: item.product.product_id,
-                version_id: item.versionId || 1, // Store the selected version ID
-                node_name: item.product.product_name,
-                node_type: "product_quota",
-                quantity: 1,
-                uom: item.product.unit_of_measurement?.unit_shortcut || "PCS",
-                frozen_unit_cost_php: item.resolvedCost,
-                frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
-            }));
+            const snapshots = validProducts.map(item => {
+                let pName = null;
+                let pType = null;
+                
+                if (item.parent_product_id) {
+                    const pMatch = allProducts.find(p => p.product_id === item.parent_product_id) || catalogProducts.find(p => p.product_id === item.parent_product_id);
+                    if (pMatch) pName = pMatch.product_name;
+                }
+                if (item.product_type_id) {
+                    const tMatch = productTypes.find(pt => pt.id === item.product_type_id);
+                    if (tMatch) pType = String(tMatch.name);
+                }
+
+                return {
+                    product_id: item.product.product_id,
+                    parent_id: item.parent_product_id || null,
+                    parent_product_name: pName || null,
+                    product_type_id: item.product_type_id || null,
+                    product_type_name: pType || null,
+                    version_id: item.versionId || 1, // Store the selected version ID
+                    node_name: item.product.product_name,
+                    node_type: "product_quota",
+                    quantity: 1,
+                    uom: item.product.unit_of_measurement?.unit_shortcut || (item.product as unknown as Record<string, unknown>).unit_shortcut || "PCS",
+                    frozen_unit_cost_php: item.resolvedCost,
+                    frozen_total_cost_php: item.agreedPrice // Save the target agreed price into the cost snapshot tree for quote tracking
+                };
+            });
 
             const res = await fetch("/api/manufacturing/finished-goods/quotes", {
                 method: "POST",
@@ -483,6 +696,82 @@ export function useQuotation() {
         } finally {
             setSavingQuote(false);
         }
+    };
+
+    const handlePrintQuotation = () => {
+        if (!selectedQuote) return;
+        
+        let customerName = "Unknown Customer";
+        if (selectedQuote.customer_id) {
+            customerName = typeof selectedQuote.customer_id === "object" && 'customer_name' in selectedQuote.customer_id
+                ? selectedQuote.customer_id.customer_name
+                : customers.find(c => String(c.id) === String(selectedQuote.customer_id))?.customer_name || "Unknown Customer";
+        }
+
+        let projNameStr = "Unknown Project";
+        if (selectedQuote.project_id) {
+            projNameStr = typeof selectedQuote.project_id === "object" && 'project_name' in selectedQuote.project_id
+                ? selectedQuote.project_id.project_name
+                : allProjects.find(p => p.projectId === Number((selectedQuote.project_id as unknown as Record<string, unknown>)?.id || selectedQuote.project_id))?.projectName || "Unknown Project";
+        }
+
+        const priceTypeName = priceTypes.find(pt => pt.price_type_id.toString() === selectedPriceTypeId)?.price_type_name || "Custom Price Tier";
+
+        // Extract dynamically fetched creator name, fallback to local session if missing
+        let createdByStr = selectedQuote.created_by_name;
+        if (!createdByStr || createdByStr === "System Admin") {
+            try {
+                const sessionUser = localStorage.getItem("user_name") || localStorage.getItem("user_fname");
+                if (sessionUser) createdByStr = sessionUser;
+            } catch {
+                // ignore
+            }
+        }
+        if (!createdByStr) createdByStr = "System Admin";
+
+        // Map snapshots to include accurate type and version strings from catalog
+        const resolvedSnapshots = snapshots.map(snap => {
+            const prodMatch = allProducts.find(p => String(p.product_id) === String(snap.product_id)) || catalogProducts.find(p => String(p.product_id) === String(snap.product_id));
+            
+            let typeName = snap.product_type_name || "Finished Goods";
+            if (!snap.product_type_name && prodMatch) {
+                let pTypeId = prodMatch.product_type ? Number(prodMatch.product_type) : undefined;
+                if (!pTypeId && prodMatch.parent_product_id) {
+                    const parentProd = allProducts.find(p => String(p.product_id) === String(prodMatch.parent_product_id));
+                    if (parentProd && parentProd.product_type) {
+                        pTypeId = Number(parentProd.product_type);
+                    }
+                }
+                const ptMatch = productTypes.find(pt => pt.id === pTypeId);
+                if (ptMatch) typeName = String(ptMatch.name);
+            }
+
+            const versionName = snap.version_name || "v1.0";
+            if (prodMatch && (prodMatch as unknown as Record<string, unknown>).has_versions) {
+                // If the product has versions, and the snapshot has a version_id but no version_name, try to find it
+                // (Though usually the snapshot will have version_name saved, we fallback just in case)
+            }
+
+            return {
+                node_name: snap.node_name,
+                type_name: typeName,
+                version_name: versionName,
+                uom: snap.uom,
+                frozen_unit_cost_php: snap.frozen_unit_cost_php,
+                frozen_total_cost_php: snap.frozen_total_cost_php
+            };
+        });
+
+        generateQuotationPDF({
+            quote: selectedQuote,
+            snapshots: resolvedSnapshots,
+            customerName,
+            projectName: projNameStr,
+            priceTypeName,
+            createdByName: createdByStr
+        });
+        
+        toast.success("Simulation Report PDF generated!");
     };
 
     // Reset current page when query changes
@@ -516,7 +805,7 @@ export function useQuotation() {
 
     // Virtual Project Portfolio List: maps each project_name to a single portfolio
     const allProjects = useMemo(() => {
-        const projectMap = new Map<string, { projectId: number; projectName: string; customerId: number; customerName: string; customerCode: string; quoteCount: number; latest: QuotationHeader; history: QuotationHeader[] }>();
+        const projectMap = new Map<string, { projectId: number; projectName: string; customerId: number; customerName: string; customerCode: string; projectStatus: string; quoteCount: number; latest: QuotationHeader; history: QuotationHeader[] }>();
         
         quotes.forEach(q => {
             const projObj = q.project_id && typeof q.project_id === "object" ? q.project_id as Project : null;
@@ -535,6 +824,7 @@ export function useQuotation() {
                     customerId: custId,
                     customerName: custName,
                     customerCode: custCode,
+                    projectStatus: projObj?.status || "Draft",
                     quoteCount: 1,
                     latest: q,
                     history: [q]
@@ -560,6 +850,7 @@ export function useQuotation() {
                     customerId: lp.customer_id,
                     customerName: lp.customer_name,
                     customerCode: lp.customer_code || "",
+                    projectStatus: lp.status || "Draft",
                     quoteCount: 0,
                     latest: {
                         id: 0,
@@ -622,12 +913,25 @@ export function useQuotation() {
         viewQuoteDetails,
         initCreateFlow,
         reviseQuotation,
+        handlePrintQuotation,
+        isConfirmModalOpen,
+        setIsConfirmModalOpen,
+        isPriceTypeWarningOpen,
+        handlePriceTypeChange,
+        confirmPriceTypeChange,
+        cancelPriceTypeChange,
         addProductToQuote,
         removeProductFromQuote,
         handleAgreedPriceChange,
         handleSearchCustomers,
         selectCustomer,
         submitQuotation,
+        confirmSubmitQuotation,
+        productTypes,
+        allProducts,
+        addEmptyRow,
+        updateRow,
+        handleRowProductSelect,
         filteredCatalog,
         totalPages,
         paginatedCatalog,

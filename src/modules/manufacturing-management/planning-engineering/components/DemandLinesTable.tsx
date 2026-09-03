@@ -46,6 +46,10 @@ export function DemandLinesTable({
         );
     }, [salesOrderLines, searchQuery]);
 
+    const isSchedulableLine = (line: SalesOrderDetail) =>
+        line.parent_order_status === "For Production" && line.is_scheduled !== true;
+    const selectableFilteredLines = filteredLines.filter(isSchedulableLine);
+
     return (
         <Card className="shadow-sm">
             <CardHeader className="pb-3 border-b bg-muted/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -55,7 +59,7 @@ export function DemandLinesTable({
                         Unfulfilled Demand Lines
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Sales Order items awaiting production scheduling.
+                        For Production demand can be scheduled; In Production demand remains visible for tracking.
                     </CardDescription>
                 </div>
                 <div className="relative w-full md:w-60 shrink-0">
@@ -88,20 +92,21 @@ export function DemandLinesTable({
                                     <TableHead className="w-[40px] text-center">
                                         <Checkbox
                                             checked={
-                                                filteredLines.length > 0 &&
-                                                filteredLines.every(l => selectedDetailIds.includes(l.detail_id))
+                                                selectableFilteredLines.length > 0 &&
+                                                selectableFilteredLines.every(l => selectedDetailIds.includes(l.detail_id))
                                             }
+                                            disabled={selectableFilteredLines.length === 0}
                                             onCheckedChange={(checked) => {
                                                 if (checked) {
                                                     // Select only the filtered lines
-                                                    filteredLines.forEach(l => {
+                                                    selectableFilteredLines.forEach(l => {
                                                         if (!selectedDetailIds.includes(l.detail_id)) {
                                                             handleSelectLine(l.detail_id, true);
                                                         }
                                                     });
                                                 } else {
                                                     // Deselect only the filtered lines
-                                                    filteredLines.forEach(l => {
+                                                    selectableFilteredLines.forEach(l => {
                                                         if (selectedDetailIds.includes(l.detail_id)) {
                                                             handleSelectLine(l.detail_id, false);
                                                         }
@@ -112,6 +117,7 @@ export function DemandLinesTable({
                                     </TableHead>
                                     <TableHead className="font-bold text-xs">SO No.</TableHead>
                                     <TableHead className="font-bold text-xs">Product / Version</TableHead>
+                                    <TableHead className="font-bold text-xs">Production Status</TableHead>
                                     <TableHead className="font-bold text-xs text-right">Qty</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -121,6 +127,7 @@ export function DemandLinesTable({
                                         <TableCell className="py-2 text-center">
                                             <Checkbox
                                                 checked={selectedDetailIds.includes(line.detail_id)}
+                                                disabled={!isSchedulableLine(line)}
                                                 onCheckedChange={(checked) =>
                                                     handleSelectLine(line.detail_id, !!checked)
                                                 }
@@ -144,6 +151,11 @@ export function DemandLinesTable({
                                             <div className="text-[10px] font-medium text-primary">
                                                 Ver: {line.bom_version_name || "No Version"}
                                             </div>
+                                        </TableCell>
+                                        <TableCell className="py-2 text-xs">
+                                            <span className={isSchedulableLine(line) ? "font-semibold text-amber-700" : "font-semibold text-blue-700"}>
+                                                {line.is_scheduled ? "Already scheduled" : line.parent_order_status || "Unknown"}
+                                            </span>
                                         </TableCell>
                                         <TableCell className="py-2 text-right font-bold text-xs">
                                             <span>{line.ordered_quantity.toLocaleString()}</span>

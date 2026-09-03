@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
@@ -11,6 +12,7 @@ import { DirectusShipment } from "@/modules/manufacturing-management/procurement
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
+import { movementLegacyLotId, movementMmLotId } from "../../qa-receiving/_mm-lot-compat";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
@@ -156,6 +158,7 @@ interface DirectusPOProduct {
     vat_percent?: number | string;
     withholding_percent?: number | string;
     unit_price_foreign?: number | string;
+    branch_id?: number | { id: number } | null;
 }
 
 interface ProductMin {
@@ -177,28 +180,17 @@ interface ProductMin {
     cbm_length?: number | string | null;
 }
 
-interface DirectusInventoryLot {
-    id: number;
-    product_id: number;
-    quantity: number;
-    qa_status?: string;
-    unit_cost?: number | string;
-    lot_number?: string;
-    batch_no?: string;
-    lot_id?: number | { lot_id: number; lot_name?: string } | null;
-    expiry_date?: string;
-    branch_id?: number;
-}
-
 interface DirectusReceivingRecord {
     purchase_order_product_id: number | string;
     purchase_order_line_id?: number | { purchase_order_product_id: number } | null;
     product_id: number | { product_id: number };
     receipt_no?: string | null;
+    receipt_date?: string | null;
     receiving_header_id?: number | { id: number; receiving_ticket_no?: string | null; receipt_date?: string | null } | null;
     receipt_type?: number | string | { id: number } | null;
     batch_no?: string | null;
     lot_id?: number | { lot_id: number } | null;
+    mm_lot_id?: number | { lot_id: number } | null;
     received_quantity?: number | string | null;
     quantity_rejected?: number | string | null;
     is_replacement?: boolean | number | null;
@@ -209,12 +201,15 @@ interface DirectusReceivingRecord {
     qa_status?: string | null;
     branch_id?: number | { id: number } | null;
     received_date?: string | null;
+    isPosted?: boolean | number | null;
+    receiving_method?: string | null;
 }
 
 interface DirectusInventoryMovement {
     source_document_id: number | { purchase_order_product_id: number };
     product_id: number | { product_id: number };
     lot_id: number | { lot_id: number };
+    mm_lot_id?: number | { lot_id: number } | null;
     branch_id?: number | { id: number } | null;
     quantity?: number | string | null;
     batch_no?: string | null;
@@ -238,6 +233,8 @@ interface LatestReceivingSnapshot {
     rejected_quantity: number;
     supplier_batch_number: string;
     storage_lot_id: number | null;
+    mm_lot_id: number | null;
+    legacy_lot_id: number | null;
     accepted_lot_allocations: ReceivingLotAllocationSnapshot[];
     rejected_lot_allocations: ReceivingLotAllocationSnapshot[];
     manufacturing_date: string | null;
@@ -279,6 +276,7 @@ export interface ExtendedShipmentLineItem {
     lot_number?: string;
     batch_no?: string;
     lot_id?: number | null;
+    mm_lot_id?: number | null;
     manufacturing_date?: string | null;
     expiration_date?: string;
     discount_type?: number | null;
@@ -290,11 +288,60 @@ export interface ExtendedShipmentLineItem {
     withholding_percent?: number;
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: number | null;
+    rfid_tagged_count?: number;
+    rfid_tags?: string[];
+    rfid_receiving_record_id?: number | null;
 }
 
-function resolveInventoryLotId(value: DirectusInventoryLot["lot_id"]): number | null {
+interface DirectusReceivingItem {
+    purchase_order_product_id?: number | string | null;
+    rfid_code?: string | null;
+}
+
+function chunk<T>(items: T[], size: number) {
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+    return chunks;
+}
+
+async function fetchRfidItemsByReceivingIds(base: string, receivingIds: number[]) {
+    if (receivingIds.length === 0) return [] as DirectusReceivingItem[];
+    try {
+        const rows: DirectusReceivingItem[] = [];
+        for (const ids of chunk(Array.from(new Set(receivingIds)).filter(id => id > 0), 250)) {
+            const params = new URLSearchParams({
+                limit: "-1",
+                fields: "purchase_order_product_id,rfid_code",
+                "filter[purchase_order_product_id][_in]": ids.join(",")
+            });
+            const response = await fetch(`${base}/items/purchase_order_receiving_items?${params.toString()}`, { headers, cache: "no-store" });
+            if (!response.ok) {
+                console.warn(`[Manufacturing Directus API] RFID receiving-items lookup returned ${response.status}.`);
+                return rows;
+            }
+            const body = await response.json() as { data?: DirectusReceivingItem[] };
+            rows.push(...(body.data || []));
+        }
+        return rows;
+    } catch (error) {
+        console.warn("[Manufacturing Directus API] RFID receiving-items lookup failed.", error);
+        return [] as DirectusReceivingItem[];
+    }
+}
+
+function isPreQaRfidAnchor(row: DirectusReceivingRecord) {
+    const receivingMethod = String(row.receiving_method || "").trim().toLowerCase();
+    return (!receivingMethod || receivingMethod === "rfid")
+        && Number(row.isPosted) !== 1
+        && Number(row.received_quantity || 0) === 0
+        && !String(row.receipt_no || "").trim()
+        && !String(row.received_date || "").trim()
+        && !String(row.receipt_date || "").trim();
+}
+
+function resolveInventoryLotId(value: unknown): number | null {
     if (typeof value === "number") return value;
-    return value?.lot_id || null;
+    return value && typeof value === "object" ? Number((value as { lot_id?: unknown }).lot_id) || null : null;
 }
 
 function receivingRecordId(value: DirectusReceivingRecord["purchase_order_product_id"]): number {
@@ -316,9 +363,10 @@ function sumMovementAllocations(
         if (!Number.isSafeInteger(movementBranchId) || branchId === null) continue;
         if (mode === "match" && movementBranchId !== branchId) continue;
         if (mode === "exclude" && movementBranchId === branchId) continue;
-        const storageLotId = movementRelationId(movement.lot_id, "lot_id");
+        const storageLotId = movementMmLotId(movement as unknown as Record<string, unknown>)
+            || movementLegacyLotId(movement as unknown as Record<string, unknown>);
         const quantity = Number(movement.quantity || 0);
-        if (!Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
+        if (storageLotId === null || !Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
         const batchNumber = String(movement.batch_no || "").trim();
         const manufacturingDate = movement.manufacturing_date ? String(movement.manufacturing_date).slice(0, 10) : null;
         const expirationDate = movement.expiry_date ? String(movement.expiry_date).slice(0, 10) : null;
@@ -797,16 +845,38 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,batch_no,lot_id,receipt_type,received_quantity,quantity_rejected,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
         const receivingData = (receivingRes.ok ? (await receivingRes.json()).data || [] : []) as DirectusReceivingRecord[];
-        const originalReceivingData = receivingData.filter(row => row.is_replacement !== true && Number(row.is_replacement) !== 1);
+        const allReceivingIds = receivingData
+            .map(row => receivingRecordId(row.purchase_order_product_id))
+            .filter(id => Number.isSafeInteger(id) && id > 0);
+        const rfidItems = await fetchRfidItemsByReceivingIds(DIRECTUS_URL, allReceivingIds);
+        const rfidTagsByReceivingId = new Map<number, string[]>();
+        for (const item of rfidItems) {
+            const receivingId = Number(item.purchase_order_product_id);
+            const rfid = String(item.rfid_code || "").trim();
+            if (!Number.isSafeInteger(receivingId) || receivingId <= 0 || !rfid) continue;
+            const tags = rfidTagsByReceivingId.get(receivingId) || [];
+            if (!tags.includes(rfid)) tags.push(rfid);
+            rfidTagsByReceivingId.set(receivingId, tags);
+        }
+        const preQaRfidReceivingIds = new Set(
+            receivingData
+                .filter(row => isPreQaRfidAnchor(row) && (rfidTagsByReceivingId.get(receivingRecordId(row.purchase_order_product_id))?.length || 0) > 0)
+                .map(row => receivingRecordId(row.purchase_order_product_id))
+        );
+        const originalReceivingData = receivingData.filter(row =>
+            row.is_replacement !== true
+            && Number(row.is_replacement) !== 1
+            && !preQaRfidReceivingIds.has(receivingRecordId(row.purchase_order_product_id))
+        );
         const receivingHistory = summarizeReceivingHistory(originalReceivingData, popData);
         const receivingIds = originalReceivingData
             .map(row => receivingRecordId(row.purchase_order_product_id))
@@ -815,7 +885,7 @@ export async function fetchShipmentLineItems(
         if (receivingIds.length > 0) {
             const movementParams = new URLSearchParams({
                 "filter[source_document_id][_in]": receivingIds.join(","),
-                fields: "source_document_id,product_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
+                fields: "source_document_id,product_id,mm_lot_id,lot_id,branch_id,quantity,batch_no,manufacturing_date,expiry_date",
                 limit: "-1"
             });
             const movementRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?${movementParams.toString()}`, { headers, cache: "no-store" });
@@ -930,9 +1000,12 @@ export async function fetchShipmentLineItems(
             const latestReceivedQuantity = Number(latestReceipt?.received_quantity || 0);
             const latestRejectedQuantity = Number(latestReceipt?.quantity_rejected || 0);
             const latestAcceptedQuantity = Math.max(0, latestReceivedQuantity - latestRejectedQuantity);
-            const latestPrimaryLotId = resolveInventoryLotId(latestReceipt?.lot_id)
+            const latestMmLotId = resolveInventoryLotId(latestReceipt?.mm_lot_id)
                 || latestAcceptedAllocations[0]?.storage_lot_id
                 || rejectedAllocations[0]?.storage_lot_id
+                || null;
+            const latestPrimaryLotId = latestMmLotId
+                || resolveInventoryLotId(latestReceipt?.lot_id)
                 || null;
             const latestSnapshot: LatestReceivingSnapshot | null = latestReceipt
                 ? {
@@ -949,6 +1022,8 @@ export async function fetchShipmentLineItems(
                     rejected_quantity: latestRejectedQuantity,
                     supplier_batch_number: String(latestReceipt.batch_no || ""),
                     storage_lot_id: latestPrimaryLotId,
+                    mm_lot_id: latestMmLotId,
+                    legacy_lot_id: resolveInventoryLotId(latestReceipt.lot_id),
                     accepted_lot_allocations: latestAcceptedAllocations,
                     rejected_lot_allocations: rejectedAllocations,
                     manufacturing_date: latestMovementWithDate?.manufacturing_date || null,
@@ -968,6 +1043,19 @@ export async function fetchShipmentLineItems(
             const finalLandedUnitCost = allocation
                 ? allocation.finalLandedUnitCost
                 : resolveBaseUnitCostPhp(pop, currency);
+            const lineRfidReceivingRows = receivingData.filter(row => {
+                if (relationId(row.product_id, "product_id") !== Number(rawProdId)) return false;
+                if (movementRelationId(row.branch_id, "id") !== Number(pop.branch_id || 0)) return false;
+                const resolvedLineId = resolvePurchaseOrderLineId(row, popData);
+                return resolvedLineId === null || resolvedLineId === lineId;
+            });
+            const lineRfidTags = [...new Set(lineRfidReceivingRows.flatMap(row =>
+                rfidTagsByReceivingId.get(receivingRecordId(row.purchase_order_product_id)) || []
+            ))];
+            const preQaRfidAnchor = lineRfidReceivingRows.find(row =>
+                isPreQaRfidAnchor(row)
+                && (rfidTagsByReceivingId.get(receivingRecordId(row.purchase_order_product_id))?.length || 0) > 0
+            );
 
             return {
                 line_id: pop.purchase_order_product_id, // map line_id to pop.purchase_order_product_id so QA receiving can update it
@@ -1020,10 +1108,16 @@ export async function fetchShipmentLineItems(
                 batch_no: latestReceipt ? latestReceipt.batch_no || "" : "",
                 lot_number: latestReceipt ? latestReceipt.batch_no || "" : "",
                 lot_id: latestReceipt ? resolveInventoryLotId(latestReceipt.lot_id) : null,
+                mm_lot_id: latestReceipt
+                    ? resolveInventoryLotId(latestReceipt.mm_lot_id) || latestSnapshot?.mm_lot_id || null
+                    : null,
                 manufacturing_date: latestSnapshot?.manufacturing_date || matchingMovement?.manufacturing_date || null,
                 expiration_date: latestSnapshot?.expiration_date || (latestReceipt ? latestReceipt.expiry_date || "" : ""),
                 purchase_intent: pop.purchase_intent || "Buffer_Stock",
                 job_order_id: pop.job_order_id || null,
+                rfid_tagged_count: lineRfidTags.length,
+                rfid_tags: lineRfidTags,
+                rfid_receiving_record_id: preQaRfidAnchor ? receivingRecordId(preQaRfidAnchor.purchase_order_product_id) : null,
                 discount_type: pop.discount_type || null,
                 discount_mode: pop.discount_mode || "Percentage",
                 discount_amount_foreign: pop.discount_amount_foreign ?? null,
@@ -1213,7 +1307,8 @@ export async function updateIncomingShipmentStatus(
                         headers,
                         body: JSON.stringify({
                             cost_per_unit: finalLandedUnitCost,
-                            estimated_unit_cost: finalLandedUnitCost
+                            estimated_unit_cost: finalLandedUnitCost,
+                            ...productUpdateAuditFields(userId)
                         })
                     }).catch(err => console.error("Error updating product cost on status change:", err));
                 }

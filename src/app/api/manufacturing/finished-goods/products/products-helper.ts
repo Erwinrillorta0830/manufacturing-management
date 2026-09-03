@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import {
     DirectusProduct,
     DirectusProductCurrencyProfile,
@@ -77,7 +78,7 @@ export async function getLatestLandedCost(
  */
 export async function fetchAllProducts(search?: string, limit: number = -1): Promise<DirectusProduct[]> {
     try {
-        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes";
+        const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,created_at,created_by,updated_at,updated_by";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
@@ -423,14 +424,18 @@ export async function updateProductDetails(
         unit_of_measurement_count?: number;
         product_image?: string;
         unit_of_measurement?: number | null;
-    }
+    },
+    userId?: number | null
 ): Promise<ProductDetailsUpdateResult> {
     try {
         const url = `${DIRECTUS_URL}/items/products/${productId}`;
         const res = await fetch(url, {
             method: "PATCH",
             headers,
-            body: JSON.stringify(details)
+            body: JSON.stringify({
+                ...details,
+                ...productUpdateAuditFields(userId)
+            })
         });
         if (res.ok) return { ok: true };
         return {
@@ -601,13 +606,16 @@ export async function syncProductOverheads(
     }
 }
 
-export async function updateProductStandardCost(productId: number, standardCost: number): Promise<boolean> {
+export async function updateProductStandardCost(productId: number, standardCost: number, userId?: number | null): Promise<boolean> {
     try {
         const url = `${DIRECTUS_URL}/items/products/${productId}`;
         const res = await fetch(url, {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ cost_per_unit: standardCost })
+            body: JSON.stringify({
+                cost_per_unit: standardCost,
+                ...productUpdateAuditFields(userId)
+            })
         });
         return res.ok;
     } catch (e) {

@@ -259,7 +259,6 @@ export async function createPriceChangeBatch(
     }>(`/api/manufacturing/financial-management/price-control/price-change-batches`, {
         method: "POST",
         body: JSON.stringify({
-            supplier_id: batch.supplier_id,
             reference_no: batch.reference_no,
             remarks: batch.remarks,
             lines,
@@ -281,7 +280,6 @@ export async function createCostChangeRequests(
             proposed_cost: number;
             current_cost?: number | null;
         }[];
-        supplier_id: number;
         reference_no?: string;
         remarks?: string;
     },

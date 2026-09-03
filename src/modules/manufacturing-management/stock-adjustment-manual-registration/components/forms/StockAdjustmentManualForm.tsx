@@ -891,6 +891,12 @@ export function StockAdjustmentManualForm({
                 item.unit_name ||
                 (item.product_id as { unit_name?: string })?.unit_name ||
                 "pcs",
+              product_type: (item.product_id as { product_type?: unknown })?.product_type || item.product_type,
+              product_category: (item.product_id as { product_category?: unknown })?.product_category || item.product_category,
+              category_name:
+                (item.product_id as { product_category?: { category_name?: string } })?.product_category?.category_name ||
+                (item.product_id as { category_name?: string })?.category_name ||
+                item.category_name,
               unit_order: (item.product_id as { unit_of_measurement?: { order: number } })?.unit_of_measurement?.order || 1,
               db_id: item.id,
             })),
@@ -1498,10 +1504,12 @@ export function StockAdjustmentManualForm({
                   <ComboboxContent>
                     <ComboboxList>
                       {(() => {
-                        const filtered = branches.filter(b =>
-                          b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
-                          (b.branch_code ?? "").toLowerCase().includes(branchSearch.toLowerCase())
-                        );
+                        const filtered = branches
+                          .filter(b => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
+                          .filter(b =>
+                            b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
+                            (b.branch_code ?? "").toLowerCase().includes(branchSearch.toLowerCase())
+                          );
                         if (filtered.length === 0) return <ComboboxEmpty>No branches found.</ComboboxEmpty>;
                         return filtered.map(b => {
                           const bCode = b.branch_code ?? "";

@@ -4,6 +4,10 @@ import { toast } from "sonner";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
+function isSchedulableLine(line: SalesOrderDetail): boolean {
+    return line.parent_order_status === "For Production" && line.is_scheduled !== true;
+}
+
 export function usePlanningEngineering() {
     // UI State
     const [loadingBranches, setLoadingBranches] = useState(true);
@@ -392,7 +396,7 @@ export function usePlanningEngineering() {
 
     // Helper: Currently selected details
     const selectedLines = useMemo(() => {
-        return salesOrderLines.filter((l) => selectedDetailIds.includes(l.detail_id));
+        return salesOrderLines.filter((l) => selectedDetailIds.includes(l.detail_id) && isSchedulableLine(l));
     }, [salesOrderLines, selectedDetailIds]);
 
     // Validation checks for merging selected lines
@@ -432,7 +436,7 @@ export function usePlanningEngineering() {
     // Handle toggling select-all
     const handleSelectAll = (checked: boolean) => {
         if (checked) {
-            setSelectedDetailIds(salesOrderLines.map((l) => l.detail_id));
+            setSelectedDetailIds(salesOrderLines.filter(isSchedulableLine).map((l) => l.detail_id));
         } else {
             setSelectedDetailIds([]);
         }
@@ -441,6 +445,8 @@ export function usePlanningEngineering() {
     // Handle toggling single line
     const handleSelectLine = (detailId: number, checked: boolean) => {
         if (checked) {
+            const line = salesOrderLines.find((candidate) => candidate.detail_id === detailId);
+            if (!line || !isSchedulableLine(line)) return;
             setSelectedDetailIds((prev) => [...prev, detailId]);
         } else {
             setSelectedDetailIds((prev) => prev.filter((id) => id !== detailId));
@@ -518,7 +524,8 @@ export function usePlanningEngineering() {
                         }
                     ]
                 },
-                salesOrderIds: uniqueSalesOrderIds
+                salesOrderIds: uniqueSalesOrderIds,
+                salesOrderDetailIds: selectedLines.map((line) => line.detail_id)
             };
 
             await releaseJobOrder(payload);

@@ -134,6 +134,8 @@ export interface FinalReceivingMovement {
     inventoryLotId: number;
     productId: number;
     storageLotId: number;
+    mmLotId: number | null;
+    legacyLotId: number | null;
     branchId: number;
     transactionTypeId: number;
     sourceDocumentNo: string;
@@ -166,6 +168,8 @@ export interface FinalReceivingRecord {
     receiptNumber: string;
     branchId: number;
     storageLotId: number;
+    mmLotId: number | null;
+    legacyLotId: number | null;
     batchNumber: string;
     receivedQuantity: number;
     rejectedQuantity: number;

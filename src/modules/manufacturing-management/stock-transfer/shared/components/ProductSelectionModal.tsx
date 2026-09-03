@@ -108,17 +108,27 @@ export function getProductClassification(product: EnrichedProduct): ProductClass
   if (catLower) {
     if (catLower.includes('raw') || catLower.includes('ingredient') || catLower.includes('bulk') || catLower.includes('chemical')) return 'RM';
     if (catLower.includes('packag') || catLower.includes('bottle') || catLower.includes('cap') || catLower.includes('container') || catLower.includes('wrapping') || catLower.includes('label')) return 'PKG';
-    if (catLower.includes('finish') || catLower.includes('commercial')) return 'FG';
+    if (catLower.includes('finish') || catLower.includes('commercial') || catLower.includes('bihon') || catLower.includes('canton') || catLower.includes('noodle') || catLower.includes('pasta')) return 'FG';
   }
 
   // 3. Product code prefix check
   const codeLower = String(product.product_code || '').toLowerCase();
   if (codeLower.startsWith('rm-') || codeLower.startsWith('rm_') || codeLower.startsWith('raw-')) return 'RM';
-  if (codeLower.startsWith('pkg-') || codeLower.startsWith('pkg_') || codeLower.startsWith('pack-') || codeLower.startsWith('pkg')) return 'PKG';
-  if (codeLower.startsWith('fg-') || codeLower.startsWith('fg_') || codeLower.startsWith('fin-')) return 'FG';
+  if (codeLower.startsWith('pkg-') || codeLower.startsWith('pkg_') || codeLower.startsWith('pack-') || codeLower.startsWith('pkg') || codeLower.startsWith('pm-')) return 'PKG';
+  if (codeLower.startsWith('fg-') || codeLower.startsWith('fg_') || codeLower.startsWith('fin-') || codeLower.startsWith('test-pgb') || codeLower.startsWith('pgb')) return 'FG';
 
   // 4. Product description / name keywords
   const text = `${product.description || ''} ${product.product_name || ''}`.toLowerCase();
+  if (
+    text.includes('bihon') ||
+    text.includes('canton') ||
+    text.includes('noodle') ||
+    text.includes('pasta') ||
+    text.includes('finished good') ||
+    text.includes('commercial')
+  ) {
+    return 'FG';
+  }
   if (
     text.includes('purified process water') ||
     text.includes('purified water') ||

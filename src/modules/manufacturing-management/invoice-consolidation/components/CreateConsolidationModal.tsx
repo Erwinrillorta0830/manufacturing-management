@@ -6,6 +6,7 @@ import { CandidateInvoice, Branch, AllocationPreview } from "../types";
 import { fetchAllocationPreview } from "../services/invoice-consolidation-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 
 interface Props {
     isOpen: boolean;
@@ -39,6 +40,10 @@ export default function CreateConsolidationModal({ isOpen, onClose, branch, cand
                     if (error.name !== "AbortError") {
                         setAllocationPreview(null);
                         setPreviewError(error.message);
+                        toast.error(error.message || "Failed to load live stock from Spring Boot service", {
+                            duration: 6000,
+                            id: "consolidation-preview-error",
+                        });
                     }
                 })
                 .finally(() => {

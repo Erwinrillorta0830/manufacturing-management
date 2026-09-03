@@ -6,21 +6,24 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { 
   Search, 
   RefreshCcw, 
-  Calendar,
-  Layers,
-  MapPin,
-  ArrowUp,
-  ArrowDown,
-  ArrowUpDown,
-  Loader2,
-  ServerCrash,
-  Filter,
-  ExternalLink
+  RotateCcw,
+  Calendar, 
+  Layers, 
+  MapPin, 
+  ArrowUp, 
+  ArrowDown, 
+  ArrowUpDown, 
+  Loader2, 
+  ServerCrash, 
+  Filter, 
+  ExternalLink,
+  Paperclip
 } from 'lucide-react';
 import { useStockTransferSummary, SortConfig } from './hooks/use-stock-transfer-summary';
 import { TransferDetailModal } from './components/TransferDetailModal';
 import { formatPhDateTime } from '../utils/date-utils';
 import { SearchableCombobox } from '../shared/components/searchable-combobox';
+import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -121,7 +124,9 @@ export default function StockTransferSummaryView() {
 
   const branchOptions = React.useMemo(() => [
     { value: 'all', label: 'All Branches' },
-    ...branches.map(b => ({ value: String(b.id), label: b.branch_name || b.name || `Branch ${b.id}` }))
+    ...branches
+      .filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
+      .map(b => ({ value: String(b.id), label: b.branch_name || b.name || `Branch ${b.id}` }))
   ], [branches]);
 
   const statusOptions = React.useMemo(() => [
@@ -142,7 +147,12 @@ export default function StockTransferSummaryView() {
   }
 
   return (
-    <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="flex-1 space-y-4 p-4 md:p-8 pt-6"
+    >
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight text-foreground">Stock Transfer Summary</h2>
         <div className="flex items-center gap-2">
@@ -258,8 +268,8 @@ export default function StockTransferSummaryView() {
                   onChange={(e) => updateFilter('dateTo', e.target.value)}
                   className="h-9 text-xs bg-background border-border flex-1 shadow-none"
                 />
-                <Button variant="ghost" size="icon" onClick={resetFilters} className="h-9 w-9 shrink-0 hover:bg-destructive/10 hover:text-destructive transition-colors">
-                  <RefreshCcw className="w-4 h-4" />
+                <Button variant="ghost" size="icon" onClick={resetFilters} title="Reset Filters" className="h-9 w-9 shrink-0 hover:bg-destructive/10 hover:text-destructive transition-colors">
+                  <RotateCcw className="w-4 h-4" />
                 </Button>
               </div>
             </div>
@@ -312,6 +322,7 @@ export default function StockTransferSummaryView() {
                     <SortableHeader label="Items" sortKey="items" filters={filters} toggleSort={toggleSort} className="text-center" />
                     <SortableHeader label="Value" sortKey="totalAmount" filters={filters} toggleSort={toggleSort} className="text-right" />
                     <SortableHeader label="Requested At" sortKey="dateRequested" filters={filters} toggleSort={toggleSort} className="text-center" />
+                    <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Attachments</TableHead>
                     <SortableHeader label="Status" sortKey="status" filters={filters} toggleSort={toggleSort} className="text-center" />
                     <TableHead className="w-[80px]" />
                   </TableRow>
@@ -319,7 +330,7 @@ export default function StockTransferSummaryView() {
                 <TableBody>
                   {paginatedGroups.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-48 text-center">
+                      <TableCell colSpan={9} className="h-48 text-center">
                         <div className="flex flex-col items-center justify-center space-y-2 text-muted-foreground opacity-30">
                           <Filter className="w-10 h-10" />
                           <p className="text-sm font-bold uppercase tracking-widest">No transfers match your filters</p>
@@ -361,6 +372,20 @@ export default function StockTransferSummaryView() {
                               {formatPhDateTime(group.dateRequested, { formatType: 'timeOnly' })}
                             </span>
                           </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {group.attachments && group.attachments.length > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] font-bold gap-1 bg-primary/5 text-primary border-primary/20 hover:bg-primary/10 transition-colors"
+                              title={`${group.attachments.length} attached document(s)`}
+                            >
+                              <Paperclip className="w-2.5 h-2.5" />
+                              {group.attachments.length} {group.attachments.length === 1 ? 'file' : 'files'}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground/30 text-xs font-mono">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge 
@@ -473,6 +498,6 @@ export default function StockTransferSummaryView() {
         getUnitName={getUnitName}
         branches={branches}
       />
-    </div>
+    </motion.div>
   );
 }

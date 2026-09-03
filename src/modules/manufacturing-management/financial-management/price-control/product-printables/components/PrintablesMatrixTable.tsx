@@ -205,51 +205,7 @@ export default function PrintablesMatrixTable({
                                     );
                                 })}
                             </TableRow>
-                            {/* Render Versions (Nested Rows) */}
-                            {(row.versions || []).map((v) => (
-                                <TableRow key={`v-${v.version.version_id}`} className="hover:bg-muted/40 transition-colors border-b border-border/80 bg-muted/30">
-                                    <TableCell className="sticky left-0 bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5"></TableCell>
-                                    <TableCell className="sticky left-[100px] bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5"></TableCell>
-                                    <TableCell className="sticky left-[200px] bg-background/95 backdrop-blur-sm z-10 border-r border-border/50 py-2.5 text-xs text-foreground/90 whitespace-nowrap">
-                                        <div className="flex items-center pl-3 relative">
-                                            <div className="absolute left-1.5 top-0 bottom-1/2 w-3 border-l-2 border-b-2 border-border/70 rounded-bl-sm" />
-                                            <span className="ml-3 font-medium">{v.version.version_name}</span>
-                                        </div>
-                                    </TableCell>
-                                    {activePriceTypes.map((pt) => {
-                                        const ptSuffix = priceTypeTierKey(pt);
-                                        
-                                        return (
-                                            <React.Fragment key={pt.price_type_id}>
-                                                {visibleUnits.length > 0 ? visibleUnits.map((u) => {
-                                                    const isMatchingUnit = Number(u.unit_id) === Number(v.version.uom_id);
-                                                    const price = isMatchingUnit ? v.tiers[ptSuffix] : null;
 
-                                                    return (
-                                                        <TableCell 
-                                                            key={u.unit_id} 
-                                                            className={cn(
-                                                                "text-right border-r border-border/50 px-3 py-2.5 font-mono text-xs",
-                                                                price == null ? "text-muted-foreground/30" : ""
-                                                            )}
-                                                        >
-                                                            {price != null ? (
-                                                                <span className="font-semibold text-foreground/90">
-                                                                    {formatPriceNumber(price, "\u2014")}
-                                                                </span>
-                                                            ) : (
-                                                                <span className="text-muted-foreground/20">—</span>
-                                                            )}
-                                                        </TableCell>
-                                                    );
-                                                }) : (
-                                                    <TableCell className="border-r border-border/50 text-muted-foreground/20">—</TableCell>
-                                                )}
-                                            </React.Fragment>
-                                        );
-                                    })}
-                                </TableRow>
-                            ))}
                         </React.Fragment>
                     ))}
                 </TableBody>

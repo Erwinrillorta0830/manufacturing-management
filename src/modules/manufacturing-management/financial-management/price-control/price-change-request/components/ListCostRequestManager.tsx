@@ -26,7 +26,7 @@ import { useSupplierPrintEditor } from "../../shared/print/useSupplierPrintEdito
 import { ExcelExportOptionsDialog } from "../../shared/supplier-batch/ExcelExportOptionsDialog";
 import { usePCRActions } from "../hooks/usePCRActions";
 import { useUnifiedApprovals } from "../hooks/useUnifiedApprovals";
-import type { SupplierOption } from "../providers/pcrApi";
+import type { SupplierOption, ProductTypeOption } from "../providers/pcrApi";
 import { applyBulkActionResult, type BulkActionOutcome } from "../utils/applyBulkActionResult";
 import { pcrApproveButtonClass, pcrRejectButtonClass } from "../utils/pcrStatusStyles";
 import { snapshotFromCostRow } from "../utils/labels";
@@ -43,6 +43,9 @@ type Props = {
     suppliers: SupplierOption[];
     suppliersLoading: boolean;
     suppliersError: string | null;
+    productTypes: ProductTypeOption[];
+    productTypesLoading?: boolean;
+    productTypesError?: string | null;
     query: ListQuery;
     setQuery: React.Dispatch<React.SetStateAction<ListQuery>>;
     onUnauthorized?: () => void;
@@ -54,6 +57,9 @@ export function ListCostRequestManager({
     suppliers,
     suppliersLoading,
     suppliersError,
+    productTypes,
+    productTypesLoading,
+    productTypesError,
     query,
     setQuery,
     onUnauthorized,
@@ -197,6 +203,9 @@ export function ListCostRequestManager({
                     suppliers={suppliers}
                     suppliersLoading={suppliersLoading}
                     suppliersError={suppliersError}
+                    productTypes={productTypes}
+                    productTypesLoading={productTypesLoading}
+                    productTypesError={productTypesError}
                     loading={inbox.loading}
                     total={inbox.total}
                     totalLabel="requests"
@@ -487,7 +496,7 @@ export function ListCostRequestManager({
             <CreatePriceChangeBatchDialog
                 open={creatingBatch}
                 onOpenChange={setCreatingBatch}
-                suppliers={suppliers}
+
                 onCreated={() => void inbox.refresh()}
             />
             </>

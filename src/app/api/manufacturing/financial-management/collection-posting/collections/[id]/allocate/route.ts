@@ -57,6 +57,56 @@ export async function POST(
         // Fallback linked_by to 1 if not provided by payload/session
         const linkedBy = payload.collectedBy || 1;
 
+        const newAdjustments = payload.newAdjustments || [];
+        const newEwts = payload.newEwts || [];
+
+        // 1.5 Handle virtual items mapping to collection_details
+        const tempIdToDbIdMap: Record<string, string> = {};
+
+        // Fetch EWT COA ID
+        let ewtCoaId: number | null = null;
+        if (newEwts.length > 0) {
+            const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[_or][0][gl_name][_icontains]=ewt&filter[_or][1][gl_name][_icontains]=withholding`, { headers });
+            if (coaRes.ok) {
+                const coaData = await coaRes.json();
+                if (coaData.data && coaData.data.length > 0) {
+                    ewtCoaId = coaData.data[0].coa_id;
+                }
+            }
+        }
+
+        // Insert Adjustments
+        for (const adj of newAdjustments) {
+            const detailData = {
+                collection_id: id,
+                finding: adj.findingId,
+                balance_type_id: adj.balanceTypeId,
+                amount: adj.amount,
+                remarks: adj.remarks
+            };
+            const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
+            if (res.ok) {
+                const data = await res.json();
+                tempIdToDbIdMap[adj.tempId] = `detail-${data.data.id}`;
+            }
+        }
+
+        // Insert EWTs
+        for (const ewt of newEwts) {
+            const detailData = {
+                collection_id: id,
+                type: ewtCoaId,
+                amount: ewt.amount,
+                check_no: ewt.referenceNo,
+                remarks: ewt.referenceNo
+            };
+            const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
+            if (res.ok) {
+                const data = await res.json();
+                tempIdToDbIdMap[ewt.tempId] = `detail-${data.data.id}`;
+            }
+        }
+
         for (const alloc of allocations) {
             if (alloc.amountApplied <= 0) continue; // Skip zero allocations
 
@@ -68,7 +118,7 @@ export async function POST(
                     invoice_id: alloc.invoiceId,
                     amount: alloc.amountApplied,
                     type: type,
-                    source_temp_id: alloc.sourceTempId
+                    source_temp_id: tempIdToDbIdMap[alloc.sourceTempId] || alloc.sourceTempId
                 });
             } else if (type === "MEMO") {
                 const memoId = parseInt(alloc.sourceTempId.replace(/\D/g, ""), 10);

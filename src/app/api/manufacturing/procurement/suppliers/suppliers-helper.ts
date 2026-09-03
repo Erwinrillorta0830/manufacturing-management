@@ -285,7 +285,7 @@ export async function fetchSuppliers(status: SupplierStatusFilter = "active"): P
             ? ""
             : `&filter[isActive][_eq]=${status === "active" ? "true" : "false"}`;
         const [supRes, repRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/suppliers?fields=id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency&sort=supplier_name&limit=-1${statusFilter}`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/suppliers?fields=${SUPPLIER_FIELDS}&sort=supplier_name&limit=-1${statusFilter}`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/suppliers_representative?limit=-1`, { headers, cache: "no-store" })
         ]);
         if (!supRes.ok) throw new Error("Failed to fetch suppliers");

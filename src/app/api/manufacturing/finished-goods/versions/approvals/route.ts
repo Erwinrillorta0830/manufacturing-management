@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ interface DirectusProductVersion {
     product_id: number;
     version_name: string;
     base_quantity: number;
-    uom_id?: number | null;
+    uom_id?: { unit_shortcut?: string; unit_name?: string } | number | string | null;
     expected_yield_percentage: number;
     custom_overhead?: number | null;
     status: string;
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
         const searchParam = searchParams.get("search");
 
         const [verRes, prodRes, usersRes] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,base_quantity,uom_id,expected_yield_percentage,custom_overhead,status,valid_from,valid_to,created_by,created_at,approved_by,approved_at,remarks`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,product_id,version_name,base_quantity,uom_id.unit_shortcut,uom_id.unit_name,expected_yield_percentage,custom_overhead,status,valid_from,valid_to,created_by,created_at,approved_by,approved_at,remarks`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,product_category.category_name`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`, { headers, cache: "no-store" }).catch(() => null)
         ]);
@@ -119,6 +120,7 @@ export async function GET(request: Request) {
                 category: prod?.category_name || "Unassigned",
                 version_name: v.version_name || `v${v.version_id}`,
                 base_quantity: Number(v.base_quantity || 1),
+                uom: (typeof v.uom_id === "object" && v.uom_id) ? (v.uom_id.unit_shortcut || v.uom_id.unit_name || "Unknown") : "pcs",
                 expected_yield_percentage: Number(v.expected_yield_percentage || 100),
                 created_by: createdByName,
                 created_at: v.created_at || new Date().toISOString(),
@@ -257,7 +259,11 @@ export async function POST(request: Request) {
                 await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "Active", isActive: true })
+                    body: JSON.stringify({
+                        status: "Active",
+                        isActive: true,
+                        ...productUpdateAuditFields(userId)
+                    })
                 }).catch(() => {});
             }
 

@@ -64,7 +64,6 @@ const defaultFilters: PricingFilters = {
     price_type_ids: [],
     show_list_price: false,
     product_type_ids: [],
-    show_versions: false,
 };
 
 export function usePricingMatrix(args: {
@@ -123,7 +122,6 @@ export function usePricingMatrix(args: {
                 unit_ids: filters.unit_ids ?? [],
                 supplier_ids: filters.supplier_ids ?? [],
                 product_type_ids: filters.product_type_ids ?? [],
-                show_versions: filters.show_versions,
             }),
         [
             filters.q,
@@ -135,7 +133,6 @@ export function usePricingMatrix(args: {
             filters.unit_ids,
             filters.supplier_ids,
             filters.product_type_ids,
-            filters.show_versions,
         ],
     );
 
@@ -162,7 +159,6 @@ export function usePricingMatrix(args: {
                 active_only: filters.active_only ? "1" : "0",
                 missing_tier: filters.missing_tier ? "1" : "0",
                 product_type_ids: filters.product_type_ids.length ? filters.product_type_ids.join(",") : undefined,
-                show_versions: filters.show_versions ? "1" : "0",
                 page: String(page),
                 page_size: String(pageSize),
                 pending_product_ids:
@@ -616,8 +612,8 @@ export function usePricingMatrix(args: {
             const meta = dirtyMeta.get(k);
             const product = findProductInRows(rows, productId);
             const pObj = typeof product?.product_id === "object" ? product?.product_id : null;
-            const product_name = meta?.product_name ?? pObj?.product_name ?? `Product #${productId}`;
-            const product_code = meta?.product_code ?? pObj?.product_code ?? null;
+            const product_name = meta?.product_name ?? pObj?.product_name ?? product?.product_name ?? `Product #${productId}`;
+            const product_code = meta?.product_code ?? pObj?.product_code ?? product?.product_code ?? null;
 
             if (!price.trim()) {
                 const validation_error = dirtyErrors.get(k) ?? EMPTY_PRICE_ERROR;
@@ -727,17 +723,8 @@ export function usePricingMatrix(args: {
                 const finalPrice = price.trim() === "" ? null : proposed;
                 
                 // Find the product_id for this version
-                let versionProductId = 0;
-                rows_loop: for (const row of rows) {
-                    if (row.display?.versions) {
-                        for (const v of row.display.versions) {
-                            if (v.version_id === vid) {
-                                versionProductId = v.product_id;
-                                break rows_loop;
-                            }
-                        }
-                    }
-                }
+                const versionProductId = 0;
+                // versions removed
 
                 if (finalPrice !== null && versionProductId > 0) {
                     pcrItems.push({
@@ -796,13 +783,13 @@ export function usePricingMatrix(args: {
             return { success: false, reason: "no_valid_lines" };
         }
 
-        if (costPcrItems.length > 0 && (!batch?.supplier_id || batch.supplier_id <= 0)) {
-            toast.error("Supplier is required for List Cost requests.");
+        if (costPcrItems.length > 0 && !batch) {
+            toast.error("Batch details are required for List Cost requests.");
             return { success: false, reason: "missing_batch_fields" };
         }
 
-        if (pcrItems.length > 0 && (!batch?.supplier_id || !batch.remarks.trim())) {
-            toast.error("Supplier and batch remarks are required for price change batches.");
+        if (pcrItems.length > 0 && (!batch?.remarks.trim())) {
+            toast.error("Batch remarks are required for price change batches.");
             return { success: false, reason: "missing_batch_fields" };
         }
 
@@ -891,7 +878,6 @@ export function usePricingMatrix(args: {
             if (costPcrItems.length > 0) {
                 const costRes = (await api.createCostChangeRequests({
                     items: costPcrItems,
-                    supplier_id: batch!.supplier_id,
                     reference_no: batch!.reference_no,
                     remarks: batch!.remarks,
                 })) as CreateResult;

@@ -14,6 +14,16 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         
+        const page = parseInt(searchParams.get("page") || "1");
+        const size = parseInt(searchParams.get("size") || "25");
+        
+        searchParams.delete("page");
+        searchParams.delete("size");
+        
+        searchParams.append("page", String(page));
+        searchParams.append("limit", String(size));
+        searchParams.append("meta", "filter_count");
+
         // Pass through query parameters but force isPosted=0
         searchParams.append("filter[isPosted][_eq]", "0");
         if (!searchParams.has("sort")) {
@@ -61,11 +71,14 @@ export async function GET(request: Request) {
             };
         });
         
+        const totalElements = data.meta?.filter_count || mappedItems.length;
+        const totalPages = Math.ceil(totalElements / size);
+
         return NextResponse.json({
             content: mappedItems,
-            totalElements: data.meta?.filter_count || mappedItems.length,
-            totalPages: 1,
-            currentPage: 0
+            totalElements,
+            totalPages,
+            currentPage: page
         });
     } catch (e) {
         console.error("API Error fetching unposted collections:", e);

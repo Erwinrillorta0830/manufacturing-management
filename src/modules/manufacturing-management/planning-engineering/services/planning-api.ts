@@ -2,14 +2,30 @@
 import { Branch, JobOrderMaterial, SalesOrder, SalesOrderDetail } from "../types";
 
 export async function fetchBranches(): Promise<Branch[]> {
-    const invRes = await fetch("/api/manufacturing/inventory");
-    if (!invRes.ok) {
+    const branchRes = await fetch("/api/manufacturing/branches", { cache: "no-store" });
+    if (!branchRes.ok) {
         throw new Error("Failed to load branches list.");
     }
-    const invData = await invRes.json();
-    return (invData.branches || []).filter(
-        (b: Branch) => b.isActive === true || b.isActive === 1 || b.isActive === undefined
-    );
+
+    const payload: unknown = await branchRes.json();
+    if (!Array.isArray(payload)) {
+        throw new Error("Branches endpoint returned an invalid response.");
+    }
+
+    return payload
+        .map((row: {
+            id?: number | string;
+            branchName?: string | null;
+            branchCode?: string | null;
+            branch_name?: string | null;
+            branch_code?: string | null;
+        }): Branch => ({
+            id: Number(row.id),
+            branch_name: String(row.branchName ?? row.branch_name ?? "").trim(),
+            branch_code: String(row.branchCode ?? row.branch_code ?? "").trim() || undefined,
+            isActive: true,
+        }))
+        .filter((branch) => Number.isFinite(branch.id) && branch.id > 0 && Boolean(branch.branch_name));
 }
 
 export async function fetchSalesOrders(): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
@@ -78,6 +94,7 @@ export interface ReleaseJOPayload {
         }>;
     };
     salesOrderIds: number[];
+    salesOrderDetailIds: number[];
 }
 
 export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<void> {

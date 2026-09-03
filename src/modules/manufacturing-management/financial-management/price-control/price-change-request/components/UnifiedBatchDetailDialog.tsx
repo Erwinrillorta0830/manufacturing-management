@@ -22,6 +22,7 @@ import { getUnifiedBatch } from "../providers/pcrApi";
 import { BatchDecisionSummaryFields } from "./BatchDecisionSummaryFields";
 import { DecisionConfirmationDialog } from "./DecisionConfirmationDialog";
 import { RejectDialog } from "./RejectDialog";
+import { getProductTypeBadgeProps } from "../utils/productTypeLabels";
 import { decisionUserLabel } from "../utils/labels";
 import { displayPcrStatus, pcrApproveButtonClass, pcrStatusBadgeClass } from "../utils/pcrStatusStyles";
 
@@ -73,6 +74,7 @@ function buildLineSummary(lines: UnifiedBatchLine[]) {
     const typeLabels = new Set<string>();
     let increaseCount = 0;
     let decreaseCount = 0;
+    let isFGBatch = true;
 
     for (const line of lines) {
         if (Number.isFinite(line.product_id)) productIds.add(Number(line.product_id));
@@ -80,6 +82,7 @@ function buildLineSummary(lines: UnifiedBatchLine[]) {
         const delta = Number(line.delta ?? 0);
         if (delta > 0) increaseCount += 1;
         if (delta < 0) decreaseCount += 1;
+        if (line.product_type_name !== "FG") isFGBatch = false;
     }
 
     return {
@@ -88,6 +91,7 @@ function buildLineSummary(lines: UnifiedBatchLine[]) {
         typeCount: typeLabels.size,
         increaseCount,
         decreaseCount,
+        isFGBatch,
     };
 }
 
@@ -95,12 +99,10 @@ type LineSummary = ReturnType<typeof buildLineSummary>;
 
 function LineTable({
     lines,
-    supplierName,
     summary,
 }: {
     lines: UnifiedBatchLine[];
-    supplierName: string;
-    summary: LineSummary;
+    summary: LineSummary & { isFGBatch?: boolean };
 }) {
     return (
         <div className="rounded-md border overflow-x-auto">
@@ -108,7 +110,7 @@ function LineTable({
                 <TableHeader>
                     <TableRow>
                         <TableHead>Product</TableHead>
-                        <TableHead className="w-[130px]">Supplier</TableHead>
+                        {summary.isFGBatch ? null : <TableHead className="w-[130px]">Supplier</TableHead>}
                         <TableHead className="w-[72px]">Unit</TableHead>
                         <TableHead className="w-[110px]">Type</TableHead>
                         <TableHead className="w-[140px] text-right">Current</TableHead>
@@ -123,7 +125,7 @@ function LineTable({
                             <TableCell className="min-w-[280px] max-w-[420px] align-top">
                                 <div className="whitespace-normal break-words leading-snug font-medium">
                                     {line.product_name || `Product #${line.product_id}`}
-                                    {line.version_name ? ` (${line.version_name.trim()})` : null}
+
                                 </div>
                                 {line.product_code ? (
                                     <div className="whitespace-normal break-words text-xs text-muted-foreground">
@@ -131,9 +133,11 @@ function LineTable({
                                     </div>
                                 ) : null}
                             </TableCell>
-                            <TableCell className="min-w-[180px] max-w-[280px] whitespace-normal break-words align-top">
-                                {supplierName || "-"}
-                            </TableCell>
+                            {summary.isFGBatch ? null : (
+                                <TableCell className="min-w-[180px] max-w-[280px] whitespace-normal break-words align-top">
+                                    {line.supplier_name || "-"}
+                                </TableCell>
+                            )}
                             <TableCell>{line.unit_name || "-"}</TableCell>
                             <TableCell>
                                 <Badge variant="outline">
@@ -231,7 +235,11 @@ export function UnifiedBatchDetailDialog({
         () => [...(detail?.price_details ?? []), ...(detail?.cost_details ?? [])],
         [detail?.cost_details, detail?.price_details],
     );
-    const lineSummary = React.useMemo(() => buildLineSummary(lines), [lines]);
+    const lineSummary = React.useMemo(() => {
+        const summary = buildLineSummary(lines);
+        summary.isFGBatch = detail?.product_types?.every((t) => t.name === "FG") ?? false;
+        return summary;
+    }, [lines, detail]);
 
     const handleRetryApplication = async () => {
         if (!batchId || !onRetryApplication) return;
@@ -267,10 +275,6 @@ export function UnifiedBatchDetailDialog({
                         <div className="flex flex-col gap-4">
                             <div className="grid gap-3 rounded-md border bg-muted/30 p-3 text-sm sm:grid-cols-4">
                                 <div>
-                                    <div className="text-xs font-medium uppercase text-muted-foreground">Supplier</div>
-                                    <div className="mt-1 break-words font-medium">{detail.supplier_name || "-"}</div>
-                                </div>
-                                <div>
                                     <div className="text-xs font-medium uppercase text-muted-foreground">Status</div>
                                     <div className="mt-1">
                                         <Badge variant="outline" className={pcrStatusBadgeClass(String(displayStatus))}>
@@ -291,6 +295,27 @@ export function UnifiedBatchDetailDialog({
                                 <div>
                                     <div className="text-xs font-medium uppercase text-muted-foreground">Lines</div>
                                     <div className="mt-1 font-medium">{lines.length.toLocaleString()}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs font-medium uppercase text-muted-foreground">Product Type</div>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                        {detail.product_types && detail.product_types.length > 0 ? (
+                                            detail.product_types.map((type) => {
+                                                const badgeProps = getProductTypeBadgeProps(type.name);
+                                                return (
+                                                    <Badge
+                                                        key={type.id}
+                                                        variant="outline"
+                                                        className={badgeProps.className}
+                                                    >
+                                                        {badgeProps.label}
+                                                    </Badge>
+                                                );
+                                            })
+                                        ) : (
+                                            <span className="font-medium">-</span>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="sm:col-span-2">
                                     <div className="text-xs font-medium uppercase text-muted-foreground">Reference No.</div>
@@ -313,7 +338,7 @@ export function UnifiedBatchDetailDialog({
                                 </div>
                             ) : null}
 
-                            <LineTable lines={lines} supplierName={detail.supplier_name} summary={lineSummary} />
+                            <LineTable lines={lines} summary={lineSummary} />
                         </div>
                     ) : (
                         <div className="py-10 text-center text-sm text-muted-foreground">No batch details found.</div>

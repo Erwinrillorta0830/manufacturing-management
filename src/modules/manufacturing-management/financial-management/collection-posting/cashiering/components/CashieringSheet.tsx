@@ -427,7 +427,7 @@ export default function CashieringSheet({state}: { state: CashieringState }) {
                                                                             className="max-h-[250px] overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-border hover:scrollbar-thumb-foreground/20 overscroll-contain">
                                                                             <CommandEmpty>No COA found.</CommandEmpty>
                                                                             <CommandGroup>
-                                                                                {coas.map((c: COA) => (
+                                                                                {coas.filter((c: COA) => c.coaId !== 1 && c.id !== 1).map((c: COA) => (
                                                                                     <CommandItem key={c.coaId || c.id}
                                                                                                  value={c.accountTitle}
                                                                                                  onSelect={() => {

@@ -18,8 +18,18 @@ import {
     fetchProducts
 } from "../services/lot-management-api";
 import { getFefoPriorityMap, evaluateBatchEligibility, sortBatchesForDisplay } from "../utils/fefoEngine";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
-export function useBatchRegistration(lots: Lot[], selectedProductId: number | "ALL" = "ALL") {
+export function useBatchRegistration(
+    lots: Lot[],
+    selectedProductId: number | "ALL" = "ALL",
+    selectedLotId: number | "ALL" = "ALL",
+    selectedBatchId: number | "ALL" = "ALL",
+    globalSearchQuery: string = "",
+    selectedBranchId: number | "ALL" = "ALL",
+    selectedProductType: string | "ALL" = "ALL",
+    selectedUomId: number | "ALL" = "ALL"
+) {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [products, setProducts] = useState<ProductItem[]>([]);
     const [loadingBatches, setLoadingBatches] = useState(true);
@@ -81,10 +91,15 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
                     ? matchedP.skuCode
                     : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
 
+                const pType = (matchedP as { productType?: unknown; product_type?: unknown })?.productType || (matchedP as { productType?: unknown; product_type?: unknown })?.product_type || b.productType;
+                const pCat = (matchedP as { productCategory?: unknown; category_name?: unknown })?.productCategory || (matchedP as { productCategory?: unknown; category_name?: unknown })?.category_name || b.productCategory;
+
                 return {
                     ...b,
                     productName: prodName,
-                    itemCode: itemCode
+                    itemCode: itemCode,
+                    productType: pType,
+                    productCategory: pCat
                 };
             });
 
@@ -115,10 +130,15 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
                             ? matchedP.skuCode
                             : (b.itemCode && !b.itemCode.startsWith("PROD-") ? b.itemCode : (matchedP?.skuCode || b.itemCode || `PROD-${b.productId}`));
 
+                        const pType = (matchedP as { productType?: unknown; product_type?: unknown })?.productType || (matchedP as { productType?: unknown; product_type?: unknown })?.product_type || b.productType;
+                        const pCat = (matchedP as { productCategory?: unknown; category_name?: unknown })?.productCategory || (matchedP as { productCategory?: unknown; category_name?: unknown })?.category_name || b.productCategory;
+
                         return {
                             ...b,
                             productName: prodName,
-                            itemCode: itemCode
+                            itemCode: itemCode,
+                            productType: pType,
+                            productCategory: pCat
                         };
                     });
 
@@ -141,53 +161,48 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
 
     const openCreateBatchDialog = (preselectedLotId?: number) => {
         const defaultLotId = preselectedLotId || (lots.length > 0 ? lots[0].lotId : "");
+        const defaultProduct = products.length > 0 ? products[0] : null;
         const matchedLot = lots.find((l) => l.lotId === defaultLotId);
-        const defaultProd = products.length > 0 ? products[0] : null;
-        const defaultProdId = defaultProd ? defaultProd.productId : "";
-        const initialCost = defaultProd?.unitCost !== undefined
-            ? String(defaultProd.unitCost)
-            : (defaultProd?.cost_per_unit !== undefined ? String(defaultProd.cost_per_unit) : "0.00");
-        
-        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-        const autoSeq = String(batches.length + 1).padStart(3, "0");
-        const suggestedBatchNo = `BAT-${todayStr}-${autoSeq}`;
+        const resolvedCost = defaultProduct?.unitCost !== undefined
+            ? String(defaultProduct.unitCost)
+            : (defaultProduct?.cost_per_unit !== undefined ? String(defaultProduct.cost_per_unit) : "0.00");
 
         setBatchFormData({
-            batchNumber: suggestedBatchNo,
+            batchNumber: "",
             lotId: defaultLotId,
-            productId: defaultProdId,
-            itemCode: defaultProd ? defaultProd.skuCode : "",
+            productId: defaultProduct ? defaultProduct.productId : "",
+            itemCode: defaultProduct ? defaultProduct.skuCode : "",
             quantity: "1",
-            unitCost: initialCost,
+            unitCost: resolvedCost || "0.00",
             uomId: matchedLot?.uomId || "",
-            manufacturingDate: new Date().toISOString().slice(0, 10),
+            manufacturingDate: "",
             expirationDate: "",
             qaStatus: "GOOD",
             status: "ACTIVE",
             remarks: ""
         });
-        setBatchFormErrors({});
         setEditingBatch(null);
+        setBatchFormErrors({});
         setIsBatchFormOpen(true);
     };
 
     const openEditBatchDialog = (batch: Batch) => {
+        setEditingBatch(batch);
         setBatchFormData({
             batchNumber: batch.batchNumber,
             lotId: batch.lotId,
-            productId: batch.productId || (products.length > 0 ? products[0].productId : ""),
-            itemCode: batch.itemCode || "",
-            quantity: String(batch.quantity || 1),
+            productId: batch.productId,
+            itemCode: batch.itemCode,
+            quantity: String(batch.quantity || "0"),
             unitCost: String(batch.unitCost || "0.00"),
-            uomId: batch.uomId !== null ? batch.uomId : "",
-            manufacturingDate: batch.manufacturingDate ? batch.manufacturingDate.slice(0, 10) : "",
-            expirationDate: batch.expirationDate ? batch.expirationDate.slice(0, 10) : "",
+            uomId: batch.uomId || "",
+            manufacturingDate: batch.manufacturingDate ? batch.manufacturingDate.substring(0, 10) : "",
+            expirationDate: batch.expirationDate ? batch.expirationDate.substring(0, 10) : "",
             qaStatus: batch.qaStatus || "GOOD",
             status: batch.status || "ACTIVE",
             remarks: batch.remarks || ""
         });
         setBatchFormErrors({});
-        setEditingBatch(batch);
         setIsBatchFormOpen(true);
     };
 
@@ -275,60 +290,51 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
         if (!validateBatchForm()) return;
         setSavingBatch(true);
         try {
-            const matchedLot = lots.find((l) => l.lotId === Number(batchFormData.lotId));
-            const targetBranchId = matchedLot?.branchId || 1;
-
             const payload: CreateBatchPayload = {
                 batch_no: batchFormData.batchNumber.trim(),
                 lot_id: Number(batchFormData.lotId),
-                branch_id: targetBranchId,
                 product_id: Number(batchFormData.productId),
+                item_code: batchFormData.itemCode.trim() || undefined,
+                quantity: Number(batchFormData.quantity),
+                unit_cost: Number(batchFormData.unitCost) || 0,
                 manufacturing_date: batchFormData.manufacturingDate || null,
                 expiry_date: batchFormData.expirationDate || null,
-                unit_cost: Number(batchFormData.unitCost || 0),
                 qa_status: batchFormData.qaStatus,
                 status: batchFormData.status,
-                remarks: batchFormData.remarks.trim() || undefined,
-                quantity: Number(batchFormData.quantity || 1),
-                item_code: batchFormData.itemCode.trim() || undefined
+                remarks: batchFormData.remarks.trim() || null
             };
 
             await createBatch(payload);
-            toast.success(`Batch "${batchFormData.batchNumber.trim()}" registered successfully!`);
+            toast.success(`Batch "${batchFormData.batchNumber}" created successfully!`);
             closeBatchDialog();
             await loadBatches();
         } catch (e) {
-            console.error("Failed to register batch:", e);
-            toast.error(e instanceof Error ? e.message : "Failed to register batch");
+            console.error("Failed to create batch:", e);
+            toast.error(e instanceof Error ? e.message : "Failed to create batch");
         } finally {
             setSavingBatch(false);
         }
     };
 
     const handleUpdateBatch = async () => {
-        if (!editingBatch) return;
-        if (!validateBatchForm()) return;
+        if (!editingBatch || !validateBatchForm()) return;
         setSavingBatch(true);
         try {
-            const matchedLot = lots.find((l) => l.lotId === Number(batchFormData.lotId));
-            const targetBranchId = matchedLot?.branchId || editingBatch.branchId || 1;
-
             const payload: UpdateBatchPayload = {
                 batch_no: batchFormData.batchNumber.trim(),
                 lot_id: Number(batchFormData.lotId),
-                branch_id: targetBranchId,
                 product_id: Number(batchFormData.productId),
+                quantity: Number(batchFormData.quantity),
+                unit_cost: Number(batchFormData.unitCost) || 0,
                 manufacturing_date: batchFormData.manufacturingDate || null,
                 expiry_date: batchFormData.expirationDate || null,
-                unit_cost: Number(batchFormData.unitCost || 0),
                 qa_status: batchFormData.qaStatus,
                 status: batchFormData.status,
-                remarks: batchFormData.remarks.trim() || undefined,
-                quantity: Number(batchFormData.quantity || 1)
+                remarks: batchFormData.remarks.trim() || null
             };
 
             await updateBatch(editingBatch.batchId, payload);
-            toast.success("Batch updated successfully!");
+            toast.success(`Batch "${batchFormData.batchNumber}" updated successfully!`);
             closeBatchDialog();
             await loadBatches();
         } catch (e) {
@@ -355,43 +361,139 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
 
     const filteredBatches = useMemo(() => {
         const rawFiltered = batches.filter((b) => {
-            const matchesLot = selectedLotFilter === "ALL" || b.lotId === selectedLotFilter;
+            if (selectedBranchId !== "ALL") {
+                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
+                    return false;
+                }
+            }
+            if (selectedProductType !== "ALL") {
+                const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
+                if (cls.code !== selectedProductType) {
+                    return false;
+                }
+            }
+            if (selectedUomId !== "ALL") {
+                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                if (Number(b.uomId) !== Number(selectedUomId) && Number(matchedLot?.uomId) !== Number(selectedUomId)) {
+                    return false;
+                }
+            }
+            const matchesProduct = selectedProductId === "ALL" || Number(b.productId) === Number(selectedProductId);
+            const matchesGlobalLot = selectedLotId === "ALL" || Number(b.lotId) === Number(selectedLotId);
+            const matchesLocalLot = selectedLotFilter === "ALL" || Number(b.lotId) === Number(selectedLotFilter);
+            const matchesBatch = selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId);
             const matchesStatus = statusFilter === "ALL" || b.status === statusFilter || b.qaStatus === statusFilter;
-            const query = batchSearchQuery.toLowerCase().trim();
-            const matchesSearch =
-                !query ||
-                b.batchNumber.toLowerCase().includes(query) ||
-                b.lotName.toLowerCase().includes(query) ||
-                b.productName?.toLowerCase().includes(query) ||
-                b.itemCode.toLowerCase().includes(query) ||
-                b.remarks.toLowerCase().includes(query);
+            
+            const localQuery = batchSearchQuery.toLowerCase().trim();
+            const globalQuery = globalSearchQuery.toLowerCase().trim();
 
-            return matchesLot && matchesStatus && matchesSearch;
+            const matchesText = (q: string) =>
+                !q ||
+                b.batchNumber.toLowerCase().includes(q) ||
+                b.lotName.toLowerCase().includes(q) ||
+                b.productName?.toLowerCase().includes(q) ||
+                b.itemCode.toLowerCase().includes(q) ||
+                b.remarks.toLowerCase().includes(q);
+
+            return (
+                matchesProduct &&
+                matchesGlobalLot &&
+                matchesLocalLot &&
+                matchesBatch &&
+                matchesStatus &&
+                matchesText(localQuery) &&
+                matchesText(globalQuery)
+            );
         });
 
         // Sort by FEFO Priority order (#1 FEFO NEXT items at the top)
         const fefoSorted = sortBatchesForDisplay(rawFiltered, selectedProductId);
 
         return fefoSorted.map((b, idx) => ({ ...b, displayNumber: idx + 1 }));
-    }, [batches, selectedLotFilter, statusFilter, batchSearchQuery, selectedProductId]);
+    }, [
+        batches,
+        lots,
+        selectedBranchId,
+        selectedProductType,
+        selectedUomId,
+        selectedLotFilter,
+        selectedLotId,
+        selectedBatchId,
+        statusFilter,
+        batchSearchQuery,
+        globalSearchQuery,
+        selectedProductId
+    ]);
 
     const kpiMetrics: LotKpiMetrics = useMemo(() => {
-        const fefoMap = getFefoPriorityMap(batches, selectedProductId);
-        const totalLots = lots.length;
-        const totalBatches = batches.length;
+        const isAllBranches = selectedBranchId === "ALL";
+        const isAllTypes = selectedProductType === "ALL";
+        const isAllUoms = selectedUomId === "ALL";
+        const isAllProducts = selectedProductId === "ALL";
+        const isAllLots = selectedLotId === "ALL";
+        const isAllBatches = selectedBatchId === "ALL";
+        const globalQuery = globalSearchQuery.toLowerCase().trim();
+
+        const targetBatches = batches.filter((b) => {
+            if (!isAllBranches) {
+                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
+                    return false;
+                }
+            }
+            if (!isAllTypes) {
+                const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
+                if (cls.code !== selectedProductType) {
+                    return false;
+                }
+            }
+            if (!isAllUoms) {
+                const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
+                if (Number(b.uomId) !== Number(selectedUomId) && Number(matchedLot?.uomId) !== Number(selectedUomId)) {
+                    return false;
+                }
+            }
+            if (!isAllProducts && Number(b.productId) !== Number(selectedProductId)) return false;
+            if (!isAllLots && Number(b.lotId) !== Number(selectedLotId)) return false;
+            if (!isAllBatches && Number(b.batchId) !== Number(selectedBatchId)) return false;
+            if (globalQuery) {
+                const matches =
+                    b.batchNumber.toLowerCase().includes(globalQuery) ||
+                    b.lotName.toLowerCase().includes(globalQuery) ||
+                    b.productName?.toLowerCase().includes(globalQuery) ||
+                    b.itemCode.toLowerCase().includes(globalQuery) ||
+                    b.remarks.toLowerCase().includes(globalQuery);
+                if (!matches) return false;
+            }
+            return true;
+        });
+
+        const fefoMap = getFefoPriorityMap(targetBatches, selectedProductId);
+        const relevantLotIds = new Set(targetBatches.map((b) => b.lotId));
+        let branchLots = !isAllBranches ? lots.filter((l) => Number(l.branchId) === Number(selectedBranchId)) : lots;
+        if (!isAllUoms) {
+            branchLots = branchLots.filter((l) => Number(l.uomId) === Number(selectedUomId));
+        }
+        const totalLots = isAllBranches && isAllTypes && isAllUoms && isAllProducts && isAllLots && isAllBatches && !globalQuery
+            ? lots.length
+            : branchLots.filter((l) => relevantLotIds.has(l.lotId)).length;
+        const totalBatches = targetBatches.length;
 
         let totalQuantity = 0;
         let activeQuantity = 0;
         let fefoNextCount = 0;
         let quarantinedOrExpiring = 0;
+        const fefoNextBatches: Batch[] = [];
 
-        batches.forEach((b) => {
+        targetBatches.forEach((b) => {
             const qty = Number(b.quantity || 0);
             totalQuantity += qty;
 
             const fefoInfo = fefoMap.get(b.batchId);
             if (fefoInfo?.isFefoNext) {
                 fefoNextCount++;
+                fefoNextBatches.push(b);
             }
 
             const evalRes = evaluateBatchEligibility(b);
@@ -402,15 +504,40 @@ export function useBatchRegistration(lots: Lot[], selectedProductId: number | "A
             }
         });
 
+        fefoNextBatches.sort((a, b) => {
+            const expA = a.expirationDate ? new Date(a.expirationDate).getTime() : Infinity;
+            const expB = b.expirationDate ? new Date(b.expirationDate).getTime() : Infinity;
+            return expA - expB;
+        });
+
+        const selectedProd = !isAllProducts
+            ? products.find((p) => Number(p.productId) === Number(selectedProductId))
+            : undefined;
+        const selectedProductName = selectedProd?.productName || (selectedProd ? `Product #${selectedProd.productId}` : undefined);
+
         return {
             totalLots,
             totalBatches,
             totalQuantity,
             quarantinedOrExpiring,
             fefoNextCount,
-            activeQuantity
+            activeQuantity,
+            fefoNextBatches,
+            fefoNextBatchNumbers: fefoNextBatches.map((b) => b.batchNumber),
+            selectedProductName
         };
-    }, [lots, batches, selectedProductId]);
+    }, [
+        lots,
+        batches,
+        products,
+        selectedBranchId,
+        selectedProductType,
+        selectedUomId,
+        selectedProductId,
+        selectedLotId,
+        selectedBatchId,
+        globalSearchQuery
+    ]);
 
     return {
         batches,

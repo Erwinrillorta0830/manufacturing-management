@@ -57,6 +57,10 @@ export interface Lot {
     status: "ACTIVE" | "CLOSED" | "INACTIVE";
     createdAt: string;
     updatedAt: string;
+    branchName?: string;
+    branchCode?: string;
+    isBadStock?: boolean;
+    branchIsBadStock?: boolean;
     createdBy: string;
     updatedBy: string;
     displayNumber?: number;
@@ -121,6 +125,8 @@ export interface Batch {
     sourceType?: string;
     sourceReference?: string;
     remarks: string;
+    productType?: unknown;
+    productCategory?: unknown;
     createdAt: string;
     updatedAt: string;
     createdBy: string;
@@ -169,6 +175,9 @@ export interface LotKpiMetrics {
     quarantinedOrExpiring: number;
     fefoNextCount: number;
     activeQuantity: number;
+    fefoNextBatches?: Batch[];
+    fefoNextBatchNumbers?: string[];
+    selectedProductName?: string;
 }
 
 export interface Branch {
@@ -180,6 +189,7 @@ export interface Branch {
 export interface ProductItem {
     productId: number;
     productName: string;
+    description?: string;
     skuCode: string;
     unitCost?: number;
     cost_per_unit?: number;
@@ -231,11 +241,14 @@ export interface InventoryMovement {
     postedBy?: number;
     branchId?: number;
     inventoryLotId?: number;
+    batchId?: number;
     lotId?: number;
     lotName?: string;
     productId: number;
     productCode: string;
     productName: string;
+    productDescription?: string;
+    description?: string;
     productTypeId?: number;
     productTypeName?: string;
     unitId?: number;

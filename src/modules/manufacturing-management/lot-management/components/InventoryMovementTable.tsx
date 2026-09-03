@@ -8,7 +8,9 @@ import {
     ChevronsLeft,
     ChevronsRight,
     Warehouse,
-    FilterX
+    FilterX,
+    AlertTriangle,
+    RefreshCw
 } from "lucide-react";
 import { InventoryMovement, Lot, ProductItem } from "../types";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -35,6 +37,7 @@ interface InventoryMovementTableProps {
     lots: Lot[];
     products?: ProductItem[];
     loading: boolean;
+    error?: string | null;
     searchQuery: string;
     onSearchChange: (val: string) => void;
     directionFilter: "ALL" | "IN" | "OUT";
@@ -60,7 +63,9 @@ interface InventoryMovementTableProps {
 export default function InventoryMovementTable({
     movements,
     lots,
+    products,
     loading,
+    error,
     searchQuery,
     onSearchChange,
     directionFilter,
@@ -70,11 +75,20 @@ export default function InventoryMovementTable({
     lotFilter,
     onLotFilterChange,
     availableTransactionTypes,
+    onRefresh,
     onResetFilters,
     stats
 }: InventoryMovementTableProps) {
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
+
+    const productMap = useMemo(() => {
+        const map = new Map<number, ProductItem>();
+        (products || []).forEach((p) => {
+            if (p.productId) map.set(Number(p.productId), p);
+        });
+        return map;
+    }, [products]);
 
     const totalPages = Math.ceil(movements.length / pageSize);
     const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages || 1));
@@ -98,48 +112,48 @@ export default function InventoryMovementTable({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 px-2 border-l border-border/40">
+                    <div className="flex items-center gap-2.5 px-2">
                         <div className="h-9 w-9 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
                             <ArrowDownLeft className="h-4 w-4" />
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400">Total Inbound</p>
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Stock In</p>
                             <p className="text-base font-black text-emerald-600 dark:text-emerald-400">+{stats.totalIn.toLocaleString()}</p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 px-2 border-l border-border/40">
+                    <div className="flex items-center gap-2.5 px-2">
                         <div className="h-9 w-9 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
                             <ArrowUpRight className="h-4 w-4" />
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase font-bold text-rose-600 dark:text-rose-400">Total Outbound</p>
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Total Stock Out</p>
                             <p className="text-base font-black text-rose-600 dark:text-rose-400">-{stats.totalOut.toLocaleString()}</p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5 px-2 border-l border-border/40">
-                        <div className="h-9 w-9 rounded-lg bg-muted text-foreground flex items-center justify-center shrink-0">
+                    <div className="flex items-center gap-2.5 px-2">
+                        <div className="h-9 w-9 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
                             <Warehouse className="h-4 w-4" />
                         </div>
                         <div>
-                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Net Stock Flow</p>
-                            <p className={`text-base font-black ${stats.netQuantity >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                                {stats.netQuantity >= 0 ? `+${stats.netQuantity.toLocaleString()}` : stats.netQuantity.toLocaleString()}
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Net Flow Balance</p>
+                            <p className={`text-base font-black ${stats.netQuantity >= 0 ? "text-foreground" : "text-rose-500"}`}>
+                                {stats.netQuantity >= 0 ? "+" : ""}{stats.netQuantity.toLocaleString()}
                             </p>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Filter Toolbar */}
-            <div className="flex flex-col md:flex-row gap-2.5 justify-between items-start md:items-center">
-                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto flex-1">
+            {/* Filter Controls Bar */}
+            <div className="flex flex-col md:flex-row gap-3 justify-between items-start md:items-center bg-card p-3 rounded-xl border border-border">
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto flex-1">
                     {/* Search Input */}
-                    <div className="relative flex-1 min-w-[240px] max-w-sm">
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Search ref #, batch, SKU, lot..."
+                            placeholder="Search ref #, batch, product, or lot..."
                             value={searchQuery}
                             onChange={(e) => onSearchChange(e.target.value)}
                             className="pl-9 h-9"
@@ -147,34 +161,34 @@ export default function InventoryMovementTable({
                     </div>
 
                     {/* Direction Filter */}
-                    <Select value={directionFilter} onValueChange={(val) => onDirectionFilterChange(val as "ALL" | "IN" | "OUT")}>
-                        <SelectTrigger className="w-[140px] h-9 bg-card">
+                    <Select value={directionFilter} onValueChange={(v) => onDirectionFilterChange(v as "ALL" | "IN" | "OUT")}>
+                        <SelectTrigger className="w-[125px] h-9 bg-card">
                             <SelectValue placeholder="Direction" />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border border-border">
-                            <SelectItem value="ALL">All Directions</SelectItem>
-                            <SelectItem value="IN">IN (Inbound)</SelectItem>
-                            <SelectItem value="OUT">OUT (Outbound)</SelectItem>
+                            <SelectItem value="ALL">All Flows</SelectItem>
+                            <SelectItem value="IN">Inbound (IN)</SelectItem>
+                            <SelectItem value="OUT">Outbound (OUT)</SelectItem>
                         </SelectContent>
                     </Select>
 
                     {/* Transaction Type Filter */}
                     <Select value={transactionTypeFilter} onValueChange={onTransactionTypeFilterChange}>
-                        <SelectTrigger className="w-[180px] h-9 bg-card">
+                        <SelectTrigger className="w-[170px] h-9 bg-card">
                             <SelectValue placeholder="Transaction Type" />
                         </SelectTrigger>
-                        <SelectContent className="bg-popover border border-border max-h-[260px]">
+                        <SelectContent className="bg-popover border border-border max-h-56">
                             <SelectItem value="ALL">All Transaction Types</SelectItem>
-                            {availableTransactionTypes.map((type) => (
-                                <SelectItem key={type} value={type}>
-                                    {type.replace(/_/g, " ")}
+                            {availableTransactionTypes.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                    {t.replace(/_/g, " ")}
                                 </SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
 
-                    {/* Storage Lot Filter */}
-                    <div className="w-[200px]">
+                    {/* Lot / Rack Filter */}
+                    <div className="w-[180px]">
                         <SearchableLotSelect
                             lots={lots}
                             value={lotFilter}
@@ -184,21 +198,6 @@ export default function InventoryMovementTable({
                             className="h-9 bg-card"
                         />
                     </div>
-
-                    {/* Product Material Filter (Searchable)
-                    {products.length > 0 && onProductFilterChange && (
-                        <div className="w-[220px]">
-                            <SearchableProductSelect
-                                products={products}
-                                value={productFilter ?? "ALL"}
-                                onValueChange={onProductFilterChange}
-                                allowAll={true}
-                                allLabel="All Products"
-                                placeholder="All Products"
-                                className="h-9 bg-card"
-                            />
-                        </div>
-                    )} */}
 
                     {onResetFilters && (
                         <Button
@@ -214,11 +213,13 @@ export default function InventoryMovementTable({
                     )}
                 </div>
 
-                {/* <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
-                    <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9" title="Refresh Movements">
-                        <RefreshCw className="h-4 w-4" />
-                    </Button>
-                </div> */}
+                {onRefresh && (
+                    <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+                        <Button variant="outline" size="icon" onClick={onRefresh} className="h-9 w-9" title="Refresh Movements">
+                            <RefreshCw className="h-4 w-4" />
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* Movements Table */}
@@ -226,7 +227,26 @@ export default function InventoryMovementTable({
                 {loading ? (
                     <div className="flex flex-col items-center justify-center p-20 gap-3 text-muted-foreground">
                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                        <span className="text-sm font-medium">Loading inventory movements (/api/mm-inventory-movements/all)...</span>
+                        <span className="text-sm font-medium">Loading inventory movements...</span>
+                    </div>
+                ) : error ? (
+                    <div className="flex flex-col items-center justify-center p-14 text-center">
+                        <AlertTriangle className="h-12 w-12 text-rose-500 mb-3" />
+                        <span className="text-base font-bold text-foreground">Failed to Load Inventory Movements</span>
+                        <p className="text-xs text-rose-600 dark:text-rose-400 max-w-lg mt-1 mb-4 font-mono bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">
+                            {error}
+                        </p>
+                        {onRefresh && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={onRefresh}
+                                className="gap-2 border-border text-foreground hover:bg-accent shadow-xs"
+                            >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                                Retry Loading Movements
+                            </Button>
+                        )}
                     </div>
                 ) : movements.length === 0 ? (
                     <div className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground">
@@ -300,9 +320,21 @@ export default function InventoryMovementTable({
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[150px] max-w-[220px]">
-                                                <span className="font-semibold text-xs text-foreground truncate" title={m.productName}>
-                                                    {m.productName || (m.productId ? `Product #${m.productId}` : "-")}
-                                                </span>
+                                                {(() => {
+                                                    const matchedProduct = m.productId ? productMap.get(Number(m.productId)) : undefined;
+                                                    const displayDescription =
+                                                        m.productDescription ||
+                                                        m.description ||
+                                                        matchedProduct?.description ||
+                                                        m.productName ||
+                                                        (m.productId ? `Product #${m.productId}` : "-");
+
+                                                    return (
+                                                        <span className="font-semibold text-xs text-foreground truncate" title={displayDescription}>
+                                                            {displayDescription}
+                                                        </span>
+                                                    );
+                                                })()}
                                                 {m.productCode && (
                                                     <span className="font-mono text-[10px] text-muted-foreground truncate">
                                                         {m.productCode}

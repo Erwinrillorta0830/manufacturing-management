@@ -30,11 +30,14 @@ export function PriceTypeFormDialog({
 }: PriceTypeFormDialogProps) {
     const [name, setName] = React.useState("");
     const [sort, setSort] = React.useState<string>("");
+    const [isActive, setIsActive] = React.useState(true);
 
     React.useEffect(() => {
         if (open) {
             setName(initialData?.price_type_name ?? "");
             setSort(initialData?.sort?.toString() ?? "");
+            const active = initialData?.is_active;
+            setIsActive(active === undefined || active === null || active === true || active === 1 || active === "1" || active === "true");
         }
     }, [open, initialData]);
 
@@ -43,6 +46,7 @@ export function PriceTypeFormDialog({
         await onSubmit({
             price_type_name: name,
             sort: sort ? parseInt(sort, 10) : null,
+            is_active: isActive,
         });
         onOpenChange(false);
     };
@@ -74,6 +78,15 @@ export function PriceTypeFormDialog({
                             placeholder="1"
                         />
                     </div>
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                        <input
+                            type="checkbox"
+                            checked={isActive}
+                            onChange={(e) => setIsActive(e.target.checked)}
+                            className="h-4 w-4 rounded border"
+                        />
+                        Active template
+                    </label>
                     <DialogFooter>
                         <Button type="submit" disabled={isPending}>
                             {isPending ? "Saving..." : "Save Changes"}

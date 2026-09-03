@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
-import { MovementRow } from "../inventory-movements-client";
-import { getUserIdFromToken } from "../_auth";
+import { getUserIdFromToken, SPRING_API_BASE, getSpringAuthHeaders } from "../_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const TXN_TYPE_SALES_ISSUE = 4;
 
 export interface LotAllocationDetail {
     productId: number;
@@ -17,6 +14,9 @@ export interface LotAllocationDetail {
     expiryDate: string | null;
     manufacturingDate: string | null;
     quantity: number;
+    inventoryLotId?: number;
+    reservationIds?: number[];
+    status?: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -33,117 +33,377 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ message: "batchId is required" }, { status: 400 });
         }
 
-        const linksRes = await fetch(
-            `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&fields=invoice_id&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!linksRes.ok) {
-            return NextResponse.json({ message: "Failed to load linked invoices" }, { status: 502 });
+        let invoiceIds: number[] = [];
+        let batchProductIds: number[] = [];
+        let explicitDetailIds: number[] = [];
+
+        try {
+            const [linksRes, conDetRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&fields=invoice_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${batchId}&fields=id,product_id,sales_order_detail_id,ordered_quantity,picked_quantity,applied_quantity,picked_at,picked_by&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
+            if (linksRes.ok) {
+                const linkData = (await linksRes.json()).data || [];
+                invoiceIds = linkData.map((row: { invoice_id: number }) => Number(row.invoice_id)).filter(Boolean);
+            }
+            if (conDetRes.ok) {
+                const conData = (await conDetRes.json()).data || [];
+                batchProductIds = conData.map((row: { product_id: number }) => Number(row.product_id)).filter(Boolean);
+                explicitDetailIds = conData.map((row: { sales_order_detail_id?: number }) => Number(row.sales_order_detail_id)).filter(Boolean);
+            }
+        } catch (err) {
+            console.warn("[allocations] Warning fetching batch metadata:", err);
         }
-        const invoiceIds: number[] = ((await linksRes.json()).data || [])
-            .map((row: { invoice_id: number }) => Number(row.invoice_id))
-            .filter(Boolean);
+
+        const details: { detail_id: number; product_id: number }[] = [];
 
         if (invoiceIds.length > 0) {
-            const detailsRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
-                { headers: directusHeaders, cache: "no-store" }
-            );
-            if (!detailsRes.ok) {
-                return NextResponse.json({ message: "Failed to load invoice details" }, { status: 502 });
-            }
-            const details: { detail_id: number; product_id: number }[] = (await detailsRes.json()).data || [];
-            const detailIds = details.map((detail) => Number(detail.detail_id)).filter(Boolean);
-            const productByDetail = new Map(details.map((detail) => [Number(detail.detail_id), Number(detail.product_id)]));
-
-            if (detailIds.length > 0) {
-                const reservationFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { sales_invoice_detail_id: { _in: detailIds } },
-                        { status: { _in: ["Reserved", "Consumed"] } },
-                    ],
-                }));
-                const reservationRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_invoice_reservation?filter=${reservationFilter}`
-                    + `&fields=sales_invoice_detail_id,inventory_lot_id.id,inventory_lot_id.lot_id.lot_id,inventory_lot_id.lot_id.lot_name,inventory_lot_id.lot_number,inventory_lot_id.batch_no,inventory_lot_id.expiry_date,inventory_lot_id.created_on,quantity,status&limit=-1`,
+            try {
+                const sodRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
-                if (!reservationRes.ok) {
-                    return NextResponse.json({ message: "Failed to load invoice reservations" }, { status: 502 });
+                if (sodRes.ok) {
+                    const sodList = (await sodRes.json()).data || [];
+                    details.push(...sodList);
                 }
+            } catch (err) {
+                console.warn("[allocations] Warning fetching details by order_id:", err);
+            }
+        }
 
-                type ReservationAllocation = {
-                    sales_invoice_detail_id: number;
-                    inventory_lot_id: {
-                        id: number;
-                        lot_id: { lot_id: number; lot_name: string | null } | number | null;
-                        lot_number: string | null;
-                        batch_no: string | null;
-                        expiry_date: string | null;
-                        created_on: string | null;
-                    } | number;
-                    quantity: number;
-                };
-                const reservations: ReservationAllocation[] = (await reservationRes.json()).data || [];
-                if (reservations.length > 0) {
-                    const productIds = [...new Set(details.map((detail) => Number(detail.product_id)).filter(Boolean))];
-                    const productNameMap = new Map<number, string>();
-                    const prodRes = await fetch(
-                        `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name&limit=-1`,
-                        { headers: directusHeaders, cache: "no-store" }
-                    );
-                    if (prodRes.ok) {
-                        const products: { product_id: number; product_name: string }[] = (await prodRes.json()).data || [];
-                        for (const product of products) productNameMap.set(Number(product.product_id), product.product_name);
+        if (explicitDetailIds.length > 0) {
+            try {
+                const sodRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${explicitDetailIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (sodRes.ok) {
+                    const sodList = (await sodRes.json()).data || [];
+                    details.push(...sodList);
+                }
+            } catch (err) {
+                console.warn("[allocations] Warning fetching details by detail_id:", err);
+            }
+        }
+
+        const detailIds = [...new Set([
+            ...details.map((detail) => Number(detail.detail_id)),
+            ...explicitDetailIds,
+        ].filter(Boolean))];
+        const productByDetail = new Map(details.map((detail) => [Number(detail.detail_id), Number(detail.product_id)]));
+
+        const reservations: Array<{
+            id: number;
+            sales_invoice_detail_id?: number | { detail_id: number } | null;
+            sales_order_detail_id?: number | { detail_id: number } | null;
+            product_id?: number;
+            inventory_lot_id: number | { id?: number; inventory_lot_id?: number; lot_id?: number | { lot_id?: number; lot_name?: string }; batch_no?: string; lot_number?: string; expiry_date?: string; manufacturing_date?: string };
+            quantity: number;
+            status?: string;
+        }> = [];
+
+        try {
+            if (detailIds.length > 0) {
+                const soFilter = encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { sales_order_detail_id: { _in: detailIds } },
+                        { status: { _in: ["Reserved", "Picked", "Consumed"] } },
+                    ],
+                }));
+                const soRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,status&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (soRes.ok) {
+                    const rData = (await soRes.json()).data || [];
+                    for (const row of rData) {
+                        reservations.push({
+                            id: Number(row.reservation_id || row.id),
+                            sales_order_detail_id: row.sales_order_detail_id,
+                            sales_invoice_detail_id: null,
+                            product_id: Number(row.product_id || productByDetail.get(Number(row.sales_order_detail_id)) || 0),
+                            inventory_lot_id: row.inventory_lot_id,
+                            quantity: Number(row.reserved_quantity ?? row.quantity ?? 0),
+                            status: row.status,
+                        });
                     }
+                }
+            }
+        } catch (err) {
+            console.warn("[allocations] Warning fetching reservations:", err);
+        }
 
-                    const allocationMap = new Map<string, LotAllocationDetail>();
-                    for (const reservation of reservations) {
-                        const detailId = Number(reservation.sales_invoice_detail_id);
-                        const productId = productByDetail.get(detailId) || 0;
-                        const inventoryLot = typeof reservation.inventory_lot_id === "object" ? reservation.inventory_lot_id : null;
-                        const physicalLot = inventoryLot && typeof inventoryLot.lot_id === "object" ? inventoryLot.lot_id : null;
-                        if (!productId || !inventoryLot || !physicalLot) continue;
-                        const key = `${productId}:${inventoryLot.id}`;
-                        const existing = allocationMap.get(key);
-                        if (existing) {
-                            existing.quantity += Number(reservation.quantity || 0);
-                        } else {
-                            allocationMap.set(key, {
-                                productId,
-                                productName: productNameMap.get(productId) || `Product #${productId}`,
-                                lotId: Number(physicalLot.lot_id),
-                                lotName: physicalLot.lot_name || `Lot #${physicalLot.lot_id}`,
-                                batchNo: inventoryLot.batch_no || inventoryLot.lot_number || "LOT-N/A",
-                                expiryDate: inventoryLot.expiry_date,
-                                manufacturingDate: inventoryLot.created_on?.slice(0, 10) || null,
-                                quantity: Number(reservation.quantity || 0),
-                            });
+        if (reservations.length > 0) {
+            const productIds = [...new Set([
+                ...details.map((detail) => Number(detail.product_id)).filter(Boolean),
+                ...reservations.map((r) => Number(r.product_id)).filter(Boolean),
+                ...batchProductIds,
+            ])];
+
+            const invLotIds = [...new Set(reservations.map((r) => {
+                const raw = typeof r.inventory_lot_id === "object" && r.inventory_lot_id !== null
+                    ? (r.inventory_lot_id as { inventory_lot_id?: number; id?: number }).inventory_lot_id || (r.inventory_lot_id as { inventory_lot_id?: number; id?: number }).id
+                    : r.inventory_lot_id;
+                return Number(raw || 0);
+            }).filter(Boolean))];
+
+            const invLotFilterObj: Record<string, unknown> = {};
+            if (invLotIds.length > 0 && productIds.length > 0) {
+                invLotFilterObj._or = [
+                    { inventory_lot_id: { _in: invLotIds } },
+                    { id: { _in: invLotIds } },
+                    { product_id: { _in: productIds } },
+                ];
+            } else if (invLotIds.length > 0) {
+                invLotFilterObj._or = [
+                    { inventory_lot_id: { _in: invLotIds } },
+                    { id: { _in: invLotIds } },
+                ];
+            } else if (productIds.length > 0) {
+                invLotFilterObj.product_id = { _in: productIds };
+            }
+
+            // 1. Fetch products, mm_lots, mm_inventory_lots, and Spring Boot batch onhand in parallel
+            const [prodRes, lotRes, invLotRes, springBatchRes] = await Promise.all([
+                productIds.length > 0
+                    ? fetch(
+                          `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,product_code&limit=-1`,
+                          { headers: directusHeaders, cache: "no-store" }
+                      ).catch(() => null)
+                    : Promise.resolve(null),
+                fetch(
+                    `${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=*`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ).catch(() => null),
+                fetch(
+                    `${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=*`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ).catch(() => null),
+                (async () => {
+                    try {
+                        const springHeaders = await getSpringAuthHeaders();
+                        return await fetch(`${SPRING_API_BASE}/api/mm-batch-onhand/all`, {
+                            headers: springHeaders,
+                            cache: "no-store",
+                        });
+                    } catch {
+                        return null;
+                    }
+                })(),
+            ]);
+
+            const productNameMap = new Map<number, string>();
+            if (prodRes && prodRes.ok) {
+                const prodData: { product_id: number; product_name: string }[] = (await prodRes.json()).data || [];
+                for (const p of prodData) productNameMap.set(Number(p.product_id), p.product_name);
+            }
+
+            const lotNameMap = new Map<number, string>();
+            if (lotRes && lotRes.ok) {
+                const lotJson = await lotRes.json();
+                const lotData: Array<Record<string, unknown>> = Array.isArray(lotJson) ? lotJson : lotJson?.data || [];
+                for (const l of lotData) {
+                    const lid = Number(l.lot_id || l.id);
+                    const lname = String(l.lot_name || l.name || l.lot_number || "").trim();
+                    if (lid && lname) lotNameMap.set(lid, lname);
+                }
+            } else {
+                console.warn("[allocations] Warning: lotRes not ok, status:", lotRes?.status);
+            }
+
+            type BatchMeta = {
+                lotId: number;
+                lotName: string;
+                batchNo: string;
+                expiryDate: string | null;
+                manufacturingDate: string | null;
+                productId: number;
+            };
+
+            const invLotMap = new Map<number, BatchMeta>();
+            const productBatchMap = new Map<number, BatchMeta[]>();
+
+            // Process Directus mm_inventory_lots
+            if (invLotRes && invLotRes.ok) {
+                const invLotJson = await invLotRes.json();
+                const invLotData: Array<Record<string, unknown>> = Array.isArray(invLotJson) ? invLotJson : invLotJson?.data || [];
+                for (const row of invLotData) {
+                    const invId = Number(row.inventory_lot_id || row.id || 0);
+                    const pId = Number(typeof row.product_id === "object" && row.product_id !== null ? (row.product_id as { product_id?: number }).product_id : row.product_id || 0);
+                    const rawLotId = typeof row.lot_id === "object" && row.lot_id !== null
+                        ? (row.lot_id as { lot_id?: number; id?: number }).lot_id || (row.lot_id as { lot_id?: number; id?: number }).id
+                        : row.lot_id;
+                    const lotId = Number(rawLotId || 0);
+                    const resolvedLotName = lotNameMap.get(lotId) || (lotId ? lotNameMap.get(lotId) : undefined) || "Unknown";
+                    const batchNo = String(row.batch_no || row.lot_number || "LOT-N/A");
+                    const expiryDate = (row.expiry_date || row.expiration_date || null) as string | null;
+                    const manufacturingDate = (row.manufacturing_date || null) as string | null;
+
+                    const meta: BatchMeta = {
+                        lotId,
+                        lotName: resolvedLotName,
+                        batchNo,
+                        expiryDate,
+                        manufacturingDate,
+                        productId: pId,
+                    };
+
+                    if (invId) invLotMap.set(invId, meta);
+
+                    if (pId) {
+                        const list = productBatchMap.get(pId) || [];
+                        list.push(meta);
+                        productBatchMap.set(pId, list);
+                    }
+                }
+            } else {
+                console.warn("[allocations] Warning: invLotRes not ok, status:", invLotRes?.status);
+            }
+
+            // Process Spring Boot batch onhand for enrichment
+            if (springBatchRes && springBatchRes.ok) {
+                try {
+                    const sbData = await springBatchRes.json();
+                    const sbList: Array<Record<string, unknown>> = Array.isArray(sbData) ? sbData : sbData?.data || [];
+                    for (const sb of sbList) {
+                        const sbInvId = Number(sb.inventoryLotId ?? sb.inventory_lot_id ?? sb.id ?? 0);
+                        const sbLotId = Number(sb.lotId ?? sb.lot_id ?? 0);
+                        const sbPId = Number(sb.productId ?? sb.product_id ?? 0);
+                        const sbBatchNo = String(sb.batchNo ?? sb.batch_no ?? "LOT-N/A");
+                        const sbExp = (sb.expirationDate || sb.expiration_date || sb.expiryDate || sb.expiry_date || null) as string | null;
+                        const sbMfg = (sb.manufacturingDate || sb.manufacturing_date || null) as string | null;
+
+                        const meta: BatchMeta = {
+                            lotId: sbLotId,
+                            lotName: lotNameMap.get(sbLotId) || (sbLotId ? lotNameMap.get(sbLotId) : undefined) || "Unknown",
+                            batchNo: sbBatchNo,
+                            expiryDate: sbExp,
+                            manufacturingDate: sbMfg,
+                            productId: sbPId,
+                        };
+
+                        if (sbInvId && !invLotMap.has(sbInvId)) invLotMap.set(sbInvId, meta);
+                        if (sbPId) {
+                            const list = productBatchMap.get(sbPId) || [];
+                            if (!list.some((b) => b.batchNo === sbBatchNo && b.lotId === sbLotId)) {
+                                list.push(meta);
+                                productBatchMap.set(sbPId, list);
+                            }
                         }
                     }
+                } catch (err) {
+                    console.warn("[allocations] Warning parsing Spring batch onhand:", err);
+                }
+            }
+
+            const allocationMap = new Map<string, LotAllocationDetail>();
+            for (const reservation of reservations) {
+                const rawDetailId = typeof reservation.sales_invoice_detail_id === "object" && reservation.sales_invoice_detail_id !== null
+                    ? reservation.sales_invoice_detail_id.detail_id
+                    : reservation.sales_invoice_detail_id;
+                const detailId = Number(rawDetailId || 0);
+                const productId = Number(reservation.product_id || productByDetail.get(detailId) || 0);
+                if (!productId) continue;
+
+                const rawInvId = typeof reservation.inventory_lot_id === "object" && reservation.inventory_lot_id !== null
+                    ? (reservation.inventory_lot_id.inventory_lot_id || reservation.inventory_lot_id.id || 0)
+                    : reservation.inventory_lot_id;
+                const invLotId = Number(rawInvId || 0);
+
+                const batchInfo = invLotMap.get(invLotId);
+                const resLotObj = typeof reservation.inventory_lot_id === "object" && reservation.inventory_lot_id !== null
+                    ? (reservation.inventory_lot_id as Record<string, unknown>)
+                    : null;
+
+                const lotId = batchInfo?.lotId || Number(resLotObj?.lot_id || 0) || (lotNameMap.has(invLotId) ? invLotId : 0);
+                const batchNo = batchInfo?.batchNo && batchInfo.batchNo !== "LOT-N/A"
+                    ? batchInfo.batchNo
+                    : String(resLotObj?.batch_no || resLotObj?.lot_number || "LOT-N/A");
+
+                const lotName = (batchInfo?.lotName && batchInfo.lotName !== "Unknown")
+                    ? batchInfo.lotName
+                    : (lotNameMap.get(lotId) || lotNameMap.get(invLotId) || "Unknown");
+
+                const expiryDate = batchInfo?.expiryDate || (resLotObj?.expiry_date as string | null) || (resLotObj?.expiration_date as string | null) || null;
+                const manufacturingDate = batchInfo?.manufacturingDate || (resLotObj?.manufacturing_date as string | null) || null;
+
+                const key = `${productId}:${lotId}:${batchNo}:${expiryDate || ""}`;
+                const existing = allocationMap.get(key);
+                const qty = Number(reservation.quantity || 0);
+                const resId = Number(reservation.id || 0);
+                if (existing) {
+                    existing.quantity += qty;
+                    if (resId && existing.reservationIds && !existing.reservationIds.includes(resId)) {
+                        existing.reservationIds.push(resId);
+                    }
+                    if (reservation.status === "Reserved") {
+                        existing.status = "Reserved";
+                    }
+                } else {
+                    allocationMap.set(key, {
+                        productId,
+                        productName: productNameMap.get(productId) || `Product #${productId}`,
+                        lotId,
+                        lotName,
+                        batchNo,
+                        expiryDate,
+                        manufacturingDate,
+                        quantity: qty,
+                        inventoryLotId: invLotId,
+                        reservationIds: resId ? [resId] : [],
+                        status: reservation.status || "Reserved",
+                    });
+                }
+            }
+
                     const allocations = [...allocationMap.values()].sort((a, b) =>
                         a.productName.localeCompare(b.productName)
                         || (a.expiryDate || "9999-12-31").localeCompare(b.expiryDate || "9999-12-31")
                         || a.lotId - b.lotId
                     );
-                    if (allocations.length > 0) return NextResponse.json({ allocations });
-                }
+
+                    console.log(`[allocations GET batchId=${batchId}] lotNameMap entries:`, Object.fromEntries(lotNameMap));
+                    console.log(`[allocations GET batchId=${batchId}] returning allocations:`, JSON.stringify(allocations, null, 2));
+
+                    if (allocations.length > 0) {
+                        return NextResponse.json({ allocations });
+                    }
+        }
+
+        // Fallback to Spring Boot inventory movements for legacy batches
+        let allMovs: Array<Record<string, unknown>> = [];
+        try {
+            const springHeaders = await getSpringAuthHeaders();
+            const movRes = await fetch(
+                `${SPRING_API_BASE}/api/mm-inventory-movements/all`,
+                { headers: springHeaders, cache: "no-store" }
+            ).catch(() => null);
+
+            if (movRes && movRes.ok) {
+                const mJson = await movRes.json();
+                allMovs = Array.isArray(mJson) ? mJson : mJson?.data || [];
             }
+        } catch (err) {
+            console.warn("[allocations] Warning querying Spring movements fallback:", err);
         }
 
-        // Legacy fallback for batches completed before reservation-backed picking.
-        const movRes = await fetch(
-            `${DIRECTUS_URL}/items/inventory_movements`
-            + `?filter[source_document_id][_eq]=${batchId}`
-            + `&filter[transaction_type_id][_eq]=${TXN_TYPE_SALES_ISSUE}`
-            + `&limit=500`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!movRes.ok) {
-            return NextResponse.json({ message: "Failed to load movements" }, { status: 502 });
-        }
-
-        const movements: MovementRow[] = (await movRes.json()).data || [];
+        const movements = allMovs
+            .filter((m) => Number(m.source_document_id || m.sourceDocumentId) === Number(batchId))
+            .map((m) => ({
+                product_id: Number(m.product_id || m.productId),
+                lot_id: Number(m.lot_id || m.lotId),
+                batch_no: String(m.batch_no || m.batchNo || "LOT-N/A"),
+                expiry_date: (m.expiry_date || m.expiryDate || null) as string | null,
+                manufacturing_date: (m.manufacturing_date || m.manufacturingDate || null) as string | null,
+                quantity: Number(m.quantity || 0),
+            }));
 
         const netMap = new Map<string, { productId: number; lotId: number; batchNo: string; expiryDate: string | null; manufacturingDate: string | null; netQty: number }>();
 
@@ -177,25 +437,41 @@ export async function GET(req: NextRequest) {
         }
 
         const productIds = [...new Set(netNegative.map((a) => a.productId))];
-        const prodRes = await fetch(
-            `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
         const productNameMap = new Map<number, string>();
-        if (prodRes.ok) {
-            const prodData: { product_id: number; product_name: string }[] = (await prodRes.json()).data || [];
-            for (const p of prodData) productNameMap.set(p.product_id, p.product_name);
+        if (productIds.length > 0) {
+            try {
+                const prodRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (prodRes && prodRes.ok) {
+                    const prodData: { product_id: number; product_name: string }[] = (await prodRes.json()).data || [];
+                    for (const p of prodData) productNameMap.set(p.product_id, p.product_name);
+                }
+            } catch (err) {
+                console.warn("[allocations] Fallback products warning:", err);
+            }
         }
 
-        const lotIds = [...new Set(netNegative.map((a) => a.lotId))];
-        const lotRes = await fetch(
-            `${DIRECTUS_URL}/items/lots?filter[lot_id][_in]=${lotIds.join(",")}&fields=lot_id,lot_name&limit=-1`,
-            { headers: directusHeaders, cache: "no-store" }
-        );
+        const lotIds = [...new Set(netNegative.map((a) => a.lotId).filter(Boolean))];
         const lotNameMap = new Map<number, string>();
-        if (lotRes.ok) {
-            const lotData: { lot_id: number; lot_name: string }[] = (await lotRes.json()).data || [];
-            for (const l of lotData) lotNameMap.set(l.lot_id, l.lot_name);
+        if (lotIds.length > 0) {
+            try {
+                const lotRes = await fetch(
+                    `${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_id,lot_name`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (lotRes && lotRes.ok) {
+                    const lotData: Array<Record<string, unknown>> = (await lotRes.json()).data || [];
+                    for (const l of lotData) {
+                        const lid = Number(l.lot_id || l.id);
+                        const lname = String(l.lot_name || "").trim();
+                        if (lid && lname) lotNameMap.set(lid, lname);
+                    }
+                }
+            } catch (err) {
+                console.warn("[allocations] Fallback lots warning:", err);
+            }
         }
 
         const allocations: LotAllocationDetail[] = netNegative.map((a) => ({
@@ -212,6 +488,6 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ allocations });
     } catch (e) {
         console.error("allocations GET error:", e);
-        return NextResponse.json({ message: "BFF Network Error" }, { status: 502 });
+        return NextResponse.json({ allocations: [] });
     }
 }

@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PriceControlSearchableSelect } from "../../shared/PriceControlSearchableSelect";
 import {
     Table,
     TableBody,
@@ -27,75 +26,52 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 
-import type { DirtyPreviewLine, SaveAllResult, Supplier } from "../types";
+import type { DirtyPreviewLine, SaveAllResult } from "../types";
 import { generateBatchReferenceNo } from "../../shared/batchReference";
 import { formatPHP } from "../utils/format";
 
-type FieldErrors = Partial<Record<"supplier_id" | "remarks", string>>;
+type FieldErrors = Partial<Record<"remarks", string>>;
 
 type Props = {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    suppliers: Supplier[];
-    batchSupplierOptions?: Supplier[];
-    defaultSupplierId: number | null;
     priceLineCount: number;
     costLineCount: number;
     offPageDirtyCount?: number;
     previewLines: DirtyPreviewLine[];
     onSubmit: (payload: {
-        supplier_id: number;
         reference_no?: string;
         remarks: string;
     }) => Promise<SaveAllResult>;
 };
 
-function supplierLabel(supplier: Supplier) {
-    const shortcut = String(supplier.supplier_shortcut ?? "").trim();
-    const name = String(supplier.supplier_name ?? "").trim();
-    return shortcut && name ? `${shortcut} - ${name}` : name || `Supplier #${supplier.id}`;
-}
-
 export function PriceChangeBatchDialog({
     open,
     onOpenChange,
-    suppliers,
-    batchSupplierOptions,
-    defaultSupplierId,
     priceLineCount,
     costLineCount,
     offPageDirtyCount = 0,
     previewLines,
     onSubmit,
 }: Props) {
-    const [supplierId, setSupplierId] = React.useState(defaultSupplierId ? String(defaultSupplierId) : "");
     const [referenceNo, setReferenceNo] = React.useState("");
     const [remarks, setRemarks] = React.useState("");
     const [errors, setErrors] = React.useState<FieldErrors>({});
     const [submitting, setSubmitting] = React.useState(false);
 
-    const requiresSupplier = priceLineCount > 0 || costLineCount > 0;
     const requiresRemarks = priceLineCount > 0;
-    const supplierOptions = batchSupplierOptions ?? suppliers;
 
     React.useEffect(() => {
         if (!open) return;
-        setSupplierId(defaultSupplierId ? String(defaultSupplierId) : "");
         setReferenceNo(generateBatchReferenceNo());
         setRemarks("");
         setErrors({});
-    }, [defaultSupplierId, open]);
+    }, [open]);
 
     async function submit() {
         const nextErrors: FieldErrors = {};
-        const parsedSupplierId = Number(supplierId);
         const trimmedRemarks = remarks.trim();
 
-        if (requiresSupplier) {
-            if (!Number.isFinite(parsedSupplierId) || parsedSupplierId <= 0) {
-                nextErrors.supplier_id = "Supplier is required.";
-            }
-        }
         if (requiresRemarks) {
             if (!trimmedRemarks) {
                 nextErrors.remarks = "Remarks is required.";
@@ -108,7 +84,6 @@ export function PriceChangeBatchDialog({
         setSubmitting(true);
         try {
             const result = await onSubmit({
-                supplier_id: parsedSupplierId,
                 reference_no: referenceNo.trim() || undefined,
                 remarks: trimmedRemarks,
             });
@@ -122,7 +97,6 @@ export function PriceChangeBatchDialog({
 
     const canSubmit =
         !submitting &&
-        (!requiresSupplier || Number(supplierId) > 0) &&
         (!requiresRemarks || remarks.trim().length > 0);
 
     return (
@@ -225,66 +199,39 @@ export function PriceChangeBatchDialog({
                         </div>
                     </div>
 
-                    {requiresSupplier ? (
-                        <>
-                            <div className="flex flex-col gap-1.5">
-                                <Label>
-                                    Supplier
-                                    <span className="text-destructive"> *</span>
-                                </Label>
-                                <PriceControlSearchableSelect
-                                    value={supplierId}
-                                    onValueChange={(value) => {
-                                        setSupplierId(value);
-                                        setErrors((prev) => ({ ...prev, supplier_id: undefined }));
-                                    }}
-                                    placeholder="Select supplier"
-                                    disabled={submitting}
-                                    options={supplierOptions.map((supplier) => ({
-                                        value: String(supplier.id),
-                                        label: supplierLabel(supplier),
-                                    }))}
-                                />
-                                {errors.supplier_id ? (
-                                    <p className="text-xs text-destructive">{errors.supplier_id}</p>
-                                ) : null}
-                            </div>
+                    <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="price-change-reference">Reference No.</Label>
+                        <Input
+                            id="price-change-reference"
+                            value={referenceNo}
+                            placeholder="Optional supplier quote or memo reference"
+                            readOnly
+                            disabled={submitting}
+                        />
+                    </div>
 
-                            <div className="flex flex-col gap-1.5">
-                                <Label htmlFor="price-change-reference">Reference No.</Label>
-                                <Input
-                                    id="price-change-reference"
-                                    value={referenceNo}
-                                    placeholder="Optional supplier quote or memo reference"
-                                    readOnly
-                                    disabled={submitting}
-                                />
-                            </div>
-
-                            {requiresRemarks ? (
-                                <div className="flex flex-col gap-1.5">
-                                    <Label htmlFor="price-change-remarks">
-                                        Remarks
-                                        <span className="text-destructive"> *</span>
-                                    </Label>
-                                    <Textarea
-                                        id="price-change-remarks"
-                                        value={remarks}
-                                        onChange={(event) => {
-                                            setRemarks(event.target.value);
-                                            setErrors((prev) => ({ ...prev, remarks: undefined }));
-                                        }}
-                                        placeholder="Explain why this batch should be approved"
-                                        className="min-h-24 resize-y"
-                                        aria-invalid={Boolean(errors.remarks)}
-                                        disabled={submitting}
-                                    />
-                                    {errors.remarks ? (
-                                        <p className="text-xs text-destructive">{errors.remarks}</p>
-                                    ) : null}
-                                </div>
+                    {requiresRemarks ? (
+                        <div className="flex flex-col gap-1.5">
+                            <Label htmlFor="price-change-remarks">
+                                Remarks
+                                <span className="text-destructive"> *</span>
+                            </Label>
+                            <Textarea
+                                id="price-change-remarks"
+                                value={remarks}
+                                onChange={(event) => {
+                                    setRemarks(event.target.value);
+                                    setErrors((prev) => ({ ...prev, remarks: undefined }));
+                                }}
+                                placeholder="Explain why this batch should be approved"
+                                className="min-h-24 resize-y"
+                                aria-invalid={Boolean(errors.remarks)}
+                                disabled={submitting}
+                            />
+                            {errors.remarks ? (
+                                <p className="text-xs text-destructive">{errors.remarks}</p>
                             ) : null}
-                        </>
+                        </div>
                     ) : null}
                 </div>
 

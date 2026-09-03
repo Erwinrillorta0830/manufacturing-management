@@ -17,8 +17,8 @@ import {
  
   ClipboardList,
   Layers
-
 } from "lucide-react";
+import { motion } from "framer-motion";
 
 // import { formatDateLong } from "@/lib/utils";
 import { StockAdjustmentDetailModal } from "./StockAdjustmentDetailModal";
@@ -54,14 +54,19 @@ export function RecentLog() {
             <p className="text-sm font-medium text-foreground">No adjustments found</p>
           </div>
         ) : (
-          paginatedData.map((item) => {
+          paginatedData.map((item, idx) => {
             const isPosted = stockAdjustmentSummaryService.getIsPosted(item);
 
             return (
-              <Card 
-                key={item.id} 
-                className="group overflow-hidden border border-border/40 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 bg-card relative"
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.14, delay: Math.min(idx * 0.02, 0.1), ease: "easeOut" }}
               >
+                <Card 
+                  className="group overflow-hidden border border-border/40 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 bg-card relative"
+                >
                 {/* Visual Indicator Background Watermark */}
                 <div className="absolute right-24 top-1/2 -translate-y-1/2 opacity-[0.03] pointer-events-none transition-transform duration-500 group-hover:scale-110">
                   {item.type === "IN" ? (
@@ -139,9 +144,20 @@ export function RecentLog() {
                             <span className="text-[10px] uppercase font-bold text-muted-foreground/60 mb-0.5">Items</span>
                             <span className="font-bold text-primary">
                               {(() => {
-                                if (Array.isArray(item.items)) return item.items.length;
-                                return 0;
-                              })()} products
+                                if (!Array.isArray(item.items) || item.items.length === 0) return "0 products";
+                                const uniqueProductKeys = new Set(
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                  item.items.map((sub: any) => {
+                                    const p = sub.product_id;
+                                    if (typeof p === "object" && p !== null) {
+                                      return p.product_id ?? p.id ?? p.product_code ?? p.description ?? p.product_name;
+                                    }
+                                    return p ?? sub.product_code ?? sub.product_name;
+                                  }).filter((k: unknown) => k !== undefined && k !== null && String(k).trim() !== "")
+                                );
+                                const count = uniqueProductKeys.size > 0 ? uniqueProductKeys.size : item.items.length;
+                                return `${count} ${count === 1 ? "product" : "products"}`;
+                              })()}
                             </span>
                           </div>
                           
@@ -231,6 +247,7 @@ export function RecentLog() {
                   })()}
                 </CardContent>
               </Card>
+            </motion.div>
             );
           })
         )}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Briefcase } from "lucide-react";
 import { QATemplatesTab } from "./QATemplatesTab";
 import { ImportationTab } from "./ImportationTab";
@@ -84,53 +85,63 @@ export function QualityImportationTab(props: QualityImportationTabProps) {
                 </button>
             </div>
 
-            {subTab === "qa_templates" ? (
-                <QATemplatesTab
-                    qaTemplates={props.qaTemplates}
-                    units={props.units}
-                    handleAddQATemplate={props.handleAddQATemplate}
-                    handleSaveQATemplate={props.handleSaveQATemplate}
-                />
-            ) : (
-                <ImportationTab
-                    importNetWeight={props.importNetWeight}
-                    setImportNetWeight={props.setImportNetWeight}
-                    importPriceUsd={props.importPriceUsd}
-                    setImportPriceUsd={props.setImportPriceUsd}
-                    importFxRate={props.importFxRate}
-                    setImportFxRate={props.setImportFxRate}
-                    importDensityFactor={props.importDensityFactor}
-                    setImportDensityFactor={props.setImportDensityFactor}
-                    importThcFee={props.importThcFee}
-                    setImportThcFee={props.setImportThcFee}
-                    importStorageFee={props.importStorageFee}
-                    setImportStorageFee={props.setImportStorageFee}
-                    importCustomSop={props.importCustomSop}
-                    setImportCustomSop={props.setImportCustomSop}
-                    importTruckingFee={props.importTruckingFee}
-                    setImportTruckingFee={props.setImportTruckingFee}
-                    importOtherPortFees={props.importOtherPortFees}
-                    setImportOtherPortFees={props.setImportOtherPortFees}
-                    importCustomDuty={props.importCustomDuty}
-                    setImportCustomDuty={props.setImportCustomDuty}
-                    importVat={props.importVat}
-                    setImportVat={props.setImportVat}
-                    importIpf={props.importIpf}
-                    setImportIpf={props.setImportIpf}
-                    importForeignPeso={props.importForeignPeso}
-                    importTotalShippingPort={props.importTotalShippingPort}
-                    importTotalDutiesTaxes={props.importTotalDutiesTaxes}
-                    importTotalLandedCost={props.importTotalLandedCost}
-                    importLandedCostPerKg={props.importLandedCostPerKg}
-                    importLandedCostPerL={props.importLandedCostPerL}
-                    importTotalForCogs={props.importTotalForCogs}
-                    importCogsPerKg={props.importCogsPerKg}
-                    importCogsPerL={props.importCogsPerL}
-                    handleApplyImportLandedCost={props.handleApplyImportLandedCost}
-                    automateCustoms={props.automateCustoms}
-                    setAutomateCustoms={props.setAutomateCustoms}
-                />
-            )}
+            <AnimatePresence mode="wait">
+                <motion.div
+                    key={subTab}
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    transition={{ duration: 0.14, ease: "easeOut" }}
+                >
+                    {subTab === "qa_templates" ? (
+                        <QATemplatesTab
+                            qaTemplates={props.qaTemplates}
+                            units={props.units}
+                            handleAddQATemplate={props.handleAddQATemplate}
+                            handleSaveQATemplate={props.handleSaveQATemplate}
+                        />
+                    ) : (
+                        <ImportationTab
+                            importNetWeight={props.importNetWeight}
+                            setImportNetWeight={props.setImportNetWeight}
+                            importPriceUsd={props.importPriceUsd}
+                            setImportPriceUsd={props.setImportPriceUsd}
+                            importFxRate={props.importFxRate}
+                            setImportFxRate={props.setImportFxRate}
+                            importDensityFactor={props.importDensityFactor}
+                            setImportDensityFactor={props.setImportDensityFactor}
+                            importThcFee={props.importThcFee}
+                            setImportThcFee={props.setImportThcFee}
+                            importStorageFee={props.importStorageFee}
+                            setImportStorageFee={props.setImportStorageFee}
+                            importCustomSop={props.importCustomSop}
+                            setImportCustomSop={props.setImportCustomSop}
+                            importTruckingFee={props.importTruckingFee}
+                            setImportTruckingFee={props.setImportTruckingFee}
+                            importOtherPortFees={props.importOtherPortFees}
+                            setImportOtherPortFees={props.setImportOtherPortFees}
+                            importCustomDuty={props.importCustomDuty}
+                            setImportCustomDuty={props.setImportCustomDuty}
+                            importVat={props.importVat}
+                            setImportVat={props.setImportVat}
+                            importIpf={props.importIpf}
+                            setImportIpf={props.setImportIpf}
+                            importForeignPeso={props.importForeignPeso}
+                            importTotalShippingPort={props.importTotalShippingPort}
+                            importTotalDutiesTaxes={props.importTotalDutiesTaxes}
+                            importTotalLandedCost={props.importTotalLandedCost}
+                            importLandedCostPerKg={props.importLandedCostPerKg}
+                            importLandedCostPerL={props.importLandedCostPerL}
+                            importTotalForCogs={props.importTotalForCogs}
+                            importCogsPerKg={props.importCogsPerKg}
+                            importCogsPerL={props.importCogsPerL}
+                            handleApplyImportLandedCost={props.handleApplyImportLandedCost}
+                            automateCustoms={props.automateCustoms}
+                            setAutomateCustoms={props.setAutomateCustoms}
+                        />
+                    )}
+                </motion.div>
+            </AnimatePresence>
         </div>
     );
 }

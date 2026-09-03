@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { ProductVersion, RouteStep, RouteBOMItem, ProductOverhead, VersionPosition, RoutePosition } from "@/modules/manufacturing-management/finished-goods/types";
 
@@ -497,13 +498,16 @@ export async function createProductVersion(
     }
 }
 
-export async function updateProductStandardCost(productId: number, standardCost: number): Promise<boolean> {
+export async function updateProductStandardCost(productId: number, standardCost: number, userId?: number | null): Promise<boolean> {
     try {
         const url = `${DIRECTUS_URL}/items/products/${productId}`;
         const res = await fetch(url, {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ cost_per_unit: standardCost })
+            body: JSON.stringify({
+                cost_per_unit: standardCost,
+                ...productUpdateAuditFields(userId)
+            })
         });
         return res.ok;
     } catch (e) {

@@ -3,14 +3,19 @@ export interface Customer {
     customer_name: string;
     customer_code: string;
     isActive?: boolean;
+    default_price_type_id?: number;
+    price_type_id?: number;
 }
 
 export interface Project {
     id: number;
     project_name: string;
     customer_code: string;
+    customer_id?: number | string | null;
+    customer_name?: string | null;
     created_by?: number;
     created_at?: string;
+    status?: string;
 }
 
 export interface QuotationHeader {
@@ -24,12 +29,18 @@ export interface QuotationHeader {
     quote_date?: string;
     status?: string;
     project_id?: number | Project | null;
+    created_by_name?: string;
 }
 
 export interface QuotationSnapshotNode {
     id: number;
     product_id: number;
+    parent_id?: number | null;
+    parent_product_name?: string | null;
+    product_type_id?: number | null;
+    product_type_name?: string | null;
     version_id: number;
+    version_name?: string;
     node_name: string;
     node_type: string;
     quantity: number;
@@ -51,11 +62,16 @@ export interface CatalogProduct {
     parent_id?: {
         product_name: string;
     } | null;
+    parent_product_id?: number;
     has_cogs?: boolean;
+    product_type?: number | string;
 }
 
 export interface SelectedQuoteProduct {
-    product: CatalogProduct;
+    line_id?: number;
+    product_type_id?: number;
+    parent_product_id?: number;
+    product?: CatalogProduct | null;
     priceTypePrice: number; // Preloaded price from price type
     agreedPrice: number; // User edited override price
     versionId?: number | null;

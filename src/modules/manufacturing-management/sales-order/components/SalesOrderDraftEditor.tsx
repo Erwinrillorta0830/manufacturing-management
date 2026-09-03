@@ -249,7 +249,8 @@ export function SalesOrderDraftEditor({
         setCustomerId(value);
         setFormErrors(prev => ({ ...prev, customerId: undefined }));
         const customer = customers.find(item => String(item.id) === value);
-        const defaultTerm = Number(customer?.payment_term_id);
+        const pt = customer?.payment_term ?? customer?.payment_term_id;
+        const defaultTerm = typeof pt === 'object' && pt !== null ? Number((pt as any).id) : Number(pt);
         const hasTerm = Number.isSafeInteger(defaultTerm) && defaultTerm > 0 && paymentTerms.some(t => Number(t.id) === defaultTerm);
         setPaymentTermId(hasTerm ? String(defaultTerm) : "");
 
@@ -399,13 +400,13 @@ export function SalesOrderDraftEditor({
                     const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
                     const isFinishedGood = typeObj?.name === 'Finished Goods';
                     return {
-                        parent_product_id: item.parent_product_id,
+                        parent_product_id: item.parent_product_id as number,
                         product_id: item.product_id,
                         quantity: item.quantity,
                         unit_price: item.unit_price,
-                        discount_type: item.discount_type,
-                        discount_amount: item.discount_amount,
-                        discount_percent: item.discount_percent,
+                        discount_type: item.discount_type || null,
+                        discount_amount: item.discount_amount || 0,
+                        discount_percent: item.discount_percent || 0,
                         bom_version_id: isFinishedGood ? (item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || null) : null
                     };
                 }),

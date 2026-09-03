@@ -94,9 +94,12 @@ export function SearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] min-w-[240px] p-0 shadow-xl border-border bg-popover z-50"
+        className="w-[--radix-popover-trigger-width] min-w-[280px] p-0 shadow-xl border-border bg-popover z-50 overscroll-contain"
         align="start"
         sideOffset={4}
+        data-radix-scroll-lock-ignore="true"
+        onWheelCapture={(e) => e.stopPropagation()}
+        onTouchMoveCapture={(e) => e.stopPropagation()}
       >
         <Command shouldFilter={false} className="w-full">
           <div className="flex items-center border-b border-border px-2.5">
@@ -108,7 +111,12 @@ export function SearchableSelect({
               className="flex h-9 w-full rounded-md bg-transparent py-2 text-xs outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
-          <CommandList className="max-h-60 overflow-y-auto p-1">
+          <CommandList
+            className="max-h-64 overflow-y-auto overscroll-contain p-1 touch-pan-y"
+            data-radix-scroll-lock-ignore="true"
+            onWheelCapture={(e) => e.stopPropagation()}
+            onTouchMoveCapture={(e) => e.stopPropagation()}
+          >
             {filteredOptions.length === 0 ? (
               <div className="py-6 text-center text-xs text-muted-foreground italic">
                 {emptyMessage}
