@@ -1224,12 +1224,12 @@ export async function PATCH(request: Request) {
             }
 
             const isApprovalDecision = (current === "For Approval" || current === "On Hold")
-                && (target === "For Invoicing" || target === "Draft" || target === "On Hold" || target === "Cancelled");
+                && (target === "For Consolidation" || target === "Draft" || target === "On Hold" || target === "Cancelled");
             if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
                 throw new ApiError(403, "Sales-order approval access is required for this transition.");
             }
 
-            if (target === "For Invoicing") {
+            if (target === "For Consolidation") {
                 if (allDetails.length === 0) {
                     throw new ApiError(400, "Approval blocked: Sales Order has no item details.");
                 }
@@ -1302,6 +1302,9 @@ export async function PATCH(request: Request) {
             }
 
             const updatePayload: Record<string, any> = { order_status: target };
+            if (target === "For Invoicing") {
+                updatePayload.for_invoicing_at = new Date().toISOString();
+            }
             if (creditLimitExceeded && warningString) {
                 // If warning is not already in the remarks, append it
                 const currentRemarks = order.remarks || "";

@@ -79,35 +79,52 @@ export async function GET(
         const invJunctions: Array<{ id: number; consolidator_id: number; invoice_id: number; created_at: string }> = (await invRes.json()).data || [];
         const detJunctions: Array<{ id: number; consolidator_id: number; product_id: number; ordered_quantity: number; picked_quantity: number; applied_quantity: number; picked_by: number | null; picked_at: string | null }> = (await detRes.json()).data || [];
 
-        const invoiceIds = invJunctions.map((j) => j.invoice_id);
-        let invoiceMap = new Map<number, { invoice_id: number; invoice_no: string; branch_id: number; total_amount: number; customer_code: string }>();
+        const invoiceIds = invJunctions.map((j) => Number(j.invoice_id)).filter(Boolean);
+        let salesOrderMap = new Map<number, { order_id: number; order_no: string; branch_id: number; total_amount: number; net_amount: number; customer_code: string; created_date: string }>();
+        let soDetailsRaw: Array<{ detail_id: number; order_id: number; product_id: number; bom_version_id?: number | null; ordered_quantity: number }> = [];
+
         if (invoiceIds.length > 0) {
-            const siRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&fields=invoice_id,invoice_no,branch_id,total_amount,customer_code&limit=-1`,
-                { headers: directusHeaders, cache: "no-store" }
-            );
-            if (!siRes.ok) {
-                return NextResponse.json({ message: `Directus error (HTTP ${siRes.status})` }, { status: siRes.status });
+            const [soRes, sodRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${invoiceIds.join(",")}&fields=order_id,order_no,branch_id,total_amount,net_amount,customer_code,created_date&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id,bom_version_id,ordered_quantity&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ),
+            ]);
+
+            if (soRes.ok) {
+                const soData = (await soRes.json()).data || [];
+                salesOrderMap = new Map(soData.map((s: { order_id: number; order_no: string; branch_id: number; total_amount: number; net_amount: number; customer_code: string; created_date: string }) => [s.order_id, s]));
             }
-            const siData = (await siRes.json()).data || [];
-            invoiceMap = new Map(siData.map((s: { invoice_id: number; invoice_no: string; branch_id: number; total_amount: number; customer_code: string }) => [s.invoice_id, s]));
+            if (sodRes.ok) {
+                soDetailsRaw = (await sodRes.json()).data || [];
+            }
         }
 
         // Load customer names
-const customerCodes = [...new Set(Array.from(invoiceMap.values()).map((s) => s.customer_code).filter(Boolean))];
-let customerMap = new Map<string, { id: number; customer_name: string }>();
-if (customerCodes.length > 0) {
-    const custRes = await fetch(
-        `${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${customerCodes.map((c) => encodeURIComponent(c)).join(",")}&limit=-1&fields=id,customer_code,customer_name`,
-        { headers: directusHeaders, cache: "no-store" }
-    );
-    if (custRes.ok) {
-        const custData = (await custRes.json()).data || [];
-        customerMap = new Map(custData.map((c: { id: number; customer_code: string; customer_name: string }) => [c.customer_code, { id: c.id, customer_name: c.customer_name }]));
-    }
-}
+        const customerCodes = [...new Set(Array.from(salesOrderMap.values()).map((s) => s.customer_code).filter(Boolean))];
+        let customerMap = new Map<string, { id: number; customer_name: string }>();
+        if (customerCodes.length > 0) {
+            const custRes = await fetch(
+                `${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${customerCodes.map((c) => encodeURIComponent(c)).join(",")}&limit=-1&fields=id,customer_code,customer_name`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (custRes.ok) {
+                const custData = (await custRes.json()).data || [];
+                customerMap = new Map(custData.map((c: { id: number; customer_code: string; customer_name: string }) => [c.customer_code, { id: c.id, customer_name: c.customer_name }]));
+            }
+        }
 
-        const productIds = [...new Set(detJunctions.map((d) => d.product_id))];
+        const productIds = [
+            ...new Set([
+                ...detJunctions.map((d) => d.product_id),
+                ...soDetailsRaw.map((d) => d.product_id),
+            ].filter(Boolean)),
+        ];
+
         interface ProductPrintDetails {
             product_name: string;
             product_code: string;
@@ -127,74 +144,83 @@ if (customerCodes.length > 0) {
             }
         }
 
-        // Load per-invoice product details with version resolution
-        const invoiceNos = invoiceIds;
-        let invDetailsRaw: { invoice_no: number; product_id: number; quantity: number }[] = [];
-        if (invoiceNos.length > 0) {
-            const siDetRes = await fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${invoiceNos.join(",")}&limit=-1&fields=invoice_no,product_id,quantity`,
+        // BOM Version lookup
+        const allVersionIds = [...new Set(soDetailsRaw.map((d) => Number(d.bom_version_id)).filter(Boolean))];
+        const versionTitleMap = new Map<number, string>();
+        if (allVersionIds.length > 0) {
+            const verRes = await fetch(
+                `${DIRECTUS_URL}/items/product_manufacturing_version?filter[version_id][_in]=${allVersionIds.join(",")}&fields=version_id,version_name,version_code&limit=-1`,
                 { headers: directusHeaders, cache: "no-store" }
-            );
-            if (siDetRes.ok) {
-                invDetailsRaw = (await siDetRes.json()).data || [];
+            ).catch(() => null);
+            if (verRes && verRes.ok) {
+                const verData = (await verRes.json()).data || [];
+                for (const v of verData) {
+                    versionTitleMap.set(Number(v.version_id), v.version_name || v.version_code || `v${v.version_id}`);
+                }
             }
         }
 
-        // Build version pairs from linked invoices
+        // Build unique customer-product pairs for automatic BOM version resolution
         const versionPairs: { customerId: number; productId: number }[] = [];
-        for (const j of invJunctions) {
-            const si = invoiceMap.get(j.invoice_id);
-            if (!si) continue;
-            const cust = customerMap.get(si.customer_code);
+        for (const so of Array.from(salesOrderMap.values())) {
+            const cust = customerMap.get(so.customer_code);
             if (!cust) continue;
-            const invDetails = invDetailsRaw.filter((d) => d.invoice_no === j.invoice_id);
-            for (const d of invDetails) {
+            const soDetails = soDetailsRaw.filter((d) => d.order_id === so.order_id);
+            for (const d of soDetails) {
                 versionPairs.push({ customerId: cust.id, productId: d.product_id });
             }
         }
-        const versionMap = await resolveVersions(versionPairs);
+        const resolvedVersionMap = await resolveVersions(versionPairs);
 
-        // Aggregate invoice products by invoice_id
-        const invoiceProductsMap = new Map<number, InvoiceProduct[]>();
-        for (const d of invDetailsRaw) {
-            const invId = d.invoice_no;
-            if (!invoiceProductsMap.has(invId)) invoiceProductsMap.set(invId, []);
-            const list = invoiceProductsMap.get(invId)!;
+        // Aggregate Sales Order products by order_id
+        const soProductsMap = new Map<number, InvoiceProduct[]>();
+        for (const d of soDetailsRaw) {
+            const oId = d.order_id;
+            if (!soProductsMap.has(oId)) soProductsMap.set(oId, []);
+            const list = soProductsMap.get(oId)!;
             const existing = list.find((p) => p.productId === d.product_id);
-            const qty = Number(d.quantity || 0);
+            const qty = Number(d.ordered_quantity || 0);
             if (existing) {
                 existing.quantity += qty;
             } else {
-                const si = invoiceMap.get(invId);
-                const cust = si ? customerMap.get(si.customer_code) : undefined;
+                const so = salesOrderMap.get(oId);
+                const cust = so ? customerMap.get(so.customer_code) : undefined;
                 const versionKey = cust ? `${cust.id}:${d.product_id}` : "";
-                const version = versionMap.get(versionKey);
+                const autoVersion = resolvedVersionMap.get(versionKey);
+                const explicitVersionId = Number(d.bom_version_id || 0);
+                const finalVersionId = explicitVersionId || autoVersion?.versionId || null;
+                const finalVersionName = explicitVersionId
+                    ? (versionTitleMap.get(explicitVersionId) || `v${explicitVersionId}`)
+                    : (autoVersion?.versionName || null);
+
                 const prod = productMap.get(d.product_id);
                 list.push({
                     productId: d.product_id,
                     productName: prod?.product_name || `Product #${d.product_id}`,
                     productCode: prod?.product_code || "",
                     quantity: qty,
-                    versionId: version?.versionId ?? null,
-                    versionName: version?.versionName ?? null,
+                    versionId: finalVersionId,
+                    versionName: finalVersionName,
                 });
             }
         }
 
-        const invoices = invJunctions.map((j) => {
-            const si = invoiceMap.get(j.invoice_id);
-            const cust = si ? customerMap.get(si.customer_code) : undefined;
-            return {
-                id: j.id,
-                consolidatorId: j.consolidator_id,
-                invoiceId: j.invoice_id,
-                invoiceNo: si?.invoice_no || `#${j.invoice_id}`,
-                branchId: si?.branch_id ?? c.branch_id,
-                customerName: cust?.customer_name || si?.customer_code || "",
-                createdAt: j.created_at,
-                products: invoiceProductsMap.get(j.invoice_id) || [],
-            };
-        });
+        const invoices = invJunctions
+            .filter((j) => j.invoice_id !== null)
+            .map((j) => {
+                const so = salesOrderMap.get(j.invoice_id);
+                const cust = so ? customerMap.get(so.customer_code) : undefined;
+                return {
+                    id: j.id,
+                    consolidatorId: j.consolidator_id,
+                    invoiceId: j.invoice_id,
+                    invoiceNo: so?.order_no || `#${j.invoice_id}`,
+                    branchId: so?.branch_id ?? c.branch_id,
+                    customerName: cust?.customer_name || so?.customer_code || "Standard Fulfillment",
+                    createdAt: so?.created_date || j.created_at,
+                    products: soProductsMap.get(j.invoice_id) || [],
+                };
+            });
 
         const details = detJunctions.map((d) => {
             const prod = productMap.get(d.product_id);
@@ -216,8 +242,8 @@ if (customerCodes.length > 0) {
         });
 
         const totalAmount = invoices.reduce((sum: number, inv) => {
-            const si = invoiceMap.get(inv.invoiceId);
-            return sum + (si ? Number(si.total_amount || 0) : 0);
+            const so = salesOrderMap.get(inv.invoiceId);
+            return sum + (so ? Number(so.net_amount || so.total_amount || 0) : 0);
         }, 0);
 
         const branchMap = await getBranchesMap();

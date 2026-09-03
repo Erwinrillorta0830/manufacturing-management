@@ -65,6 +65,7 @@ export interface CandidateInvoice {
     invoiceId: number;
     invoiceNo: string;
     invoiceDate: string;
+    deliveryDate?: string | null;
     grossAmount: number;
     netAmount: number;
     branchId: number;
@@ -75,6 +76,7 @@ export interface CandidateInvoice {
     orderNo?: string | null;
     poNo?: string | null;
     orderStatus?: string | null;
+    documentType?: "SALES_ORDER" | "JOB_ORDER";
     products: CandidateProductLine[];
 }
 

@@ -24,6 +24,7 @@ import {
     nowManila,
     pickId,
     readAuditUserId,
+    type BatchDetailRow,
 } from "../../price-change-batches/_batch";
 import { assertValidPriceValue } from "../../_pricePrecision";
 import { applyProposedPrice, getPriceRequest, type PcrRow } from "../../price-change-requests/_actions";
@@ -180,8 +181,8 @@ async function applyPriceNow(row: PcrRow, userId: number, effectiveAt = nowManil
         effectiveAt,
         claimFields: ["current_price"],
         apply: async (claimed) => {
-            const productId = normalizeProductId(claimed);
-            const priceTypeId = normalizePriceTypeId(claimed);
+            const productId = normalizeProductId(claimed as unknown as BatchDetailRow);
+            const priceTypeId = normalizePriceTypeId(claimed as unknown as BatchDetailRow);
             const proposedPrice = Number(claimed.proposed_price);
             if (!productId || !priceTypeId || !Number.isFinite(proposedPrice)) {
                 throw new Error("Scheduled price request has invalid product, price type, or proposed price.");

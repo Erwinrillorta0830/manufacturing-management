@@ -19,6 +19,7 @@ import type {
   API_LineDiscount,
   API_SalesReturnType,
   PriceTypeOption,
+  ProductPerPriceType,
 } from "../type";
 
 import * as repo from "../repositories/sales-return-repository";
@@ -92,6 +93,52 @@ async function buildDiscountPercentMap(): Promise<Map<number, number>> {
   });
 
   return discountMap;
+}
+
+/**
+ * Synchronizes an inventory lot based on unique keys.
+ * Finds existing or creates a new one.
+ */
+async function syncInventoryLot(
+  lotId: number,
+  productId: number,
+  branchId: number,
+  batchNo: string,
+  returnNo: string,
+  userId: number,
+  mfgDate: string | null,
+  expDate: string | null
+): Promise<number | null> {
+  try {
+    const existing = await repo.getInventoryLotByUniqueKeys(lotId, productId, batchNo);
+    const data = existing.data || [];
+    if (data.length > 0 && data[0].inventory_lot_id) {
+      return Number(data[0].inventory_lot_id);
+    }
+
+    const payload = {
+      lot_id: lotId,
+      product_id: productId,
+      branch_id: branchId,
+      batch_no: batchNo,
+      manufacturing_date: mfgDate,
+      expiry_date: expDate,
+      unit_cost: 0,
+      qa_status: "GOOD",
+      status: "ACTIVE",
+      source_type: "Sales Return",
+      source_reference: returnNo,
+      created_by: userId,
+      created_at: nowPH(),
+      updated_at: nowPH(),
+    };
+
+    const created = await repo.createInventoryLot(payload);
+    return created.data ? Number(created.data.inventory_lot_id) : null;
+  } catch (e) {
+    console.error("Failed to sync inventory lot:", e);
+    return null;
+  }
 }
 
 // =============================================================================
@@ -182,8 +229,11 @@ export async function fetchReturnDetails(
       description:
         product.product_name || product.description || "Unknown Item",
       unit: unit ? unit.unit_shortcut : "Pcs",
+      unit_id: unitId ? Number(unitId) : undefined,
       quantity: Number(detail.quantity),
       unitPrice: Number(detail.unit_price),
+      agreedPrice: detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : Number(detail.unit_price),
+      priceVariance: detail.price_variance ? Number(detail.price_variance) : 0,
       grossAmount: Number(detail.gross_amount),
       discountType: detail.discount_type ? Number(detail.discount_type) : "",
       discountAmount: (() => {
@@ -206,6 +256,8 @@ export async function fetchReturnDetails(
       })(),
       lot_id: detail.lot_id ? Number(detail.lot_id) : null,
       batch: detail.batch || null,
+      manufacturing_date: detail.manufacturing_date ? String(detail.manufacturing_date).substring(0, 10) : null,
+      expiry_date: detail.expiry_date ? String(detail.expiry_date).substring(0, 10) : null,
       reason: detail.reason || "",
       sales_return_type_id: detail.sales_return_type_id
         ? Number(detail.sales_return_type_id)
@@ -315,9 +367,9 @@ export async function fetchReferences(): Promise<{
 /**
  * Fetches all lots.
  */
-export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
   const result = await repo.getRawLots();
-  return (result.data || []) as { lot_id: number; lot_name: string; }[];
+  return (result.data || []) as { lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[];
 }
 
 /**
@@ -334,9 +386,10 @@ export async function fetchProductCatalog(
   connections: ProductSupplierConnection[];
   supplierCategoryDiscount: any[];
   products: Product[];
+  productPrices: ProductPerPriceType[];
 }> {
   const catalogData = await repo.getRawProductCatalog(includeInactive);
-  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes] = catalogData;
+  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes, productPricesRes] = catalogData;
 
   let scdpcRes = { data: [] as any[] };
 
@@ -362,6 +415,18 @@ export async function fetchProductCatalog(
     discount_type: item.discount_type,
   }));
 
+  const productPrices = ((productPricesRes?.data || []) as any[]).map((item: any) => ({
+    id: item.id,
+    price: item.price,
+    status: item.status,
+    price_type_id: typeof item.price_type_id === "object" && item.price_type_id !== null 
+      ? (item.price_type_id.price_type_id || item.price_type_id.id)
+      : item.price_type_id,
+    product_id: typeof item.product_id === "object" && item.product_id !== null
+      ? (item.product_id.product_id || item.product_id.id)
+      : item.product_id,
+  }));
+
   return {
     brands: (brandsRes.data || []) as unknown as Brand[],
     categories: (categoriesRes.data || []) as unknown as Category[],
@@ -370,6 +435,7 @@ export async function fetchProductCatalog(
     connections: connections as ProductSupplierConnection[],
     supplierCategoryDiscount,
     products: (productsRes.data || []) as unknown as Product[],
+    productPrices: productPrices as ProductPerPriceType[],
   };
 }
 
@@ -402,6 +468,14 @@ export async function fetchInvoices(
 
   return Array.from(uniqueInvoices.values());
 }
+
+export async function fetchInvoiceDetails(invoiceId: number): Promise<any[]> {
+  const result = await repo.getRawInvoiceDetails(invoiceId);
+  return (result.data || []) as any[];
+}
+
+
+
 
 /**
  * Fetches the status card data for a return.
@@ -470,8 +544,10 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -503,7 +579,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     status: "Pending",
     return_date: formattedDate,
     price_type_id: payload.priceType ? Number(payload.priceType) : null,
-    branch_id: cleanId(payload.branchId),
+    branch_id: cleanId(payload.branchId) ?? null,
     remarks: payload.remarks || "Created via Web App",
     order_id: payload.orderNo || "",
     isThirdParty: payload.isThirdParty ? 1 : 0,
@@ -542,19 +618,37 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType && item.discountType !== ""
         ? Number(item.discountType)
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
+
+    let finalInventoryLotId = null;
+    if (item.batch && item.lot_id) {
+      finalInventoryLotId = await syncInventoryLot(
+        Number(item.lot_id),
+        Number(item.productId || item.product_id || item.id),
+        payload.branchId ? Number(payload.branchId) : 0,
+        item.batch,
+        finalReturnNo,
+        userId,
+        item.manufacturing_date || null,
+        item.expiry_date || null
+      );
+    }
 
     const detailPayload = {
       return_no: finalReturnNo,
       product_id: Number(item.productId || item.product_id || item.id),
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
@@ -563,7 +657,12 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       lot_id: item.lot_id ? Number(item.lot_id) : null,
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
+      inventory_lot_id: finalInventoryLotId,
+      unit_id: item.unit_id ? Number(item.unit_id) : null,
+      manufacturing_date: item.manufacturing_date || null,
+      expiry_date: item.expiry_date || null,
       created_at: nowPH(),
+      status: "Draft",
     };
 
     await repo.createReturnDetail(detailPayload);
@@ -598,8 +697,10 @@ export async function updateReturn(
   const lineDiscountMap = await buildDiscountPercentMap();
 
   const totalGross = payload.items.reduce(
-    (sum: number, item: any) =>
-      Math.round((sum + Number(item.quantity) * Number(item.unitPrice)) * 100) / 100,
+    (sum: number, item: any) => {
+      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+    },
     0,
   );
 
@@ -718,7 +819,8 @@ export async function updateReturn(
       ? matchedType.type_id
       : returnTypes[0]?.type_id || 1;
 
-    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice) * 100) / 100;
+    const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
+    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
     const discId =
       item.discountType &&
       item.discountType !== "No Discount" &&
@@ -727,10 +829,36 @@ export async function updateReturn(
         : null;
     const percentage = discId ? lineDiscountMap.get(discId) || 0 : 0;
     const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+    const variance = Math.round((Number(item.unitPrice) - agPrice) * Number(item.quantity) * 100) / 100;
+
+    let finalInventoryLotId = null;
+    if (item.batch && item.lot_id) {
+      if (typeof item.id === "number") {
+        const currentDbItem = currentItems.find((d: any) => d.id === item.id);
+        if (currentDbItem && currentDbItem.batch !== item.batch) {
+          if (currentDbItem.inventory_lot_id) {
+            await repo.updateInventoryLotStatus(Number(currentDbItem.inventory_lot_id), "INACTIVE");
+          }
+        }
+      }
+
+      finalInventoryLotId = await syncInventoryLot(
+        Number(item.lot_id),
+        Number(item.productId || item.product_id),
+        payload.branchId ? Number(payload.branchId) : 0,
+        item.batch,
+        payload.returnNo,
+        userId,
+        item.manufacturing_date || null,
+        item.expiry_date || null
+      );
+    }
 
     const detailPayload = {
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
+      agreed_price: agPrice,
+      price_variance: variance,
       gross_amount: gross,
       discount_amount: discountAmt,
       total_amount: Math.round((gross - discountAmt) * 100) / 100,
@@ -739,6 +867,10 @@ export async function updateReturn(
       lot_id: item.lot_id ? Number(item.lot_id) : null,
       batch: item.batch ? String(item.batch) : null,
       reason: item.reason || null,
+      inventory_lot_id: finalInventoryLotId,
+      unit_id: item.unit_id ? Number(item.unit_id) : null,
+      manufacturing_date: item.manufacturing_date || null,
+      expiry_date: item.expiry_date || null,
       updated_at: nowPH(),
     };
 
@@ -748,6 +880,7 @@ export async function updateReturn(
         return_no: payload.returnNo,
         product_id: Number(item.productId || item.product_id),
         created_at: nowPH(),
+        status: "Draft",
       });
     } else {
       await repo.updateReturnDetail(item.id, detailPayload);
@@ -766,5 +899,22 @@ export async function updateStatus(
   isReceived?: number,
   received_at?: string,
 ): Promise<any> {
+  if (status === "Received") {
+    try {
+      const headerRes = await repo.getRawReturnById(id);
+      const returnNo = headerRes.data?.return_number;
+      if (returnNo) {
+        const detailsRes = await repo.getRawReturnDetails(returnNo as string);
+        const details = detailsRes.data || [];
+        const detailPromises = details.map((d: any) =>
+          repo.updateReturnDetail(d.detail_id, { status: "Returned" }),
+        );
+        await Promise.all(detailPromises);
+      }
+    } catch (e) {
+      console.error("Failed to update sales return details status to Returned:", e);
+    }
+  }
+
   return repo.updateReturnStatus(id, status, isReceived, received_at);
 }

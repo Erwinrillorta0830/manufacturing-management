@@ -22,7 +22,7 @@ interface StockConversionTableProps {
   onFilterChange: (filters: Record<string, string>) => void;
   loadProductsInventory: (productIds: number[]) => void;
   isLoading?: boolean;
-  branches?: Array<{ id: number; branch_name?: string; name?: string }>;
+  branches?: Array<{ id: number; branch_name?: string; name?: string; isActive?: number | boolean | string }>;
   selectedBranchId?: number;
   onBranchChange?: (branchId: number | undefined) => void;
   options?: {
@@ -172,8 +172,9 @@ export function StockConversionTable({
     setSupplierFilter("");
     setHasStockFilter(false);
     setSearchQuery("");
-    setLocalBranchId(selectedBranchId);
+    setLocalBranchId(undefined);
     setPage(1);
+    onBranchChange?.(undefined);
     onFilterChange({});
   };
 
@@ -199,10 +200,12 @@ export function StockConversionTable({
       <div className="flex items-center gap-2">
         <div className="w-[170px]">
           <SearchableCombobox
-            options={branches?.map((b) => ({
-              value: String(b.id),
-              label: String(b.branch_name || b.name || b.id),
-            })) || []}
+            options={branches
+              ?.filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
+              .map((b) => ({
+                value: String(b.id),
+                label: String(b.branch_name || b.name || b.id),
+              })) || []}
             value={localBranchId ? String(localBranchId) : ""}
             onValueChange={(val: string | null) => setLocalBranchId(val ? Number(val) : undefined)}
             placeholder="Select Branch"

@@ -61,7 +61,7 @@ export default function AuditQueueModule() {
     }, [loadBatches]);
 
     const handleBatchClick = (batch: InvoiceConsolidation) => {
-        router.push(`/mm/consolidation/auditing/${encodeURIComponent(batch.consolidatorNo)}`);
+        router.push(`/mm/sales-and-fulfillment/consolidation-approval/${encodeURIComponent(batch.consolidatorNo)}`);
     };
 
     const progressPct = (batch: InvoiceConsolidation) => {

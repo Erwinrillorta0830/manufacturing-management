@@ -18,7 +18,7 @@ export async function GET(request: Request) {
             return NextResponse.json(json.data || []);
         } else {
             // Fetch all price types
-            const url = `${DIRECTUS_URL}/items/price_types?limit=-1&sort=sort`;
+            const url = `${DIRECTUS_URL}/items/price_types?filter[is_active][_eq]=1&limit=-1&sort=sort&fields=price_type_id,price_type_name,sort,is_active`;
             const res = await fetch(url, {
                 headers,
                 cache: "no-store"

@@ -22,7 +22,7 @@ const directItemSchema = z.object({
     quantity: z.number().finite().positive(),
     unit_price: positiveMoney,
     discount_type: positiveId.nullable().optional(),
-    discount_amount: money.default(0),
+    discount_amount: money.nullable().transform(v => v ?? 0).default(0),
     bom_version_id: positiveId.nullable().optional()
 });
 

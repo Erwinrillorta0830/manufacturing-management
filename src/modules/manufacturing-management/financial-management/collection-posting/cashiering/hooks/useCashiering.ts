@@ -222,8 +222,14 @@ export function useCashiering(
 
     useEffect(() => {
         let cancelled = false;
-        void fetchProvider.get<Salesman[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").then(data => {
-            if (!cancelled && data) setSalesmen(data);
+        void fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/salesmen").then(data => {
+            if (!cancelled && data) {
+                setSalesmen(data.map((s: Record<string, unknown>) => ({
+                    ...s,
+                    salesmanCode: s.salesmanCode || s.salesman_code,
+                    salesmanName: s.salesmanName || s.salesman_name
+                } as unknown as Salesman)));
+            }
         });
         return () => {
             cancelled = true;
@@ -238,30 +244,53 @@ export function useCashiering(
             setIsLookupsLoading(true);
             try {
                 const [banksData, denomData, coasData, pmData, custData, usersData] = await Promise.all([
-                    fetchProvider.get<Bank[]>("/api/manufacturing/financial-management/collection-posting/master-data/banks"),
-                    fetchProvider.get<Denomination[]>("/api/manufacturing/financial-management/collection-posting/master-data/denominations"),
-                    fetchProvider.get<COA[]>("/api/manufacturing/financial-management/collection-posting/master-data/coas"),
-                    fetchProvider.get<PaymentMethod[]>("/api/manufacturing/financial-management/collection-posting/master-data/payment-methods"),
-                    fetchProvider.get<Customer[]>("/api/manufacturing/financial-management/collection-posting/master-data/customers"),
-                    fetchProvider.get<UserDto[]>("/api/manufacturing/financial-management/collection-posting/master-data/users"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/banks"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/denominations"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/coas"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/payment-methods"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/customers"),
+                    fetchProvider.get<Record<string, unknown>[]>("/api/manufacturing/financial-management/collection-posting/master-data/users"),
                 ]);
 
                 const data: ModalLookupData = {
-                    banks: banksData || [],
-                    denominationMaster: denomData || [],
-                    coas: (coasData || []).filter(c =>
-                        c.isPayment === 1 || c.isPayment === true || c.isPaymentDuplicate
+                    banks: (banksData || []).map((b: Record<string, unknown>) => ({
+                        ...b,
+                        bankName: b.bankName || b.bank_name
+                    } as unknown as Bank)),
+                    denominationMaster: (denomData || []) as unknown as Denomination[],
+                    coas: (coasData || []).map((c: Record<string, unknown>) => ({
+                        ...c,
+                        coaId: c.coaId || c.coa_id,
+                        accountTitle: c.accountTitle || c.account_title,
+                        glCode: c.glCode || c.gl_code,
+                        isPayment: c.isPayment !== undefined ? c.isPayment : c.is_payment
+                    }) as unknown as COA).filter(c => {
+                        const p = c.isPayment as unknown as { data?: number[] } | boolean | number | string;
+                        return p === 1 || p === true || p === "1" || p === "true" || (typeof p === "object" && p && p.data && p.data[0] === 1) || (c as unknown as Record<string, unknown>).isPaymentDuplicate;
+                    }),
+                    paymentMethods: (pmData || []).map((pm: Record<string, unknown>) => ({
+                        ...pm,
+                        methodId: pm.methodId || pm.method_id,
+                        methodName: pm.methodName || pm.method_name
+                    }) as unknown as PaymentMethod).filter(pm =>
+                        pm.methodId !== 1 && (pm.methodName || "").toLowerCase() !== "cash"
                     ),
-                    paymentMethods: (pmData || []).filter(pm =>
-                        pm.methodId !== 1 && pm.methodName.toLowerCase() !== "cash"
-                    ),
-                    customers: custData || [],
-                    users: (usersData || []).map(u => ({
-                        id: u.id,
-                        firstName: u.firstName,
-                        lastName: u.lastName,
-                        name: `${u.firstName || ""} ${u.lastName || ""}`.trim(),
-                    })),
+                    customers: (custData || []).map((c: Record<string, unknown>) => ({
+                        ...c,
+                        customerCode: c.customerCode || c.customer_code,
+                        customerName: c.customerName || c.customer_name
+                    } as unknown as Customer)),
+                    users: (usersData || []).map((u: Record<string, unknown>) => {
+                        const firstName = u.firstName || u.user_fname || "";
+                        const lastName = u.lastName || u.user_lname || "";
+                        return {
+                            ...u,
+                            id: u.id || u.user_id,
+                            firstName,
+                            lastName,
+                            name: `${firstName} ${lastName}`.trim(),
+                        };
+                    }) as unknown as UserDto[],
                 };
 
                 setBanks(data.banks);
@@ -306,12 +335,21 @@ export function useCashiering(
 
         setRouteInvoices([]);
         setSubmissionError(null);
-        void fetchProvider.getOrThrow<UnpaidInvoice[]>(
+        void fetchProvider.getOrThrow<Record<string, unknown>[]>(
             `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
             {signal: controller.signal, timeoutMs: 15_000},
         ).then(data => {
             if (!cancelled) {
-                setRouteInvoices(data || []);
+                const mapped = (data || []).map(inv => ({
+                    ...inv,
+                    id: inv.id || inv.invoice_id,
+                    invoiceNo: inv.invoiceNo || inv.invoice_no,
+                    customerName: inv.customerName || inv.customer_name,
+                    transactionDate: inv.transactionDate || inv.invoice_date,
+                    dueDate: inv.dueDate || inv.due_date,
+                    remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                } as unknown as UnpaidInvoice));
+                setRouteInvoices(mapped);
                 setSubmissionError(null);
             }
         }).catch(error => {
@@ -351,36 +389,52 @@ export function useCashiering(
             if (!pouch) throw new Error("Collection details were empty.");
             {
                 setEditingId(id);
-                setSalesmanId(pouch.salesmanId.toString());
+                const rawPouch = pouch as unknown as Record<string, unknown>;
+                
+                const getNestedId = (val: unknown) => {
+                    if (val === null || val === undefined) return "";
+                    if (typeof val === "object") {
+                        const obj = val as Record<string, unknown>;
+                        return obj.id || obj.salesman_id || obj.user_id || Object.values(obj)[0] || "";
+                    }
+                    return val;
+                };
+
+                const actualSalesmanId = getNestedId(rawPouch.salesmanId) || getNestedId(rawPouch.salesman_id) || getNestedId(rawPouch.salesman);
+                setSalesmanId(actualSalesmanId ? actualSalesmanId.toString() : "");
 
                 // 🚀 Hydrate the new fields if backend returns them
-                setCollectedBy(pouch.collectedBy ? pouch.collectedBy.toString() : "");
-                setCrNo(pouch.crNo || "");
+                const actualCollectedBy = getNestedId(rawPouch.collectedBy) || getNestedId(rawPouch.collected_by);
+                setCollectedBy(actualCollectedBy ? actualCollectedBy.toString() : "");
+                setCrNo(pouch.crNo || (pouch as unknown as Record<string, unknown>).cr_no as string || "");
 
                 setCollectionDate(pouch.collectionDate.split('T')[0]);
                 setRemarks(pouch.remarks || "");
 
                 const newDenoms: Record<number, number> = lookupData.denominationMaster.reduce<Record<number, number>>((acc, d) => ({ ...acc, [d.id]: 0 }), {});
 
-                pouch.cashBuckets?.filter((b) => b.coaId === 1).forEach((bucket) => {
-                    const denomId = bucket.denominationId || parseInt(bucket.tempId?.replace("cash-", "") || "");
+                pouch.cashBuckets?.filter((b) => (b.coaId || (b as unknown as Record<string, unknown>).coa_id) === 1).forEach((bucket) => {
+                    const actualTempId = bucket.tempId || (bucket as unknown as Record<string, unknown>).temp_id as string || "";
+                    const denomId = bucket.denominationId || (bucket as unknown as Record<string, unknown>).denomination_id as number || parseInt(actualTempId.replace("cash-", "") || "");
                     if (!isNaN(denomId) && bucket.quantity) newDenoms[denomId] = bucket.quantity;
                 });
 
                 setDenominations(newDenoms);
 
-                const mappedChecks = pouch.cashBuckets?.filter((b) => b.coaId !== 1).map((b) => {
-                    const custObj = lookupData.customers.find(c => (c.customerCode || c.code) === b.customerCode);
+                const bucketRecord = (b: unknown) => b as Record<string, unknown>;
+                const mappedChecks = pouch.cashBuckets?.filter((b) => (b.coaId || (b as unknown as Record<string, unknown>).coa_id) !== 1).map((b) => {
+                    const actualCustCode = bucketRecord(b).customerCode || bucketRecord(b).customer_code as string;
+                    const custObj = lookupData.customers.find(c => (c.customerCode || c.code) === actualCustCode);
                     return {
-                        tempId: b.tempId,
-                        paymentMethodId: b.paymentMethodId?.toString() || "",
-                        coaId: b.coaId?.toString() || "",
-                        bankId: b.bankId?.toString() || "",
+                        tempId: bucketRecord(b).tempId as string || bucketRecord(b).temp_id as string,
+                        paymentMethodId: (bucketRecord(b).paymentMethodId || bucketRecord(b).payment_method_id)?.toString() || "",
+                        coaId: (bucketRecord(b).coaId || bucketRecord(b).coa_id)?.toString() || "",
+                        bankId: (bucketRecord(b).bankId || bucketRecord(b).bank_id)?.toString() || "",
                         customerId: custObj ? custObj.id.toString() : "",
-                        invoiceId: b.invoiceId?.toString() || "",
-                        checkNo: String(b.referenceNo ?? ""),
-                        amount: b.amount.toString(),
-                        chequeDate: b.chequeDate ? b.chequeDate.split('T')[0] : ""
+                        invoiceId: (bucketRecord(b).invoiceId || bucketRecord(b).invoice_id)?.toString() || "",
+                        checkNo: String(bucketRecord(b).referenceNo ?? bucketRecord(b).reference_no ?? ""),
+                        amount: (bucketRecord(b).amount ?? bucketRecord(b).amount)?.toString() || "",
+                        chequeDate: bucketRecord(b).chequeDate || bucketRecord(b).cheque_date ? (bucketRecord(b).chequeDate as string || bucketRecord(b).cheque_date as string).split('T')[0] : ""
                     };
                 }) || [];
                 setChecks(mappedChecks);
@@ -394,12 +448,21 @@ export function useCashiering(
                             customerId: String(cId),
                             currentPouchId: String(id),
                         });
-                        const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
+                        const data = await fetchProvider.getOrThrow<Record<string, unknown>[]>(
                             `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                             {signal: controller.signal, timeoutMs: 15_000},
                         );
                         if (!controller.signal.aborted && invoiceRequestVersion.current === requestVersion) {
-                            setCustomerInvoices(prev => ({...prev, [cId]: data || []}));
+                            const mapped = (data || []).map(inv => ({
+                                ...inv,
+                                id: inv.id || inv.invoice_id,
+                                invoiceNo: inv.invoiceNo || inv.invoice_no,
+                                customerName: inv.customerName || inv.customer_name,
+                                transactionDate: inv.transactionDate || inv.invoice_date,
+                                dueDate: inv.dueDate || inv.due_date,
+                                remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                            } as unknown as UnpaidInvoice));
+                            setCustomerInvoices(prev => ({...prev, [cId]: mapped}));
                         }
                     } catch (error) {
                         if (controller.signal.aborted || invoiceRequestVersion.current !== requestVersion) return;
@@ -460,11 +523,20 @@ export function useCashiering(
                     customerId,
                     ...(editingId ? { currentPouchId: String(editingId) } : {}),
                 });
-                const data = await fetchProvider.getOrThrow<UnpaidInvoice[]>(
+                const data = await fetchProvider.getOrThrow<Record<string, unknown>[]>(
                     `/api/manufacturing/financial-management/collection-posting/invoices/unpaid?${query.toString()}`,
                     {timeoutMs: 15_000},
                 );
-                setCustomerInvoices(prev => ({ ...prev, [customerId]: data || [] }));
+                const mapped = (data || []).map(inv => ({
+                    ...inv,
+                    id: inv.id || inv.invoice_id,
+                    invoiceNo: inv.invoiceNo || inv.invoice_no,
+                    customerName: inv.customerName || inv.customer_name,
+                    transactionDate: inv.transactionDate || inv.invoice_date,
+                    dueDate: inv.dueDate || inv.due_date,
+                    remainingBalance: inv.remainingBalance !== undefined ? inv.remainingBalance : (inv.net_amount || 0)
+                } as unknown as UnpaidInvoice));
+                setCustomerInvoices(prev => ({ ...prev, [customerId]: mapped }));
                 setSubmissionError(null);
             } catch (err) {
                 console.error("Failed to load customer invoices", err instanceof Error ? err.message : err);

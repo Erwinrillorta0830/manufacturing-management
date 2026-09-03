@@ -121,14 +121,12 @@ export async function planCostBulkCreate(rawItems: CostBulkItemInput[]): Promise
 export async function createPendingCostRequests(args: {
     userId: number;
     itemsToCreate: NormalizedCostBulkItem[];
-    supplierId?: number | null;
     referenceNo?: string;
     remarks?: string;
 }) {
     return createPendingCostBatch({
         userId: args.userId,
         itemsToCreate: args.itemsToCreate,
-        supplierId: args.supplierId,
         referenceNo: args.referenceNo,
         remarks: args.remarks,
     });

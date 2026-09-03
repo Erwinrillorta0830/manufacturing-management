@@ -2,33 +2,58 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { InventoryMovement } from "../types";
 import { fetchInventoryMovements } from "../services/lot-management-api";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
-export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL") {
+export function useInventoryMovements(
+    selectedProductId: number | "ALL" = "ALL",
+    selectedLotId: number | "ALL" = "ALL",
+    selectedBatchId: number | "ALL" = "ALL",
+    globalSearchQuery: string = "",
+    selectedBranchId: number | "ALL" = "ALL",
+    selectedProductType: string | "ALL" = "ALL",
+    selectedUomId: number | "ALL" = "ALL"
+) {
     const [movements, setMovements] = useState<InventoryMovement[]>([]);
     const [loadingMovements, setLoadingMovements] = useState(true);
+    const [movementError, setMovementError] = useState<string | null>(null);
 
     // Filters
     const [movementSearchQuery, setMovementSearchQuery] = useState("");
     const [directionFilter, setDirectionFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
     const [transactionTypeFilter, setTransactionTypeFilter] = useState<string>("ALL");
-    const [lotFilter, setLotFilter] = useState<number | "ALL">("ALL");
+    const [customLotFilter, setCustomLotFilter] = useState<number | "ALL" | null>(null);
     const [customProductFilter, setCustomProductFilter] = useState<number | "ALL" | null>(null);
 
     useEffect(() => {
-        setCustomProductFilter(null);
+        queueMicrotask(() => {
+            setCustomProductFilter(null);
+        });
     }, [selectedProductId]);
+
+    useEffect(() => {
+        queueMicrotask(() => {
+            setCustomLotFilter(null);
+        });
+    }, [selectedLotId]);
 
     const productFilter = customProductFilter !== null ? customProductFilter : selectedProductId;
     const setProductFilter = (val: number | "ALL") => setCustomProductFilter(val);
 
+    const lotFilter = customLotFilter !== null ? customLotFilter : selectedLotId;
+    const setLotFilter = (val: number | "ALL") => setCustomLotFilter(val);
+
     const loadMovements = useCallback(async () => {
         setLoadingMovements(true);
+        setMovementError(null);
         try {
             const list = await fetchInventoryMovements();
             setMovements(list);
+            setMovementError(null);
         } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to load inventory movements";
             console.error("Failed to load inventory movements:", e);
-            toast.error("Failed to load inventory movements");
+            setMovementError(msg);
+            toast.error(msg);
         } finally {
             setLoadingMovements(false);
         }
@@ -36,17 +61,23 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
 
     useEffect(() => {
         let isMounted = true;
+        queueMicrotask(() => {
+            if (isMounted) setMovementError(null);
+        });
         fetchInventoryMovements()
             .then((list) => {
                 if (isMounted) {
                     setMovements(list);
+                    setMovementError(null);
                     setLoadingMovements(false);
                 }
             })
             .catch((e) => {
                 if (isMounted) {
+                    const msg = e instanceof Error ? e.message : "Failed to load inventory movements";
                     console.error("Failed to load inventory movements:", e);
-                    toast.error("Failed to load inventory movements");
+                    setMovementError(msg);
+                    toast.error(msg);
                     setLoadingMovements(false);
                 }
             });
@@ -67,10 +98,27 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
 
     // Filter and sort movements
     const filteredMovements = useMemo(() => {
-        const query = movementSearchQuery.toLowerCase().trim();
+        const localQuery = movementSearchQuery.toLowerCase().trim();
+        const globalQuery = globalSearchQuery.toLowerCase().trim();
 
         return movements
             .filter((m) => {
+                // Branch filter
+                if (selectedBranchId !== "ALL") {
+                    if (m.branchId !== undefined && Number(m.branchId) !== Number(selectedBranchId)) return false;
+                }
+
+                // Product Type filter
+                if (selectedProductType !== "ALL") {
+                    const cls = resolveProductClassification(m.productTypeId || m.productTypeName, undefined, m.productCode, m.productName);
+                    if (cls.code !== selectedProductType) return false;
+                }
+
+                // UOM filter
+                if (selectedUomId !== "ALL") {
+                    if (m.unitId !== undefined && Number(m.unitId) !== Number(selectedUomId)) return false;
+                }
+
                 // Direction filter
                 if (directionFilter !== "ALL") {
                     const dirUpper = String(m.movementDirection || "").toUpperCase();
@@ -95,32 +143,27 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
                     if (Number(m.productId) !== Number(productFilter)) return false;
                 }
 
-                // Text search query
-                if (query) {
-                    const matchesRef = (m.referenceNo || "").toLowerCase().includes(query);
-                    const matchesKey = (m.movementKey || "").toLowerCase().includes(query);
-                    const matchesBatch = (m.batchNo || "").toLowerCase().includes(query);
-                    const matchesProd = (m.productName || "").toLowerCase().includes(query);
-                    const matchesCode = (m.productCode || "").toLowerCase().includes(query);
-                    const matchesLot = (m.lotName || "").toLowerCase().includes(query);
-                    const matchesRemarks = (m.remarks || "").toLowerCase().includes(query);
-                    const matchesType = (m.transactionType || "").toLowerCase().includes(query);
-                    const matchesModule = (m.sourceModule || "").toLowerCase().includes(query);
-
-                    return (
-                        matchesRef ||
-                        matchesKey ||
-                        matchesBatch ||
-                        matchesProd ||
-                        matchesCode ||
-                        matchesLot ||
-                        matchesRemarks ||
-                        matchesType ||
-                        matchesModule
-                    );
+                // Batch filter
+                if (selectedBatchId !== "ALL") {
+                    if (Number(m.inventoryLotId ?? m.batchId) !== Number(selectedBatchId)) return false;
                 }
 
-                return true;
+                const matchesText = (query: string) => {
+                    if (!query) return true;
+                    return (
+                        (m.referenceNo || "").toLowerCase().includes(query) ||
+                        (m.movementKey || "").toLowerCase().includes(query) ||
+                        (m.batchNo || "").toLowerCase().includes(query) ||
+                        (m.productName || "").toLowerCase().includes(query) ||
+                        (m.productCode || "").toLowerCase().includes(query) ||
+                        (m.lotName || "").toLowerCase().includes(query) ||
+                        (m.remarks || "").toLowerCase().includes(query) ||
+                        (m.transactionType || "").toLowerCase().includes(query) ||
+                        (m.sourceModule || "").toLowerCase().includes(query)
+                    );
+                };
+
+                return matchesText(localQuery) && matchesText(globalQuery);
             })
             .sort((a, b) => {
                 // Sort by postedAt / transactionDate desc
@@ -132,7 +175,19 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
                 ...m,
                 displayNumber: idx + 1
             }));
-    }, [movements, movementSearchQuery, directionFilter, transactionTypeFilter, lotFilter, productFilter]);
+    }, [
+        movements,
+        movementSearchQuery,
+        globalSearchQuery,
+        directionFilter,
+        transactionTypeFilter,
+        lotFilter,
+        productFilter,
+        selectedBatchId,
+        selectedBranchId,
+        selectedProductType,
+        selectedUomId
+    ]);
 
     // Aggregate summary stats
     const movementStats = useMemo(() => {
@@ -169,6 +224,7 @@ export function useInventoryMovements(selectedProductId: number | "ALL" = "ALL")
         movements,
         filteredMovements,
         loadingMovements,
+        movementError,
         movementSearchQuery,
         setMovementSearchQuery,
         directionFilter,

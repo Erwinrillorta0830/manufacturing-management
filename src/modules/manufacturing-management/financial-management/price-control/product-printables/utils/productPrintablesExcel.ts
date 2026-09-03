@@ -196,52 +196,7 @@ export async function exportProductPrintablesExcel(args: {
             }
         }
 
-        // Output Versions
-        for (const v of row.versions || []) {
-            const vValues: Array<string | number> = [
-                DASH,
-                DASH,
-                `   |_  ${v.version.version_name}`
-            ];
 
-            for (const priceType of priceTypes) {
-                const tierKey = priceTypeTierKey(priceType);
-                for (const unit of unitSlots) {
-                    if (!unit) {
-                        vValues.push(DASH);
-                        continue;
-                    }
-                    const isMatchingUnit = Number(unit.unit_id) === Number(v.version.uom_id);
-                    const price = isMatchingUnit ? v.tiers[tierKey] : null;
-                    vValues.push(price == null ? DASH : Number(price));
-                }
-            }
-
-            const vWorksheetRow = ws.addRow(vValues);
-            vWorksheetRow.height = 20;
-
-            for (let cellIndex = 1; cellIndex <= totalColumns; cellIndex++) {
-                const cell = vWorksheetRow.getCell(cellIndex);
-                cell.border = thinBorder();
-                cell.alignment = {
-                    vertical: "middle",
-                    horizontal: cellIndex <= IDENTITY_COLUMN_COUNT ? "left" : "right",
-                    wrapText: cellIndex <= IDENTITY_COLUMN_COUNT,
-                };
-                cell.font = {
-                    name: cellIndex <= IDENTITY_COLUMN_COUNT ? "Calibri" : "Consolas",
-                    size: cellIndex <= IDENTITY_COLUMN_COUNT ? 10 : 9,
-                    bold: cellIndex > IDENTITY_COLUMN_COUNT && typeof cell.value === "number",
-                    color: { argb: cell.value === DASH ? "FFD1D5DB" : "FF4B5563" },
-                };
-                if (cell.value === DASH) {
-                    cell.fill = fill("FFF9FAFB");
-                }
-                if (cellIndex > IDENTITY_COLUMN_COUNT && typeof cell.value === "number") {
-                    cell.numFmt = "#,##0.0000";
-                }
-            }
-        }
     }
 
     ws.getColumn(1).width = 16;

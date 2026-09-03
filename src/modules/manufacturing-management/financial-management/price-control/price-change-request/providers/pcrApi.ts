@@ -93,7 +93,6 @@ export async function createCostRequest(payload: CreateCCRPayload) {
 
 export async function createBulkCostChangeRequests(payload: {
     items: CreateCCRPayload[];
-    supplier_id: number;
     reference_no?: string;
     remarks?: string;
 }) {
@@ -112,7 +111,6 @@ export async function createBulkCostChangeRequests(payload: {
 
 export async function saveMixedPricingChanges(payload: {
     batch: {
-        supplier_id: number;
         reference_no?: string;
         remarks: string;
     };

@@ -3,6 +3,7 @@
 
 import React, { useState, useMemo, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     Search,
     Plus,
@@ -834,7 +835,12 @@ export default function FinishedGoodsModule() {
     };
 
     return (
-        <div className="flex h-full min-h-[calc(100vh-120px)] flex-1 flex-col overflow-hidden bg-background">
+        <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.16, ease: "easeOut" }}
+            className="flex h-full min-h-[calc(100vh-120px)] flex-1 flex-col overflow-hidden bg-background"
+        >
             {/* Header Bar & Tab Controls */}
             <FinishedGoodsHeader
                 isSidebarCollapsed={isSidebarCollapsed}
@@ -866,16 +872,6 @@ export default function FinishedGoodsModule() {
                                     {versions.length}
                                 </span>
                             </div>
-                            <button
-                                type="button"
-                                onClick={handleOpenVersionModal}
-                                disabled={!selectedProduct}
-                                className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-2xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Register a new version recipe"
-                            >
-                                <Plus className="h-3 w-3" />
-                                New
-                            </button>
                         </div>
 
                         {/* Compare Matrix + Sync Yield Toolbar */}
@@ -1129,148 +1125,157 @@ export default function FinishedGoodsModule() {
                                 <QualityTabSkeleton />
                             )
                         ) : (
-                            <>
-                                {activeTab === "details" && (
-                                    <ProductDetailsTab
-                                        editedDetails={editedDetails}
-                                        editFieldErrors={editFieldErrors}
-                                        handleDetailChange={handleDetailChange}
-                                        customOverhead={editedVersionDetails.custom_overhead ?? 0}
-                                        handleCustomOverheadChange={handleCustomOverheadChange}
-                                        selectedProduct={selectedProduct}
-                                        units={units}
-                                        brands={brands}
-                                        categories={categories}
-                                        classes={classes}
-                                        segments={segments}
-                                        sections={sections}
-                                        handleCreateBrand={handleCreateBrand}
-                                        handleCreateCategory={handleCreateCategory}
-                                        handleCreateClass={handleCreateClass}
-                                        handleCreateSegment={handleCreateSegment}
-                                        handleCreateSection={handleCreateSection}
-                                        products={products}
-                                    />
-                                )}
+                            <AnimatePresence mode="wait">
+                                <motion.div
+                                    key={activeTab}
+                                    initial={{ opacity: 0, y: -6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: 6 }}
+                                    transition={{ duration: 0.14, ease: "easeOut" }}
+                                    className="w-full"
+                                >
+                                    {activeTab === "details" && (
+                                        <ProductDetailsTab
+                                            editedDetails={editedDetails}
+                                            editFieldErrors={editFieldErrors}
+                                            handleDetailChange={handleDetailChange}
+                                            customOverhead={editedVersionDetails.custom_overhead ?? 0}
+                                            handleCustomOverheadChange={handleCustomOverheadChange}
+                                            selectedProduct={selectedProduct}
+                                            units={units}
+                                            brands={brands}
+                                            categories={categories}
+                                            classes={classes}
+                                            segments={segments}
+                                            sections={sections}
+                                            handleCreateBrand={handleCreateBrand}
+                                            handleCreateCategory={handleCreateCategory}
+                                            handleCreateClass={handleCreateClass}
+                                            handleCreateSegment={handleCreateSegment}
+                                            handleCreateSection={handleCreateSection}
+                                            products={products}
+                                        />
+                                    )}
 
-                                {activeTab !== "details" && versions.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center p-20 text-center max-w-md mx-auto my-auto h-full">
-                                        <Layers className="h-16 w-16 mb-4 text-muted-foreground/30" />
-                                        <h3 className="text-base font-bold mb-2 text-foreground">No Registered Versions</h3>
-                                        <p className="text-xs text-muted-foreground mb-6">
-                                            To start configuring the Bill of Materials (BOM) and manufacturing routings for <strong>{selectedProduct.title}</strong>, please register an initial version.
-                                        </p>
-                                        <button
-                                            onClick={handleOpenVersionModal}
-                                            className="inline-flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all text-xs cursor-pointer"
-                                        >
-                                            <Plus className="h-4 w-4" /> Register Initial Version
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {(activeTab === "version_management" || activeTab === "routes_bom") && (
-                                            <VersionManagementTab
-                                                activeTab={activeTab}
-                                                selectedVersionId={selectedVersionId}
-                                                selectedVersion={selectedVersion}
-                                                editedVersionDetails={editedVersionDetails}
-                                                setEditedVersionDetails={setEditedVersionDetails}
-                                                editedRoutes={editedRoutes}
-                                                setEditedRoutes={setEditedRoutes}
-                                                operationTypes={operationTypes}
-                                                setOperationTypes={setOperationTypes}
-                                                overheadTypes={overheadTypes}
-                                                setOverheadTypes={setOverheadTypes}
-                                                workCenters={workCenters}
-                                                qaTemplates={qaTemplates}
-                                                units={units}
-                                                setHasUnsavedChanges={setHasUnsavedChanges}
-                                                isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
-                                                onSetPrimary={handlePromptSetPrimary}
-                                                onSubmitForApproval={handlePromptSubmitForApproval}
-                                            />
-                                        )}
+                                    {activeTab !== "details" && versions.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center p-20 text-center max-w-md mx-auto my-auto h-full">
+                                            <Layers className="h-16 w-16 mb-4 text-muted-foreground/30" />
+                                            <h3 className="text-base font-bold mb-2 text-foreground">No Registered Versions</h3>
+                                            <p className="text-xs text-muted-foreground mb-6">
+                                                To start configuring the Bill of Materials (BOM) and manufacturing routings for <strong>{selectedProduct.title}</strong>, please register an initial version.
+                                            </p>
+                                            <button
+                                                onClick={handleOpenVersionModal}
+                                                className="inline-flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all text-xs cursor-pointer"
+                                            >
+                                                <Plus className="h-4 w-4" /> Register Initial Version
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {(activeTab === "version_management" || activeTab === "routes_bom") && (
+                                                <VersionManagementTab
+                                                    activeTab={activeTab}
+                                                    selectedVersionId={selectedVersionId}
+                                                    selectedVersion={selectedVersion}
+                                                    editedVersionDetails={editedVersionDetails}
+                                                    setEditedVersionDetails={setEditedVersionDetails}
+                                                    editedRoutes={editedRoutes}
+                                                    setEditedRoutes={setEditedRoutes}
+                                                    operationTypes={operationTypes}
+                                                    setOperationTypes={setOperationTypes}
+                                                    overheadTypes={overheadTypes}
+                                                    setOverheadTypes={setOverheadTypes}
+                                                    workCenters={workCenters}
+                                                    qaTemplates={qaTemplates}
+                                                    units={units}
+                                                    setHasUnsavedChanges={setHasUnsavedChanges}
+                                                    isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
+                                                    onSetPrimary={handlePromptSetPrimary}
+                                                    onSubmitForApproval={handlePromptSubmitForApproval}
+                                                />
+                                            )}
 
-                                        {(activeTab === "quality_importation" || activeTab === "qa_templates" || activeTab === "importation") && (
-                                            <QualityImportationTab
-                                                qaTemplates={qaTemplates}
-                                                units={units}
-                                                handleAddQATemplate={handleAddQATemplate}
-                                                handleSaveQATemplate={handleSaveQATemplate}
-                                                importNetWeight={importNetWeight}
-                                                setImportNetWeight={setImportNetWeight}
-                                                importPriceUsd={importPriceUsd}
-                                                setImportPriceUsd={setImportPriceUsd}
-                                                importFxRate={importFxRate}
-                                                setImportFxRate={setImportFxRate}
-                                                importDensityFactor={importDensityFactor}
-                                                setImportDensityFactor={setImportDensityFactor}
-                                                importThcFee={importThcFee}
-                                                setImportThcFee={setImportThcFee}
-                                                importStorageFee={importStorageFee}
-                                                setImportStorageFee={setImportStorageFee}
-                                                importCustomSop={importCustomSop}
-                                                setImportCustomSop={setImportCustomSop}
-                                                importTruckingFee={importTruckingFee}
-                                                setImportTruckingFee={setImportTruckingFee}
-                                                importOtherPortFees={automateCustoms ? finalOtherPortFees : importOtherPortFees}
-                                                setImportOtherPortFees={setImportOtherPortFees}
-                                                importCustomDuty={automateCustoms ? finalCustomDuty : importCustomDuty}
-                                                setImportCustomDuty={setImportCustomDuty}
-                                                importVat={automateCustoms ? finalVat : importVat}
-                                                setImportVat={setImportVat}
-                                                importIpf={automateCustoms ? finalIpf : importIpf}
-                                                setImportIpf={setImportIpf}
-                                                importForeignPeso={importForeignPeso}
-                                                importTotalShippingPort={importTotalShippingPort}
-                                                importTotalDutiesTaxes={importTotalDutiesTaxes}
-                                                importTotalLandedCost={importTotalLandedCost}
-                                                importLandedCostPerKg={importLandedCostPerKg}
-                                                importLandedCostPerL={importLandedCostPerL}
-                                                importTotalForCogs={importTotalForCogs}
-                                                importCogsPerKg={importCogsPerKg}
-                                                importCogsPerL={importCogsPerL}
-                                                handleApplyImportLandedCost={handleApplyImportLandedCost}
-                                                automateCustoms={automateCustoms}
-                                                setAutomateCustoms={setAutomateCustoms}
-                                            />
-                                        )}
+                                            {(activeTab === "quality_importation" || activeTab === "qa_templates" || activeTab === "importation") && (
+                                                <QualityImportationTab
+                                                    qaTemplates={qaTemplates}
+                                                    units={units}
+                                                    handleAddQATemplate={handleAddQATemplate}
+                                                    handleSaveQATemplate={handleSaveQATemplate}
+                                                    importNetWeight={importNetWeight}
+                                                    setImportNetWeight={setImportNetWeight}
+                                                    importPriceUsd={importPriceUsd}
+                                                    setImportPriceUsd={setImportPriceUsd}
+                                                    importFxRate={importFxRate}
+                                                    setImportFxRate={setImportFxRate}
+                                                    importDensityFactor={importDensityFactor}
+                                                    setImportDensityFactor={setImportDensityFactor}
+                                                    importThcFee={importThcFee}
+                                                    setImportThcFee={setImportThcFee}
+                                                    importStorageFee={importStorageFee}
+                                                    setImportStorageFee={setImportStorageFee}
+                                                    importCustomSop={importCustomSop}
+                                                    setImportCustomSop={setImportCustomSop}
+                                                    importTruckingFee={importTruckingFee}
+                                                    setImportTruckingFee={setImportTruckingFee}
+                                                    importOtherPortFees={automateCustoms ? finalOtherPortFees : importOtherPortFees}
+                                                    setImportOtherPortFees={setImportOtherPortFees}
+                                                    importCustomDuty={automateCustoms ? finalCustomDuty : importCustomDuty}
+                                                    setImportCustomDuty={setImportCustomDuty}
+                                                    importVat={automateCustoms ? finalVat : importVat}
+                                                    setImportVat={setImportVat}
+                                                    importIpf={automateCustoms ? finalIpf : importIpf}
+                                                    setImportIpf={setImportIpf}
+                                                    importForeignPeso={importForeignPeso}
+                                                    importTotalShippingPort={importTotalShippingPort}
+                                                    importTotalDutiesTaxes={importTotalDutiesTaxes}
+                                                    importTotalLandedCost={importTotalLandedCost}
+                                                    importLandedCostPerKg={importLandedCostPerKg}
+                                                    importLandedCostPerL={importLandedCostPerL}
+                                                    importTotalForCogs={importTotalForCogs}
+                                                    importCogsPerKg={importCogsPerKg}
+                                                    importCogsPerL={importCogsPerL}
+                                                    handleApplyImportLandedCost={handleApplyImportLandedCost}
+                                                    automateCustoms={automateCustoms}
+                                                    setAutomateCustoms={setAutomateCustoms}
+                                                />
+                                            )}
 
-                                        {activeTab === "costing" && (
-                                            <CostRollupTab
-                                                versionOverheadItems={editedVersionDetails.overhead_items}
-                                                standardPrice={standardPrice}
-                                                standardCogs={standardCostBreakdown.unitCost}
-                                                standardBreakdown={standardCostBreakdown}
-                                                standardOverheads={standardOverheads}
-                                                standardGrossProfit={standardMarginSummary.grossProfit}
-                                                standardGrossMarginPercent={standardMarginSummary.grossMarginPercent}
-                                                standardNetProfit={standardMarginSummary.netProfit}
-                                                standardNetMarginPercent={standardMarginSummary.netMarginPercent}
-                                                simulationYield={simulationYield}
-                                                setSimulationYield={setSimulationYield}
-                                                simulationTargetPrice={simulationTargetPrice}
-                                                setSimulationTargetPrice={setSimulationTargetPrice}
-                                                simulationPriceOverrides={simulationPriceOverrides}
-                                                setSimulationPriceOverrides={setSimulationPriceOverrides}
-                                                editedBOM={editedBOM}
-                                                selectedProduct={selectedProduct}
-                                                selectedVersionId={selectedVersionId}
-                                                simulatedGrossProfit={simulatedMarginSummary.grossProfit}
-                                                simulatedGrossMarginPercent={simulatedMarginSummary.grossMarginPercent}
-                                                simulatedNetProfit={simulatedMarginSummary.netProfit}
-                                                simulatedCogs={simulatedCostBreakdown.unitCost}
-                                                simulatedBreakdown={simulatedCostBreakdown}
-                                                simulatedOverheads={simulatedOverheads}
-                                                simulatedNetMarginPercent={simulatedMarginSummary.netMarginPercent}
-                                                simulatedForexRate={simulatedForexRate}
-                                                setSimulatedForexRate={setSimulatedForexRate}
-                                            />
-                                        )}
-                                    </>
-                                )}
-                            </>
+                                            {activeTab === "costing" && (
+                                                <CostRollupTab
+                                                    versionOverheadItems={editedVersionDetails.overhead_items}
+                                                    standardPrice={standardPrice}
+                                                    standardCogs={standardCostBreakdown.unitCost}
+                                                    standardBreakdown={standardCostBreakdown}
+                                                    standardOverheads={standardOverheads}
+                                                    standardGrossProfit={standardMarginSummary.grossProfit}
+                                                    standardGrossMarginPercent={standardMarginSummary.grossMarginPercent}
+                                                    standardNetProfit={standardMarginSummary.netProfit}
+                                                    standardNetMarginPercent={standardMarginSummary.netMarginPercent}
+                                                    simulationYield={simulationYield}
+                                                    setSimulationYield={setSimulationYield}
+                                                    simulationTargetPrice={simulationTargetPrice}
+                                                    setSimulationTargetPrice={setSimulationTargetPrice}
+                                                    simulationPriceOverrides={simulationPriceOverrides}
+                                                    setSimulationPriceOverrides={setSimulationPriceOverrides}
+                                                    editedBOM={editedBOM}
+                                                    selectedProduct={selectedProduct}
+                                                    selectedVersionId={selectedVersionId}
+                                                    simulatedGrossProfit={simulatedMarginSummary.grossProfit}
+                                                    simulatedGrossMarginPercent={simulatedMarginSummary.grossMarginPercent}
+                                                    simulatedNetProfit={simulatedMarginSummary.netProfit}
+                                                    simulatedCogs={simulatedCostBreakdown.unitCost}
+                                                    simulatedBreakdown={simulatedCostBreakdown}
+                                                    simulatedOverheads={simulatedOverheads}
+                                                    simulatedNetMarginPercent={simulatedMarginSummary.netMarginPercent}
+                                                    simulatedForexRate={simulatedForexRate}
+                                                    setSimulatedForexRate={setSimulatedForexRate}
+                                                />
+                                            )}
+                                        </>
+                                    )}
+                                </motion.div>
+                            </AnimatePresence>
                         )}
                     </div>
                 </div>
@@ -1303,126 +1308,140 @@ export default function FinishedGoodsModule() {
             )}
 
             {/* Version Registration Modal */}
-            {isVersionModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
-                    <div className="bg-card border border-border/80 rounded-2xl shadow-2xl   overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-                        {/* Header */}
-                        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
-                            <div className="flex items-center gap-2">
-                                <Plus className="h-5 w-5 text-primary" />
-                                <div>
-                                    <h3 className="text-base font-bold text-foreground">Register New BOM Version</h3>
-                                    <p className="text-xs text-muted-foreground">Add a new version for manufacturing specifications.</p>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setIsVersionModalOpen(false)}
-                                className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
-                            >
-                                Close
-                            </button>
-                        </div>
-
-                        {/* Form */}
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                handleRegisterNewVersion(versionForm);
-                            }}
-                            className="p-6 space-y-4 text-xs"
+            <AnimatePresence>
+                {isVersionModalOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.14 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
+                    >
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.96, y: -8 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                            transition={{ duration: 0.14, ease: "easeOut" }}
+                            className="bg-card border border-border/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-w-lg w-full"
                         >
-                            {/* Version Name */}
-                            <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Version Name <span className="text-red-500">*</span></label>
-                                <input
-                                    type="text"
-                                    required
-                                    placeholder="e.g. FG-OIL-500ML - v2.0"
-                                    value={versionForm.versionName}
-                                    onChange={e => setVersionForm(prev => ({ ...prev, versionName: e.target.value }))}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                />
-                            </div>
-
-                            {/* Base Qty & Base UOM */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base Quantity</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        required
-                                        value={versionForm.baseQuantity}
-                                        onChange={e => setVersionForm(prev => ({ ...prev, baseQuantity: parseInt(e.target.value) || 1 }))}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
-                                        <span>Base UOM</span>
-                                        <span className="text-[9px] text-muted-foreground font-semibold lowercase">(bound to product)</span>
-                                    </label>
-                                    <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm text-muted-foreground font-semibold flex items-center justify-between cursor-not-allowed">
-                                        <span>{selectedProduct?.baseUom || "PCS"}</span>
-                                        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
+                                <div className="flex items-center gap-2">
+                                    <Plus className="h-5 w-5 text-primary" />
+                                    <div>
+                                        <h3 className="text-base font-bold text-foreground">Register New BOM Version</h3>
+                                        <p className="text-xs text-muted-foreground">Add a new version for manufacturing specifications.</p>
                                     </div>
                                 </div>
-                            </div>
-
-                            {/* Expected Yield & Clone Source */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Expected Yield (%)</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        required
-                                        value={versionForm.expectedYield}
-                                        onChange={e => setVersionForm(prev => ({ ...prev, expectedYield: parseInt(e.target.value) || 100 }))}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Clone Source</label>
-                                    <select
-                                        value={versionForm.baseVersionId}
-                                        onChange={e => setVersionForm(prev => ({ ...prev, baseVersionId: e.target.value }))}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                    >
-                                        <option value="">Start Blank (No Clone)</option>
-                                        {versions.map(v => (
-                                            <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-
-                            {/* Footer Buttons */}
-                            <div className="flex justify-end gap-3 pt-3 border-t shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setIsVersionModalOpen(false)}
-                                    className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground cursor-pointer"
+                                    className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={savingBOM}
-                                    className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
-                                >
-                                    {savingBOM && (
-                                        <div className="h-3 w-3 animate-spin border border-current border-t-transparent rounded-full" />
-                                    )}
-                                    {savingBOM ? "Registering..." : "Register Version"}
+                                    Close
                                 </button>
                             </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+
+                            {/* Form */}
+                            <form
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    handleRegisterNewVersion(versionForm);
+                                }}
+                                className="p-6 space-y-4 text-xs"
+                            >
+                                {/* Version Name */}
+                                <div className="space-y-1">
+                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Version Name <span className="text-red-500">*</span></label>
+                                    <input
+                                        type="text"
+                                        required
+                                        placeholder="e.g. FG-OIL-500ML - v2.0"
+                                        value={versionForm.versionName}
+                                        onChange={e => setVersionForm(prev => ({ ...prev, versionName: e.target.value }))}
+                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                    />
+                                </div>
+
+                                {/* Base Qty & Base UOM */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base Quantity</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            required
+                                            value={versionForm.baseQuantity}
+                                            onChange={e => setVersionForm(prev => ({ ...prev, baseQuantity: parseInt(e.target.value) || 1 }))}
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
+                                            <span>Base UOM</span>
+                                            <span className="text-[9px] text-muted-foreground font-semibold lowercase">(bound to product)</span>
+                                        </label>
+                                        <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm text-muted-foreground font-semibold flex items-center justify-between cursor-not-allowed">
+                                            <span>{selectedProduct?.baseUom || "PCS"}</span>
+                                            <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Expected Yield & Clone Source */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Expected Yield (%)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="100"
+                                            required
+                                            value={versionForm.expectedYield}
+                                            onChange={e => setVersionForm(prev => ({ ...prev, expectedYield: parseInt(e.target.value) || 100 }))}
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Clone Source</label>
+                                        <select
+                                            value={versionForm.baseVersionId}
+                                            onChange={e => setVersionForm(prev => ({ ...prev, baseVersionId: e.target.value }))}
+                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                        >
+                                            <option value="">Start Blank (No Clone)</option>
+                                            {versions.map(v => (
+                                                <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Footer Buttons */}
+                                <div className="flex justify-end gap-3 pt-3 border-t shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsVersionModalOpen(false)}
+                                        className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground cursor-pointer"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={savingBOM}
+                                        className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                        {savingBOM && (
+                                            <div className="h-3 w-3 animate-spin border border-current border-t-transparent rounded-full" />
+                                        )}
+                                        {savingBOM ? "Registering..." : "Register Version"}
+                                    </button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Product Registration Modal Popup */}
             <RegisterProductModal
@@ -1464,6 +1483,6 @@ export default function FinishedGoodsModule() {
 
             {/* Custom Confirmation Modal */}
             <ConfirmActionModal {...confirmModal} />
-        </div>
+        </motion.div>
     );
 }

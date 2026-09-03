@@ -38,6 +38,7 @@ type DetailRow = {
     header_id?: number | string | null;
     product_id?: unknown;
     version_id?: unknown;
+    supplier_id?: unknown;
     price_type_id?: unknown;
     current_price?: number | string | null;
     proposed_price?: number | string | null;
@@ -69,11 +70,14 @@ export type UnifiedBatchLine = {
     product_id: number;
     product_name: string;
     product_code: string;
+
     unit_name: string;
     price_type_id?: number;
     price_type_name?: string;
     product_type_id?: number | null;
     product_type_name?: string | null;
+    supplier_id?: number | null;
+    supplier_name?: string | null;
     current_price?: number | null;
     proposed_price?: number | null;
     current_cost?: number | null;
@@ -92,8 +96,6 @@ export type UnifiedBatchLine = {
 export type UnifiedBatchData = {
     id: number;
     header_id: number;
-    supplier_id: number | null;
-    supplier_name: string;
     reference_no: string;
     remarks: string;
     status: string;
@@ -157,9 +159,8 @@ function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): Un
     const proposed = numberOrNull(line.proposed_price);
     const delta = current !== null && proposed !== null ? proposed - current : null;
     
-    const versionName = productValue(line.version_id, "version_name");
     const productName = productValue(line.product_id, "product_name");
-    const displayName = versionName ? `${productName} (${versionName})` : productName;
+    const displayName = productName;
 
     let product_type_id: number | null = null;
     if (isRecord(line.product_id) && 'product_type' in line.product_id) {
@@ -167,12 +168,16 @@ function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): Un
     }
     const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
 
+    const supplier_id = isRecord(line.supplier_id) ? pickId(line.supplier_id.id) : pickId(line.supplier_id);
+    const supplier_name = supplierLabelOf(line.supplier_id);
+
     return {
         request_id: pickId(line.request_id),
         kind: "price_type",
         product_id: detailProductId(line),
         product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
+
         unit_name: productUom(line.product_id),
         price_type_id: detailPriceTypeId(line),
         price_type_name: productValue(line.price_type_id, "price_type_name"),
@@ -189,6 +194,8 @@ function mapPriceLine(line: DetailRow, productTypesMap: Map<number, string>): Un
         application_error: line.application_error ?? null,
         applied_at: line.applied_at ?? null,
         applied_by: line.applied_by,
+        supplier_id,
+        supplier_name,
     };
 }
 
@@ -197,9 +204,8 @@ function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): Uni
     const proposed = numberOrNull(line.proposed_cost);
     const delta = current !== null && proposed !== null ? proposed - current : null;
 
-    const versionName = productValue(line.version_id, "version_name");
     const productName = productValue(line.product_id, "product_name");
-    const displayName = versionName ? `${productName} (${versionName})` : productName;
+    const displayName = productName;
 
     let product_type_id: number | null = null;
     if (isRecord(line.product_id) && 'product_type' in line.product_id) {
@@ -207,12 +213,16 @@ function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): Uni
     }
     const product_type_name = product_type_id ? productTypesMap.get(product_type_id) ?? null : null;
 
+    const supplier_id = isRecord(line.supplier_id) ? pickId(line.supplier_id.id) : pickId(line.supplier_id);
+    const supplier_name = supplierLabelOf(line.supplier_id);
+
     return {
         request_id: pickId(line.request_id),
         kind: "list_cost",
         product_id: detailProductId(line),
         product_name: displayName,
         product_code: productValue(line.product_id, "product_code"),
+
         unit_name: productUom(line.product_id),
         product_type_id,
         product_type_name,
@@ -227,6 +237,8 @@ function mapCostLine(line: DetailRow, productTypesMap: Map<number, string>): Uni
         application_error: line.application_error ?? null,
         applied_at: line.applied_at ?? null,
         applied_by: line.applied_by,
+        supplier_id,
+        supplier_name,
     };
 }
 
@@ -242,9 +254,6 @@ export async function getUnifiedBatch(headerId: number): Promise<UnifiedBatchDat
     const normalizedHeaderId = normalizeHeaderId(header);
     const price = priceDetails.map((line) => mapPriceLine(line, productTypesMap));
     const cost = costDetails.map((line) => mapCostLine(line, productTypesMap));
-    const supplierId = isRecord(header.supplier_id)
-        ? pickId(header.supplier_id.id)
-        : pickId(header.supplier_id);
     const requestedBy = userIdOf(header.requested_by);
     const { requested_by_name, approved_by_name, rejected_by_name } = await resolveBatchDecisionUserNames(header);
     const allLines = [...price, ...cost];
@@ -268,8 +277,6 @@ export async function getUnifiedBatch(headerId: number): Promise<UnifiedBatchDat
     return {
         id: normalizedHeaderId,
         header_id: normalizedHeaderId,
-        supplier_id: supplierId,
-        supplier_name: supplierLabelOf(header.supplier_id),
         reference_no: String(header.reference_no ?? ""),
         remarks: String(header.remarks ?? ""),
         status: String(header.status ?? "PENDING"),

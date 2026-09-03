@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 class DirectusReadError extends Error {
     readonly status = 502;
@@ -65,6 +66,11 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Missing joId or batchNo query parameter" }, { status: 400 });
         }
 
+        const jobOrderId = joId ? Number(joId) : 0;
+        if (joId && (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0)) {
+            return NextResponse.json({ error: "joId must be a positive integer" }, { status: 400 });
+        }
+
         const genealogyFilters: Record<string, any>[] = [];
         if (joId) genealogyFilters.push({ job_order_id: { _eq: joId } });
         if (batchNo) genealogyFilters.push({ batch_no: { _eq: batchNo } });
@@ -73,15 +79,13 @@ export async function GET(request: Request) {
             ? genealogyFilters[0]
             : { _and: genealogyFilters };
         const genUrl = `${DIRECTUS_URL}/items/jo_material_genealogy?filter=${encodeURIComponent(JSON.stringify(genealogyFilter))}&limit=-1&sort=-created_at`;
-        const movementUrl = joId
-            ? `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({ source_document_id: { _eq: joId } }))}&limit=-1&sort=-created_at`
-            : null;
-
         // These are the required audit sources. Any upstream failure must be
         // visible to the caller instead of being represented as empty data.
         const [rawGen, movements] = await Promise.all([
             directusRows<any>(genUrl, "Genealogy records lookup"),
-            movementUrl ? directusRows<any>(movementUrl, "Inventory movements lookup") : Promise.resolve([])
+            jobOrderId > 0
+                ? fetchMmInventoryMovements({ referenceId: jobOrderId })
+                : Promise.resolve([])
         ]);
 
         // Display enrichment is best-effort. Primary audit rows remain valid
@@ -140,7 +144,11 @@ export async function GET(request: Request) {
         });
     } catch (e: any) {
         console.error("Error in genealogy GET API:", e);
-        const status = e instanceof DirectusReadError ? e.status : 500;
+        const status = e instanceof DirectusReadError
+            ? e.status
+            : e instanceof MmInventoryMovementError
+                ? e.status
+                : 500;
         return NextResponse.json({
             success: false,
             error: e.message || "Failed to load genealogy records"

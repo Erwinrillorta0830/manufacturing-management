@@ -102,6 +102,10 @@ export async function fetchProducts(search?: string, limit: number = 100): Promi
             cost_per_unit: p.cost_per_unit ? Number(p.cost_per_unit) : undefined,
             unit_of_measurement_count: p.unit_of_measurement_count ? Number(p.unit_of_measurement_count) : undefined,
             product_image: p.product_image || undefined,
+            created_at: p.created_at ?? null,
+            created_by: p.created_by ?? null,
+            updated_at: p.updated_at ?? null,
+            updated_by: p.updated_by ?? null,
 
             has_versions: !!p.has_versions
         };

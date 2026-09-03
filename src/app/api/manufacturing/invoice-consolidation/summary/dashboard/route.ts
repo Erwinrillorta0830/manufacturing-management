@@ -78,7 +78,6 @@ export async function GET(request: NextRequest) {
 
     try {
         const query = new URLSearchParams();
-        query.set("filter[consolidator_no][_starts_with]", "CLINV-");
         query.set("filter[is_delete][_eq]", "0");
         query.set("filter[branch_id][_eq]", String(branchId));
         if (startDate) query.set("filter[created_at][_gte]", `${startDate}T00:00:00.000`);

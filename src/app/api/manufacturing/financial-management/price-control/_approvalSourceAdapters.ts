@@ -341,11 +341,6 @@ export async function addActorNames(rows: UnifiedApprovalRow[]): Promise<Unified
     });
 }
 
-function supplierIdOf(value: unknown): number | null {
-    if (!isRecord(value)) return null;
-    return pickId(value.id) ?? null;
-}
-
 function pickProductId(value: unknown): number | null {
     if (isRecord(value)) return pickId(value.product_id);
     return pickId(value);
@@ -1033,12 +1028,6 @@ export async function fetchPriceBatchesPage(
 
     const params = createApprovalListParams({ offset, limit, sort: "-requested_at,-header_id", fields: [
             "header_id",
-            "supplier_id",
-            "supplier_id.id",
-            "supplier_id.supplier_name",
-            "supplier_id.supplier_shortcut",
-            "supplier_id.isActive",
-            "supplier_id.nonBuy",
             "reference_no",
             "remarks",
             "status",
@@ -1069,6 +1058,15 @@ export async function fetchPriceBatchesPage(
         if (!isCostHeaderAccessError(error)) throw error;
     }
 
+    const allProductIds = new Set<number>();
+    for (const s of summaries.values()) {
+        for (const pid of s.productIds) allProductIds.add(pid);
+    }
+    for (const s of costSummaries.values()) {
+        for (const pid of s.productIds) allProductIds.add(pid);
+    }
+    const supplierByProductId = await fetchSupplierByProductIds(Array.from(allProductIds));
+
     const rows: UnifiedApprovalRow[] = [];
     for (const row of headerRows) {
         const headerId = normalizeHeaderId(row);
@@ -1078,8 +1076,6 @@ export async function fetchPriceBatchesPage(
         const summary = summaries.get(headerId);
         const costSummary = costSummaries.get(headerId);
         const isMixed = Boolean(costSummary && costSummary.lineCount > 0);
-        const supplierName = supplierNameOf(row.supplier_id);
-        const supplierNames = supplierName ? [supplierName] : [];
         const referenceNo = String(row.reference_no ?? "").trim();
         const remarks = String(row.remarks ?? "").trim();
         const proposedMin = summary?.proposedMin ?? null;
@@ -1087,11 +1083,20 @@ export async function fetchPriceBatchesPage(
         const approvedBy = Number(row.approved_by);
         const rejectedBy = Number(row.rejected_by);
 
+        const priceProductIds = summary?.productIds ?? [];
+        const costProductIds = costSummary?.productIds ?? [];
+        const combinedProductIds = Array.from(new Set([...priceProductIds, ...costProductIds]));
+        
+        const batchSupplierInfos = combinedProductIds
+            .flatMap((pid) => supplierByProductId.get(pid) ?? []);
+        const batchSupplierNames = uniqueSupplierNamesFromInfos(batchSupplierInfos);
+        const batchSupplierName = resolveSupplierName(batchSupplierInfos);
+
         rows.push({
             row_key: `batch:${headerId}`,
             kind: isMixed ? "mixed_batch" : "price_batch",
             record_label: `PCB-${headerId}`,
-            title: supplierName || referenceNo || `Price change batch #${headerId}`,
+            title: referenceNo || `Price change batch #${headerId}`,
             subtitle: remarks || referenceNo || undefined,
             status: String(row.status ?? "PENDING"),
             requested_at: row.requested_at ?? null,
@@ -1124,9 +1129,9 @@ export async function fetchPriceBatchesPage(
             cost_summary: toUnifiedBatchSummary(costSummary),
             remarks: remarks || null,
             reference_no: referenceNo || null,
-            supplier_id: supplierIdOf(row.supplier_id),
-            supplier_name: supplierName || null,
-            supplier_names: supplierNames,
+            supplier_id: null,
+            supplier_name: batchSupplierName !== "-" ? batchSupplierName : null,
+            supplier_names: batchSupplierNames,
         });
     }
 
@@ -1152,12 +1157,6 @@ export async function fetchCostBatchesPage(
 
     const params = createApprovalListParams({ offset, limit, sort: "-requested_at,-header_id", fields: [
             "header_id",
-            "supplier_id",
-            "supplier_id.id",
-            "supplier_id.supplier_name",
-            "supplier_id.supplier_shortcut",
-            "supplier_id.isActive",
-            "supplier_id.nonBuy",
             "reference_no",
             "remarks",
             "status",
@@ -1206,11 +1205,8 @@ export async function fetchCostBatchesPage(
 
         const batchSupplierInfos = (summary?.productIds ?? [])
             .flatMap((pid) => supplierByProductId.get(pid) ?? []);
-        const headerSupplierName = supplierNameOf(row.supplier_id);
-        const batchSupplierNames = headerSupplierName
-            ? [headerSupplierName]
-            : uniqueSupplierNamesFromInfos(batchSupplierInfos);
-        const batchSupplierName = headerSupplierName || resolveSupplierName(batchSupplierInfos);
+        const batchSupplierNames = uniqueSupplierNamesFromInfos(batchSupplierInfos);
+        const batchSupplierName = resolveSupplierName(batchSupplierInfos);
 
         rows.push({
             row_key: `cost-batch:${headerId}`,

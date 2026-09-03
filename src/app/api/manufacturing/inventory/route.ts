@@ -4,6 +4,11 @@ import { canonicalBatchNumber } from "@/app/api/manufacturing/procurement/_domai
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "@/app/api/manufacturing/qa-receiving/_movement-stock";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { resolveJobOrderRelationship } from "./_job-order-relationships";
+import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError,
+    movementErrorStatus
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 
 interface InventoryLot {
@@ -47,6 +52,8 @@ interface DirectusMovementRaw {
         transaction_type_id?: number | null;
         type_name?: string | null;
     } | null;
+    transaction_type?: string | null;
+    transactionType?: string | null;
     version_id?: number | { version_id?: number } | null;
     expiry_date?: string | null;
     created_at?: string | null;
@@ -57,6 +64,12 @@ interface DirectusMovementRaw {
 interface DirectusJobOrderRaw {
     job_order_id?: number | null;
     job_order_no?: string | null;
+}
+
+interface DirectusBranchRaw {
+    id?: number | null;
+    branch_name?: string | null;
+    branch_code?: string | null;
 }
 
 interface DirectusFinalQAReleaseRaw {
@@ -86,11 +99,22 @@ interface DirectusYieldRaw {
     logged_at?: string | null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+    const requestUrl = new URL(request.url);
+    const hasProductIdFilter = requestUrl.searchParams.has("productId");
+    const productIdParam = requestUrl.searchParams.get("productId");
+    const productId = productIdParam === null || productIdParam.trim() === ""
+        ? null
+        : Number(productIdParam);
+
+    if (hasProductIdFilter && (productId === null || !Number.isSafeInteger(productId) || productId <= 0)) {
+        return NextResponse.json({ error: "productId must be a positive integer." }, { status: 400 });
+    }
+
     try {
-        const [ledgerRes, movementsRes, productsRes, branchesRes, jobOrdersRes, finalQARes] = await Promise.all([
+        const [ledgerRes, movementsData, productsRes, branchesRes, jobOrdersRes, finalQARes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/product_ledger?limit=100&sort=-id`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?fields=*,source_document_id,source_document_no,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.transaction_type_id,transaction_type_id.type_name&limit=-1`, { headers, cache: "no-store" }),
+            fetchMmInventoryMovements(productId === null ? {} : { product: productId }),
             fetch(`${DIRECTUS_URL}/items/products?limit=500&fields=product_id,product_name,product_code,product_brand.brand_id,product_brand.brand_name,product_category.category_id,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,cost_per_unit,product_shelf_life,parent_id,product_type`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?fields=job_order_id,job_order_no&limit=-1`, { headers, cache: "no-store" }),
@@ -108,14 +132,24 @@ export async function GET() {
             console.warn("Directus product_ledger fetch failed, using fallback entries.");
         }
 
-        if (!movementsRes.ok) throw new Error("Failed to fetch inventory_movements from Directus");
         if (!productsRes.ok) throw new Error("Failed to fetch products from Directus");
         if (!branchesRes.ok) throw new Error("Failed to fetch branches from Directus");
         if (!jobOrdersRes.ok) throw new Error("Failed to fetch manufacturing_job_orders from Directus");
 
-        const rawMovements = (await movementsRes.json()).data || [];
+        const rawMovements = (movementsData as unknown as DirectusMovementRaw[]).filter((movement) => {
+            if (productId === null) return true;
+            const movementProductId = typeof movement.product_id === "object"
+                ? movement.product_id?.product_id
+                : movement.product_id;
+            return Number(movementProductId) === productId;
+        });
         const productsData = (await productsRes.json()).data || [];
-        const branches = (await branchesRes.json()).data || [];
+        const branches = (await branchesRes.json()).data as DirectusBranchRaw[] || [];
+        const branchesById = new Map(
+            branches
+                .filter((branch) => Number.isSafeInteger(Number(branch.id)) && Number(branch.id) > 0)
+                .map((branch) => [Number(branch.id), branch])
+        );
         const jobOrders = (await jobOrdersRes.json()).data as DirectusJobOrderRaw[] || [];
         const finalQaStatusByLotId = new Map<number, string>();
         if (finalQARes.ok) {
@@ -248,7 +282,9 @@ export async function GET() {
                 rejection_reason: null,
                 created_on: createdOnVal,
                 source_reference: creationMvt.source_document_no || null,
-                source_type: typeof creationMvt.transaction_type_id === "object" ? creationMvt.transaction_type_id?.type_name || null : null,
+                source_type: typeof creationMvt.transaction_type_id === "object"
+                    ? creationMvt.transaction_type_id?.type_name || null
+                    : creationMvt.transaction_type || creationMvt.transactionType || null,
                 remarks: creationMvt.remarks || null,
                 version_id: creationMvt.version_id ? (typeof creationMvt.version_id === "object" ? creationMvt.version_id.version_id : creationMvt.version_id) : null,
                 job_order_id: jobOrderRelationship.jobOrderId,
@@ -335,7 +371,7 @@ export async function GET() {
 
             const txnTypeName = typeof creationMvt?.transaction_type_id === "object"
                 ? creationMvt.transaction_type_id?.type_name
-                : null;
+                : creationMvt?.transaction_type || creationMvt?.transactionType;
 
             const resolvedTxnType = txnTypeName || (b.source_type ? String(b.source_type).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "Legacy Stock");
             const resolvedRemarks = b.remarks || b.rejection_reason || creationMvt?.remarks || null;
@@ -348,6 +384,8 @@ export async function GET() {
                 product_id: b.product_id,
                 version_id: versionId,
                 branch_id: b.branch_id,
+                branch_name: branchesById.get(Number(b.branch_id))?.branch_name || null,
+                branch_code: branchesById.get(Number(b.branch_id))?.branch_code || null,
                 batch_no: batchNo,
                 lot_number: batchNo || "LOT-N/A",
                 lot_id: lotId,
@@ -374,15 +412,24 @@ export async function GET() {
             };
         });
 
+        const responseBatches = productId === null
+            ? batches
+            : batches.filter((batch) => Number(batch.product_id) === productId);
+
         return NextResponse.json({
             ledger,
-            batches,
+            batches: responseBatches,
             products,
             branches
         });
     } catch (e) {
         console.error("[Inventory BFF GET] Error:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to fetch inventory logs" }, { status: 500 });
+        const upstreamStatus = e instanceof MmInventoryMovementError ? movementErrorStatus(e) : 500;
+        const status = e instanceof MmInventoryMovementError && upstreamStatus >= 500 ? 502 : upstreamStatus;
+        const message = e instanceof MmInventoryMovementError
+            ? "Unable to load inventory data at this time."
+            : "Failed to fetch inventory logs";
+        return NextResponse.json({ error: message }, { status });
     }
 }
 

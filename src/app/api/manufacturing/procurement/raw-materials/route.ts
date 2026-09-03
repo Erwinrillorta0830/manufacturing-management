@@ -1,8 +1,8 @@
-/* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { getManilaTimeString, getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
+import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { productCreationAuditFields, productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
+import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 import { verifyOrGetValidWeightUnitId } from "@/app/api/manufacturing/finished-goods/weight-units/weight-units-helper";
 import {
     ProductIdentityError,
@@ -16,6 +16,15 @@ import {
     syncProductQaSpecifications
 } from "./_purchase-qa";
 import {
+    normalizeSupplierIds,
+    resolvePositiveInteger,
+    readProductSupplierLinks,
+    supplierIdsFromLinks,
+    synchronizeProductSupplierLinks,
+    synchronizeFamilySupplierLinks,
+    validateSupplierSelection
+} from "./_supplier-links";
+import {
     enforceClassificationIntegrity,
     RawMaterialClassificationError
 } from "./_classification-integrity";
@@ -25,7 +34,14 @@ import {
     resolveProductWeightBreakdown,
     validateProductWeightForProductType
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import {
+    getDensityRequirement,
+    normalizeDensityForRequirement,
+    validateDensityForRequirement,
+    type DensityRequirement
+} from "@/modules/manufacturing-management/procurement/raw-materials/density-policy";
 import type { PurchaseQaConfig } from "@/modules/manufacturing-management/procurement/raw-materials/types/raw-materials.types";
+import { formatRawMaterialDescription } from "@/modules/manufacturing-management/procurement/raw-materials/description-format";
 
 function isPositiveNumber(value: unknown): boolean {
     if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return false;
@@ -35,6 +51,101 @@ function isPositiveNumber(value: unknown): boolean {
 
 function hasProvidedValue(value: unknown): boolean {
     return value !== undefined && value !== null && !(typeof value === "string" && !value.trim());
+}
+
+function resolveUomId(value: unknown): number | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return resolveUomId(record.unit_id ?? record.id);
+    }
+
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+type DensityUnitRecord = {
+    unit_id: number | string;
+    unit_name?: string | null;
+    unit_shortcut?: string | null;
+};
+
+async function loadDensityPolicies(unitIds: number[]): Promise<Map<number, DensityRequirement>> {
+    const uniqueIds = [...new Set(unitIds)];
+    const params = new URLSearchParams({
+        fields: "unit_id,unit_name,unit_shortcut",
+        limit: String(uniqueIds.length)
+    });
+    params.set("filter[unit_id][_in]", uniqueIds.join(","));
+
+    const response = await fetch(`${DIRECTUS_URL}/items/units?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new RawMaterialQaError(503, "Unable to load UOM density policies.");
+    }
+
+    const body = await response.json().catch(() => null) as { data?: unknown } | null;
+    if (!Array.isArray(body?.data)) {
+        throw new RawMaterialQaError(503, "UOM density policies returned an invalid response.");
+    }
+
+    return new Map((body.data as DensityUnitRecord[]).map(unit => {
+        const id = resolveUomId(unit.unit_id);
+        return id === null ? null : [id, getDensityRequirement(unit)] as const;
+    }).filter((entry): entry is readonly [number, DensityRequirement] => entry !== null));
+}
+
+type CurrentVariantMeasurement = {
+    unit_of_measurement?: unknown;
+    density_factor?: unknown;
+};
+
+async function loadCurrentVariantMeasurements(productIds: number[]): Promise<Map<number, CurrentVariantMeasurement>> {
+    const uniqueIds = [...new Set(productIds)];
+    if (uniqueIds.length === 0) return new Map();
+
+    const params = new URLSearchParams({
+        fields: "product_id,unit_of_measurement.unit_id,density_factor",
+        limit: String(uniqueIds.length)
+    });
+    params.set("filter[product_id][_in]", uniqueIds.join(","));
+
+    const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new RawMaterialQaError(503, "Unable to load current packaging variant measurements.");
+    }
+
+    const body = await response.json().catch(() => null) as { data?: unknown } | null;
+    if (!Array.isArray(body?.data)) {
+        throw new RawMaterialQaError(503, "Packaging variant measurements returned an invalid response.");
+    }
+
+    return new Map((body.data as Array<{ product_id?: unknown }>)
+        .map(row => {
+            const productId = resolveUomId(row.product_id);
+            return productId === null ? null : [productId, row as CurrentVariantMeasurement] as const;
+        })
+        .filter((entry): entry is readonly [number, CurrentVariantMeasurement] => entry !== null));
+}
+
+function requireUomId(value: unknown, label: string): number {
+    const id = resolveUomId(value);
+    if (id === null) throw new RawMaterialQaError(400, `${label} UOM is required and must be valid.`);
+    return id;
+}
+
+function normalizeDensityForUom(
+    value: unknown,
+    uomId: number,
+    policies: Map<number, DensityRequirement>,
+    label: string
+): number | null {
+    const requirement = policies.get(uomId);
+    if (requirement === undefined) {
+        throw new RawMaterialQaError(400, `${label} UOM is invalid or unavailable.`);
+    }
+
+    const validationError = validateDensityForRequirement(value, requirement, label);
+    if (validationError) throw new RawMaterialQaError(400, validationError);
+    return normalizeDensityForRequirement(value, requirement);
 }
 
 function normalizeBarcode(value: unknown, defaultNull: boolean): string | null | undefined {
@@ -65,7 +176,16 @@ function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | un
 }
 
 function withoutPurchaseQa(value: Record<string, unknown>): Record<string, unknown> {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "purchaseQa" && key !== "price_control"));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => ![
+        "purchaseQa",
+        "price_control",
+        "description",
+        "short_description",
+        "created_at",
+        "created_by",
+        "updated_at",
+        "updated_by"
+    ].includes(key)));
 }
 
 function buildWeightPayload(
@@ -145,8 +265,7 @@ function normalizeActiveFlag(value: unknown, fallback = 1): number {
 function validateMeasurementFields(productDetails: Record<string, unknown>, requireAll: boolean): string | null {
     const fields: Array<{ name: string; label: string }> = [
         { name: "unit_of_measurement", label: "UOM is required." },
-        { name: "unit_of_measurement_count", label: "UOM ratio is required and must be greater than 0." },
-        { name: "density_factor", label: "Density is required and must be greater than 0." }
+        { name: "unit_of_measurement_count", label: "UOM ratio is required and must be greater than 0." }
     ];
 
     for (const field of fields) {
@@ -169,8 +288,7 @@ function validatePackagingVariants(packagingVariants: unknown, productType: unkn
         if (!variant || typeof variant !== "object") return true;
         const item = variant as Record<string, unknown>;
         const invalidMeasurements = !isPositiveNumber(item.unit_of_measurement) ||
-            !isPositiveNumber(item.unit_of_measurement_count) ||
-            !isPositiveNumber(item.density_factor);
+            !isPositiveNumber(item.unit_of_measurement_count);
         if (invalidMeasurements) return true;
 
         weightValidationError = validateProductWeightForProductType(item, productType);
@@ -181,7 +299,7 @@ function validatePackagingVariants(packagingVariants: unknown, productType: unkn
         ? !requireWeightComponents && weightValidationError
             ? `Variant weight: ${weightValidationError}`
             : requireWeightComponents
-            ? "Packaging variants require valid UOM, conversion count, density, net weight, outer carton weight, pallet weight, and weight unit values."
+            ? "Packaging variants require valid UOM, conversion count, net weight, outer carton weight, pallet weight, and weight unit values."
             : "Variants require valid UOM, conversion count, and any supplied weight components must be complete."
             : null;
 }
@@ -221,6 +339,28 @@ async function resolvePackagingVariantIdentities(
     }));
 }
 
+async function cleanupCreatedProducts(productIds: number[]): Promise<void> {
+    for (const productId of [...new Set(productIds)].reverse()) {
+        try {
+            const cleanupResponse = await fetch(`${DIRECTUS_URL}/items/products/${productId}`, {
+                method: "DELETE",
+                headers
+            });
+            if (!cleanupResponse.ok) {
+                console.error("Failed to clean up product after an unsuccessful raw-material mutation:", {
+                    productId,
+                    status: cleanupResponse.status
+                });
+            }
+        } catch (cleanupError) {
+            console.error("Failed to clean up product after an unsuccessful raw-material mutation:", {
+                productId,
+                error: cleanupError
+            });
+        }
+    }
+}
+
 
 export async function GET(request: Request) {
     try {
@@ -231,13 +371,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
         }
 
-        const res = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${productId}&fields=supplier_id&limit=-1`, { headers, cache: "no-store" });
-        if (!res.ok) {
-            throw new Error(`Directus failed to fetch suppliers for product: ${res.status}`);
+        const numericProductId = resolvePositiveInteger(productId);
+        if (numericProductId === null) {
+            return NextResponse.json({ error: "productId must be a positive integer" }, { status: 400 });
         }
-        const json = await res.json();
-        const links = json.data || [];
-        const supplierIds = links.map((l: { supplier_id: number }) => l.supplier_id);
+
+        const links = await readProductSupplierLinks(numericProductId);
+        const supplierIds = supplierIdsFromLinks(links, numericProductId);
         return NextResponse.json(supplierIds);
     } catch (e) {
         console.error("API Error fetching product suppliers:", e);
@@ -246,6 +386,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    let createdProductId: number | null = null;
+    const createdChildProductIds: number[] = [];
+
     try {
         const body = await request.json();
         const { productDetails, supplierIds, packagingVariants } = body;
@@ -256,6 +399,15 @@ export async function POST(request: Request) {
 
         if (!isValidActiveFlag(productDetails.isActive)) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
+        }
+
+        const requestedSupplierIds = normalizeSupplierIds(supplierIds);
+        const parentProductId = resolvePositiveInteger(productDetails.parent_id);
+        const normalizedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : requestedSupplierIds || [];
+        if (!parentProductId) {
+            await validateSupplierSelection(normalizedSupplierIds);
         }
 
         const purchaseQa = await normalizePurchaseQaConfig(productDetails.purchaseQa);
@@ -293,6 +445,35 @@ export async function POST(request: Request) {
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
+
+        const primaryUomId = requireUomId(productDetails.unit_of_measurement, "Primary");
+        const variantUomIds = classifiedVariants.map((variant, index) =>
+            requireUomId((variant as Record<string, unknown>).unit_of_measurement, `Variant ${index + 1}`)
+        );
+        const densityPolicies = await loadDensityPolicies([primaryUomId, ...variantUomIds]);
+        const normalizedDensity = normalizeDensityForUom(
+            productDetails.density_factor,
+            primaryUomId,
+            densityPolicies,
+            "Density"
+        );
+        const normalizedVariantDensities = variantUomIds.map((uomId, index) => normalizeDensityForUom(
+            (classifiedVariants[index] as Record<string, unknown>).density_factor,
+            uomId,
+            densityPolicies,
+            `Variant ${index + 1} density`
+        ));
+
+        const baseIdentity = await resolveProductIdentity({
+            productName: productDetails.product_name,
+            parentId: parentProductId,
+            unitId: primaryUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity);
 
         if (classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
@@ -336,15 +517,19 @@ export async function POST(request: Request) {
         }
 
         const todayStr = await getTodayDateString();
+        const createdAt = formatPhtDateTime();
 
         // Create Raw Material / Packaging Product with explicit null overrides for foreign keys to bypass invalid database defaults
         const productPayload = {
             ...withoutPurchaseQa(productDetails),
             ...weightPayload,
+            density_factor: normalizedDensity,
             weight_unit_id: verifiedWeightUnitId,
             barcode: normalizedProductBarcode,
             maintaining_quantity: normalizedSafetyStock,
             product_image: normalizedProductImage,
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -358,7 +543,8 @@ export async function POST(request: Request) {
             status: "Approved",
             item_type: "regular", // Must be regular due to DB enum constraint
             date_added: productDetails.date_added || todayStr,
-            created_by: userId ? Number(userId) : null
+            created_by: userId ? Number(userId) : null,
+            ...productCreationAuditFields(createdAt)
         };
 
         const prodRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -377,37 +563,21 @@ export async function POST(request: Request) {
         if (!productId) {
             throw new Error("Directus did not return the created raw material ID.");
         }
+        createdProductId = Number(productId);
 
         await syncProductQaSpecifications(Number(productId), purchaseQa);
 
-        // Link selected suppliers in product_per_supplier junction table
-        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-            try {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: productId,
-                            supplier_id: Number(supId)
-                        })
-                    });
-                }
-            } catch (err) {
-                console.error("Error linking suppliers to raw material:", err);
-            }
-        }
-
         // Create child packaging variants if passed
         if (resolvedVariants.length > 0) {
-            for (const { variant, identity } of resolvedVariants) {
+            for (const [variantIndex, { variant, identity }] of resolvedVariants.entries()) {
                     const variantWeightPayload = buildWeightPayload(variant, isPackagingMaterial);
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
+                        density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
@@ -422,7 +592,8 @@ export async function POST(request: Request) {
                         status: "Approved",
                         item_type: "regular",
                         date_added: todayStr,
-                        created_by: userId ? Number(userId) : null
+                        created_by: userId ? Number(userId) : null,
+                        ...productCreationAuditFields(createdAt)
                     };
 
                     const varRes = await fetch(`${DIRECTUS_URL}/items/products?fields=product_id`, {
@@ -438,25 +609,13 @@ export async function POST(request: Request) {
                         if (!childId) {
                             throw new Error("Directus did not return the created packaging variant ID.");
                         }
+                        createdChildProductIds.push(Number(childId));
 
                         await syncProductQaSpecifications(
                             Number(childId),
                             variant.purchaseQa as PurchaseQaConfig | undefined
                         );
 
-                        // Link child to the same suppliers
-                        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                            for (const supId of supplierIds) {
-                                await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify({
-                                        product_id: childId,
-                                        supplier_id: Number(supId)
-                                    })
-                                }).catch(() => { });
-                            }
-                        }
                     } else {
                         const errText = await varRes.text();
                         throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
@@ -464,8 +623,17 @@ export async function POST(request: Request) {
             }
         }
 
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, normalizedSupplierIds);
+        } else if (supplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(Number(productId), normalizedSupplierIds);
+        }
+
         return NextResponse.json({ success: true, productId });
     } catch (e) {
+        if (createdProductId !== null) {
+            await cleanupCreatedProducts([...createdChildProductIds, createdProductId]);
+        }
         if (e instanceof RawMaterialClassificationError) {
             return NextResponse.json(
                 { error: e.message, code: e.code, ...e.details },
@@ -487,9 +655,13 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+    const createdChildProductIds: number[] = [];
+
     try {
         const body = await request.json();
         const { productId, productDetails, supplierIds, packagingVariants } = body;
+        const hasSupplierIds = Object.prototype.hasOwnProperty.call(body, "supplierIds");
+        const normalizedSupplierIds = hasSupplierIds ? (normalizeSupplierIds(supplierIds) || []) : undefined;
 
         if (!productId) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
@@ -547,14 +719,31 @@ export async function PATCH(request: Request) {
         const classifiedVariants = classification.packagingVariants;
 
         const currentProductResponse = await fetch(
-            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_type,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
+            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=parent_id,product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
             { headers, cache: "no-store" }
         );
         if (!currentProductResponse.ok) {
             throw new RawMaterialQaError(503, "Unable to load the current product weight specification.");
         }
         const currentProduct = (await currentProductResponse.json()).data as Record<string, unknown>;
-        const effectiveWeightDetails = { ...currentProduct, ...productDetails };
+        const parentProductId = resolvePositiveInteger(currentProduct.parent_id);
+        const supplierSyncRootProductId = parentProductId || numericProductId;
+        const inheritedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : undefined;
+        if (!parentProductId && normalizedSupplierIds !== undefined) {
+            const existingParentLinks = await readProductSupplierLinks(supplierSyncRootProductId);
+            const existingParentSupplierIds = supplierIdsFromLinks(existingParentLinks, supplierSyncRootProductId);
+            await validateSupplierSelection(normalizedSupplierIds, existingParentSupplierIds);
+        }
+        const effectiveUomId = hasProvidedValue(productDetails.unit_of_measurement)
+            ? requireUomId(productDetails.unit_of_measurement, "Primary")
+            : requireUomId(currentProduct.unit_of_measurement, "Primary");
+        const effectiveWeightDetails = {
+            ...currentProduct,
+            ...productDetails,
+            unit_of_measurement: effectiveUomId
+        };
 
         const measurementError = validateMeasurementFields(effectiveWeightDetails, false);
         if (measurementError) {
@@ -566,6 +755,56 @@ export async function PATCH(request: Request) {
         if (variantsError) {
             return NextResponse.json({ error: variantsError }, { status: 400 });
         }
+
+        const currentVariantIds = classifiedVariants
+            .map(variant => variant && typeof variant === "object" ? resolveUomId((variant as Record<string, unknown>).product_id) : null)
+            .filter((id): id is number => id !== null);
+        const currentVariantMeasurements = await loadCurrentVariantMeasurements(currentVariantIds);
+        const variantUomIds = classifiedVariants.map((variant, index) => {
+            const record = variant as Record<string, unknown>;
+            const current = currentVariantMeasurements.get(resolveUomId(record.product_id) || 0);
+            const submittedUom = hasProvidedValue(record.unit_of_measurement)
+                ? record.unit_of_measurement
+                : current?.unit_of_measurement;
+            return requireUomId(submittedUom, `Variant ${index + 1}`);
+        });
+        const densityPolicies = await loadDensityPolicies([effectiveUomId, ...variantUomIds]);
+        const normalizedDensity = normalizeDensityForUom(
+            Object.prototype.hasOwnProperty.call(productDetails, "density_factor")
+                ? productDetails.density_factor
+                : currentProduct.density_factor,
+            effectiveUomId,
+            densityPolicies,
+            "Density"
+        );
+        const normalizedVariantDensities = variantUomIds.map((uomId, index) => {
+            const record = classifiedVariants[index] as Record<string, unknown>;
+            const current = currentVariantMeasurements.get(resolveUomId(record.product_id) || 0);
+            const densityInput = Object.prototype.hasOwnProperty.call(record, "density_factor")
+                ? record.density_factor
+                : current?.density_factor;
+            return normalizeDensityForUom(
+                densityInput,
+                uomId,
+                densityPolicies,
+                `Variant ${index + 1} density`
+            );
+        });
+
+        const effectiveParentId = Object.prototype.hasOwnProperty.call(productDetails, "parent_id")
+            ? resolvePositiveInteger(productDetails.parent_id)
+            : parentProductId;
+        const baseIdentity = await resolveProductIdentity({
+            productId: numericProductId,
+            productName: productDetails.product_name,
+            parentId: effectiveParentId,
+            unitId: effectiveUomId
+        });
+        const baseDescription = formatRawMaterialDescription(baseIdentity.productName, baseIdentity.unitLabel);
+        if (!baseDescription) {
+            throw new ProductIdentityError("A canonical raw-material description could not be generated.");
+        }
+        await ensureProductIdentityAvailable(baseIdentity, numericProductId);
 
         if (!isValidActiveFlag(productDetails.isActive) || classifiedVariants.some(variant => {
             return !variant || typeof variant !== "object" || !isValidActiveFlag((variant as Record<string, unknown>).isActive);
@@ -592,11 +831,8 @@ export async function PATCH(request: Request) {
         if (!userId || !Number.isInteger(userId) || userId <= 0) {
             return NextResponse.json({ error: "A valid authenticated user is required to update raw materials." }, { status: 401 });
         }
-        const updatedAt = await getManilaTimeString();
-        const auditFields = {
-            updated_by: userId,
-            updated_at: updatedAt
-        };
+        const operationTimestamp = formatPhtDateTime();
+        const auditFields = productUpdateAuditFields(userId);
 
         const hasWeightField = Object.prototype.hasOwnProperty.call(productDetails, "weight");
         const hasWeightUnitField = Object.prototype.hasOwnProperty.call(productDetails, "weight_unit_id");
@@ -619,10 +855,13 @@ export async function PATCH(request: Request) {
         const productPayload = {
             ...withoutPurchaseQa(productDetails),
             ...(shouldPersistWeight ? buildWeightPayload(effectiveWeightDetails, isPackagingMaterial) : {}),
+            density_factor: normalizedDensity,
             ...(hasWeightUnitField ? { weight_unit_id: verifiedWeightUnitId ?? null } : {}),
             ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
             ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
             ...(hasProductImageField ? { product_image: normalizedProductImage } : {}),
+            description: baseDescription,
+            short_description: baseDescription,
             product_brand: productDetails.product_brand !== undefined ? productDetails.product_brand : null,
             product_category: productDetails.product_category !== undefined ? productDetails.product_category : null,
             product_class: productDetails.product_class !== undefined ? productDetails.product_class : null,
@@ -685,16 +924,17 @@ export async function PATCH(request: Request) {
 
         // Handle packaging variants (update existing ones if product_id is provided, create new ones if not)
         if (resolvedVariants.length > 0) {
-            for (const { variant, identity } of resolvedVariants) {
+            for (const [variantIndex, { variant, identity }] of resolvedVariants.entries()) {
                     const variantHasActiveFlag = hasProvidedActiveFlag(variant.isActive);
                     const variantActive = normalizeActiveFlag(variant.isActive);
                     const variantWeightPayload = buildWeightPayload(variant, isPackagingMaterial);
                     const variantPayload = {
                         ...withoutPurchaseQa(variant),
                         product_name: identity.productName,
-                        description: identity.descriptionKey,
-                        short_description: identity.descriptionKey,
+                        description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
+                        short_description: formatRawMaterialDescription(identity.productName, identity.unitLabel),
                         ...variantWeightPayload,
+                        density_factor: normalizedVariantDensities[variantIndex],
                         product_brand: variant.product_brand !== undefined ? variant.product_brand : null,
                         product_category: variant.product_category !== undefined ? variant.product_category : null,
                         product_class: variant.product_class !== undefined ? variant.product_class : null,
@@ -708,7 +948,6 @@ export async function PATCH(request: Request) {
                         ...(variantHasActiveFlag ? { isActive: variantActive } : {}),
                         status: "Approved",
                         item_type: "regular",
-                        ...auditFields,
                     };
 
                     if (variant.product_id) {
@@ -716,7 +955,7 @@ export async function PATCH(request: Request) {
                         const variantRes = await fetch(`${DIRECTUS_URL}/items/products/${variant.product_id}`, {
                             method: "PATCH",
                             headers,
-                            body: JSON.stringify(variantPayload)
+                            body: JSON.stringify({ ...variantPayload, ...auditFields })
                         });
                         if (!variantRes.ok) {
                             const errText = await variantRes.text();
@@ -736,7 +975,7 @@ export async function PATCH(request: Request) {
                                 isActive: variantHasActiveFlag ? variantActive : 1,
                                 date_added: await getTodayDateString(),
                                 created_by: userId,
-                                created_at: updatedAt
+                                ...productCreationAuditFields(operationTimestamp)
                             })
                         });
 
@@ -748,24 +987,13 @@ export async function PATCH(request: Request) {
                                 throw new Error("Directus did not return the created packaging variant ID.");
                             }
 
+                            createdChildProductIds.push(Number(childId));
+
                             await syncProductQaSpecifications(
                                 Number(childId),
                                 variant.purchaseQa as PurchaseQaConfig | undefined
                             );
 
-                            // Link child to the same suppliers
-                            if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                                for (const supId of supplierIds) {
-                                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify({
-                                            product_id: childId,
-                                            supplier_id: Number(supId)
-                                        })
-                                    }).catch(() => { });
-                                }
-                            }
                         } else {
                             const errText = await varRes.text();
                             throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
@@ -774,41 +1002,25 @@ export async function PATCH(request: Request) {
             }
         }
 
-        // Update supplier links: delete old ones first, then create new ones for parent and all children
-        if (supplierIds && Array.isArray(supplierIds)) {
-            // 1. Get all child products of this parent
-            const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
-            const children = childrenRes.ok ? (await childrenRes.json()).data || [] : [];
-            const allProductIdsToSync = [Number(productId), ...children.map((c: any) => Number(c.product_id))];
-
-            // 2. Delete old links
-            for (const pid of allProductIdsToSync) {
-                const oldLinksRes = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${pid}&limit=-1`, { headers });
-                if (oldLinksRes.ok) {
-                    const oldLinks = (await oldLinksRes.json()).data || [];
-                    for (const link of oldLinks) {
-                        await fetch(`${DIRECTUS_URL}/items/product_per_supplier/${link.id}`, { method: "DELETE", headers }).catch(() => { });
-                    }
-                }
-            }
-
-            // 3. Create new links
-            for (const pid of allProductIdsToSync) {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: pid,
-                            supplier_id: Number(supId)
-                        })
-                    }).catch(() => { });
-                }
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, inheritedSupplierIds || []);
+        } else if (normalizedSupplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(supplierSyncRootProductId, normalizedSupplierIds);
+        } else if (createdChildProductIds.length > 0) {
+            const persistedParentSupplierIds = supplierIdsFromLinks(
+                await readProductSupplierLinks(supplierSyncRootProductId),
+                supplierSyncRootProductId
+            );
+            for (const childProductId of createdChildProductIds) {
+                await synchronizeProductSupplierLinks(childProductId, persistedParentSupplierIds);
             }
         }
 
         return NextResponse.json({ success: true });
     } catch (e) {
+        if (createdChildProductIds.length > 0) {
+            await cleanupCreatedProducts(createdChildProductIds);
+        }
         if (e instanceof RawMaterialClassificationError) {
             return NextResponse.json(
                 { error: e.message, code: e.code, ...e.details },

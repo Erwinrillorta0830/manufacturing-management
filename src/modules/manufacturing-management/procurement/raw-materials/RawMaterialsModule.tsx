@@ -18,8 +18,8 @@ interface RawMaterialsModuleProps {
     rawMaterials: RawMaterialItem[];
     suppliers: SupplierItem[];
     loadingItems: boolean;
-    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>;
-    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>;
+    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>;
+    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>;
 }
 
 export default function RawMaterialsModule({
@@ -55,6 +55,8 @@ export default function RawMaterialsModule({
                 weightUnits={formHook.weightUnits}
                 categoriesList={formHook.categoriesList}
                 loadingBatches={dataHook.loadingBatches}
+                inventoryDetailsError={dataHook.inventoryDetailsError}
+                onRetryInventoryDetails={dataHook.retryInventoryDetails}
                 groupedByBranch={dataHook.groupedByBranch}
                 familyGroups={dataHook.familyGroups}
                 page={dataHook.page}
@@ -70,14 +72,16 @@ export default function RawMaterialsModule({
                 saving={formHook.saving}
                 submitError={formHook.submitError}
                 loadingUnits={formHook.loadingUnits}
+                units={formHook.units}
                 suppliers={suppliers}
                 showValidationErrors={formHook.showValidationErrors}
+                validationErrors={formHook.validationErrors}
                 formName={formHook.formName}
                 setFormName={formHook.setFormName}
                 formCode={formHook.formCode}
                 setFormCode={formHook.setFormCode}
-                formDesc={formHook.formDesc}
-                setFormDesc={formHook.setFormDesc}
+                generatedDescription={formHook.generatedDescription}
+                descriptionProductName={formHook.descriptionProductName}
                 formUom={formHook.formUom}
                 setFormUom={formHook.setFormUom}
                 formDensity={formHook.formDensity}
@@ -114,7 +118,6 @@ export default function RawMaterialsModule({
                 setFormPurchaseQa={formHook.setFormPurchaseQa}
                 purchaseQaParameters={formHook.purchaseQaParameters}
                 loadingPurchaseQa={formHook.loadingPurchaseQa}
-                purchaseQaReady={formHook.purchaseQaReady}
                 purchaseQaError={formHook.purchaseQaError}
                 formProductType={formHook.formProductType}
                 setFormProductType={formHook.setFormProductType}
@@ -133,8 +136,6 @@ export default function RawMaterialsModule({
                 setFormUomCount={formHook.setFormUomCount}
                 selectedSupplierIds={formHook.selectedSupplierIds}
                 handleToggleSupplier={formHook.handleToggleSupplier}
-                supplierSearch={formHook.supplierSearch}
-                setSupplierSearch={formHook.setSupplierSearch}
                 packagingVariants={formHook.packagingVariants}
                 handleAddVariant={formHook.handleAddVariant}
                 handleAddPresetVariant={formHook.handleAddPresetVariant}
@@ -152,6 +153,7 @@ export default function RawMaterialsModule({
                 handleCreateBrand={formHook.handleCreateBrand}
                 handleCreateCategory={formHook.handleCreateCategory}
                 onSubmit={formHook.handleFormSubmit}
+                onSaveClick={formHook.handleSaveClick}
             />
         </div>
     );

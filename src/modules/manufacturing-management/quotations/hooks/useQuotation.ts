@@ -5,6 +5,16 @@ import { QuotationHeader, QuotationSnapshotNode, CatalogProduct, SelectedQuotePr
 
 import { generateQuotationPDF } from "../utils/exportQuotationPDF";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseCustomerLookupResponse(value: unknown): Customer[] {
+    if (Array.isArray(value)) return value as Customer[];
+    if (isRecord(value) && Array.isArray(value.data)) return value.data as Customer[];
+    return [];
+}
+
 export function useQuotation() {
     // List view vs Create view
     const [view, setView] = useState<"list" | "create">("list");
@@ -36,6 +46,24 @@ export function useQuotation() {
     
     // Project portfolio database registry
     const [localProjects, setLocalProjects] = useState<{ id: number; project_name: string; customer_id: number; customer_name: string; customer_code: string; status?: string }[]>([]);
+    const customerLookupRequestId = useRef(0);
+
+    const mergeCustomer = (customer: Customer) => {
+        setCustomers(previous => {
+            const existing = previous.findIndex(item => String(item.id) === String(customer.id));
+            if (existing === -1) return [...previous, customer];
+            return previous.map((item, index) => index === existing ? customer : item);
+        });
+    };
+
+    const loadCustomerById = async (customerId: number | string): Promise<Customer | null> => {
+        const response = await fetch(`/api/manufacturing/finished-goods/customers/lookup?customerId=${encodeURIComponent(String(customerId))}&limit=1`);
+        if (!response.ok) return null;
+        const data = parseCustomerLookupResponse(await response.json());
+        const customer = data[0] || null;
+        if (customer) mergeCustomer(customer);
+        return customer;
+    };
 
     // Load master list of quotations
     const loadQuotes = async () => {
@@ -57,30 +85,39 @@ export function useQuotation() {
     useEffect(() => {
         loadQuotes();
         
-        // Fetch active customers initially
-        fetch("/api/manufacturing/finished-goods/customers")
-            .then(res => res.ok ? res.json() : [])
-            .then(data => {
-                setCustomers(data);
-                // After customers are loaded, fetch projects from the database to map them correctly!
-                fetch("/api/manufacturing/finished-goods/projects")
-                    .then(res => res.ok ? res.json() : [])
-                    .then(projData => {
-                        const mapped = (projData as Project[]).map(p => {
-                            const matchedCust = data.find((c: Customer) => c.customer_code === p.customer_code);
-                            return {
-                                id: p.id,
-                                project_name: p.project_name,
-                                customer_id: matchedCust ? Number(matchedCust.id) : 0,
-                                customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
-                                customer_code: p.customer_code,
-                                status: p.status
-                            };
-                        });
-                        setLocalProjects(mapped);
-                    });
+        // Fetch a bounded customer lookup and independently load projects. The
+        // project endpoint includes customer details so this no longer depends
+        // on a full customer-directory response.
+        Promise.all([
+            fetch("/api/manufacturing/finished-goods/customers/lookup?limit=10"),
+            fetch("/api/manufacturing/finished-goods/projects")
+        ])
+            .then(async ([customerRes, projectRes]) => {
+                const customerData = customerRes.ok
+                    ? parseCustomerLookupResponse(await customerRes.json())
+                    : [];
+                setCustomers(customerData);
+
+                if (!projectRes.ok) return;
+                const projectData: unknown = await projectRes.json();
+                const projects = Array.isArray(projectData) ? projectData as Project[] : [];
+                const mapped = projects.map(p => {
+                    const matchedCust = customerData.find(c => c.customer_code === p.customer_code);
+                    const projectCustomerId = p.customer_id !== undefined && p.customer_id !== null
+                        ? Number(p.customer_id)
+                        : matchedCust ? Number(matchedCust.id) : 0;
+                    return {
+                        id: p.id,
+                        project_name: p.project_name,
+                        customer_id: Number.isFinite(projectCustomerId) ? projectCustomerId : 0,
+                        customer_name: p.customer_name || matchedCust?.customer_name || `Code: ${p.customer_code}`,
+                        customer_code: p.customer_code,
+                        status: p.status
+                    };
+                });
+                setLocalProjects(mapped);
             })
-            .catch(e => console.error("Error fetching customers:", e));
+            .catch(e => console.error("Error fetching quotation customer metadata:", e));
 
         // Fetch price types
         fetch("/api/manufacturing/finished-goods/price-types")
@@ -180,7 +217,7 @@ export function useQuotation() {
         setQuoteNumber(`QT-${year}${month}${day}-${hour}${min}${sec}`);
     };
 
-    const startCreateQuoteForProject = (projName: string, customerId: number, projectId?: number) => {
+    const startCreateQuoteForProject = async (projName: string, customerId: number, projectId?: number) => {
         setView("create");
         setSelectedProductsList([]);
         setRemarks("");
@@ -201,7 +238,14 @@ export function useQuotation() {
             }
         }
 
-        const matchedCust = customers.find(c => Number(c.id) === customerId);
+        let matchedCust = customers.find(c => Number(c.id) === customerId);
+        if (!matchedCust && customerId > 0) {
+            try {
+                matchedCust = await loadCustomerById(customerId) || undefined;
+            } catch (error) {
+                console.error("Error loading project customer:", error);
+            }
+        }
         if (matchedCust) {
             setCustomerSearchText(`${matchedCust.customer_name} (${matchedCust.customer_code})`);
             // Auto-Fill the Price Type Template!
@@ -249,13 +293,17 @@ export function useQuotation() {
             const projRes = await fetch("/api/manufacturing/finished-goods/projects");
             if (projRes.ok) {
                 const projData = await projRes.json();
-                const mapped = (projData as Project[]).map(p => {
+                const projects = Array.isArray(projData) ? projData as Project[] : [];
+                const mapped = projects.map(p => {
                     const matchedCust = customers.find((c: Customer) => c.customer_code === p.customer_code);
+                    const projectCustomerId = p.customer_id !== undefined && p.customer_id !== null
+                        ? Number(p.customer_id)
+                        : matchedCust ? Number(matchedCust.id) : 0;
                     return {
                         id: p.id,
                         project_name: p.project_name,
-                        customer_id: matchedCust ? Number(matchedCust.id) : 0,
-                        customer_name: matchedCust ? matchedCust.customer_name : `Code: ${p.customer_code}`,
+                        customer_id: Number.isFinite(projectCustomerId) ? projectCustomerId : 0,
+                        customer_name: p.customer_name || matchedCust?.customer_name || `Code: ${p.customer_code}`,
                         customer_code: p.customer_code,
                         status: p.status
                     };
@@ -350,8 +398,12 @@ export function useQuotation() {
                 : `Cust ID: ${quote.customer_id}`;
             setCustomerSearchText(custNameStr);
 
-            // Fetch and set price type template if customer has one
-            const matchedCust = customers.find(c => String(c.id) === custIdStr);
+            // Fetch and set price type template if customer has one. The
+            // customer may not be in the bounded autocomplete result set.
+            let matchedCust = customers.find(c => String(c.id) === custIdStr);
+            if (!matchedCust && custIdStr && custIdStr !== "null") {
+                matchedCust = await loadCustomerById(custIdStr) || undefined;
+            }
             if (matchedCust && matchedCust.price_type_id) {
                 handlePriceTypeChange(String(matchedCust.price_type_id));
             } else {
@@ -441,8 +493,8 @@ export function useQuotation() {
 
     const removeProductFromQuote = (lineIdOrProductId: number) => {
         setSelectedProductsList(prev => prev.filter(item => 
-            (item.line_id && item.line_id !== lineIdOrProductId) || 
-            (item.product?.product_id !== lineIdOrProductId)
+            item.line_id !== lineIdOrProductId && 
+            item.product?.product_id !== lineIdOrProductId
         ));
     };
 
@@ -467,11 +519,13 @@ export function useQuotation() {
     const handleSearchCustomers = async (searchVal: string) => {
         setCustomerSearchText(searchVal);
         setSelectedCustomerId(""); // Clear selection to allow display of lists
+        const requestId = customerLookupRequestId.current + 1;
+        customerLookupRequestId.current = requestId;
         try {
-            const res = await fetch(`/api/manufacturing/finished-goods/customers?search=${encodeURIComponent(searchVal)}`);
+            const res = await fetch(`/api/manufacturing/finished-goods/customers/lookup?search=${encodeURIComponent(searchVal)}&limit=10`);
             if (res.ok) {
-                const data = await res.json();
-                setCustomers(data);
+                const data = parseCustomerLookupResponse(await res.json());
+                if (requestId === customerLookupRequestId.current) setCustomers(data);
             }
         } catch (err) {
             console.error("Error querying customers:", err);

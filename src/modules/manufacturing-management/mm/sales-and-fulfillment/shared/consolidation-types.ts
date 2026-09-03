@@ -138,6 +138,8 @@ export interface AuditPayload {
 export interface PickingSavePayload {
     batchId: number;
     quantities: { detailId: number; pickedQuantity: number }[];
+    pickedReservationIds?: number[];
+    pickedLotIds?: number[];
 }
 
 export interface Branch {

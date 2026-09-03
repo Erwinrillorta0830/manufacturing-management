@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { finalizeLandedCost } from "../landed-cost/_domain";
 import {
     resolveProductWeightBreakdown
@@ -245,7 +246,8 @@ interface ProductCostSnapshot {
 
 export async function persistProductCostUpdates(
     updates: ProductCostUpdate[],
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = fetch,
+    userId?: number | null
 ): Promise<ProductCostCommit> {
     const snapshots = new Map<number, ProductCostSnapshot>();
     const patchedProductIds: number[] = [];
@@ -263,7 +265,10 @@ export async function persistProductCostUpdates(
             const response = await fetchImpl(`${DIRECTUS_URL}/items/products/${productId}`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify(snapshot)
+                body: JSON.stringify({
+                    ...snapshot,
+                    ...productUpdateAuditFields(userId)
+                })
             }).catch(() => null);
             if (!response?.ok) failures.push(productId);
         }
@@ -296,7 +301,8 @@ export async function persistProductCostUpdates(
                 headers,
                 body: JSON.stringify({
                     cost_per_unit: update.cost_per_unit,
-                    estimated_unit_cost: update.estimated_unit_cost
+                    estimated_unit_cost: update.estimated_unit_cost,
+                    ...productUpdateAuditFields(userId)
                 })
             });
             if (!response.ok) {

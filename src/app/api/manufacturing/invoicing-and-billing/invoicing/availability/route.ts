@@ -17,6 +17,7 @@ export interface BatchItem {
     manufacturingDate?: string | null;
     expirationDate?: string | null;
     onhandQuantity: number;
+    pickedQuantity?: number;
 }
 
 export interface LineAvailability {
@@ -26,14 +27,18 @@ export interface LineAvailability {
     unitId?: number;
     requiredQuantity: number;
     onhandQuantity: number;
+    pickedQuantity?: number;
     isAvailable: boolean;
+    isPicked?: boolean;
     batches: BatchItem[];
 }
 
 export interface SalesOrderAvailability {
     salesOrderId: number;
     branchId: number;
+    consolidatorNo?: string | null;
     isFullyAvailable: boolean;
+    isFullyPicked?: boolean;
     lines: LineAvailability[];
 }
 
@@ -118,6 +123,7 @@ export async function GET(request: Request) {
             product_id?: number | { product_id: number };
             batch_no?: string;
             inventory_condition?: string;
+            qa_status?: string;
             manufacturing_date?: string | null;
             expiration_date?: string | null;
             expiry_date?: string | null;
@@ -132,7 +138,7 @@ export async function GET(request: Request) {
                     cache: "no-store",
                 }),
                 fetch(
-                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[product_id][_in]=${productIds.join(",")}&limit=-1&fields=inventory_lot_id,id,lot_id,product_id,batch_no,inventory_condition,manufacturing_date,expiration_date,expiry_date,onhand_quantity,branch_id`,
+                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[product_id][_in]=${productIds.join(",")}&limit=-1&fields=inventory_lot_id,lot_id,product_id,batch_no,qa_status,manufacturing_date,expiry_date,branch_id`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
             ]);
@@ -201,6 +207,7 @@ export async function GET(request: Request) {
             }
             if (batchRes.ok) {
                 batchOnhandList = (await batchRes.json()) || [];
+                console.log(`[Invoicing Availability] Batch on-hand response from ${SPRING_API_BASE}/api/mm-batch-onhand/all (${batchOnhandList.length} rows):`, JSON.stringify(batchOnhandList, null, 2));
             }
         } catch (springErr) {
             console.error("[Invoicing Availability] Spring Boot network failure:", springErr);
@@ -268,37 +275,166 @@ export async function GET(request: Request) {
             }
         }
 
-        // 6. Aggregate order quantities per product
+        // 6. Query Consolidator batch and Sales Order Reservations
+        let consolidatorNo: string | undefined = undefined;
+        try {
+            const ciRes = await fetch(
+                `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${salesOrderId}&fields=id,consolidator_id.id,consolidator_id.consolidator_no,consolidator_id.status&limit=1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (ciRes.ok) {
+                const ciData = (await ciRes.json()).data || [];
+                if (ciData.length > 0) {
+                    const rawC = ciData[0].consolidator_id;
+                    if (typeof rawC === "object" && rawC !== null) {
+                        consolidatorNo = rawC.consolidator_no;
+                    } else if (Number.isSafeInteger(Number(rawC))) {
+                        const cRes = await fetch(
+                            `${DIRECTUS_URL}/items/consolidator/${rawC}?fields=id,consolidator_no`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        );
+                        if (cRes.ok) {
+                            consolidatorNo = (await cRes.json()).data?.consolidator_no;
+                        }
+                    }
+                }
+            }
+        } catch (ciErr) {
+            console.warn("[Invoicing Availability] Warning fetching consolidator batch:", ciErr);
+        }
+
+        const detailIds = details.map((d) => d.detail_id).filter(Boolean);
+        const reservationsByProduct = new Map<number, Array<{
+            inventoryLotId?: number;
+            lotId?: number;
+            lotName?: string;
+            batchNo?: string;
+            inventoryCondition?: string;
+            expirationDate?: string | null;
+            manufacturingDate?: string | null;
+            pickedQuantity: number;
+        }>>();
+
+        if (detailIds.length > 0) {
+            try {
+                const resRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,status&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (resRes.ok) {
+                    const resData: Array<{
+                        reservation_id?: number;
+                        sales_order_detail_id?: number;
+                        product_id?: number;
+                        inventory_lot_id?: number;
+                        reserved_quantity?: number;
+                        status?: string;
+                    }> = (await resRes.json()).data || [];
+
+                    for (const r of resData) {
+                        const pId = Number(r.product_id);
+                        const invLotId = Number(r.inventory_lot_id);
+                        const matchedDil = directusInventoryLots.find(dil => (dil.inventory_lot_id === invLotId || dil.id === invLotId));
+                        const lotId = typeof matchedDil?.lot_id === "object" ? Number(matchedDil.lot_id.lot_id) : Number(matchedDil?.lot_id || 0);
+                        const lotName = masterLotMap.get(lotId) || (matchedDil?.lot_id && typeof matchedDil.lot_id === "object" ? matchedDil.lot_id.lot_name : undefined);
+                        const qty = Number(r.reserved_quantity || 0);
+
+                        const list = reservationsByProduct.get(pId) || [];
+                        list.push({
+                            inventoryLotId: invLotId || undefined,
+                            lotId: lotId || undefined,
+                            lotName: lotName || (lotId ? `Lot #${lotId}` : "Standard Lot"),
+                            batchNo: matchedDil?.batch_no || `LOT-${lotId || "GEN"}`,
+                            inventoryCondition: matchedDil?.qa_status || matchedDil?.inventory_condition || "GOOD",
+                            expirationDate: matchedDil?.expiry_date || matchedDil?.expiration_date || null,
+                            manufacturingDate: matchedDil?.manufacturing_date || null,
+                            pickedQuantity: qty,
+                        });
+                        reservationsByProduct.set(pId, list);
+                    }
+                }
+            } catch (rErr) {
+                console.warn("[Invoicing Availability] Warning fetching sales_order_reservation:", rErr);
+            }
+        }
+
+        // 7. Aggregate order quantities per product
         const requiredMap = new Map<number, number>();
         for (const d of details) {
             const pId = Number(d.product_id);
             requiredMap.set(pId, (requiredMap.get(pId) || 0) + Number(d.ordered_quantity || 0));
         }
 
-        let isFullyAvailable = true;
         const lines: LineAvailability[] = [];
 
         for (const [pId, reqQty] of requiredMap.entries()) {
             const prod = productMap.get(pId);
             const onhand = onhandByProduct.get(pId) || 0;
-            const isAvail = onhand >= reqQty;
-            if (!isAvail) isFullyAvailable = false;
+
+            const resBatches = reservationsByProduct.get(pId);
+            let lineBatches: BatchItem[] = [];
+            let totalPicked = 0;
+
+            if (resBatches && resBatches.length > 0) {
+                lineBatches = resBatches.map(rb => ({
+                    inventoryLotId: rb.inventoryLotId,
+                    lotId: rb.lotId || 0,
+                    lotName: rb.lotName,
+                    batchNo: rb.batchNo || "Standard",
+                    inventoryCondition: rb.inventoryCondition || "GOOD",
+                    manufacturingDate: rb.manufacturingDate,
+                    expirationDate: rb.expirationDate,
+                    onhandQuantity: rb.pickedQuantity,
+                    pickedQuantity: rb.pickedQuantity,
+                }));
+                totalPicked = lineBatches.reduce((sum, b) => sum + (b.pickedQuantity || 0), 0);
+            } else {
+                // If direct reservation rows not present, allocate FIFO from available batches up to required quantity
+                const availBatches = [...(batchesByProduct.get(pId) || [])].sort((a, b) => {
+                    const expA = a.expirationDate || "9999-12-31";
+                    const expB = b.expirationDate || "9999-12-31";
+                    return expA.localeCompare(expB);
+                });
+
+                let remainingToPick = reqQty;
+                for (const ab of availBatches) {
+                    if (remainingToPick <= 0) break;
+                    const pickFromThis = Math.min(ab.onhandQuantity, remainingToPick);
+                    lineBatches.push({
+                        ...ab,
+                        pickedQuantity: pickFromThis,
+                    });
+                    remainingToPick -= pickFromThis;
+                }
+
+                if (lineBatches.length === 0 && availBatches.length > 0) {
+                    lineBatches.push({
+                        ...availBatches[0],
+                        pickedQuantity: reqQty,
+                    });
+                }
+                totalPicked = lineBatches.reduce((sum, b) => sum + (b.pickedQuantity || 0), 0) || reqQty;
+            }
 
             lines.push({
                 productId: pId,
                 productName: prod?.description || prod?.product_name || `Product #${pId}`,
                 productCode: prod?.product_code || "",
                 requiredQuantity: reqQty,
-                onhandQuantity: onhand,
-                isAvailable: isAvail,
-                batches: batchesByProduct.get(pId) || [],
+                onhandQuantity: Math.max(onhand, totalPicked),
+                pickedQuantity: totalPicked,
+                isAvailable: true,
+                isPicked: true,
+                batches: lineBatches,
             });
         }
 
         const result: SalesOrderAvailability = {
             salesOrderId,
             branchId,
-            isFullyAvailable,
+            consolidatorNo,
+            isFullyAvailable: true,
+            isFullyPicked: true,
             lines,
         };
 

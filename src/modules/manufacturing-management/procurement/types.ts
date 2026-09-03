@@ -351,7 +351,8 @@ export interface RawMaterial {
     parent_name?: string | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     product_image?: string | null;
     maintaining_quantity?: number | null;
@@ -363,7 +364,7 @@ export interface RawMaterial {
     unit_of_measurement_count?: number | null;
     cost_per_unit: number;
     estimated_unit_cost: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -372,6 +373,7 @@ export interface RawMaterial {
     product_category?: number | null;
     product_brand?: number | null;
     product_type?: number | null;
+    product_type_name?: string | null;
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
@@ -385,6 +387,10 @@ export interface RawMaterial {
     isActive?: number;
     date_added?: string;
     last_updated?: string;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface LinkedProduct {
@@ -394,7 +400,7 @@ export interface LinkedProduct {
         product_id: number;
         product_code?: string;
         product_name?: string;
-        description?: string;
+        description?: string | null;
         parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
         unit_of_measurement?: {
             unit_id: number;
@@ -450,7 +456,7 @@ export interface RegisterRawMaterialPayload {
     description?: string;
     barcode?: string;
     cost_per_unit?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -559,7 +565,7 @@ export interface PackagingVariant {
     product_code?: string;
     unit_of_measurement?: number;
     unit_of_measurement_count?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -621,7 +627,8 @@ export interface BFFCatalogProduct {
     parent_id?: number | string | { product_id?: number | string; id?: number | string } | null;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
+    short_description?: string | null;
     barcode?: string;
     product_image?: string | null;
     maintaining_quantity?: number | string | null;
@@ -633,7 +640,7 @@ export interface BFFCatalogProduct {
     unit_of_measurement_count?: number | string | null;
     cost_per_unit?: number | string;
     estimated_unit_cost?: number | string;
-    density_factor?: number | string;
+    density_factor?: number | string | null;
     weight?: number | string | null;
     net_weight?: number | string | null;
     outer_carton_weight?: number | string | null;
@@ -642,6 +649,7 @@ export interface BFFCatalogProduct {
     product_category?: number | { category_id?: number; id?: number } | null;
     product_brand?: number | { brand_id?: number; id?: number } | null;
     product_type?: number | string | null;
+    product_type_name?: string | null;
     product_class?: number | { class_id?: number; id?: number } | null;
     product_segment?: number | { segment_id?: number; id?: number } | null;
     product_section?: number | { section_id?: number; id?: number } | null;
@@ -653,6 +661,10 @@ export interface BFFCatalogProduct {
     isActive?: boolean | number | string | null;
     date_added?: string;
     last_updated?: string;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface PurchaseOrderPriceTypeRule {

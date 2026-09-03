@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers, procurementDirectusFetch } from "../_directus";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import {
     assertLandedCostPostingEligible,
     assertLandedCostStatus,
@@ -1250,9 +1251,13 @@ export async function finalizeLandedCost(input: {
             });
             await patchRow("products", productId, {
                 cost_per_unit: afterCost,
-                estimated_unit_cost: afterCost
+                estimated_unit_cost: afterCost,
+                ...productUpdateAuditFields(input.actorId)
             });
-            rollback.push(() => patchRow("products", productId, productBefore.get(productId) || {} ).then(() => undefined));
+            rollback.push(() => patchRow("products", productId, {
+                ...(productBefore.get(productId) || {}),
+                ...productUpdateAuditFields(input.actorId)
+            }).then(() => undefined));
 
             const valuation = await createRow("purchase_order_inventory_valuation_ledger", {
                 computation_id: computation.id,

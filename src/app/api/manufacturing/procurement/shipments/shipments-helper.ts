@@ -1,4 +1,5 @@
 import { DIRECTUS_URL, headers } from "../_directus";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
@@ -1215,7 +1216,8 @@ export async function updateIncomingShipmentStatus(
                         headers,
                         body: JSON.stringify({
                             cost_per_unit: finalLandedUnitCost,
-                            estimated_unit_cost: finalLandedUnitCost
+                            estimated_unit_cost: finalLandedUnitCost,
+                            ...productUpdateAuditFields(userId)
                         })
                     }).catch(err => console.error("Error updating product cost on status change:", err));
                 }

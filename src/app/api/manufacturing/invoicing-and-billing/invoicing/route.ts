@@ -73,11 +73,14 @@ export async function POST(request: Request) {
             }
 
             const orderResponse = await fetch(
-                `${DIRECTUS_URL}/items/sales_order/${salesOrderId}?fields=order_id,order_no,order_status,customer_code,branch_id,salesman_id,payment_terms,discount_amount`,
+                `${DIRECTUS_URL}/items/sales_order/${salesOrderId}?fields=order_id,order_no,order_status,customer_code,branch_id,salesman_id,payment_terms,discount_amount,sales_type,receipt_type,delivery_date`,
                 { headers: directusHeaders, cache: "no-store" }
             );
             if (orderResponse.status === 404) throw new ApiError(404, "Sales order not found.");
-            if (!orderResponse.ok) throw new ApiError(503, "Unable to load the sales order.");
+            if (!orderResponse.ok) {
+                const errText = await orderResponse.text().catch(() => "");
+                throw new ApiError(503, `Unable to load the sales order (HTTP ${orderResponse.status}): ${errText}`);
+            }
             const order = (await orderResponse.json()).data as Row;
             if (order.order_status !== "For Invoicing") throw new ApiError(409, "Sales order must be For Invoicing.");
             const branchId = Number(order.branch_id);
@@ -126,19 +129,23 @@ export async function POST(request: Request) {
             const detailIds: number[] = [];
             try {
                 const nowIso = await getISOStringInConfiguredTimezone();
+                const invDateIso = invoiceDate ? new Date(invoiceDate).toISOString() : nowIso;
+                const dueDateIso = dueDate ? new Date(dueDate).toISOString() : nowIso;
                 const headerResponse = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
                     method: "POST",
                     headers: directusHeaders,
                     body: JSON.stringify({
                         invoice_no: invoiceNo,
-                        invoice_date: invoiceDate,
-                        due_date: dueDate,
+                        invoice_date: invDateIso,
+                        dispatch_date: nowIso,
+                        due_date: dueDateIso,
                         created_date: nowIso,
                         customer_code: order.customer_code,
-                        order_id: salesOrderId,
+                        order_id: String(salesOrderId),
                         salesman_id: order.salesman_id || null,
                         branch_id: branchId,
                         payment_terms: order.payment_terms || null,
+                        sales_type: order.sales_type || null,
                         invoice_type: invoiceTypeId,
                         transaction_status: "Prepared",
                         payment_status: "Unpaid",
@@ -147,10 +154,21 @@ export async function POST(request: Request) {
                         discount_amount: discount,
                         vat_amount: 0,
                         net_amount: gross - discount,
+                        created_by: userId,
+                        modified_by: userId,
+                        modified_date: nowIso,
                         remarks,
+                        isReceipt: invoiceType?.isOfficial ? 1 : 0,
+                        isPosted: 0,
+                        isDispatched: 1,
+                        isRemitted: 0,
+                        isReplaced: 0,
                     }),
                 });
-                if (!headerResponse.ok) throw new Error(`Invoice header insert failed (HTTP ${headerResponse.status})`);
+                if (!headerResponse.ok) {
+                    const errText = await headerResponse.text().catch(() => "");
+                    throw new Error(`Invoice header insert failed (HTTP ${headerResponse.status}): ${errText}`);
+                }
                 invoiceId = Number((await headerResponse.json()).data?.invoice_id);
                 if (!Number.isSafeInteger(invoiceId) || invoiceId < 1) throw new Error("Invoice header returned no valid ID");
 
@@ -174,17 +192,24 @@ export async function POST(request: Request) {
                             net_amount: quantity * unitPrice,
                         }),
                     });
-                    if (!detailResponse.ok) throw new Error(`Invoice detail insert failed (HTTP ${detailResponse.status})`);
+                    if (!detailResponse.ok) {
+                        const errText = await detailResponse.text().catch(() => "");
+                        throw new Error(`Invoice detail insert failed (HTTP ${detailResponse.status}): ${errText}`);
+                    }
                     const detailId = Number((await detailResponse.json()).data?.detail_id);
                     if (!Number.isSafeInteger(detailId) || detailId < 1) throw new Error("Invoice detail returned no valid ID");
                     detailIds.push(detailId);
                 }
 
-                // Transition sales order to "For Consolidation"
+                // Transition sales order to "Dispatched"
                 await fetch(`${DIRECTUS_URL}/items/sales_order/${salesOrderId}`, {
                     method: "PATCH",
                     headers: directusHeaders,
-                    body: JSON.stringify({ order_status: "For Consolidation" }),
+                    body: JSON.stringify({
+                        order_status: "Dispatched",
+                        modified_date: nowIso,
+                        modified_by: userId,
+                    }),
                 }).catch(() => undefined);
 
                 return NextResponse.json({
@@ -202,7 +227,8 @@ export async function POST(request: Request) {
                     await remove("sales_invoice", invoiceId).catch(() => undefined);
                 }
                 console.error("Invoice creation failed:", error);
-                throw new ApiError(503, "Invoice creation failed. Partial records were removed; please retry.");
+                const msg = error instanceof Error ? error.message : "Invoice creation failed. Partial records were removed; please retry.";
+                throw new ApiError(500, msg);
             }
         });
     } catch (error) {

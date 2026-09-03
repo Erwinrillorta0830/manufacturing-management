@@ -37,6 +37,7 @@ export function useInvoiceConsolidation() {
     }, [searchQuery]);
     const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
     const [selectedConsolidation, setSelectedConsolidation] = useState<InvoiceConsolidation | null>(null);
+    const [loadingDetailId, setLoadingDetailId] = useState<number | null>(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
 
     const branchId = selectedBranch?.id;
@@ -90,6 +91,23 @@ export function useInvoiceConsolidation() {
     const loadCandidates = useCallback(async (bId: number) => {
         try {
             const data = await fetchCandidates(bId);
+            console.log(
+                `[Consolidation UI] Candidate Orders loaded for Branch ${bId} (${data.length} candidate(s)):`,
+                data.map((c) => ({
+                    orderNo: c.orderNo,
+                    customer: c.customerName,
+                    orderStatus: c.orderStatus,
+                    documentType: c.documentType,
+                    products: c.products.map((p) => ({
+                        productId: p.productId,
+                        productName: p.productName,
+                        orderedQty: (p as { orderedQuantity?: number }).orderedQuantity,
+                        allocatedQty: (p as { allocatedQuantity?: number }).allocatedQuantity,
+                        consolidatedQty: (p as { consolidatedQuantity?: number }).consolidatedQuantity,
+                        remainingQty: (p as { remainingQuantity?: number }).remainingQuantity ?? p.quantity,
+                    })),
+                }))
+            );
             setCandidates(data);
         } catch (e) {
             const err = e as Error;
@@ -98,11 +116,15 @@ export function useInvoiceConsolidation() {
     }, []);
 
     const openDetail = useCallback(async (c: InvoiceConsolidation) => {
+        setSelectedConsolidation(c);
+        setLoadingDetailId(c.id);
         try {
             const fresh = await fetchConsolidationByNo(c.consolidatorNo);
             setSelectedConsolidation(fresh);
         } catch {
             setSelectedConsolidation(c);
+        } finally {
+            setLoadingDetailId(null);
         }
     }, []);
 
@@ -237,6 +259,7 @@ export function useInvoiceConsolidation() {
         searchQuery,
         branchId,
         selectedConsolidation,
+        loadingDetailId,
         showCreateModal,
         setPage,
         setStatusFilter,

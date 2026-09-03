@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import {
   MMLot,
   MMInventoryLot,
@@ -28,6 +29,25 @@ const getHeaders = (token?: string) => {
   return headers;
 };
 
+async function notifyClientApiError(res: Response, fallbackMessage: string): Promise<string> {
+  if (typeof window === "undefined") return fallbackMessage;
+  if (res.status === 401) {
+    const authMsg = "Authentication expired. Please log in again.";
+    toast.error(authMsg);
+    return authMsg;
+  }
+  let detail = "";
+  try {
+    const json = await res.json();
+    detail = json?.error || json?.message || "";
+  } catch {
+    detail = await res.text().catch(() => "");
+  }
+  const message = detail || `${fallbackMessage} (HTTP ${res.status})`;
+  toast.error(message);
+  return message;
+}
+
 /**
  * Fetch lots by branch ID with active status
  */
@@ -38,7 +58,7 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
       const url = branchId ? `/api/manufacturing/lots?branch_id=${branchId}` : "/api/manufacturing/lots";
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
-        console.warn(`[LotTracking] Failed to fetch lots from BFF: ${res.status}`);
+        await notifyClientApiError(res, "Failed to fetch lots from BFF");
         return [];
       }
       const data = await res.json();
@@ -224,7 +244,7 @@ export async function fetchInventoryLots(params: {
       const qs = searchParams.toString();
       const res = await fetch(`/api/manufacturing/inventory-lots${qs ? `?${qs}` : ""}`, { cache: "no-store" });
       if (!res.ok) {
-        console.warn(`[LotTracking] Failed to fetch inventory lots from BFF: ${res.status}`);
+        await notifyClientApiError(res, "Failed to fetch inventory lots from BFF");
         return [];
       }
       const rows = await res.json();
@@ -514,7 +534,10 @@ export async function fetchProductOnhand(params: {
     if (typeof window !== "undefined") {
       const url = `/api/manufacturing/product-onhand${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        await notifyClientApiError(res, "Failed to fetch product onhand inventory");
+        return [];
+      }
       return await res.json();
     }
 
@@ -651,7 +674,10 @@ export async function fetchBatchOnhand(params: {
     if (typeof window !== "undefined") {
       const url = `/api/manufacturing/batch-onhand${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        await notifyClientApiError(res, "Failed to fetch batch onhand inventory");
+        return [];
+      }
       return await res.json();
     }
 
@@ -810,7 +836,10 @@ export async function fetchInventoryMovements(params: {
     if (typeof window !== "undefined") {
       const url = `/api/manufacturing/inventory-movements${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        await notifyClientApiError(res, "Failed to fetch inventory movements from server");
+        return [];
+      }
       return await res.json();
     }
 

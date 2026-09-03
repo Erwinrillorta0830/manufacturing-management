@@ -1,6 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
+import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError,
+    movementErrorStatus
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 import { resolveJobOrderRelationship } from "../../inventory/_job-order-relationships";
 import {
     normalizeFinalQARelease,
@@ -26,16 +31,6 @@ interface DirectusJobOrder {
     job_order_no?: unknown;
     product_id?: unknown;
     branch_id?: unknown;
-}
-
-interface DirectusMovement {
-    lot_id?: unknown;
-    product_id?: unknown;
-    branch_id?: unknown;
-    transaction_type_id?: unknown;
-    quantity?: unknown;
-    source_document_id?: unknown;
-    source_document_no?: unknown;
 }
 
 interface DirectusLot {
@@ -150,10 +145,11 @@ async function verifyFinalQALotRelationship(input: {
         throw new FinalQAValidationError("The selected lot does not belong to the submitted Job Order branch.", 409);
     }
 
-    const movementRows = await directusCollection<DirectusMovement>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter[lot_id][_eq]=${input.lotId}&filter[transaction_type_id][_eq]=2&filter[quantity][_gt]=0&fields=lot_id,product_id,branch_id,transaction_type_id,quantity,source_document_id,source_document_no&limit=-1`,
-        "Finished-goods movement lookup"
-    );
+    const movementRows = await fetchMmInventoryMovements({
+        lot: input.lotId,
+        transactionTypeId: 2,
+        movementDirection: "IN"
+    });
     const lotMovements = movementRows.filter((movement) => sameRelation(movement.lot_id, input.lotId));
     if (lotMovements.length === 0) {
         throw new FinalQAValidationError(
@@ -204,6 +200,9 @@ async function verifyFinalQALotRelationship(input: {
 function errorResponse(error: unknown) {
     if (error instanceof FinalQAValidationError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof MmInventoryMovementError) {
+        return NextResponse.json({ error: error.message }, { status: movementErrorStatus(error) });
     }
     const message = error instanceof Error ? error.message : "Failed to release lot";
     console.error("Error in final-qa API:", error);

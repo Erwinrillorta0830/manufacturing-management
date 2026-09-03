@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import {
     calculateIncrementalMaterialConsumption,
     loadYieldMaterials,
@@ -9,6 +9,10 @@ import {
     verifyZeroComponentBOM
 } from "./_yield-materials";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import {
+    fetchMmInventoryMovements,
+    MmInventoryMovementError
+} from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -314,16 +318,10 @@ function stockLotKey(lotId: number, lotNumber: string): string {
 }
 
 async function loadStockLots(productId: number, branchId: number): Promise<StockLot[]> {
-    const movementFilter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { product_id: { _eq: productId } },
-            { branch_id: { _eq: branchId } }
-        ]
-    }));
-    const movements = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${movementFilter}&limit=-1`,
-        `Inventory movement lookup for component ${productId}`
-    );
+    const movements = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId
+    });
     const receipts = await directusRows<any>(
         `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${encodeURIComponent(String(productId))}&filter[branch_id][_eq]=${encodeURIComponent(String(branchId))}&limit=-1`,
         `Receiving lookup for component ${productId}`
@@ -341,7 +339,7 @@ async function loadStockLots(productId: number, branchId: number): Promise<Stock
 
     const stock = new Map<string, StockLot>();
     movements.forEach(movement => {
-        const batchNumber = String(movement.batch_no || movement.lot_number || "LOT-N/A").trim() || "LOT-N/A";
+        const batchNumber = String(movement.batch_no || "LOT-N/A").trim() || "LOT-N/A";
         const lotId = numericRelationId(movement.lot_id);
         const key = stockLotKey(lotId, batchNumber);
         const existing = stock.get(key);
@@ -480,30 +478,26 @@ async function findExistingFinishedMovements(
     joNo: string,
     lotNumber: string
 ): Promise<any[]> {
-    const baseConditions = [
-        { product_id: { _eq: productId } },
-        { branch_id: { _eq: branchId } },
-        { batch_no: { _eq: lotNumber } },
-        { transaction_type_id: { _eq: 2 } },
-        { quantity: { _gt: 0 } }
-    ];
-
     // New records are linked by the numeric job-order ID. Only fall back to
     // the document number for legacy movements that have no source ID.
-    const bySourceId = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-            _and: [...baseConditions, { source_document_id: { _eq: jobOrderId } }]
-        }))}&limit=-1`,
-        `Existing finished-goods movement lookup for ${joNo}`
-    );
+    const bySourceId = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId,
+        batchNo: lotNumber,
+        transactionTypeId: 2,
+        movementDirection: "IN",
+        referenceId: jobOrderId
+    });
     if (bySourceId.length > 0) return bySourceId;
 
-    const legacyRows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-            _and: [...baseConditions, { source_document_no: { _eq: joNo } }]
-        }))}&limit=-1`,
-        `Legacy finished-goods movement lookup for ${joNo}`
-    );
+    const legacyRows = await fetchMmInventoryMovements({
+        product: productId,
+        branch: branchId,
+        batchNo: lotNumber,
+        transactionTypeId: 2,
+        movementDirection: "IN",
+        referenceNo: joNo
+    });
     return legacyRows.filter(row => numericRelationId(row.source_document_id) <= 0);
 }
 
@@ -909,19 +903,17 @@ async function verifyPersistedCompletion(options: {
         }
 
         for (const lot of plan.lots) {
-            const componentMovements = await directusRows<any>(
-                `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { source_document_id: { _eq: jobOrder.jobOrderId } },
-                        { transaction_type_id: { _eq: 1 } },
-                        { product_id: { _eq: plan.material.productId } },
-                        { batch_no: { _eq: lot.lotNumber } },
-                        { quantity: { _eq: -lot.quantity } }
-                    ]
-                }))}&limit=-1`,
-                `Component movement verification for ${lot.lotNumber}`
-            );
-            if (componentMovements.length === 0) {
+            const componentMovements = await fetchMmInventoryMovements({
+                referenceId: jobOrder.jobOrderId,
+                branch: branchId,
+                product: plan.material.productId,
+                batchNo: lot.lotNumber,
+                transactionTypeId: 1,
+                movementDirection: "OUT"
+            });
+            if (!componentMovements.some(movement =>
+                Math.abs(Number(movement.quantity) + lot.quantity) <= EPSILON
+            )) {
                 throw new YieldCompletionError(
                     502,
                     "PERSISTENCE_VERIFICATION_FAILED",
@@ -1138,6 +1130,7 @@ async function completeYieldClosingInternal(
         }
 
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
+        const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
         const finishedLotId = await resolveMasterLotId(lotNumber, 2, journal);
         const finishedMovement = await journal.create<any>(
@@ -1229,7 +1222,7 @@ async function completeYieldClosingInternal(
                         component_lot_id: consumedLotId,
                         component_batch_no: lot.lotNumber,
                         consumed_quantity: lot.quantity,
-                        created_at: new Date().toISOString()
+                        created_at: phtMovementTimestamp
                     },
                     `Create material genealogy for ${plan.material.productName}`
                 );
@@ -1364,6 +1357,15 @@ async function completeYieldClosingInternal(
             const materialsError = new YieldCompletionError(error.status, error.code, error.message);
             materialsError.operationKey = operationKey;
             throw materialsError;
+        }
+        if (error instanceof MmInventoryMovementError) {
+            const movementError = new YieldCompletionError(
+                error.status,
+                "INVENTORY_MOVEMENT_LOOKUP_FAILED",
+                error.message
+            );
+            movementError.operationKey = operationKey;
+            throw movementError;
         }
         const closingError = new YieldCompletionError(502, "YIELD_CLOSING_FAILED", "Yield closing could not be completed.");
         closingError.operationKey = operationKey;

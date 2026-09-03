@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
 
         const filter: Record<string, unknown> = {
             _and: [
-                { consolidator_no: { _starts_with: "CLINV-" } },
                 { is_delete: { _eq: 0 } },
                 { branch_id: { _eq: Number(branchId) } },
             ],

@@ -42,11 +42,19 @@ const TRANSACTION_TYPES = [
     { value: "STOCK_TRANSFER", label: "Stock Transfer" },
     { value: "STOCK_ADJUSTMENT", label: "Stock Adjustment" },
     { value: "STOCK_CONVERSION", label: "Stock Conversion" },
-    { value: "PHYSICAL_INVENTORY", label: "Physical Inventory" },
-    { value: "MATERIAL_ISSUANCE", label: "Material Issuance" },
-    { value: "PRODUCTION_RECEIPT", label: "Production Receipt" },
-    { value: "PURCHASE_RECEIPT", label: "Purchase Receipt" },
-    { value: "SALES_DISPATCH", label: "Sales Dispatch" }
+    { value: "PHYSICAL_INVENTORY_OPENING", label: "Physical Inventory Opening" },
+    { value: "PHYSICAL_INVENTORY_ADJUSTMENT", label: "Physical Inventory Adjustment" },
+    { value: "PHYSICAL_INVENTORY_SURPLUS", label: "Physical Inventory Surplus" },
+    { value: "PHYSICAL_INVENTORY_DEFICIT", label: "Physical Inventory Deficit" },
+    { value: "JOB_ORDER_CONSUMPTION", label: "Job Order Consumption" },
+    { value: "JOB_ORDER_FINISHED_YIELD", label: "Job Order Finished Yield" },
+    { value: "JOB_ORDER_WASTAGE_SCRAP", label: "Job Order Wastage / Scrap" },
+    { value: "PURCHASE_RECEIVING_QA", label: "Purchase Receiving QA" },
+    { value: "SALES_ISSUE", label: "Sales Issue" },
+    { value: "QA_REJECT_BAD_ORDER_RECEIPT", label: "QA Reject / Bad Order Receipt" },
+    { value: "QA_VENDOR_RETURN", label: "QA Vendor Return" },
+    { value: "LOT_TRANSFER_SOURCE_OUT", label: "Lot Transfer Source OUT" },
+    { value: "LOT_TRANSFER_TARGET_IN", label: "Lot Transfer Target IN" }
 ];
 
 const CONDITIONS = [

@@ -21,6 +21,7 @@ import type {
   API_SalesReturnType,
   PriceTypeOption,
   ProductCatalog,
+  InvoiceLineItem,
 } from "../type";
 
 const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-manual";
@@ -123,9 +124,14 @@ export const SalesReturnProvider = {
     return handleResponse<InvoiceOption[]>(res);
   },
 
-  async getLots(): Promise<{ lot_id: number; lot_name: string; }[]> {
+  async getLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
     const res = await fetch(`${API_BASE}?action=lots`, { cache: "no-store" });
-    return handleResponse<{ lot_id: number; lot_name: string; }[]>(res);
+    return handleResponse<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]>(res);
+  },
+
+  async getInvoiceDetails(invoiceId: number | string): Promise<InvoiceLineItem[]> {
+    const res = await fetch(`${API_BASE}?action=invoice-items&id=${invoiceId}`, { cache: "no-store" });
+    return handleResponse<InvoiceLineItem[]>(res);
   },
 
   // --- 4. PRODUCT LOOKUP HELPERS ---

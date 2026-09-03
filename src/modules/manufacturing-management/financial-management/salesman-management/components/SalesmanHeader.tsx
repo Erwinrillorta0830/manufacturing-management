@@ -10,7 +10,7 @@ export function SalesmanHeader() {
                     <Users className="h-7 w-7" />
                 </div>
                 <div>
-                    <h1 className="text-3xl font-black tracking-tighter text-slate-900 uppercase">
+                    <h1 className="text-3xl font-black tracking-tighter text-foreground uppercase">
                         Salesman Management
                     </h1>
                     <p className="text-sm text-muted-foreground font-medium">

@@ -7,9 +7,12 @@ import {
     normalizeBatchNo
 } from "../_stock";
 import { z } from "zod";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const QUANTITY_EPSILON = 0.000001;
 
 type DirectusRecord = Record<string, unknown>;
 
@@ -57,7 +60,10 @@ const transferPayloadSchema = z.object({
     work_center_id: z.number().int().positive(),
     override_negative: z.boolean().default(false),
     remarks: z.string().optional()
-});
+}).refine(
+    (payload) => !payload.override_negative || Boolean(payload.remarks?.trim()),
+    { path: ["remarks"], message: "Authorization remarks are required for a negative stock override." }
+);
 
 function relationId(value: unknown, preferredKeys: string[] = []): number {
     if (typeof value === "number" || typeof value === "string") {
@@ -255,10 +261,23 @@ async function rollbackTransfer(
     return failures;
 }
 
-async function getUserIdFromSession(): Promise<number> {
+function readCookieValue(cookieHeader: string | null, name: string): string | null {
+    if (!cookieHeader) return null;
+
+    const prefix = `${name}=`;
+    const cookie = cookieHeader
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+
+    return cookie ? decodeURIComponent(cookie.slice(prefix.length)) : null;
+}
+
+async function getUserIdFromSession(request: Request): Promise<number | null> {
     try {
         const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
+        const token = readCookieValue(request.headers.get("cookie"), "vos_access_token") ||
+            cookieStore.get("vos_access_token")?.value;
         if (token) {
             const parts = token.split(".");
             if (parts.length >= 2) {
@@ -266,14 +285,15 @@ async function getUserIdFromSession(): Promise<number> {
                 while (base64.length % 4) base64 += "=";
                 const jsonPayload = Buffer.from(base64, "base64").toString("utf8");
                 const payload = JSON.parse(jsonPayload);
-                const rawId = payload?.id || payload?.user_id || payload?.sub;
-                if (rawId && !isNaN(Number(rawId))) return Number(rawId);
+                const rawId = payload?.id || payload?.user_id || payload?.userId || payload?.sub;
+                const parsedId = Number(rawId);
+                if (Number.isInteger(parsedId) && parsedId > 0) return parsedId;
             }
         }
     } catch (e) {
         console.error("[Material Staging Transfer] Session resolution error:", e);
     }
-    return 1; // Fallback admin
+    return null;
 }
 
 export async function POST(request: Request) {
@@ -295,7 +315,10 @@ export async function POST(request: Request) {
         const data = parseResult.data;
         rollbackJobOrderId = data.job_order_id;
         rollbackMaterialId = data.jo_material_id;
-        const userId = await getUserIdFromSession();
+        const userId = await getUserIdFromSession(request);
+        if (!userId) {
+            throw new TransferError("An authenticated user is required to stage material.", 401);
+        }
         transactionState = createTransactionState();
 
         const jobOrder = await directusRequest<DirectusRecord>(
@@ -354,15 +377,10 @@ export async function POST(request: Request) {
             throw new TransferError("The material product does not match the selected product.", 400);
         }
 
-        const movFilter = encodeURIComponent(JSON.stringify({
-            product_id: { _eq: data.product_id }
-        }));
-        const movements = await directusRequest<DirectusRecord[]>(
-            `/items/inventory_movements?filter=${movFilter}&fields=product_id,lot_id,branch_id,batch_no,quantity,source_document_id,transaction_type_id,remarks&limit=-1`,
-            { headers, cache: "no-store" },
-            "Load inventory movements",
-            true
-        );
+        const movements = await fetchMmInventoryMovements({
+            branch: branchId,
+            product: data.product_id
+        });
 
         const requestedBatch = normalizeBatchNo(data.batch_no);
         const stockByBatch = new Map<string, number>();
@@ -644,12 +662,11 @@ export async function POST(request: Request) {
         }
 
         for (const [index, movementId] of transactionState.movementIds.entries()) {
-            const verifiedMovement = await directusRequest<DirectusRecord>(
-                `/items/inventory_movements/${movementId}?fields=product_id,lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
-                { headers, cache: "no-store" },
-                "Verify inventory movement",
-                true
-            );
+            const verifiedMovement = (await fetchMmInventoryMovements({ movementId }))
+                .find((movement) => Number(movement.movement_id) === movementId);
+            if (!verifiedMovement) {
+                throw new TransferError("The inventory movement could not be verified after saving.", 503);
+            }
             const expectedMovement = movementPayloads[index];
             if (
                 relationId(verifiedMovement.product_id, ["product_id"]) !== data.product_id ||
@@ -658,7 +675,7 @@ export async function POST(request: Request) {
                 Number(verifiedMovement.transaction_type_id) !== expectedMovement.transaction_type_id ||
                 Number(verifiedMovement.source_document_id) !== data.job_order_id ||
                 String(verifiedMovement.batch_no || "") !== data.batch_no ||
-                Number(verifiedMovement.quantity) !== expectedMovement.quantity
+                Math.abs(Number(verifiedMovement.quantity) - expectedMovement.quantity) > QUANTITY_EPSILON
             ) {
                 throw new TransferError("The inventory movement could not be verified after saving.", 503);
             }
@@ -691,19 +708,11 @@ export async function POST(request: Request) {
             "Validate Job Order staging reservations",
             true
         );
-        const jobOrderMovementFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                { source_document_id: { _eq: data.job_order_id } },
-                { branch_id: { _eq: branchId } },
-                { transaction_type_id: { _eq: 4 } }
-            ]
-        }));
-        const allJobOrderMovements = await directusRequest<DirectusRecord[]>(
-            `/items/inventory_movements?filter=${jobOrderMovementFilter}&fields=product_id,batch_no,quantity,remarks&limit=-1`,
-            { headers, cache: "no-store" },
-            "Validate Job Order staging movements",
-            true
-        );
+        const allJobOrderMovements = await fetchMmInventoryMovements({
+            referenceId: data.job_order_id,
+            branch: branchId,
+            transactionTypeId: 4
+        });
         const stagedQuantityByProductBatch = new Map<string, number>();
         allJobOrderMovements.forEach((movement) => {
             if (!String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")) return;
@@ -769,7 +778,10 @@ export async function POST(request: Request) {
         const verifiedAllocation = verifiedAllocations[0];
         if (
             verifiedAllocations.length !== 1 ||
-            Number(verifiedAllocation?.reserved_quantity || 0) !== existingAllocationQuantity + data.transfer_quantity
+            Math.abs(
+                Number(verifiedAllocation?.reserved_quantity || 0) -
+                (existingAllocationQuantity + data.transfer_quantity)
+            ) > QUANTITY_EPSILON
         ) {
             throw new TransferError("The staging reservation could not be verified after saving.", 503);
         }
@@ -781,7 +793,10 @@ export async function POST(request: Request) {
             true
         );
         if (
-            Number(verifiedMaterial.reserved_quantity || 0) !== currentReservedQuantity + data.transfer_quantity
+            Math.abs(
+                Number(verifiedMaterial.reserved_quantity || 0) -
+                (currentReservedQuantity + data.transfer_quantity)
+            ) > QUANTITY_EPSILON
         ) {
             throw new TransferError("The material staging state could not be verified after saving.", 503);
         }
@@ -808,7 +823,9 @@ export async function POST(request: Request) {
     } catch (error) {
         const transferError = error instanceof TransferError
             ? error
-            : new TransferError(error instanceof Error ? error.message : "Failed to execute bin transfer", 500);
+            : error instanceof MmInventoryMovementError
+                ? new TransferError(error.message, error.status)
+                : new TransferError(error instanceof Error ? error.message : "Failed to execute bin transfer", 500);
         let rollbackFailures: string[] = [];
 
         if (transactionState) {

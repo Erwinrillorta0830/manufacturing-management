@@ -20,7 +20,7 @@ export type SalesOrderStatus =
 export const SALES_ORDER_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[]> = {
     Draft: ["For Approval", "Cancelled"],
     Pending: ["Draft", "Cancelled"],
-    "For Approval": ["For Invoicing", "On Hold", "Draft", "Cancelled"],
+    "For Approval": ["For Consolidation", "On Hold", "Draft", "Cancelled"],
     "For Production": ["In Production", "Cancelled"],
     "On Hold": ["For Approval", "Draft", "Cancelled"],
     "For Invoicing": ["For Consolidation", "Cancelled"],

@@ -15,7 +15,7 @@ import {
     rejectPriceChangeBatch,
     resolveBatchDecisionUserNames,
     resolveUserDisplayName,
-    supplierLabelOf,
+
     fetchProductTypesMap,
 } from "../_batch";
 import {
@@ -45,15 +45,6 @@ function priceTypeName(value: unknown) {
     return isRecord(value) ? String(value.price_type_name ?? "").trim() : "";
 }
 
-function supplierIdOf(value: unknown): number | null {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value === "string") {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : null;
-    }
-    if (isRecord(value)) return pickId(value.id);
-    return null;
-}
 
 function userIdOf(value: unknown): number | string | null {
     if (isRecord(value)) {
@@ -131,7 +122,6 @@ export async function GET(req: NextRequest, context: RouteContext) {
 
         const details = await getDetails(headerId);
         const productTypesMap = await fetchProductTypesMap();
-        const batchSupplierName = supplierLabelOf(header.supplier_id);
         const { approved_by_name, rejected_by_name } = await resolveBatchDecisionUserNames(header);
         const detailRequester = details.find((line) => userIdOf(line.requested_by) !== null)?.requested_by ?? null;
         const requestedBy = header.requested_by ?? detailRequester;
@@ -143,8 +133,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
             data: {
                 id: normalizeHeaderId(header),
                 header_id: normalizeHeaderId(header),
-                supplier_id: supplierIdOf(header.supplier_id),
-                supplier_name: batchSupplierName,
+
                 reference_no: header.reference_no ?? "",
                 remarks: header.remarks ?? "",
                 status: header.status ?? "PENDING",
@@ -165,7 +154,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
                 details: details.map((line) => {
                     return {
                         ...mapDetail(line, productTypesMap),
-                        supplier_name: batchSupplierName || null,
+                        supplier_name: null,
                         effective_at: line.effective_at ?? null,
                         application_status: line.application_status ?? null,
                         applied_at: line.applied_at ?? null,

@@ -36,6 +36,7 @@ import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
 import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
 import { resolveBaseUnitCostPhp, resolveLandedCostCurrency } from "../landed-cost/_domain";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import {
     allocationCapacityKey,
     capacityAuditsEqual,
@@ -772,7 +773,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         const rollback = async () => {
             for (const [productId, previous] of [...productChanges.entries()].reverse()) {
-                const response = await mutate("products", productId, "PATCH", previous);
+                const response = await mutate("products", productId, "PATCH", {
+                    ...previous,
+                    ...productUpdateAuditFields(options.actorUserId)
+                });
                 if (!response.ok) return false;
             }
             const headerRestore = await mutate("purchase_order", shipmentId, "PATCH", {
@@ -984,7 +988,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 });
                 const productUpdateRes = await mutate("products", productId, "PATCH", {
                     cost_per_unit: weightedCost,
-                    estimated_unit_cost: weightedCost
+                    estimated_unit_cost: weightedCost,
+                    ...productUpdateAuditFields(options.actorUserId)
                 });
                 if (!productUpdateRes.ok) throw new Error(`Failed to update landed cost for product ${productId}.`);
             }

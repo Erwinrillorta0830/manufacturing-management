@@ -3,7 +3,8 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { movementLegacyLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
-import { DIRECTUS_URL, headers, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -153,6 +154,7 @@ export async function POST(request: Request) {
     try {
         const todayStr = await getTodayDateString();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
+        const phtMovementTimestamp = formatPhtDateTime();
         const sessionUserId = await getUserIdFromSession();
 
         const body = await request.json();
@@ -267,14 +269,10 @@ export async function POST(request: Request) {
                 if (consumedQty <= 0) continue;
 
                 // Fetch inventory movements to calculate true ledger stock
-                const movFilter = encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { product_id: { _eq: rawProductId } },
-                        { branch_id: { _eq: branchId } }
-                    ]
-                }));
-                const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${movFilter}&limit=-1`, { headers, cache: "no-store" });
-                const movements = movRes.ok ? (await movRes.json()).data || [] : [];
+                const movements = await fetchMmInventoryMovements({
+                    branch: branchId,
+                    product: rawProductId
+                });
                 const movementStockMap = sumMovementQuantitiesByStock(movements);
 
                 // Fetch document statuses for this product to determine QA status
@@ -370,7 +368,7 @@ export async function POST(request: Request) {
             scrap_quantity: scrapUnits,
             lot_number: finalBatchNo,
             qa_status: qaStatus === "Passed" ? "Passed" : qaStatus,
-            logged_at: manilaTimestamp,
+            logged_at: phtMovementTimestamp,
             logged_by: effectiveEncoderId
         };
 
@@ -437,16 +435,11 @@ export async function POST(request: Request) {
         // Document No: 'JO-xxxx' (single standard source_document_no)
         const genealogyRecords: any[] = [];
         const persistedGenealogyRecords: any[] = [];
-        const backflushFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                { source_document_id: { _eq: Number(joId) } },
-                { transaction_type_id: { _eq: 1 } }
-            ]
-        }));
-        const existingBackflushMovements = await directusRows<any>(
-            `${DIRECTUS_URL}/items/inventory_movements?filter=${backflushFilter}&limit=-1`,
-            `Existing backflush movement lookup for Job Order ${joId}`
-        );
+        const existingBackflushMovements = await fetchMmInventoryMovements({
+            referenceId: Number(joId),
+            branch: branchId,
+            transactionTypeId: 1
+        });
         const existingGenealogyRows = await directusRows<any>(
             `${DIRECTUS_URL}/items/jo_material_genealogy?filter=${encodeURIComponent(JSON.stringify({ job_order_id: { _eq: Number(joId) } }))}&limit=-1`,
             `Existing genealogy lookup for Job Order ${joId}`
@@ -583,7 +576,7 @@ export async function POST(request: Request) {
                         component_lot_id: consumedLotId,
                         component_batch_no: batchNumber,
                         consumed_quantity: qty,
-                        created_at: manilaTimestamp
+                        created_at: phtMovementTimestamp
                     };
                     const existingGenealogy = persistedGenealogyRows.find((row: any) =>
                         Number(row.job_order_id) === Number(joId)
@@ -703,10 +696,11 @@ export async function POST(request: Request) {
         // Confirm the records that will be reported to the caller are present in
         // Directus before recording finished output or advancing the Job Order.
         if (persistedGenealogyRecords.length > 0) {
-            const verifiedMovementRows = await directusRows<any>(
-                `${DIRECTUS_URL}/items/inventory_movements?filter=${backflushFilter}&limit=-1`,
-                `Backflush movement verification for Job Order ${joId}`
-            );
+            const verifiedMovementRows = await fetchMmInventoryMovements({
+                referenceId: Number(joId),
+                branch: branchId,
+                transactionTypeId: 1
+            });
             const verifiedGenealogyRows = await directusRows<any>(
                 `${DIRECTUS_URL}/items/jo_material_genealogy?filter=${encodeURIComponent(JSON.stringify({
                     _and: [
@@ -768,18 +762,13 @@ export async function POST(request: Request) {
             remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName} | Lot: ${finalBatchNo}`
         };
 
-        const finishedMovementFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                { source_document_id: { _eq: Number(joId) } },
-                { transaction_type_id: { _eq: 2 } },
-                { product_id: { _eq: producedProductId } },
-                { batch_no: { _eq: finalBatchNo } }
-            ]
-        }));
-        const existingFinishedMovements = await directusRows<any>(
-            `${DIRECTUS_URL}/items/inventory_movements?filter=${finishedMovementFilter}&limit=1`,
-            `Existing finished-goods movement lookup for Job Order ${joId}`
-        );
+        const existingFinishedMovements = await fetchMmInventoryMovements({
+            referenceId: Number(joId),
+            branch: branchId,
+            product: producedProductId,
+            batchNo: finalBatchNo,
+            transactionTypeId: 2
+        });
         const existingFinishedMovement = existingFinishedMovements.find((row: any) => sameQuantity(row.quantity, goodYield));
         if (!existingFinishedMovement) {
             await directusRequest<any>(
@@ -881,7 +870,11 @@ export async function POST(request: Request) {
         });
     } catch (e) {
         console.error("Error in shift-run-log POST API:", e);
-        const status = e instanceof DirectusPersistenceError ? e.status : 500;
+        const status = e instanceof DirectusPersistenceError
+            ? e.status
+            : e instanceof MmInventoryMovementError
+                ? e.status
+                : 500;
         return NextResponse.json({
             success: false,
             error: (e as Error).message || "Failed to log shift progress"
