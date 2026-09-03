@@ -244,9 +244,14 @@ export default function PhysicalInventoryManufacturingModule() {
         inventory_lot_id: number;
         lot_id: number;
         product_id: number;
-        physical_count: number;
+        physical_count?: number | null;
         inventory_condition: string;
         remarks?: string;
+        batch_no?: string;
+        manufacturing_date?: string | null;
+        expiry_date?: string | null;
+        expiration_date?: string | null;
+        unit_cost?: number;
     }) => {
         if (!activeSheet) return;
         try {
@@ -277,7 +282,7 @@ export default function PhysicalInventoryManufacturingModule() {
         }
     };
 
-    const handleSaveInlineCount = async (detail: MmPhysicalInventoryDetail, newPhysCount: number) => {
+    const handleSaveInlineCount = async (detail: MmPhysicalInventoryDetail, newPhysCount: number | null) => {
         if (!activeSheet) return;
         const dId = detail.physical_inventory_detail_id || detail.id;
         if (!dId) return;
@@ -299,10 +304,41 @@ export default function PhysicalInventoryManufacturingModule() {
         }
     };
 
+    const handleSaveInlineRemark = async (detail: MmPhysicalInventoryDetail, remarks: string) => {
+        if (!activeSheet) return;
+        const dId = detail.physical_inventory_detail_id || detail.id;
+        if (!dId) return;
+
+        try {
+            setLoading(true);
+            await updatePhysicalInventoryDetail(activeSheet.physical_inventory_id, dId, {
+                remarks: remarks.trim(),
+            });
+            showToast("Remarks updated.");
+            const refreshed = await fetchPhysicalInventorySheet(activeSheet.physical_inventory_id);
+            setActiveSheet(refreshed);
+            await loadSheets();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to update remarks";
+            showToast(msg, "error");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleRemoveDetail = async (detail: MmPhysicalInventoryDetail) => {
         if (!activeSheet) return;
         const dId = detail.physical_inventory_detail_id || detail.id;
         if (!dId) return;
+
+        const sysCount = Number(detail.system_count || 0);
+        const isAutoPopulated = Boolean(detail.remarks && String(detail.remarks).toLowerCase().includes("auto-populated"));
+
+        if (sysCount > 0 || isAutoPopulated) {
+            showToast("Deletion restricted: Line items with system stock (SYSTEM > 0) or derived from automated stock population cannot be deleted.", "error");
+            return;
+        }
+
         if (!window.confirm("Are you sure you want to remove this detail row?")) return;
 
         try {
@@ -423,7 +459,7 @@ export default function PhysicalInventoryManufacturingModule() {
     };
 
     const getBranchIdNum = () => {
-        if (!activeSheet?.branch_id) return branches[0]?.id || 0;
+        if (!activeSheet?.branch_id) return 0;
         return typeof activeSheet.branch_id === "object" ? activeSheet.branch_id.id || 0 : activeSheet.branch_id;
     };
 
@@ -511,6 +547,7 @@ export default function PhysicalInventoryManufacturingModule() {
                     }}
                     onRemoveDetail={handleRemoveDetail}
                     onSaveInlineCount={handleSaveInlineCount}
+                    onSaveInlineRemark={handleSaveInlineRemark}
                     onOpenOffsettingModal={() => setIsOffsettingModalOpen(true)}
                     onSubmit={() => handleSubmitSheet()}
                     onReturnToDraft={() => handleReturnToDraft()}

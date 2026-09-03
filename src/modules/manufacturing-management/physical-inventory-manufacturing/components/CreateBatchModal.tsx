@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Product, MmLot, MmInventoryLot } from "../types";
-import { createMmBatch } from "../services/physical-inventory-manufacturing-api";
+import { createMmDraftBatch } from "../services/physical-inventory-manufacturing-api";
 import { X, AlertTriangle } from "lucide-react";
 
 interface Props {
@@ -34,23 +34,17 @@ export default function CreateBatchModal({
     const [batchNo, setBatchNo] = useState("");
     const [mfgDate, setMfgDate] = useState("");
     const [expDate, setExpDate] = useState("");
-    const [unitCost, setUnitCost] = useState<string>(
-        targetProduct?.cost_per_unit !== undefined ? String(targetProduct.cost_per_unit) : "0"
-    );
-
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
     React.useEffect(() => {
         if (isOpen) {
             setBatchNo("");
             setMfgDate("");
             setExpDate("");
-            setUnitCost(targetProduct?.cost_per_unit !== undefined ? String(targetProduct.cost_per_unit) : "0");
             setError(null);
             setSubmitting(false);
         }
-    }, [isOpen, lotId, productId, targetProduct?.cost_per_unit]);
+    }, [isOpen, lotId, productId]);
 
     if (!isOpen) return null;
 
@@ -81,6 +75,12 @@ export default function CreateBatchModal({
 
     const shelfLife = Number(targetProduct.product_shelf_life || 0);
 
+    const getValidUnitCost = (val: unknown): number => {
+        if (val === null || val === undefined || val === "") return 0;
+        const num = Number(val);
+        return isNaN(num) || num < 0 ? 0 : num;
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
@@ -101,15 +101,11 @@ export default function CreateBatchModal({
             return;
         }
 
-        const costNum = Number(unitCost || 0);
-        if (isNaN(costNum) || costNum < 0) {
-            setError("Unit cost cannot be negative.");
-            return;
-        }
+        const costNum = getValidUnitCost(targetProduct.cost_per_unit);
 
         try {
             setSubmitting(true);
-            const created = await createMmBatch({
+            const createdDraft = await createMmDraftBatch({
                 lot_id: lotId,
                 branch_id: branchId,
                 product_id: productId,
@@ -119,10 +115,10 @@ export default function CreateBatchModal({
                 unit_cost: costNum,
                 source_reference: piNo || undefined,
             });
-            onBatchCreated(created);
+            onBatchCreated(createdDraft);
             onClose();
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "Failed to create batch";
+            const msg = err instanceof Error ? err.message : "Failed to create draft batch";
             setError(msg);
         } finally {
             setSubmitting(false);

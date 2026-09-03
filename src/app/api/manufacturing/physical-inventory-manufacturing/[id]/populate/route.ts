@@ -52,8 +52,10 @@ export async function POST(_request: NextRequest, context: RouteParams) {
         const headerPriceTypeId = extractId(sheet.price_type_id);
         const priceTypeId = bodyPriceTypeId > 0 ? bodyPriceTypeId : headerPriceTypeId;
 
+        const token = _request.cookies.get("vos_access_token")?.value || undefined;
+
         // 2. Fetch Spring movements
-        const movements = await fetchSpringMovements(branchId, productTypeId);
+        const movements = await fetchSpringMovements(branchId, productTypeId, token);
         let items: AggregatedMovementItem[] = aggregateMovementsToItems(movements);
 
         // Resolve valid product_ids belonging to productTypeId from Directus catalog
@@ -76,29 +78,38 @@ export async function POST(_request: NextRequest, context: RouteParams) {
             }
         }
 
-        // Fallback to Directus if Spring API returns no items
+        // Fallback to Directus v_mm_batch_onhand if Spring API returns no items
         if (items.length === 0) {
             try {
-                const directusOnhandUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?filter[branch_id][_eq]=${branchId}&limit=-1`;
+                const directusOnhandUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?filter[branch_id][_eq]=${branchId}&fields=*,lot_id.*,product_id.*,product_id.unit_of_measurement.*&limit=-1`;
                 const directusRes = await fetch(directusOnhandUrl, { headers, cache: "no-store" });
                 if (directusRes.ok) {
                     const dJson = await directusRes.json();
-                    const rawList = dJson.data || [];
-                    items = rawList.map((row: Record<string, unknown>) => ({
-                        branchId,
-                        inventoryLotId: extractId(row.inventory_lot_id),
-                        lotId: extractId(row.lot_id),
-                        productId: extractId(row.product_id),
-                        productCode: String(row.product_code || `PROD-${row.product_id}`),
-                        productName: String(row.product_name || `Product #${row.product_id}`),
-                        unitId: extractId(row.unit_id) || 1,
-                        batchNo: String(row.batch_no || `BATCH-${row.inventory_lot_id}`),
-                        manufacturingDate: row.manufacturing_date ? String(row.manufacturing_date) : null,
-                        expirationDate: row.expiration_date ? String(row.expiration_date) : null,
-                        inventoryCondition: String(row.inventory_condition || "GOOD").toUpperCase(),
-                        systemCount: roundQty(row.onhand_quantity as number | string | undefined),
-                        unitCost: 0,
-                    }));
+                    const rawList: Array<Record<string, unknown>> = dJson.data || [];
+                    items = rawList.map((row) => {
+                        const prod = typeof row.product_id === "object" && row.product_id !== null ? (row.product_id as Record<string, unknown>) : null;
+                        const pId = extractId(row.product_id);
+                        const lId = extractId(row.lot_id);
+                        const ptId = prod ? extractId(prod.product_type_id || prod.product_type) : 0;
+                        const uId = prod ? extractId(prod.unit_of_measurement) : 1;
+
+                        return {
+                            branchId,
+                            inventoryLotId: extractId(row.inventory_lot_id || row.id),
+                            lotId: lId,
+                            productId: pId,
+                            productCode: String(prod?.product_code || `PROD-${pId}`),
+                            productName: String(prod?.product_name || `Product #${pId}`),
+                            productTypeId: ptId,
+                            unitId: uId,
+                            batchNo: String(row.batch_no || `BATCH-${row.inventory_lot_id}`),
+                            manufacturingDate: row.manufacturing_date ? String(row.manufacturing_date) : null,
+                            expirationDate: row.expiry_date || row.expiration_date ? String(row.expiry_date || row.expiration_date) : null,
+                            inventoryCondition: String(row.qa_status || row.inventory_condition || "GOOD").toUpperCase(),
+                            systemCount: roundQty(row.onhand_quantity as number | string | undefined || row.quantity as number | string | undefined || 0),
+                            unitCost: Number(row.unit_cost || 0),
+                        };
+                    });
                 }
             } catch (e) {
                 console.error("[Populate] Directus fallback failed:", e);
@@ -163,7 +174,7 @@ export async function POST(_request: NextRequest, context: RouteParams) {
             const existingDetailId = existingMap.get(`${item.inventoryLotId}:${cond}`);
 
             const systemCount = roundQty(item.systemCount);
-            const physCount = roundQty(item.systemCount);
+            const physCount = 0;
 
             if (existingDetailId) {
                 // Update system_count on existing detail
@@ -201,6 +212,9 @@ export async function POST(_request: NextRequest, context: RouteParams) {
                 });
                 if (createRes.ok) {
                     insertedCount++;
+                } else {
+                    const errText = await createRes.text();
+                    console.error(`[Populate] Directus failed to insert detail row for batch ${item.batchNo}:`, errText);
                 }
             }
         }
