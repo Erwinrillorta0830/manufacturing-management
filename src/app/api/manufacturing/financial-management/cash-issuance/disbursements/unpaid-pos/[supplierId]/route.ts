@@ -110,7 +110,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const receivingsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&filter=${encodeURIComponent(
             JSON.stringify({ purchase_order_id: { _in: poIds } })
-        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted`;
+        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted,product_id.product_type`;
 
         const receivingsRes = await fetch(receivingsUrl, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
@@ -132,6 +132,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             date: string | null;
             amountDue: number;
             type: string;
+            breakdown?: { productType: number | null, amount: number }[];
         }> = [];
 
         for (const po of poList) {
@@ -171,17 +172,28 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             // Standard POs: Only receipt rows posted to inventory and to financial amounts
             // may contribute to the disbursement selection list.
             const receivings = postedReceivingsByPoId.get(poId) || [];
-            const grouped: Record<string, { transDate: string | null, totalLiability: number }> = {};
+            const grouped: Record<string, { transDate: string | null, totalLiability: number, breakdown: Record<string, number> }> = {};
 
             for (const por of receivings) {
                 const rNo = por.receipt_no || "NO-RECEIPT";
                 if (!grouped[rNo]) {
-                    grouped[rNo] = { transDate: null, totalLiability: 0 };
+                    grouped[rNo] = { transDate: null, totalLiability: 0, breakdown: {} };
                 }
                 const amt = por.total_amount !== null && por.total_amount !== undefined
                     ? Number(por.total_amount)
                     : (Number(por.received_quantity || 0) * Number(por.unit_price || 0));
-                grouped[rNo].totalLiability += amt || 0;
+                
+                const actualAmt = amt || 0;
+                grouped[rNo].totalLiability += actualAmt;
+                
+                let productType: number | null = null;
+                if (por.product_id && typeof por.product_id === 'object' && 'product_type' in por.product_id) {
+                    productType = Number((por.product_id as any).product_type);
+                    if (Number.isNaN(productType)) productType = null;
+                }
+
+                const key = productType !== null ? String(productType) : "null";
+                grouped[rNo].breakdown[key] = (grouped[rNo].breakdown[key] || 0) + actualAmt;
 
                 const currentDateStr = por.receipt_date || null;
                 if (currentDateStr) {
@@ -197,6 +209,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 const remainingDue = Math.max(0, data.totalLiability);
 
                 if (remainingDue > 0.01) {
+                    const breakdownArray = Object.entries(data.breakdown).map(([key, amount]) => ({
+                        productType: key === "null" ? null : Number(key),
+                        amount: Number(Math.max(0, amount).toFixed(2))
+                    })).filter(b => b.amount > 0);
+
                     unpaidPos.push({
                         uniqueKey: `${poNo}-${receiptNo}`,
                         poId,
@@ -204,7 +221,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                         receiptNo,
                         date: data.transDate || (po.date ? po.date.split("T")[0] : null),
                         amountDue: Number(remainingDue.toFixed(2)),
-                        type: "RECEIPT"
+                        type: "RECEIPT",
+                        breakdown: breakdownArray
                     });
                 }
             }

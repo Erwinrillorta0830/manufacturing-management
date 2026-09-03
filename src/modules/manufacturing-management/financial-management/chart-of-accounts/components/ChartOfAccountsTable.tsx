@@ -97,8 +97,8 @@ export default function ChartOfAccountsTable(props: {
                     if (!addedBy) return "-";
                     
                     if (typeof addedBy === "object") {
-                      const fname = addedBy.user_fname || "";
-                      const lname = addedBy.user_lname || "";
+                      const fname = addedBy.user_fname || addedBy.first_name || "";
+                      const lname = addedBy.user_lname || addedBy.last_name || "";
                       const fullName = [fname, lname].filter(Boolean).join(" ");
                       return fullName || "-";
                     }
