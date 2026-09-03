@@ -16,6 +16,7 @@ async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?
             headers: directusHeaders,
             body: JSON.stringify({
                 order_status: "For Invoicing",
+                for_invoicing_at: phNow,
                 modified_date: phNow,
                 modified_by: userId,
                 updated_at: phNow,
