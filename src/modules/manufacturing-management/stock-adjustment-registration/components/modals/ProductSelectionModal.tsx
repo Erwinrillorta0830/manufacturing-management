@@ -238,7 +238,7 @@ export function ProductSelectionModal({
       product_id: Number(productId),
       product_name: product.description || product.product_name,
       product_code: product.product_code,
-      quantity: 1,
+      quantity: 0,
       branch_id: 0, // Will be set by form
       type: "IN",   // Will be set by form
       cost_per_unit: product.cost_per_unit || product.price_per_unit || 0,
@@ -267,7 +267,7 @@ export function ProductSelectionModal({
     setCartItems(
       cartItems.map((item) => {
         if (Number(item.product_id) === productId) {
-          const newQty = Math.max(1, (item.quantity || 1) + delta);
+          const newQty = Math.max(0, (item.quantity ?? 0) + delta);
           return { ...item, quantity: newQty };
         }
         return item;
@@ -590,7 +590,7 @@ export function ProductSelectionModal({
                 cartItems.map((item) => {
                   const pid = Number(item.product_id);
                   const cost = Number(item.cost_per_unit || 0);
-                  const qty = item.quantity || 1;
+                  const qty = item.quantity ?? 0;
                   const total = cost * qty;
 
                   return (
@@ -616,16 +616,16 @@ export function ProductSelectionModal({
                           <button
                             className="w-9 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
                             onClick={() => handleUpdateQuantity(pid, -1)}
-                            disabled={qty <= 1}
+                            disabled={qty <= 0}
                           >
                             <Minus className="h-3 w-3" />
                           </button>
                           <input
                             type="number"
-                            value={qty === 0 ? "" : qty}
+                            value={qty === undefined || qty === null ? "" : qty}
                             onChange={(e) => {
                               let val = parseInt(e.target.value, 10);
-                              if (isNaN(val) || val < 1) val = 1;
+                              if (isNaN(val) || val < 0) val = 0;
                               setCartItems(cartItems.map((cItem) => {
                                 if (Number(cItem.product_id) === pid) {
                                   return { ...cItem, quantity: val };
@@ -634,7 +634,7 @@ export function ProductSelectionModal({
                               }));
                             }}
                             className="w-12 h-9 text-center text-sm font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            min={1}
+                            min={0}
                           />
                           <button
                             className="w-9 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"

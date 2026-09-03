@@ -30,7 +30,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
         const headerData = (await headerRes.json()).data;
 
         // Fetch details
-        const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1&fields=*,inventory_lot_id.*,lot_id.*,product_id.*,product_id.product_type.*,product_id.unit_of_measurement.*,unit_id.*`;
+        const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1&fields=*,inventory_lot_id.*,lot_id.*,lot_id.unit_id.*,product_id.*,product_id.product_type.*,product_id.unit_of_measurement.*,unit_id.*`;
         const detailsRes = await fetch(detailsUrl, { headers, cache: "no-store" });
         let detailsData = [];
         if (detailsRes.ok) {

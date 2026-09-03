@@ -125,6 +125,8 @@ export interface Batch {
     sourceType?: string;
     sourceReference?: string;
     remarks: string;
+    productType?: unknown;
+    productCategory?: unknown;
     createdAt: string;
     updatedAt: string;
     createdBy: string;
@@ -187,6 +189,7 @@ export interface Branch {
 export interface ProductItem {
     productId: number;
     productName: string;
+    description?: string;
     skuCode: string;
     unitCost?: number;
     cost_per_unit?: number;
@@ -244,6 +247,8 @@ export interface InventoryMovement {
     productId: number;
     productCode: string;
     productName: string;
+    productDescription?: string;
+    description?: string;
     productTypeId?: number;
     productTypeName?: string;
     unitId?: number;

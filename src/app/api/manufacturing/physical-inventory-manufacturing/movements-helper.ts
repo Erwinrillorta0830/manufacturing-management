@@ -87,22 +87,38 @@ export async function fetchSpringMovements(branchId: number, productTypeId?: num
             reqHeaders["Cookie"] = `vos_access_token=${token}`;
         }
 
-        const url = `${SPRING_API_BASE}/api/mm-inventory-movements/filter?${params.toString()}`;
-        const res = await fetch(url, { headers: reqHeaders, cache: "no-store" });
-        if (!res.ok) {
-            console.warn(`[Spring Movements API] HTTP ${res.status} from ${url}`);
-            return [];
-        }
+        const endpointsToTry = [
+            `${SPRING_API_BASE}/api/mm-inventory-movements/filter?${params.toString()}`,
+            `${SPRING_API_BASE}/api/mm-inventory-movements/filter?branchId=${branchId}${productTypeId ? `&productTypeId=${productTypeId}` : ""}`,
+            `${SPRING_API_BASE}/api/view-product-movements/filter?branchId=${branchId}`,
+            `${SPRING_API_BASE}/api/mm-batch-onhand/filter?branch=${branchId}`,
+            `${SPRING_API_BASE}/api/mm-batch-onhand/filter?branchId=${branchId}`,
+        ];
 
-        const json = await res.json();
         let list: SpringMovement[] = [];
-        if (Array.isArray(json)) {
-            list = json;
-        } else if (json.data && Array.isArray(json.data)) {
-            list = json.data;
+
+        for (const url of endpointsToTry) {
+            try {
+                const res = await fetch(url, { headers: reqHeaders, cache: "no-store" });
+                if (res.ok) {
+                    const json = await res.json();
+                    let rawData: SpringMovement[] = [];
+                    if (Array.isArray(json)) {
+                        rawData = json;
+                    } else if (json.data && Array.isArray(json.data)) {
+                        rawData = json.data;
+                    }
+                    if (rawData.length > 0) {
+                        list = rawData;
+                        break;
+                    }
+                }
+            } catch (epErr) {
+                console.warn(`[Spring API] Attempt failed for ${url}:`, epErr);
+            }
         }
 
-        if (productTypeId && productTypeId > 0) {
+        if (productTypeId && productTypeId > 0 && list.length > 0) {
             list = list.filter((m) => {
                 const ptId = Number(m.productTypeId || (m as Record<string, unknown>).product_type_id || 0);
                 return ptId > 0 ? ptId === Number(productTypeId) : true;
@@ -183,11 +199,17 @@ export async function getSingleItemSystemOnhand(
     lotId?: number | null,
     productId?: number | null,
     condition: string = "GOOD",
-    productTypeId?: number | null
+    productTypeId?: number | null,
+    batchNo?: string | null
 ): Promise<number> {
+    const condUpper = (condition || "GOOD").trim().toUpperCase();
+    const cleanBatch = (batchNo || "").trim().toLowerCase();
+    const invLotIdNum = inventoryLotId ? Number(inventoryLotId) : 0;
+    const lotIdNum = lotId ? Number(lotId) : 0;
+    const prodIdNum = productId ? Number(productId) : 0;
+
     const movements = await fetchSpringMovements(branchId, productTypeId);
     if (movements.length > 0) {
-        const condUpper = condition.trim().toUpperCase();
         let total = 0;
         let matched = false;
 
@@ -195,34 +217,57 @@ export async function getSingleItemSystemOnhand(
             const mBranch = Number(m.branchId || 0);
             if (mBranch !== branchId) continue;
 
-            const mInvLot = Number(m.inventoryLotId || 0);
-            const mLot = Number(m.lotId || 0);
             const mProd = Number(m.productId || 0);
-            const mCond = (m.inventoryCondition || "GOOD").trim().toUpperCase();
+            if (prodIdNum > 0 && mProd !== prodIdNum) continue;
 
-            if (inventoryLotId && mInvLot && mInvLot === inventoryLotId) {
-                if (!condUpper || mCond === condUpper) {
-                    total += Number(m.quantityIn || 0) - Number(m.quantityOut || 0);
-                    matched = true;
+            const mLot = Number(m.lotId || 0);
+            if (lotIdNum > 0 && mLot > 0 && mLot !== lotIdNum) continue;
+
+            const mCond = (m.inventoryCondition || "GOOD").trim().toUpperCase();
+            if (condUpper && mCond !== condUpper) continue;
+
+            const mInvLot = Number(m.inventoryLotId || 0);
+            const mBatch = (m.batchNo || "").trim().toLowerCase();
+
+            // Strict Hierarchy Match Criteria (Lot ID + Batch No + Product Code)
+            let isMatch = false;
+
+            if (invLotIdNum > 0 && mInvLot > 0) {
+                if (mInvLot === invLotIdNum) {
+                    isMatch = true;
                 }
-            } else if (productId && mProd === productId && (!lotId || mLot === lotId)) {
-                if (!condUpper || mCond === condUpper) {
-                    total += Number(m.quantityIn || 0) - Number(m.quantityOut || 0);
-                    matched = true;
+            } else if (cleanBatch && mBatch) {
+                if (mBatch === cleanBatch && (lotIdNum === 0 || mLot === lotIdNum)) {
+                    isMatch = true;
                 }
+            } else if (invLotIdNum === 0 && !cleanBatch) {
+                if (prodIdNum > 0 && mProd === prodIdNum && (lotIdNum === 0 || mLot === lotIdNum)) {
+                    isMatch = true;
+                }
+            }
+
+            if (isMatch) {
+                total += Number(m.quantityIn || 0) - Number(m.quantityOut || 0);
+                matched = true;
             }
         }
 
         if (matched) return roundQty(total);
     }
 
-    // Directus Fallback
+    // Directus Fallback - Query strictly by hierarchy
     try {
         const filterParts: string[] = [`filter[branch_id][_eq]=${encodeURIComponent(branchId)}`];
-        if (inventoryLotId) filterParts.push(`filter[inventory_lot_id][_eq]=${encodeURIComponent(inventoryLotId)}`);
-        if (lotId) filterParts.push(`filter[lot_id][_eq]=${encodeURIComponent(lotId)}`);
-        if (productId) filterParts.push(`filter[product_id][_eq]=${encodeURIComponent(productId)}`);
-        if (condition) filterParts.push(`filter[inventory_condition][_eq]=${encodeURIComponent(condition.trim().toUpperCase())}`);
+
+        if (invLotIdNum > 0) {
+            filterParts.push(`filter[inventory_lot_id][_eq]=${encodeURIComponent(invLotIdNum)}`);
+        } else {
+            if (lotIdNum > 0) filterParts.push(`filter[lot_id][_eq]=${encodeURIComponent(lotIdNum)}`);
+            if (prodIdNum > 0) filterParts.push(`filter[product_id][_eq]=${encodeURIComponent(prodIdNum)}`);
+            if (cleanBatch) filterParts.push(`filter[batch_no][_eq]=${encodeURIComponent(cleanBatch)}`);
+        }
+
+        if (condUpper) filterParts.push(`filter[inventory_condition][_eq]=${encodeURIComponent(condUpper)}`);
 
         const url = `${DIRECTUS_URL}/items/v_mm_batch_onhand?${filterParts.join("&")}&limit=1`;
         const res = await fetch(url, { headers: directusHeaders, cache: "no-store" });

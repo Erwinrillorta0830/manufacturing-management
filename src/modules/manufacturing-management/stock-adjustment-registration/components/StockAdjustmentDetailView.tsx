@@ -182,49 +182,91 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
 
       // --- Product Table ---
       const tableRows: (string | number)[][] = [];
+      let rowNumber = 1;
       data.items?.forEach((item) => {
         const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
         const unitPrice = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit || 0);
         const itemQty = Number(item.quantity || 0);
-        const totalAmount = itemQty * unitPrice;
+        const brandName = item.brand_name || product.brand_name || (product as unknown as { product_brand?: { brand_name?: string } })?.product_brand?.brand_name || "N/A";
+        const productName = `${product.description || product.product_name || item.product_name || "Unknown"}\n(${product.product_code || item.product_code || "N/A"})`;
+        const uomName = item.unit_name || (product.unit_of_measurement as { unit_name?: string })?.unit_name || "pcs";
         
-        tableRows.push([
-          item.brand_name || "N/A",
-          `${product.description || product.product_name || "Unknown"}\n(${product.product_code || "N/A"})`,
-          itemQty,
-          `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-        ]);
-
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const allocations = (item as unknown as { allocations?: any[] }).allocations || [];
+
         if (lotAllocations.length > 0) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           lotAllocations.forEach((lg: any) => {
             const lotName = lg.lot_name || `Lot #${lg.lot_id}`;
-            tableRows.push([
-              "",
-              `  [Lot: ${lotName}]`,
-              lg.allocated_quantity || "",
-              "",
-              ""
-            ]);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (lg.batches || []).forEach((b: any) => {
-              const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : unitPrice;
-              const bQty = Number(b.quantity || 0);
-              const bTotal = bQty * bCost;
-              const mfg = b.manufacturing_date ? ` Mfg: ${String(b.manufacturing_date).substring(0, 10)}` : "";
-              const exp = b.expiry_date ? ` Exp: ${String(b.expiry_date).substring(0, 10)}` : "";
+            const batches = lg.batches || [];
+            if (batches.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              batches.forEach((b: any) => {
+                const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : unitPrice;
+                const bQty = Number(b.quantity || 0);
+                const bTotal = bQty * bCost;
+                tableRows.push([
+                  rowNumber++,
+                  brandName,
+                  productName,
+                  lotName,
+                  b.batch_no || "N/A",
+                  uomName,
+                  `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  bQty
+                ]);
+              });
+            } else {
+              const grpQty = Number(lg.allocated_quantity || 0);
               tableRows.push([
-                "",
-                `    • Batch: ${b.batch_no || "—"}${mfg}${exp}`,
-                bQty,
-                `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                rowNumber++,
+                brandName,
+                productName,
+                lotName,
+                "N/A",
+                uomName,
+                `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                `PHP ${(grpQty * unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                grpQty
               ]);
-            });
+            }
           });
+        } else if (allocations.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          allocations.forEach((alloc: any) => {
+            const lotName = alloc.lot_name || (alloc.lot_id ? `Lot #${alloc.lot_id}` : "N/A");
+            const aQty = Number(alloc.allocated_quantity || 0);
+            const aCost = alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : unitPrice;
+            tableRows.push([
+              rowNumber++,
+              brandName,
+              productName,
+              lotName,
+              alloc.batch_no || "N/A",
+              uomName,
+              `PHP ${aCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              `PHP ${(aQty * aCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              aQty
+            ]);
+          });
+        } else {
+          const lotName = item.lot_name || (item.lot_id ? (typeof item.lot_id === 'object' ? (item.lot_id as { lot_name?: string })?.lot_name || `Lot #${(item.lot_id as { id?: number })?.id}` : `Lot #${item.lot_id}`) : "N/A");
+          const batchNo = item.batch_no || "N/A";
+          const totalAmount = itemQty * unitPrice;
+          tableRows.push([
+            rowNumber++,
+            brandName,
+            productName,
+            lotName,
+            batchNo,
+            uomName,
+            `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            itemQty
+          ]);
         }
       });
 
@@ -236,16 +278,20 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       autoTable(doc, {
         startY: metaY + 12,
         margin: { ...margins, bottom: bottomMargin },
-        head: [["Brand", "Product Name", "Qty", "Unit Price", "Total Amount"]],
+        head: [["#", "Brand", "Product Name", "Storage Lot", "Batch No", "UOM", "Unit Price", "Total Amount", "Qty"]],
         body: tableRows,
         headStyles: { fillColor: [248, 250, 252], textColor: [71, 85, 105], fontSize: 8, fontStyle: 'bold' },
         bodyStyles: { fontSize: 7, textColor: [30, 41, 59] },
         columnStyles: {
-          0: { halign: 'left', cellWidth: 35 },
-          1: { halign: 'left' },
-          2: { halign: 'center', cellWidth: 20 },
-          3: { halign: 'right', cellWidth: 25 },
-          4: { halign: 'right', fontStyle: 'bold', cellWidth: 30 }
+          0: { halign: 'center', cellWidth: 8 },
+          1: { halign: 'left', cellWidth: 18 },
+          2: { halign: 'left' },
+          3: { halign: 'left', cellWidth: 26 },
+          4: { halign: 'left', cellWidth: 26 },
+          5: { halign: 'center', cellWidth: 14 },
+          6: { halign: 'right', cellWidth: 22 },
+          7: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
+          8: { halign: 'center', fontStyle: 'bold', cellWidth: 14 }
         },
         theme: 'grid',
         styles: { cellPadding: 1.5 }

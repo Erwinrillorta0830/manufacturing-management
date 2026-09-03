@@ -1303,6 +1303,9 @@ export async function PATCH(request: Request) {
             }
 
             const updatePayload: Record<string, any> = { order_status: target };
+            if (target === "For Invoicing") {
+                updatePayload.for_invoicing_at = new Date().toISOString();
+            }
             if (creditLimitExceeded && warningString) {
                 // If warning is not already in the remarks, append it
                 const currentRemarks = order.remarks || "";

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { 
   Search, 
   RefreshCcw, 
+  RotateCcw,
   Calendar, 
   Layers, 
   MapPin, 
@@ -22,6 +23,7 @@ import { useStockTransferSummary, SortConfig } from './hooks/use-stock-transfer-
 import { TransferDetailModal } from './components/TransferDetailModal';
 import { formatPhDateTime } from '../utils/date-utils';
 import { SearchableCombobox } from '../shared/components/searchable-combobox';
+import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -145,7 +147,12 @@ export default function StockTransferSummaryView() {
   }
 
   return (
-    <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
+    <motion.div 
+      initial={{ opacity: 0, y: -10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="flex-1 space-y-4 p-4 md:p-8 pt-6"
+    >
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight text-foreground">Stock Transfer Summary</h2>
         <div className="flex items-center gap-2">
@@ -261,8 +268,8 @@ export default function StockTransferSummaryView() {
                   onChange={(e) => updateFilter('dateTo', e.target.value)}
                   className="h-9 text-xs bg-background border-border flex-1 shadow-none"
                 />
-                <Button variant="ghost" size="icon" onClick={resetFilters} className="h-9 w-9 shrink-0 hover:bg-destructive/10 hover:text-destructive transition-colors">
-                  <RefreshCcw className="w-4 h-4" />
+                <Button variant="ghost" size="icon" onClick={resetFilters} title="Reset Filters" className="h-9 w-9 shrink-0 hover:bg-destructive/10 hover:text-destructive transition-colors">
+                  <RotateCcw className="w-4 h-4" />
                 </Button>
               </div>
             </div>
@@ -491,6 +498,6 @@ export default function StockTransferSummaryView() {
         getUnitName={getUnitName}
         branches={branches}
       />
-    </div>
+    </motion.div>
   );
 }

@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
         const condition = searchParams.get("condition") || "GOOD";
         const productTypeId = searchParams.get("product_type_id");
 
+        const batchNo = searchParams.get("batch_no");
+
         if (!branchId || (!inventoryLotId && !productId)) {
             return NextResponse.json({ success: false, error: "branch_id and (inventory_lot_id or product_id) are required." }, { status: 400 });
         }
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
         const pId = productId ? Number(productId) : null;
         const ptId = productTypeId ? Number(productTypeId) : null;
 
-        const onhandQuantity = await getSingleItemSystemOnhand(bId, invLotId, lId, pId, condition, ptId);
+        const onhandQuantity = await getSingleItemSystemOnhand(bId, invLotId, lId, pId, condition, ptId, batchNo);
 
         return NextResponse.json({
             success: true,
