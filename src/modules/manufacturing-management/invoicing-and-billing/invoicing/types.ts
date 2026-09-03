@@ -12,6 +12,7 @@ export interface InvoicingCandidate {
     total_amount?: number;
     details: InvoicingLine[];
     stockStatus?: StockStatus;
+    for_invoicing_at?: string;
 }
 
 export interface InvoicingLine {

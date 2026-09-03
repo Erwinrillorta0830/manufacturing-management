@@ -209,21 +209,21 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
               <button
                 type="button"
                 className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
-                onClick={() => setValue(`items.${index}.quantity`, Math.max(1, Number(quantity || 0) - 1), { shouldValidate: true })}
-                disabled={Number(quantity || 0) <= 1}
+                onClick={() => setValue(`items.${index}.quantity`, Math.max(0, Number(quantity || 0) - 1), { shouldValidate: true })}
+                disabled={Number(quantity || 0) <= 0}
               >
                 <Minus className="h-3 w-3" />
               </button>
               <input
                 type="number"
-                value={quantity === 0 ? "" : quantity}
+                value={quantity === undefined || quantity === null ? "" : quantity}
                 onChange={(e) => {
                   let val = parseInt(e.target.value, 10);
-                  if (isNaN(val) || val < 1) val = 1;
+                  if (isNaN(val) || val < 0) val = 0;
                   setValue(`items.${index}.quantity`, val, { shouldValidate: true });
                 }}
                 className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                min={1}
+                min={0}
               />
               <button
                 type="button"

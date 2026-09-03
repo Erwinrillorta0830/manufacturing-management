@@ -1234,9 +1234,9 @@ export const stockAdjustmentManualService = {
    * Fetch all branches for the dropdown
    */
   async fetchBranches() {
-    const res = await directusFetch<{ data: { id: number; branch_name: string; branch_code: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null; isActive?: number | boolean | string | null }[] }>(`${DIRECTUS_URL}/items/branches?fields=id,branch_name,branch_code,isBadStock,bad_stock_branch_id,isActive&sort=branch_name&limit=-1`);
+    const res = await directusFetch<{ data: { id: number; branch_name: string; branch_code: string; isBadStock?: number | boolean | string | null; bad_stock_branch_id?: number | null; isActive?: number | boolean | string | null }[] }>(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&fields=id,branch_name,branch_code,isBadStock,bad_stock_branch_id,isActive&sort=branch_name&limit=-1`);
     return (res.data || []).filter(
-      (b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1"
+      (b) => b.isActive === 1 || b.isActive === true || b.isActive === "1"
     );
   },
 

@@ -172,8 +172,9 @@ export function StockConversionTable({
     setSupplierFilter("");
     setHasStockFilter(false);
     setSearchQuery("");
-    setLocalBranchId(selectedBranchId);
+    setLocalBranchId(undefined);
     setPage(1);
+    onBranchChange?.(undefined);
     onFilterChange({});
   };
 

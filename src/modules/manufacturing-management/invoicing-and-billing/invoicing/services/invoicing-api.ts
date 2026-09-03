@@ -92,13 +92,14 @@ export function receiptBackgroundUrl(fileId: string) {
 
 export async function fetchBranches(): Promise<Branch[]> {
     try {
-        const res = await fetch("/api/manufacturing/sales-orders/branches", { cache: "no-store" });
+        const res = await fetch("/api/manufacturing/branches", { cache: "no-store" });
         if (res.ok) {
             const data = await res.json();
-            return (data.data || data || []).map((b: Record<string, unknown>) => ({
+            const list = Array.isArray(data) ? data : data.data || [];
+            return list.map((b: Record<string, unknown>) => ({
                 id: Number(b.id || b.branch_id),
-                branchName: String(b.branch_name || b.branchName || `Branch #${b.id}`),
-                branchCode: String(b.branch_code || b.branchCode || ""),
+                branchName: String(b.branchName || b.branch_name || `Branch #${b.id}`),
+                branchCode: String(b.branchCode || b.branch_code || ""),
             }));
         }
     } catch {

@@ -162,7 +162,12 @@ export default function BatchTable({
                                 return (
                                     <TableRow
                                         key={batch.batchId}
-                                        className={fefoInfo?.isFefoNext ? "bg-amber-500/5 hover:bg-amber-500/10" : ""}
+                                        onClick={() => onViewMovements?.(batch)}
+                                        className={`cursor-pointer transition-colors ${
+                                            fefoInfo?.isFefoNext
+                                                ? "bg-amber-500/5 hover:bg-amber-500/15"
+                                                : "hover:bg-muted/50"
+                                        }`}
                                     >
                                         <TableCell className="font-medium text-xs">{batch.displayNumber}</TableCell>
                                         
@@ -184,18 +189,24 @@ export default function BatchTable({
                                             )}
                                         </TableCell>
 
-                                        <TableCell className="font-bold text-foreground">
+                                        <TableCell className="font-bold text-foreground" title={batch.batchNumber}>
                                             {batch.batchNumber}
                                         </TableCell>
-                                        <TableCell className="font-semibold text-foreground">
+                                        <TableCell className="font-semibold text-foreground" title={batch.lotName}>
                                             {batch.lotName}
                                         </TableCell>
                                         <TableCell>
-                                            <div className="flex flex-col min-w-[140px] max-w-[210px]">
-                                                <span className="font-semibold text-xs text-foreground truncate">
+                                            <div className="flex flex-col min-w-[180px] max-w-[360px]">
+                                                <span
+                                                    className="font-semibold text-xs text-foreground truncate"
+                                                    title={batch.productName || `Product #${batch.productId}`}
+                                                >
                                                     {batch.productName || `Product #${batch.productId}`}
                                                 </span>
-                                                <span className="font-mono text-[10px] text-muted-foreground truncate">
+                                                <span
+                                                    className="font-mono text-[10px] text-muted-foreground truncate"
+                                                    title={batch.itemCode || `PROD-${batch.productId}`}
+                                                >
                                                     {batch.itemCode || `PROD-${batch.productId}`}
                                                 </span>
                                             </div>
@@ -231,7 +242,7 @@ export default function BatchTable({
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <div className="flex justify-end gap-1">
+                                            <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                                                 {onViewMovements && (
                                                     <Button
                                                         variant="ghost"

@@ -1,5 +1,80 @@
-// src/modules/manufacturing-management/deliveries/types.ts
+// src/modules/manufacturing-management/mm/sales-and-fulfillment/fulfilment-and-deliveries/types.ts
 
+export type FulfillmentStatus =
+    | "Pending"
+    | "Fulfilled"
+    | "Fulfilled with Returns"
+    | "Fulfilled with Concern"
+    | "Unfulfilled";
+
+export type LineStatus =
+    | "Fulfilled"
+    | "Returned"
+    | "Concern"
+    | "Unfulfilled";
+
+export interface ClearanceLineItem {
+    detail_id: number;
+    product_id: number;
+    product_code: string;
+    product_name: string;
+    ordered_quantity: number;
+    received_quantity: number;
+    returned_quantity: number;
+    unit_price: number;
+    has_concern: boolean;
+    concern_notes: string;
+    line_status: LineStatus;
+}
+
+export interface DeliveryClearanceRecord {
+    order_id: number;
+    order_no: string;
+    order_status: string;
+    invoice_id: number;
+    invoice_no: string;
+    invoice_date: string;
+    customer_code: string;
+    customer_name: string;
+    branch_id: number;
+    branch_name: string;
+    amount: number;
+    remarks: string;
+    fulfillment_status: FulfillmentStatus;
+    is_cleared: boolean;
+    cleared_at?: string | null;
+    cleared_by?: number | null;
+    items: ClearanceLineItem[];
+}
+
+export interface ClearanceMetrics {
+    total_dispatched: number;
+    pending_clearance: number;
+    fulfilled_count: number;
+    concerns_and_returns_count: number;
+}
+
+export interface Branch {
+    id: number;
+    branch_name: string;
+    branch_code: string;
+}
+
+export interface ClearanceSubmissionPayload {
+    invoice_id: number;
+    order_id: number;
+    clearance_remarks?: string;
+    items: {
+        detail_id: number;
+        product_id: number;
+        received_quantity: number;
+        returned_quantity: number;
+        has_concern: boolean;
+        concern_notes: string;
+    }[];
+}
+
+// Backward-compatible types to preserve legacy component references without deletion
 export interface Vehicle {
     id: number;
     name: string;
@@ -15,12 +90,6 @@ export interface User {
     last_name?: string;
     email: string;
     role?: string;
-}
-
-export interface Branch {
-    id: number;
-    branch_name: string;
-    branch_code: string;
 }
 
 export interface DispatchPlanStaff {
@@ -85,4 +154,3 @@ export interface PendingInvoice {
     customer_location: string | null;
     customer_city: string | null;
 }
-

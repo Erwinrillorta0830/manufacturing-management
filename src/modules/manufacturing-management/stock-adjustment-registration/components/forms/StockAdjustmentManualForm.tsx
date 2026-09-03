@@ -124,7 +124,7 @@ const ProductTableRow = React.memo(function ProductTableRow({
 
   const handleUpdateQuantity = (delta: number) => {
     const currentQty = Number(quantity || 0);
-    const newQty = Math.max(1, currentQty + delta);
+    const newQty = Math.max(0, currentQty + delta);
     setValue(`items.${index}.quantity`, newQty, { shouldValidate: true });
   };
 
@@ -275,13 +275,13 @@ const ProductTableRow = React.memo(function ProductTableRow({
               type="button"
               className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
               onClick={() => handleUpdateQuantity(-1)}
-              disabled={Number(quantity || 0) <= 1}
+              disabled={Number(quantity || 0) <= 0}
             >
               <Minus className="h-3 w-3" />
             </button>
             <input
               type="number"
-              value={quantity === 0 || quantity === undefined ? "" : quantity}
+              value={quantity === undefined || quantity === null ? "" : quantity}
               onChange={(e) => {
                 const raw = e.target.value;
                 if (raw === "") {
@@ -293,12 +293,12 @@ const ProductTableRow = React.memo(function ProductTableRow({
               }}
               onBlur={(e) => {
                 const val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 1) {
-                  setValue(`items.${index}.quantity`, 1, { shouldValidate: true });
+                if (isNaN(val) || val < 0) {
+                  setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
                 }
               }}
               className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={1}
+              min={0}
             />
             <button
               type="button"
@@ -650,19 +650,89 @@ export function StockAdjustmentManualForm({
       doc.text(adjTypeFull, rightColX + 35, metaY + 6);
 
       // --- Product Table ---
-      const tableRows = values.items?.map((item, index) => {
+      const tableRows: (string | number)[][] = [];
+      let rowNumber = 1;
+      values.items?.forEach((item) => {
         const price = Number(item.cost_per_unit || 0);
-        const totalAmount = Number(item.quantity || 0) * price;
-        return [
-          index + 1,
-          item.brand_name || "N/A",
-          `${item.product_name || "Unknown"}\n(${item.product_code || "N/A"})`,
-          item.unit_name || "pcs",
-          `PHP ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          item.quantity || 0
-        ];
-      }) || [];
+        const itemQty = Number(item.quantity || 0);
+        const brandName = item.brand_name || "N/A";
+        const productName = `${item.product_name || "Unknown"}\n(${item.product_code || "N/A"})`;
+        const uomName = item.unit_name || "pcs";
+
+        // Check for multi-lot allocations
+        const lotAllocations = (item as unknown as { lot_allocations?: { lot_id: number; lot_name?: string; allocated_quantity?: number; batches?: { batch_no?: string; quantity?: number; unit_cost?: number }[] }[] }).lot_allocations || [];
+        const allocations = (item as unknown as { allocations?: { lot_id: number; lot_name?: string; batch_no?: string; allocated_quantity?: number; unit_cost?: number }[] }).allocations || [];
+
+        if (lotAllocations.length > 0) {
+          lotAllocations.forEach((lg) => {
+            const lotName = lg.lot_name || `Lot #${lg.lot_id}`;
+            const batches = lg.batches || [];
+            if (batches.length > 0) {
+              batches.forEach((b) => {
+                const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : price;
+                const bQty = Number(b.quantity || 0);
+                const bTotal = bQty * bCost;
+                tableRows.push([
+                  rowNumber++,
+                  brandName,
+                  productName,
+                  lotName,
+                  b.batch_no || "N/A",
+                  uomName,
+                  `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  bQty
+                ]);
+              });
+            } else {
+              const grpQty = Number(lg.allocated_quantity || 0);
+              tableRows.push([
+                rowNumber++,
+                brandName,
+                productName,
+                lotName,
+                "N/A",
+                uomName,
+                `PHP ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                `PHP ${(grpQty * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                grpQty
+              ]);
+            }
+          });
+        } else if (allocations.length > 0) {
+          allocations.forEach((alloc) => {
+            const lotName = alloc.lot_name || (alloc.lot_id ? `Lot #${alloc.lot_id}` : "N/A");
+            const aQty = Number(alloc.allocated_quantity || 0);
+            const aCost = alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : price;
+            tableRows.push([
+              rowNumber++,
+              brandName,
+              productName,
+              lotName,
+              alloc.batch_no || "N/A",
+              uomName,
+              `PHP ${aCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              `PHP ${(aQty * aCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              aQty
+            ]);
+          });
+        } else {
+          const lotName = item.lot_name || (item.lot_id ? `Lot #${item.lot_id}` : "N/A");
+          const batchNo = item.batch_no || "N/A";
+          const totalAmount = itemQty * price;
+          tableRows.push([
+            rowNumber++,
+            brandName,
+            productName,
+            lotName,
+            batchNo,
+            uomName,
+            `PHP ${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            itemQty
+          ]);
+        }
+      });
 
       // Dynamic bottom margin
       const baseSize = config.paperSize === "Custom" ? config.customSize : (PAPER_SIZES[config.paperSize] || PAPER_SIZES.A4);
@@ -672,18 +742,20 @@ export function StockAdjustmentManualForm({
       autoTable(doc, {
         startY: metaY + 12,
         margin: { ...margins, bottom: bottomMargin },
-        head: [["#", "Brand", "Product Name", "UOM", "Unit Price", "Total Amount", "Qty"]],
+        head: [["#", "Brand", "Product Name", "Storage Lot", "Batch No", "UOM", "Unit Price", "Total Amount", "Qty"]],
         body: tableRows,
         headStyles: { fillColor: [248, 250, 252], textColor: [71, 85, 105], fontSize: 8, fontStyle: "bold" },
         bodyStyles: { fontSize: 7, textColor: [30, 41, 59] },
         columnStyles: {
           0: { halign: "center", cellWidth: 8 },
-          1: { halign: "left", cellWidth: 25 },
+          1: { halign: "left", cellWidth: 18 },
           2: { halign: "left" },
-          3: { halign: "center", cellWidth: 15 },
-          4: { halign: "right", cellWidth: 25 },
-          5: { halign: "right", fontStyle: "bold", cellWidth: 30 },
-          6: { halign: "center", fontStyle: "bold", cellWidth: 15 }
+          3: { halign: "left", cellWidth: 26 },
+          4: { halign: "left", cellWidth: 26 },
+          5: { halign: "center", cellWidth: 14 },
+          6: { halign: "right", cellWidth: 22 },
+          7: { halign: "right", fontStyle: "bold", cellWidth: 24 },
+          8: { halign: "center", fontStyle: "bold", cellWidth: 14 }
         },
         theme: "grid",
         styles: { cellPadding: 1.5 }
@@ -1856,7 +1928,7 @@ export function StockAdjustmentManualForm({
             branchId={Number(watchedBranchId) || 0}
             productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : 0}
             productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : ''}
-            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
+            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 0 : 0}
             uomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
             initialAllocations={
               activeLotBatchIndex !== null
@@ -1898,7 +1970,7 @@ export function StockAdjustmentManualForm({
             productType={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_type`) : undefined}
             productCategory={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_category`) : undefined}
             categoryName={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.category_name`) as string | undefined) : undefined}
-            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 1 : 1}
+            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 0 : 0}
             adjustmentType={watchedType || "IN"}
             initialLotAllocations={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.lot_allocations`) as LotAllocationGroup[] | undefined) : undefined}
             existingFormAllocations={
