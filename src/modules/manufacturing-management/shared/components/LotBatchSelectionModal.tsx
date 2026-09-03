@@ -661,7 +661,6 @@ export function LotBatchSelectionModal({
 
     if (!nextLot) return;
 
-    const remainingQty = Math.max(1, quantityDifference);
     const lId = Number(nextLot.lot_id);
     const isNextLotBad = isBadStockLot(nextLot);
     const defaultQA: QAStatus = isNextLotBad ? 'DAMAGED' : 'GOOD';

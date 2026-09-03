@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Boxes, Building2, Calendar, CheckCircle2, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, Users, X } from "lucide-react";
+import { AlertTriangle, Boxes, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
 import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineAvailability, LineBatchAllocation, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
@@ -787,7 +787,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                                             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-900 dark:text-amber-200 flex items-start gap-1.5">
                                                                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
                                                                                 <div>
-                                                                                    <strong>Batch Allocation Shortfall:</strong> Allocating {currentAlloc} units from '{b.batchNo}' leaves only {remainingInBatch} units for sibling order(s) ({unInvoicedBatchSiblings.map(s => s.orderNo).join(", ")}).
+                                                                                    <strong>Batch Allocation Shortfall:</strong> Allocating {currentAlloc} units from &apos;{b.batchNo}&apos; leaves only {remainingInBatch} units for sibling order(s) ({unInvoicedBatchSiblings.map(s => s.orderNo).join(", ")}).
                                                                                 </div>
                                                                             </div>
                                                                         )}

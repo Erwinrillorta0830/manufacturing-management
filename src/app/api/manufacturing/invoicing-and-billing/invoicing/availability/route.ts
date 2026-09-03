@@ -250,9 +250,17 @@ export async function GET(request: Request) {
         let consolidatorId: number | undefined = undefined;
         const allSiblingOrders: SiblingConsolidatedOrder[] = [];
         const thisDetailIds = new Set(details.map((d) => d.detail_id).filter(Boolean));
-        let allBatchReservations: any[] = [];
-        let allBatchSodList: any[] = [];
-        let sibSoMap = new Map<number, any>();
+        let allBatchReservations: Array<{
+            sales_order_detail_id?: number | string;
+            product_id?: number | string;
+            inventory_lot_id?: number | string;
+            status?: string;
+            picked_quantity?: number | string;
+            reserved_quantity?: number | string;
+            quantity?: number | string;
+        }> = [];
+        let allBatchSodList: Array<{ detail_id: number; order_id: number; product_id?: number; ordered_quantity?: number }> = [];
+        let sibSoMap = new Map<number, { order_id: number; order_no: string; customer_code?: string }>();
         let invoicedSibIds = new Set<number>();
 
         try {
@@ -310,7 +318,7 @@ export async function GET(request: Request) {
                             );
                             sibSoMap = new Map(sibSoList.map((s) => [Number(s.order_id), s]));
 
-                            const allBatchDetailIds = allBatchSodList.map((d: any) => Number(d.detail_id)).filter(Boolean);
+                            const allBatchDetailIds = allBatchSodList.map((d) => Number(d.detail_id)).filter(Boolean);
                             if (allBatchDetailIds.length > 0) {
                                 const allResRes = await fetch(
                                     `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allBatchDetailIds.join(",")}&fields=*&limit=-1`,
@@ -345,11 +353,11 @@ export async function GET(request: Request) {
         }
 
         const reservationsByProduct = new Map<number, Array<BatchItem>>();
-        const detailToOrderMap = new Map(allBatchSodList.map((d: any) => [Number(d.detail_id), Number(d.order_id)]));
+        const detailToOrderMap = new Map(allBatchSodList.map((d) => [Number(d.detail_id), Number(d.order_id)]));
 
         if (allBatchReservations.length > 0) {
             // Group reservations by (product_id, inventory_lot_id)
-            const lotGroupMap = new Map<string, any[]>();
+            const lotGroupMap = new Map<string, typeof allBatchReservations>();
             for (const r of allBatchReservations) {
                 if (r.status === "Released") continue;
                 const pId = Number(r.product_id);
@@ -426,7 +434,7 @@ export async function GET(request: Request) {
                     { headers: directusHeaders, cache: "no-store" }
                 );
                 if (resRes.ok) {
-                    const resData: any[] = (await resRes.json()).data || [];
+                    const resData: typeof allBatchReservations = (await resRes.json()).data || [];
                     for (const r of resData) {
                         if (r.status === "Released") continue;
                         const pId = Number(r.product_id);

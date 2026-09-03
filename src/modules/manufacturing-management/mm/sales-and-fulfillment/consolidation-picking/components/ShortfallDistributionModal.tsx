@@ -55,18 +55,11 @@ export default function ShortfallDistributionModal({
 }: Props) {
     // Map of `${productId}:${orderIdentifier}` -> allocatedQty
     // orderIdentifier is orderId or invoiceNo
-    const [allocations, setAllocations] = useState<Record<string, number>>({});
-
-    // Filter down to products that have a shortfall (totalPicked < totalOrdered)
-    const shortfallProducts = useMemo(() => {
-        return products.filter((p) => p.totalPicked < p.totalOrdered);
-    }, [products]);
-
     // Initialize allocations using default First-In, First-Served (FIFS)
-    const computeFifsAllocations = () => {
+    const computeFifsAllocations = (prods: ShortfallProductItem[]) => {
         const initial: Record<string, number> = {};
 
-        for (const prod of products) {
+        for (const prod of prods) {
             let budget = Math.max(0, prod.totalPicked);
             // Sort orders: oldest orderDate first, then invoiceNo
             const sortedOrders = [...prod.orders].sort((a, b) => {
@@ -89,14 +82,20 @@ export default function ShortfallDistributionModal({
         return initial;
     };
 
-    useEffect(() => {
+    const [allocations, setAllocations] = useState<Record<string, number>>(() => computeFifsAllocations(products));
+    const [prevProducts, setPrevProducts] = useState(products);
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+
+    if (products !== prevProducts || isOpen !== prevIsOpen) {
+        setPrevProducts(products);
+        setPrevIsOpen(isOpen);
         if (isOpen) {
-            setAllocations(computeFifsAllocations());
+            setAllocations(computeFifsAllocations(products));
         }
-    }, [isOpen, products]);
+    }
 
     const handleResetToFifs = () => {
-        setAllocations(computeFifsAllocations());
+        setAllocations(computeFifsAllocations(products));
     };
 
     const handleQtyChange = (productId: number, ordKey: string, maxDemanded: number, valStr: string) => {
@@ -106,6 +105,11 @@ export default function ShortfallDistributionModal({
             [`${productId}:${ordKey}`]: parsed,
         }));
     };
+
+    // Filter down to products that have a shortfall (totalPicked < totalOrdered)
+    const shortfallProducts = useMemo(() => {
+        return products.filter((p) => p.totalPicked < p.totalOrdered);
+    }, [products]);
 
     // Calculate product level distribution stats
     const productStats = useMemo(() => {

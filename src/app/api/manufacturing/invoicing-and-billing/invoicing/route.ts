@@ -120,8 +120,9 @@ export async function POST(request: Request) {
             const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
 
             const lineAllocMap = new Map<number, import("@/modules/manufacturing-management/invoicing-and-billing/invoicing/types").LineAllocationPayload>();
-            if (body && Array.isArray((body as any).lineAllocations)) {
-                for (const la of (body as any).lineAllocations) {
+            const rawLineAllocations = (body as { lineAllocations?: import("@/modules/manufacturing-management/invoicing-and-billing/invoicing/types").LineAllocationPayload[] })?.lineAllocations;
+            if (Array.isArray(rawLineAllocations)) {
+                for (const la of rawLineAllocations) {
                     if (la && Number(la.productId)) {
                         lineAllocMap.set(Number(la.productId), la);
                     }
