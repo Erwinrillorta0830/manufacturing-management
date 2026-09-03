@@ -63,6 +63,7 @@ interface InventoryMovementTableProps {
 export default function InventoryMovementTable({
     movements,
     lots,
+    products,
     loading,
     error,
     searchQuery,
@@ -80,6 +81,14 @@ export default function InventoryMovementTable({
 }: InventoryMovementTableProps) {
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
+
+    const productMap = useMemo(() => {
+        const map = new Map<number, ProductItem>();
+        (products || []).forEach((p) => {
+            if (p.productId) map.set(Number(p.productId), p);
+        });
+        return map;
+    }, [products]);
 
     const totalPages = Math.ceil(movements.length / pageSize);
     const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages || 1));
@@ -311,9 +320,21 @@ export default function InventoryMovementTable({
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col min-w-[150px] max-w-[220px]">
-                                                <span className="font-semibold text-xs text-foreground truncate" title={m.productName}>
-                                                    {m.productName || (m.productId ? `Product #${m.productId}` : "-")}
-                                                </span>
+                                                {(() => {
+                                                    const matchedProduct = m.productId ? productMap.get(Number(m.productId)) : undefined;
+                                                    const displayDescription =
+                                                        m.productDescription ||
+                                                        m.description ||
+                                                        matchedProduct?.description ||
+                                                        m.productName ||
+                                                        (m.productId ? `Product #${m.productId}` : "-");
+
+                                                    return (
+                                                        <span className="font-semibold text-xs text-foreground truncate" title={displayDescription}>
+                                                            {displayDescription}
+                                                        </span>
+                                                    );
+                                                })()}
                                                 {m.productCode && (
                                                     <span className="font-mono text-[10px] text-muted-foreground truncate">
                                                         {m.productCode}

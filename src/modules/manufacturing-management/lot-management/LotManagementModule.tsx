@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { LayoutGrid, Warehouse, Layers, RefreshCw, ArrowLeftRight, Search, X, RotateCcw, Tag } from "lucide-react";
+import { LayoutGrid, Warehouse, Layers, RefreshCw, ArrowLeftRight, Search, X, RotateCcw } from "lucide-react";
 import { useLotManagement } from "./hooks/useLotManagement";
 import { useBatchRegistration } from "./hooks/useBatchRegistration";
 import { useInventoryMovements } from "./hooks/useInventoryMovements";
@@ -11,6 +11,7 @@ import LotTable from "./components/LotTable";
 import BatchTable from "./components/BatchTable";
 import InventoryMovementTable from "./components/InventoryMovementTable";
 import BatchMovementsDialog from "./components/BatchMovementsDialog";
+import LotBatchesDialog from "./components/LotBatchesDialog";
 import { SearchableProductSelect } from "./components/SearchableProductSelect";
 import { SearchableLotSelect } from "./components/SearchableLotSelect";
 import { SearchableBatchSelect } from "./components/SearchableBatchSelect";
@@ -18,17 +19,11 @@ import { SearchableBranchSelect } from "./components/SearchableBranchSelect";
 import { SearchableProductTypeSelect } from "./components/SearchableProductTypeSelect";
 import { SearchableUomSelect } from "./components/SearchableUomSelect";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
-import { Batch } from "./types";
+import { Batch, Lot } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select";
+
 
 export default function LotManagementModule() {
     const [mounted, setMounted] = useState(false);
@@ -127,6 +122,20 @@ export default function LotManagementModule() {
     const handleCloseBatchAudit = () => {
         setAuditBatch(null);
         setIsAuditDialogOpen(false);
+    };
+
+    // Modal state for viewing batches stored inside a specific storage lot
+    const [selectedLotForBatches, setSelectedLotForBatches] = useState<Lot | null>(null);
+    const [isLotBatchesDialogOpen, setIsLotBatchesDialogOpen] = useState(false);
+
+    const handleOpenLotBatches = (lot: Lot) => {
+        setSelectedLotForBatches(lot);
+        setIsLotBatchesDialogOpen(true);
+    };
+
+    const handleCloseLotBatches = () => {
+        setSelectedLotForBatches(null);
+        setIsLotBatchesDialogOpen(false);
     };
 
     const handleViewLotMovements = (lotId: number) => {
@@ -279,7 +288,7 @@ export default function LotManagementModule() {
             });
         }
         return baseLots;
-    }, [filteredLots, batches, selectedBranchId, selectedProductType, selectedProductId, selectedLotId, selectedBatchId, globalSearchQuery]);
+    }, [filteredLots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotId, selectedBatchId, globalSearchQuery]);
 
     if (!mounted) {
         return (
@@ -525,6 +534,7 @@ export default function LotManagementModule() {
                         loading={loadingLots}
                         searchQuery={lotSearchQuery}
                         onSearchChange={setLotSearchQuery}
+                        onViewBatches={handleOpenLotBatches}
                         onRefresh={loadLots}
                     />
                 </TabsContent>
@@ -583,6 +593,15 @@ export default function LotManagementModule() {
                 lots={lots}
                 branches={branches}
                 loading={loadingMovements}
+            />
+
+            {/* Storage Lot Batches Dialog */}
+            <LotBatchesDialog
+                isOpen={isLotBatchesDialogOpen}
+                onClose={handleCloseLotBatches}
+                lot={selectedLotForBatches}
+                batches={batches}
+                onViewBatchMovements={handleOpenBatchAudit}
             />
         </div>
     );

@@ -24,6 +24,7 @@ interface LotTableProps {
     loading: boolean;
     searchQuery: string;
     onSearchChange: (value: string) => void;
+    onViewBatches?: (lot: Lot) => void;
     onEdit?: (lot: Lot) => void;
     onRefresh?: () => void;
     onAddClick?: () => void;
@@ -34,6 +35,7 @@ export default function LotTable({
     loading,
     searchQuery,
     onSearchChange,
+    onViewBatches,
     onEdit,
     onAddClick
 }: LotTableProps) {
@@ -107,9 +109,13 @@ export default function LotTable({
                             {paginatedLots.map((lot) => {
                                 const unitLabel = lot.uomShortcut || lot.uomName || "";
                                 return (
-                                    <TableRow key={lot.lotId}>
+                                    <TableRow
+                                        key={lot.lotId}
+                                        onClick={() => onViewBatches?.(lot)}
+                                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                                    >
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
-                                        <TableCell className="font-semibold text-foreground">
+                                        <TableCell className="font-semibold text-foreground" title={lot.lotName}>
                                              {lot.lotName}
                                         </TableCell>
                                         <TableCell>
@@ -147,7 +153,7 @@ export default function LotTable({
                                         </TableCell>
                                         {onEdit && (
                                             <TableCell className="text-right">
-                                                <div className="flex justify-end gap-1">
+                                                <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
