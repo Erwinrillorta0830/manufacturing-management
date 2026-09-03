@@ -101,7 +101,7 @@ function isLockedReceivingShipment(shipment: Shipment | null, replacementDisposi
     );
 }
 
-export function useQAReceiving() {
+export function useQAReceiving(initialShipmentId?: number) {
     const listController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
     const fifoController = useRef<AbortController | null>(null);
@@ -124,6 +124,7 @@ export function useQAReceiving() {
 
     // Selected active container details
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
+    const initialShipmentHandled = useRef(false);
     const [lineItems, setLineItems] = useState<ShipmentLineItem[]>([]);
     const [loadingLines, setLoadingLines] = useState(false);
 
@@ -619,6 +620,23 @@ export function useQAReceiving() {
             if (!controller.signal.aborted) setLoadingLines(false);
         }
     };
+
+    useEffect(() => {
+        if (
+            !initialShipmentId
+            || initialShipmentHandled.current
+            || selectedShipment
+            || loadingShipments
+            || shipments.length === 0
+        ) return;
+        const shipment = shipments.find(item => item.shipment_id === initialShipmentId);
+        if (!shipment) return;
+        initialShipmentHandled.current = true;
+        void handleSelectShipment(shipment);
+        // handleSelectShipment intentionally remains a local workflow command;
+        // the handoff query should be consumed once after the queue is loaded.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialShipmentId, loadingShipments, selectedShipment, shipments]);
 
     const handleStartReplacement = async (disposition: QuarantineDisposition) => {
         try {

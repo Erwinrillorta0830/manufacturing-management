@@ -1,6 +1,6 @@
 import React from "react";
 import Image from "next/image";
-import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays } from "lucide-react";
+import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays, Radio } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
@@ -1097,6 +1097,16 @@ export default function ShipmentInspectionForm({
                                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] font-semibold text-muted-foreground">
                                             {selectedShipment.status === "Partially Received" && line.latest_receipt?.receipt_number && (
                                                 <span>Previous receipt: <strong className="text-foreground">{line.latest_receipt.receipt_number}</strong></span>
+                                            )}
+                                            {(line.rfid_tagged_count || 0) > 0 && (
+                                                <span
+                                                    className="inline-flex max-w-full items-center gap-1 rounded-md border border-sky-500/25 bg-sky-500/10 px-1.5 py-0.5 text-sky-700"
+                                                    data-testid={`rfid-tagged-${line.line_id}`}
+                                                    title={line.rfid_tags?.join(", ") || "RFID tags captured before QA"}
+                                                >
+                                                    <Radio className="h-3 w-3 shrink-0" />
+                                                    RFID pre-QA: {line.rfid_tagged_count}
+                                                </span>
                                             )}
                                         </div>
                                     </div>
