@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Trash2, AlertTriangle, Plus, X, Printer } from "lucide-react";
+import { Trash2, AlertTriangle, Plus, X, Printer, ArrowLeft } from "lucide-react";
 import { useReceivingProducts, ReceivingPOItem, ActivityRow } from "../../providers/ReceivingProductsProvider";
 import { useKeyboardScanner } from "../../hooks/useKeyboardScanner";
 import { toast } from "sonner";
@@ -471,7 +471,8 @@ export function TagRFIDStep() {
         <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
             <div className="flex items-center gap-2 mb-2">
                 <Button variant="ghost" size="sm" onClick={() => { setActiveProductId(null); setActivePorId(null); }} className="text-muted-foreground hover:text-foreground">
-                    â† Back to Product List
+                    <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Back to Product List
                 </Button>
             </div>
 
