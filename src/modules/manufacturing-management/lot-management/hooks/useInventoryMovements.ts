@@ -2,12 +2,16 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import { InventoryMovement } from "../types";
 import { fetchInventoryMovements } from "../services/lot-management-api";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
 export function useInventoryMovements(
     selectedProductId: number | "ALL" = "ALL",
     selectedLotId: number | "ALL" = "ALL",
     selectedBatchId: number | "ALL" = "ALL",
-    globalSearchQuery: string = ""
+    globalSearchQuery: string = "",
+    selectedBranchId: number | "ALL" = "ALL",
+    selectedProductType: string | "ALL" = "ALL",
+    selectedUomId: number | "ALL" = "ALL"
 ) {
     const [movements, setMovements] = useState<InventoryMovement[]>([]);
     const [loadingMovements, setLoadingMovements] = useState(true);
@@ -93,6 +97,22 @@ export function useInventoryMovements(
 
         return movements
             .filter((m) => {
+                // Branch filter
+                if (selectedBranchId !== "ALL") {
+                    if (m.branchId !== undefined && Number(m.branchId) !== Number(selectedBranchId)) return false;
+                }
+
+                // Product Type filter
+                if (selectedProductType !== "ALL") {
+                    const cls = resolveProductClassification(m.productTypeId || m.productTypeName, undefined, m.productCode, m.productName);
+                    if (cls.code !== selectedProductType) return false;
+                }
+
+                // UOM filter
+                if (selectedUomId !== "ALL") {
+                    if (m.unitId !== undefined && Number(m.unitId) !== Number(selectedUomId)) return false;
+                }
+
                 // Direction filter
                 if (directionFilter !== "ALL") {
                     const dirUpper = String(m.movementDirection || "").toUpperCase();

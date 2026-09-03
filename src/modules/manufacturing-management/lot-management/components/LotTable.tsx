@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
+import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus, Building2 } from "lucide-react";
 import { Lot } from "../types";
 import {
     Table,
@@ -96,6 +96,7 @@ export default function LotTable({
                             <TableRow>
                                 <TableHead className="w-[80px]">No.</TableHead>
                                 <TableHead>Storage Location</TableHead>
+                                <TableHead>Branch Location</TableHead>
                                 <TableHead>UOM</TableHead>
                                 <TableHead>Max Capacity</TableHead>
                                 <TableHead>Created By</TableHead>
@@ -110,6 +111,17 @@ export default function LotTable({
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
                                         <TableCell className="font-semibold text-foreground">
                                              {lot.lotName}
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-foreground border border-border">
+                                                <Building2 className="h-3 w-3 text-primary shrink-0" />
+                                                <span>{lot.branchName || `Branch #${lot.branchId}`}</span>
+                                                {lot.branchCode && (
+                                                    <span className="text-[10px] font-mono text-muted-foreground font-bold">
+                                                        ({lot.branchCode})
+                                                    </span>
+                                                )}
+                                            </span>
                                         </TableCell>
                                         <TableCell>
                                             {unitLabel ? (

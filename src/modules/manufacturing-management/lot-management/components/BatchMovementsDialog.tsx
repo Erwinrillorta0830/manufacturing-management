@@ -15,14 +15,17 @@ import {
     TableHead
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Batch, InventoryMovement } from "../types";
+import { Batch, InventoryMovement, Lot, Branch } from "../types";
 import { ArrowDownLeft, ArrowUpRight, History, Layers, Package, Warehouse, Loader2 } from "lucide-react";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 
 interface BatchMovementsDialogProps {
     isOpen: boolean;
     onClose: () => void;
     batch: Batch | null;
     movements: InventoryMovement[];
+    lots?: Lot[];
+    branches?: Branch[];
     loading?: boolean;
 }
 
@@ -31,6 +34,8 @@ export default function BatchMovementsDialog({
     onClose,
     batch,
     movements,
+    lots = [],
+    branches = [],
     loading = false
 }: BatchMovementsDialogProps) {
     // Filter movements specifically for this batch
@@ -54,7 +59,35 @@ export default function BatchMovementsDialog({
         });
     }, [batch, movements]);
 
+    const classification = React.useMemo(() => {
+        if (!batch) return { code: "OTHER", label: "General", className: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" };
+        const cls = resolveProductClassification(batch.productType, batch.productCategory, batch.itemCode, batch.productName);
+        let className = "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
+        if (cls.code === "RM") className = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+        if (cls.code === "PKG") className = "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+        if (cls.code === "FG") className = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+        return { ...cls, className };
+    }, [batch]);
+
     if (!batch) return null;
+
+    const matchedLot = lots.find((l) => Number(l.lotId) === Number(batch.lotId));
+    const matchedBranch = branches.find((br) => Number(br.id) === Number(batch.branchId || matchedLot?.branchId));
+
+    const branchName = matchedLot?.branchName || matchedBranch?.branchName || (batch.branchId ? `Branch #${batch.branchId}` : "");
+    const branchCode = matchedLot?.branchCode || matchedBranch?.branchCode;
+    const branchDisplay = branchName ? (branchCode ? `${branchName} (${branchCode})` : branchName) : "";
+
+    const isBadStock = Boolean(
+        matchedLot?.isBadStock ||
+        matchedLot?.branchIsBadStock ||
+        batch.qaStatus === "DAMAGED" ||
+        batch.qaStatus === "QUARANTINED" ||
+        batch.qaStatus === "EXPIRED" ||
+        batch.status === "DAMAGED" ||
+        batch.status === "QUARANTINED" ||
+        batch.status === "EXPIRED"
+    );
 
     // Compute stats
     const totalIn = batchMovements.reduce((sum, m) => sum + Number(m.quantityIn || 0), 0);
@@ -85,8 +118,29 @@ export default function BatchMovementsDialog({
                             </DialogDescription>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-primary/10 text-primary border border-primary/20">
+                        {/* Clean Badges: Branch, Product Type, Stock Quality, Batch No */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            {branchDisplay && (
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-muted text-foreground border border-border">
+                                    {branchDisplay}
+                                </span>
+                            )}
+
+                            <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold border ${classification.className}`}>
+                                {classification.label}
+                            </span>
+
+                            {isBadStock ? (
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                    Bad Stock
+                                </span>
+                            ) : (
+                                <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                    Good Stock
+                                </span>
+                            )}
+
+                            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
                                 {batch.batchNumber}
                             </span>
                         </div>

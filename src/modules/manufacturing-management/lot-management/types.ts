@@ -125,6 +125,8 @@ export interface Batch {
     sourceType?: string;
     sourceReference?: string;
     remarks: string;
+    productType?: unknown;
+    productCategory?: unknown;
     createdAt: string;
     updatedAt: string;
     createdBy: string;
