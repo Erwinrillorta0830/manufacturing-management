@@ -245,8 +245,8 @@ function collectWeightValidationErrors(
 
 export function useRawMaterialForm(
     rawMaterials: RawMaterialItem[],
-    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>,
-    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>
+    onRegisterRawMaterial: (productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>,
+    onUpdateRawMaterial: (productId: number, productDetails: RegisterRawMaterialPayload, supplierIds?: number[], packagingVariants?: PackagingVariantPayload[]) => Promise<boolean>
 ) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<RawMaterialItem | null>(null);
@@ -296,7 +296,6 @@ export function useRawMaterialForm(
     const [formParentId, setFormParentId] = useState<string>("");
     const [formUomCount, setFormUomCount] = useState<string>("");
     const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
-    const [supplierSearch, setSupplierSearch] = useState("");
     const [cascadeToChildren, setCascadeToChildren] = useState(true);
     const [packagingVariants, setPackagingVariants] = useState<PackagingVariantFormState[]>([]);
 
@@ -779,7 +778,6 @@ export function useRawMaterialForm(
         setFormParentId("");
         setFormUomCount("");
         setSelectedSupplierIds([]);
-        setSupplierSearch("");
         setShowValidationErrors(false);
         setPurchaseQaReady(true);
         setPurchaseQaError(null);
@@ -912,9 +910,13 @@ export function useRawMaterialForm(
 
         void loadPurchaseQaForFamily(item.product_id, existingChildren.map(child => child.product_id));
 
-        fetchLinkedSuppliers(item.product_id)
-            .then(supplierIds => setSelectedSupplierIds(supplierIds || []))
-            .catch(err => console.error("Failed to load item suppliers:", err));
+        setSelectedSupplierIds([]);
+        fetchLinkedSuppliers(item.parent_id ? Number(item.parent_id) : item.product_id)
+            .then(supplierIds => setSelectedSupplierIds(supplierIds))
+            .catch(error => {
+                const message = error instanceof Error ? error.message : "Failed to load linked suppliers.";
+                toast.error(message);
+            });
     }, [applyParentSharedAttributes, loadPurchaseQaForFamily, rawMaterials]);
 
     const handleStartEdit = (item: RawMaterialItem) => {
@@ -951,6 +953,13 @@ export function useRawMaterialForm(
         if (parentItem) {
             applyParentSharedAttributes(parentItem);
             resetChildSpecificFields();
+            setSelectedSupplierIds([]);
+            fetchLinkedSuppliers(parentItem.product_id)
+                .then(supplierIds => setSelectedSupplierIds(supplierIds))
+                .catch(error => {
+                    const message = error instanceof Error ? error.message : "Failed to load inherited suppliers.";
+                    toast.error(message);
+                });
         } else {
             setFormBrand("");
             setFormCategory("");
@@ -963,6 +972,7 @@ export function useRawMaterialForm(
             setFormRegulatoryNotes("");
             setFormPriceControl(null);
             resetChildSpecificFields();
+            setSelectedSupplierIds([]);
         }
         if (val && !editingItem) {
             if (parentItem && parentItem.product_code) {
@@ -987,6 +997,7 @@ export function useRawMaterialForm(
         setFormRegulatoryNotes("");
         setFormPriceControl(null);
         resetChildSpecificFields();
+        setSelectedSupplierIds([]);
         setSubmitError(null);
     };
 
@@ -1014,13 +1025,17 @@ export function useRawMaterialForm(
         }
     };
 
-    const handleToggleSupplier = (supplierId: number) => {
-        if (selectedSupplierIds.includes(supplierId)) {
-            setSelectedSupplierIds(selectedSupplierIds.filter(id => id !== supplierId));
-        } else {
-            setSelectedSupplierIds([...selectedSupplierIds, supplierId]);
-        }
-    };
+    const handleToggleSupplier = useCallback((supplierId: number) => {
+        setSelectedSupplierIds(currentIds => {
+            const nextIds = new Set(currentIds);
+            if (nextIds.has(supplierId)) {
+                nextIds.delete(supplierId);
+            } else {
+                nextIds.add(supplierId);
+            }
+            return [...nextIds];
+        });
+    }, []);
 
     const attemptSave = async () => {
         if (saving) return;
@@ -1137,9 +1152,11 @@ export function useRawMaterialForm(
         let success = false;
         try {
             if (editingItem) {
-                success = await onUpdateRawMaterial(editingItem.product_id, payload, selectedSupplierIds, variantsPayload);
+                const supplierIdsForSave = editingItem.parent_id || formParentId ? undefined : selectedSupplierIds;
+                success = await onUpdateRawMaterial(editingItem.product_id, payload, supplierIdsForSave, variantsPayload);
             } else {
-                success = await onRegisterRawMaterial(payload, selectedSupplierIds, variantsPayload);
+                const supplierIdsForSave = formParentId ? undefined : selectedSupplierIds;
+                success = await onRegisterRawMaterial(payload, supplierIdsForSave, variantsPayload);
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to save raw material.";
@@ -1242,8 +1259,6 @@ export function useRawMaterialForm(
         setFormUomCount,
         selectedSupplierIds,
         handleToggleSupplier,
-        supplierSearch,
-        setSupplierSearch,
         packagingVariants,
         handleAddVariant,
         handleAddPresetVariant,

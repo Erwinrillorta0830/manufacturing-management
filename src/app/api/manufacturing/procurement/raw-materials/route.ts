@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../_directus";
 import { formatPhtDateTime, getTodayDateString } from "@/app/api/manufacturing/directus-api";
@@ -329,6 +328,231 @@ async function resolvePackagingVariantIdentities(
 }
 
 
+type SupplierLinkRecord = {
+    id?: unknown;
+    supplier_id?: unknown;
+};
+
+type SupplierRecord = {
+    id?: unknown;
+    isActive?: unknown;
+    supplier_name?: unknown;
+    supplier_shortcut?: unknown;
+};
+
+function resolvePositiveInteger(value: unknown): number | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return resolvePositiveInteger(record.id ?? record.product_id ?? record.supplier_id);
+    }
+
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeSupplierIds(value: unknown): number[] | undefined {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) {
+        throw new RawMaterialQaError(400, "supplierIds must be an array.");
+    }
+
+    const ids: number[] = [];
+    for (const rawId of value) {
+        const id = resolvePositiveInteger(rawId);
+        if (id === null) {
+            throw new RawMaterialQaError(400, "supplierIds must contain only positive integer IDs.");
+        }
+        if (!ids.includes(id)) ids.push(id);
+    }
+    return ids;
+}
+
+function supplierIdsFromLinks(links: SupplierLinkRecord[], productId: number): number[] {
+    const ids: number[] = [];
+    for (const link of links) {
+        const supplierId = resolvePositiveInteger(link.supplier_id);
+        if (supplierId === null) {
+            throw new Error(`Supplier link for product ${productId} has an invalid supplier ID.`);
+        }
+        if (!ids.includes(supplierId)) ids.push(supplierId);
+    }
+    return ids;
+}
+
+async function readProductSupplierLinks(productId: number): Promise<SupplierLinkRecord[]> {
+    const params = new URLSearchParams({
+        "filter[product_id][_eq]": String(productId),
+        fields: "id,supplier_id",
+        limit: "-1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    const body = await response.json().catch(() => null) as { data?: unknown; error?: unknown } | null;
+    if (!response.ok) {
+        const detail = typeof body?.error === "string" ? `: ${body.error}` : "";
+        throw new Error(`Directus failed to fetch supplier links for product ${productId}: ${response.status}${detail}`);
+    }
+    if (!Array.isArray(body?.data)) {
+        throw new Error(`Directus returned an invalid supplier-link response for product ${productId}.`);
+    }
+    return body.data as SupplierLinkRecord[];
+}
+
+async function readSupplierRecords(supplierIds: number[]): Promise<Map<number, SupplierRecord>> {
+    const recordsById = new Map<number, SupplierRecord>();
+    if (supplierIds.length === 0) return recordsById;
+
+    const params = new URLSearchParams({
+        "filter[id][_in]": supplierIds.join(","),
+        fields: "id,isActive,supplier_name,supplier_shortcut",
+        limit: "-1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/suppliers?${params.toString()}`, {
+        headers,
+        cache: "no-store"
+    });
+    const body = await response.json().catch(() => null) as { data?: unknown; error?: unknown } | null;
+    if (!response.ok) {
+        const detail = typeof body?.error === "string" ? `: ${body.error}` : "";
+        throw new Error(`Directus failed to validate suppliers: ${response.status}${detail}`);
+    }
+    if (!Array.isArray(body?.data)) {
+        throw new Error("Directus returned an invalid supplier response.");
+    }
+
+    for (const rawRecord of body.data) {
+        if (!rawRecord || typeof rawRecord !== "object") continue;
+        const record = rawRecord as SupplierRecord;
+        const id = resolvePositiveInteger(record.id);
+        if (id !== null) recordsById.set(id, record);
+    }
+
+    const missingIds = supplierIds.filter(id => !recordsById.has(id));
+    if (missingIds.length > 0) {
+        throw new RawMaterialQaError(400, `Supplier record(s) not found: ${missingIds.join(", ")}.`);
+    }
+    return recordsById;
+}
+
+function isActiveSupplier(value: unknown): boolean {
+    if (value === true || value === 1) return true;
+    return typeof value === "string" && ["true", "1"].includes(value.trim().toLowerCase());
+}
+
+async function validateSupplierSelection(supplierIds: number[], existingSupplierIds: number[] = []): Promise<void> {
+    const idsToCheck = [...new Set([...supplierIds, ...existingSupplierIds])];
+    const recordsById = await readSupplierRecords(idsToCheck);
+    const existingSet = new Set(existingSupplierIds);
+    const inactiveNewSupplierIds = supplierIds.filter(id => !existingSet.has(id) && !isActiveSupplier(recordsById.get(id)?.isActive));
+
+    if (inactiveNewSupplierIds.length > 0) {
+        throw new RawMaterialQaError(
+            400,
+            `Only active suppliers can be newly linked. Inactive supplier(s): ${inactiveNewSupplierIds.join(", ")}.`
+        );
+    }
+}
+
+async function ensureSupplierMutationSucceeded(response: Response, action: string): Promise<void> {
+    if (response.ok) return;
+    const detail = (await response.text().catch(() => "")).trim().slice(0, 500);
+    throw new Error(`${action} failed with HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
+}
+
+async function synchronizeProductSupplierLinks(productId: number, desiredSupplierIds: number[]): Promise<void> {
+    const existingLinks = await readProductSupplierLinks(productId);
+    const desiredSet = new Set(desiredSupplierIds);
+    const retainedSupplierIds = new Set<number>();
+
+    for (const link of existingLinks) {
+        const linkId = resolvePositiveInteger(link.id);
+        const supplierId = resolvePositiveInteger(link.supplier_id);
+        if (linkId === null || supplierId === null) {
+            throw new Error(`Supplier link for product ${productId} has invalid relationship data.`);
+        }
+
+        const keep = desiredSet.has(supplierId) && !retainedSupplierIds.has(supplierId);
+        if (keep) {
+            retainedSupplierIds.add(supplierId);
+            continue;
+        }
+
+        const response = await fetch(`${DIRECTUS_URL}/items/product_per_supplier/${encodeURIComponent(String(linkId))}`, {
+            method: "DELETE",
+            headers
+        });
+        await ensureSupplierMutationSucceeded(response, `Removing supplier ${supplierId} from product ${productId}`);
+    }
+
+    for (const supplierId of desiredSupplierIds) {
+        if (retainedSupplierIds.has(supplierId)) continue;
+
+        const response = await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                product_id: productId,
+                supplier_id: supplierId
+            })
+        });
+        await ensureSupplierMutationSucceeded(response, `Linking supplier ${supplierId} to product ${productId}`);
+        retainedSupplierIds.add(supplierId);
+    }
+}
+
+async function readChildProductIds(parentProductId: number): Promise<number[]> {
+    const params = new URLSearchParams({
+        "filter[parent_id][_eq]": String(parentProductId),
+        fields: "product_id",
+        limit: "-1"
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/products?${params.toString()}`, { headers, cache: "no-store" });
+    const body = await response.json().catch(() => null) as { data?: unknown; error?: unknown } | null;
+    if (!response.ok) {
+        const detail = typeof body?.error === "string" ? `: ${body.error}` : "";
+        throw new Error(`Directus failed to fetch child products for ${parentProductId}: ${response.status}${detail}`);
+    }
+    if (!Array.isArray(body?.data)) {
+        throw new Error(`Directus returned an invalid child-product response for ${parentProductId}.`);
+    }
+
+    const childIds: number[] = [];
+    for (const rawChild of body.data) {
+        const childId = rawChild && typeof rawChild === "object"
+            ? resolvePositiveInteger((rawChild as Record<string, unknown>).product_id)
+            : null;
+        if (childId === null) throw new Error(`Directus returned an invalid child product for ${parentProductId}.`);
+        if (!childIds.includes(childId)) childIds.push(childId);
+    }
+    return childIds;
+}
+
+function haveSameIds(left: number[], right: number[]): boolean {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every(id => rightSet.has(id));
+}
+
+async function synchronizeFamilySupplierLinks(parentProductId: number, desiredSupplierIds: number[]): Promise<void> {
+    await synchronizeProductSupplierLinks(parentProductId, desiredSupplierIds);
+
+    const persistedParentIds = supplierIdsFromLinks(
+        await readProductSupplierLinks(parentProductId),
+        parentProductId
+    );
+    if (!haveSameIds(persistedParentIds, desiredSupplierIds)) {
+        throw new Error(`Supplier links for parent product ${parentProductId} could not be verified after saving.`);
+    }
+
+    const childProductIds = await readChildProductIds(parentProductId);
+    for (const childProductId of childProductIds) {
+        await synchronizeProductSupplierLinks(childProductId, persistedParentIds);
+    }
+}
+
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -338,13 +562,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
         }
 
-        const res = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${productId}&fields=supplier_id&limit=-1`, { headers, cache: "no-store" });
-        if (!res.ok) {
-            throw new Error(`Directus failed to fetch suppliers for product: ${res.status}`);
+        const numericProductId = resolvePositiveInteger(productId);
+        if (numericProductId === null) {
+            return NextResponse.json({ error: "productId must be a positive integer" }, { status: 400 });
         }
-        const json = await res.json();
-        const links = json.data || [];
-        const supplierIds = links.map((l: { supplier_id: number }) => l.supplier_id);
+
+        const links = await readProductSupplierLinks(numericProductId);
+        const supplierIds = supplierIdsFromLinks(links, numericProductId);
         return NextResponse.json(supplierIds);
     } catch (e) {
         console.error("API Error fetching product suppliers:", e);
@@ -363,6 +587,15 @@ export async function POST(request: Request) {
 
         if (!isValidActiveFlag(productDetails.isActive)) {
             return NextResponse.json({ error: "isActive must be either 0 or 1." }, { status: 400 });
+        }
+
+        const requestedSupplierIds = normalizeSupplierIds(supplierIds);
+        const parentProductId = resolvePositiveInteger(productDetails.parent_id);
+        const normalizedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : requestedSupplierIds || [];
+        if (!parentProductId) {
+            await validateSupplierSelection(normalizedSupplierIds);
         }
 
         const purchaseQa = await normalizePurchaseQaConfig(productDetails.purchaseQa);
@@ -508,24 +741,6 @@ export async function POST(request: Request) {
 
         await syncProductQaSpecifications(Number(productId), purchaseQa);
 
-        // Link selected suppliers in product_per_supplier junction table
-        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-            try {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: productId,
-                            supplier_id: Number(supId)
-                        })
-                    });
-                }
-            } catch (err) {
-                console.error("Error linking suppliers to raw material:", err);
-            }
-        }
-
         // Create child packaging variants if passed
         if (resolvedVariants.length > 0) {
             for (const [variantIndex, { variant, identity }] of resolvedVariants.entries()) {
@@ -574,24 +789,17 @@ export async function POST(request: Request) {
                             variant.purchaseQa as PurchaseQaConfig | undefined
                         );
 
-                        // Link child to the same suppliers
-                        if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                            for (const supId of supplierIds) {
-                                await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                    method: "POST",
-                                    headers,
-                                    body: JSON.stringify({
-                                        product_id: childId,
-                                        supplier_id: Number(supId)
-                                    })
-                                }).catch(() => { });
-                            }
-                        }
                     } else {
                         const errText = await varRes.text();
                         throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
                     }
             }
+        }
+
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, normalizedSupplierIds);
+        } else if (supplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(Number(productId), normalizedSupplierIds);
         }
 
         return NextResponse.json({ success: true, productId });
@@ -620,6 +828,8 @@ export async function PATCH(request: Request) {
     try {
         const body = await request.json();
         const { productId, productDetails, supplierIds, packagingVariants } = body;
+        const hasSupplierIds = Object.prototype.hasOwnProperty.call(body, "supplierIds");
+        const normalizedSupplierIds = hasSupplierIds ? (normalizeSupplierIds(supplierIds) || []) : undefined;
 
         if (!productId) {
             return NextResponse.json({ error: "productId is required" }, { status: 400 });
@@ -677,13 +887,23 @@ export async function PATCH(request: Request) {
         const classifiedVariants = classification.packagingVariants;
 
         const currentProductResponse = await fetch(
-            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
+            `${DIRECTUS_URL}/items/products/${numericProductId}?fields=parent_id,product_type,unit_of_measurement.unit_id,density_factor,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id`,
             { headers, cache: "no-store" }
         );
         if (!currentProductResponse.ok) {
             throw new RawMaterialQaError(503, "Unable to load the current product weight specification.");
         }
         const currentProduct = (await currentProductResponse.json()).data as Record<string, unknown>;
+        const parentProductId = resolvePositiveInteger(currentProduct.parent_id);
+        const supplierSyncRootProductId = parentProductId || numericProductId;
+        const inheritedSupplierIds = parentProductId
+            ? supplierIdsFromLinks(await readProductSupplierLinks(parentProductId), parentProductId)
+            : undefined;
+        if (!parentProductId && normalizedSupplierIds !== undefined) {
+            const existingParentLinks = await readProductSupplierLinks(supplierSyncRootProductId);
+            const existingParentSupplierIds = supplierIdsFromLinks(existingParentLinks, supplierSyncRootProductId);
+            await validateSupplierSelection(normalizedSupplierIds, existingParentSupplierIds);
+        }
         const effectiveUomId = hasProvidedValue(productDetails.unit_of_measurement)
             ? requireUomId(productDetails.unit_of_measurement, "Primary")
             : requireUomId(currentProduct.unit_of_measurement, "Primary");
@@ -923,19 +1143,6 @@ export async function PATCH(request: Request) {
                                 variant.purchaseQa as PurchaseQaConfig | undefined
                             );
 
-                            // Link child to the same suppliers
-                            if (supplierIds && Array.isArray(supplierIds) && supplierIds.length > 0) {
-                                for (const supId of supplierIds) {
-                                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify({
-                                            product_id: childId,
-                                            supplier_id: Number(supId)
-                                        })
-                                    }).catch(() => { });
-                                }
-                            }
                         } else {
                             const errText = await varRes.text();
                             throw new Error(`Directus failed to create packaging variant: ${varRes.status} - ${errText}`);
@@ -944,37 +1151,10 @@ export async function PATCH(request: Request) {
             }
         }
 
-        // Update supplier links: delete old ones first, then create new ones for parent and all children
-        if (supplierIds && Array.isArray(supplierIds)) {
-            // 1. Get all child products of this parent
-            const childrenRes = await fetch(`${DIRECTUS_URL}/items/products?filter[parent_id][_eq]=${productId}&fields=product_id&limit=-1`, { headers });
-            const children = childrenRes.ok ? (await childrenRes.json()).data || [] : [];
-            const allProductIdsToSync = [Number(productId), ...children.map((c: any) => Number(c.product_id))];
-
-            // 2. Delete old links
-            for (const pid of allProductIdsToSync) {
-                const oldLinksRes = await fetch(`${DIRECTUS_URL}/items/product_per_supplier?filter[product_id][_eq]=${pid}&limit=-1`, { headers });
-                if (oldLinksRes.ok) {
-                    const oldLinks = (await oldLinksRes.json()).data || [];
-                    for (const link of oldLinks) {
-                        await fetch(`${DIRECTUS_URL}/items/product_per_supplier/${link.id}`, { method: "DELETE", headers }).catch(() => { });
-                    }
-                }
-            }
-
-            // 3. Create new links
-            for (const pid of allProductIdsToSync) {
-                for (const supId of supplierIds) {
-                    await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            product_id: pid,
-                            supplier_id: Number(supId)
-                        })
-                    }).catch(() => { });
-                }
-            }
+        if (parentProductId) {
+            await synchronizeFamilySupplierLinks(parentProductId, inheritedSupplierIds || []);
+        } else if (normalizedSupplierIds !== undefined) {
+            await synchronizeFamilySupplierLinks(supplierSyncRootProductId, normalizedSupplierIds);
         }
 
         return NextResponse.json({ success: true });
