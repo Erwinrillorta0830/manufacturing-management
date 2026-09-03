@@ -17,8 +17,8 @@ import {
  
   ClipboardList,
   Layers
-
 } from "lucide-react";
+import { motion } from "framer-motion";
 
 // import { formatDateLong } from "@/lib/utils";
 import { StockAdjustmentDetailModal } from "./StockAdjustmentDetailModal";
@@ -54,14 +54,19 @@ export function RecentLog() {
             <p className="text-sm font-medium text-foreground">No adjustments found</p>
           </div>
         ) : (
-          paginatedData.map((item) => {
+          paginatedData.map((item, idx) => {
             const isPosted = stockAdjustmentSummaryService.getIsPosted(item);
 
             return (
-              <Card 
-                key={item.id} 
-                className="group overflow-hidden border border-border/40 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 bg-card relative"
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.14, delay: Math.min(idx * 0.02, 0.1), ease: "easeOut" }}
               >
+                <Card 
+                  className="group overflow-hidden border border-border/40 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 bg-card relative"
+                >
                 {/* Visual Indicator Background Watermark */}
                 <div className="absolute right-24 top-1/2 -translate-y-1/2 opacity-[0.03] pointer-events-none transition-transform duration-500 group-hover:scale-110">
                   {item.type === "IN" ? (
@@ -242,6 +247,7 @@ export function RecentLog() {
                   })()}
                 </CardContent>
               </Card>
+            </motion.div>
             );
           })
         )}

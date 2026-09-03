@@ -59,43 +59,29 @@ export function useStockConversion() {
       const activeBranchId = filters.branchId || "";
       const invMap: Record<number, number> = {};
 
-      // Fetch per-product on-hand from Spring Boot /api/mm-product-onhand/filter?product=...
-      await Promise.all(
-        fetchableIds.map(async (pid) => {
-          const sp = new URLSearchParams();
-          if (activeBranchId) sp.set("branch", activeBranchId);
-          sp.set("product", String(pid));
+      // Fetch branch-wide on-hand from Spring Boot /api/mm-product-onhand in a single request
+      const sp = new URLSearchParams();
+      if (activeBranchId) sp.set("branch", activeBranchId);
 
-          const res = await fetch(`/api/manufacturing/product-onhand?${sp.toString()}`, { cache: "no-store" });
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            console.error(`[useStockConversion] Product ${pid} onhand error (HTTP ${res.status}):`, errData);
-            throw new Error(`Spring Boot error HTTP ${res.status}: ${JSON.stringify(errData)}`);
-          }
+      const res = await fetch(`/api/manufacturing/product-onhand?${sp.toString()}`, { cache: "no-store" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error(`[useStockConversion] Product onhand error (HTTP ${res.status}):`, errData);
+        throw new Error(`Spring Boot error HTTP ${res.status}: ${JSON.stringify(errData)}`);
+      }
 
-          const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number }> = await res.json();
-          console.group(`📦 [ProductOnhand] /api/manufacturing/product-onhand (Product: ${pid}, Branch: ${activeBranchId || 'ALL'})`);
-          console.log(`📌 Raw API response:`, onhandList);
-          console.groupEnd();
-
-          onhandList.forEach((item) => {
-            const pId = Number(item.productId);
-            const qty = Math.max(0, Number(item.onhandQuantity ?? 0));
-            if (pId > 0) {
-              invMap[pId] = (invMap[pId] || 0) + qty;
-            }
-          });
-        })
-      );
-
-      console.group(`✅ [ProductOnhand] Resolved invMap for requested products`);
-      console.table(
-        fetchableIds.map((pid) => ({
-          productId: pid,
-          resolvedQty: invMap[pid] ?? '0 (no movements)',
-        }))
-      );
+      const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number }> = await res.json();
+      console.group(`📦 [ProductOnhand] /api/manufacturing/product-onhand (Branch: ${activeBranchId || 'ALL'})`);
+      console.log(`📌 Raw API response:`, onhandList);
       console.groupEnd();
+
+      onhandList.forEach((item) => {
+        const pId = Number(item.productId);
+        const qty = Math.max(0, Number(item.onhandQuantity ?? 0));
+        if (pId > 0) {
+          invMap[pId] = (invMap[pId] || 0) + qty;
+        }
+      });
 
       setData(prev => {
         return prev.map(p => {
