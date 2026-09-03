@@ -443,7 +443,7 @@ export function UpdateSalesReturnModal({
         })
       );
     }
-  }, [headerData.priceType, discountOptions, invoiceLineItems, details.length]);
+  }, [headerData.priceType, discountOptions, invoiceLineItems, details.length, priceTypeOptions]);
 
   // Click outside handler for order/invoice dropdowns
   useEffect(() => {

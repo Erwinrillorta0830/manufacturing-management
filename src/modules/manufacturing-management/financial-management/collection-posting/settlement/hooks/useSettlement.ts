@@ -34,6 +34,7 @@ export interface RawMemoOrReturn {
     amount?: number;
     appliedAmount?: number;
     memoNumber?: string;
+    memo_number?: string;
     customerCode?: string;
     customerName?: string;
     isApplied?: boolean;

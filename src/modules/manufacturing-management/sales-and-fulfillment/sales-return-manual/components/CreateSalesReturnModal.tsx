@@ -388,7 +388,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         })
       );
     }
-  }, [priceType, lineDiscountOptions, resolvePrice, invoiceLineItems]);
+  }, [priceType, lineDiscountOptions, resolvePrice, invoiceLineItems, items.length]);
 
   // 🟢 NEW: Effect to automatically update discounts when Customer changes
   useEffect(() => {
