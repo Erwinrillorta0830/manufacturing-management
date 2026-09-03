@@ -34,6 +34,13 @@ export async function POST(request: Request) {
         const collectionRecord = (await colRes.json()).data;
         const collectionId = collectionRecord.id;
 
+        // 🚀 Auto-generate docNo based on the new ID and update the record
+        const docNo = `CP-${String(collectionId).padStart(6, '0')}`;
+        await fetch(`${DIRECTUS_URL}/items/collection/${collectionId}`, {
+            method: "PATCH", headers, body: JSON.stringify({ docNo })
+        });
+        collectionRecord.docNo = docNo;
+
         // 2. Create details & denominations
         if (payload.cashBuckets && payload.cashBuckets.length > 0) {
             const detailsPromises = payload.cashBuckets.map(async (bucket: Record<string, unknown>) => {

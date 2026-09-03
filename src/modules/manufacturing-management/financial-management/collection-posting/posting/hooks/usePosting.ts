@@ -318,13 +318,8 @@ export function usePosting() {
         }
     }, [loadCompanyProfile]);
 
-    const handlePostPouch = async (id: number, docNo: string, shortageAmount: number) => {
-        const warningMsg = shortageAmount > 0
-            ? `WARNING: This pouch has a SHORTAGE of â‚±${shortageAmount.toLocaleString()}.\n\nPosting this will permanently lock the pouch AND automatically generate a Payroll Audit Finding for the Route Manager.\n\nAre you sure you want to POST?`
-            : `Are you sure you want to permanently POST and lock pouch ${docNo}?`;
-
-        if (!confirm(warningMsg)) return;
-
+    const handlePostPouch = async (id: number, docNo: string) => {
+        // The UI handles the confirmation modal before calling handlePostPouch
         setIsPosting(true);
         try {
             await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${id}/post`, {});
