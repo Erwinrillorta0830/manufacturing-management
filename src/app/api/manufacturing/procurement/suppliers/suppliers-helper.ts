@@ -42,7 +42,7 @@ interface InputRepresentative {
 export type SupplierStatusFilter = "active" | "inactive" | "all";
 export type SupplierForeignFilter = "all" | "local" | "foreign";
 
-const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency,created_at,updated_at";
+const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency";
 const SUPPLIER_PAGE_SIZE_DEFAULT = 10;
 const SUPPLIER_PAGE_SIZE_MAX = 100;
 const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.unit_of_measurement.*";
@@ -138,28 +138,8 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
     const isForeignNum = (isForeignBool || isNonPH || rawCurrency !== "" && rawCurrency !== "PHP" || Number(supplier.is_foreign) === 1) ? 1 : 0;
     const resolvedCurrency = rawCurrency || (isForeignNum === 1 ? "" : "PHP");
 
-    let created_at = supplier.created_at;
-    if (created_at && typeof created_at === 'string') {
-        if (!created_at.includes('T') && !created_at.includes('Z')) {
-            created_at = created_at.replace(' ', 'T') + 'Z';
-        } else if (created_at.includes('T') && !created_at.endsWith('Z')) {
-            created_at = created_at + 'Z';
-        }
-    }
-    
-    let updated_at = supplier.updated_at;
-    if (updated_at && typeof updated_at === 'string') {
-        if (!updated_at.includes('T') && !updated_at.includes('Z')) {
-            updated_at = updated_at.replace(' ', 'T') + 'Z';
-        } else if (updated_at.includes('T') && !updated_at.endsWith('Z')) {
-            updated_at = updated_at + 'Z';
-        }
-    }
-
     return {
         ...supplier,
-        created_at,
-        updated_at,
         isActive: toBoolean(supplier.isActive),
         nonBuy: toBoolean(supplier.nonBuy),
         country,

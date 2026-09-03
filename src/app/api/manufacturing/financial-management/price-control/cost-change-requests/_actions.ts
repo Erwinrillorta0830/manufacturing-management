@@ -9,6 +9,7 @@ import { chunkArray, IN_CHUNK_SIZE } from "../_directusPaging";
 import { invalidateGroupIndexCacheOnCatalogChange } from "../_productGroupIndexCache";
 import { executeClaimedApplication, stageStandaloneApproval } from "../_applicationEngine";
 import { assertValidProposedCost } from "./_costValidation";
+import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 
 export const CCR = "cost_change_requests";
 const PRODUCTS = "products";
@@ -93,7 +94,10 @@ export async function patchProductCostField(args: { product_id: number; proposed
     const response = await fetchDirectus<DirectusSingleResponse<ProductCostRow | null>>(url, {
         method: "PATCH",
         headers: directusHeaders(),
-        body: JSON.stringify({ cost_per_unit: proposed_cost }),
+        body: JSON.stringify({
+            cost_per_unit: proposed_cost,
+            ...productUpdateAuditFields(args.userId)
+        }),
     });
 
     const persistedProductId = Number(response.data?.product_id);

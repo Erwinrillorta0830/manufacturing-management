@@ -1,6 +1,7 @@
 // VOS ERP - Finished Goods Catalog API Service
 
 import { DIRECTUS_URL, headers } from "./core-api.service";
+import { productUpdateAuditFields } from "../product-audit";
 
 // Data Interfaces
 export interface DirectusProductCurrencyProfile {
@@ -30,6 +31,10 @@ export interface DirectusProduct {
     weight_unit_id?: number | { id?: number; unit_id?: number; code?: string; unit_shortcut?: string; name?: string; unit_name?: string } | null;
     has_versions?: boolean;
     currency_profile?: DirectusProductCurrencyProfile | null;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface DirectusBOM {
@@ -153,7 +158,7 @@ export interface DirectusProductVersion {
  */
 export async function fetchAllProducts(search?: string, limit: number = -1): Promise<DirectusProduct[]> {
     try {
-        const explicitFields = "product_id,product_name,product_code,description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id.product_id,parent_id.product_name,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type";
+        const explicitFields = "product_id,product_name,product_code,description,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id.product_id,parent_id.product_name,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,product_image,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,created_at,created_by,updated_at,updated_by";
         let url = `${DIRECTUS_URL}/items/products?limit=${limit}&fields=${explicitFields}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
@@ -222,13 +227,16 @@ export async function fetchAllUnits(): Promise<DirectusUnit[]> {
 /**
  * Utility to update product cost field.
  */
-export async function updateProductStandardCost(productId: number, standardCost: number): Promise<boolean> {
+export async function updateProductStandardCost(productId: number, standardCost: number, userId?: number | null): Promise<boolean> {
     try {
         const url = `${DIRECTUS_URL}/items/products/${productId}`;
         const res = await fetch(url, {
             method: "PATCH",
             headers,
-            body: JSON.stringify({ cost_per_unit: standardCost })
+            body: JSON.stringify({
+                cost_per_unit: standardCost,
+                ...productUpdateAuditFields(userId)
+            })
         });
         return res.ok;
     } catch (e) {
@@ -413,14 +421,18 @@ export async function updateProductDetails(
         product_shelf_life?: number;
         unit_of_measurement_count?: number;
         product_image?: string;
-    }
+    },
+    userId?: number | null
 ): Promise<boolean> {
     try {
         const url = `${DIRECTUS_URL}/items/products/${productId}`;
         const res = await fetch(url, {
             method: "PATCH",
             headers,
-            body: JSON.stringify(details)
+            body: JSON.stringify({
+                ...details,
+                ...productUpdateAuditFields(userId)
+            })
         });
         return res.ok;
     } catch (e) {

@@ -8,7 +8,8 @@ import {
     PurchaseQaConfig,
     PurchaseQaParameter,
     PriceControlValue,
-    TaxRateOption
+    TaxRateOption,
+    RawMaterialValidationErrors
 } from "../types/raw-materials.types";
 import { CreatableSelect } from "../../../finished-goods/components/CreatableSelect";
 import { ProductImageField } from "./ProductImageField";
@@ -24,6 +25,7 @@ interface RawMaterialModalProps {
     loadingUnits: boolean;
     suppliers: SupplierItem[];
     showValidationErrors: boolean;
+    validationErrors: RawMaterialValidationErrors;
     formName: string;
     setFormName: (v: string) => void;
     formCode: string;
@@ -66,7 +68,6 @@ interface RawMaterialModalProps {
     setFormPurchaseQa: (v: PurchaseQaConfig) => void;
     purchaseQaParameters: PurchaseQaParameter[];
     loadingPurchaseQa: boolean;
-    purchaseQaReady: boolean;
     purchaseQaError: string | null;
     formProductType: number;
     setFormProductType: (v: number) => void;
@@ -104,6 +105,7 @@ interface RawMaterialModalProps {
     handleCreateBrand: (name: string) => void;
     handleCreateCategory: (name: string) => void;
     onSubmit: (e: React.FormEvent) => void;
+    onSaveClick: () => void;
 }
 
 export function RawMaterialModal({
@@ -114,6 +116,7 @@ export function RawMaterialModal({
     submitError,
     suppliers,
     showValidationErrors,
+    validationErrors,
     formName,
     setFormName,
     formCode,
@@ -156,7 +159,6 @@ export function RawMaterialModal({
     setFormPurchaseQa,
     purchaseQaParameters,
     loadingPurchaseQa,
-    purchaseQaReady,
     purchaseQaError,
     formProductType,
     setFormProductType,
@@ -193,7 +195,8 @@ export function RawMaterialModal({
     taxRatesList,
     handleCreateBrand,
     handleCreateCategory,
-    onSubmit
+    onSubmit,
+    onSaveClick
 }: RawMaterialModalProps) {
     if (!isOpen) return null;
 
@@ -205,6 +208,10 @@ export function RawMaterialModal({
     const sharedAttributesLocked = Boolean(formParentId);
     const classificationLabel = isPackagingMaterial ? "Packaging Material" : "Raw Material / Ingredient";
     const baseUomId = formUom === "" ? null : Number(formUom);
+    const selectedPrimaryUom = uomOptions.find(option => option.value === String(formUom));
+    const primaryDensityRequirement = selectedPrimaryUom?.requiresDensity ?? null;
+    const showPrimaryDensity = primaryDensityRequirement === true;
+    const primaryDensityPolicyUnknown = formUom !== "" && primaryDensityRequirement === null;
     const eligibleVariantUomOptions = uomOptions.filter(option =>
         baseUomId === null || Number(option.value) !== baseUomId
     );
@@ -230,6 +237,10 @@ export function RawMaterialModal({
         isPackagingMaterial
             ? !hasWeightUnitValue || isWeightUnitInvalid
             : (hasWeightComponents && !hasWeightUnitValue) || isWeightUnitInvalid
+    );
+    const hasBaseValidationError = (field: string) => showValidationErrors && Boolean(validationErrors.base[field]);
+    const hasVariantValidationError = (index: number, field: string) => (
+        showValidationErrors && Boolean(validationErrors.variants[index]?.[field])
     );
 
     return (
@@ -265,7 +276,19 @@ export function RawMaterialModal({
                 )}
 
                 {/* Single Page Form Container */}
-                <form onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
+                <form noValidate onSubmit={onSubmit} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
+                    {editingItem && (
+                        <div className="rounded-xl border border-border/80 bg-muted/15 px-3 py-2.5">
+                            <div className="flex items-center gap-2 font-semibold text-foreground">
+                                <Layers className="h-3.5 w-3.5 text-primary/80" /> Audit timestamps
+                            </div>
+                            <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2 text-[10px] text-muted-foreground">
+                                <span>Created: <strong className="font-mono text-foreground">{editingItem.created_at || editingItem.date_added || "Unavailable"}</strong></span>
+                                <span>Last modified: <strong className="font-mono text-foreground">{editingItem.updated_at || editingItem.last_updated || "Not modified since creation"}</strong></span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Item Classification Pill Buttons */}
                     <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/20 border p-2 rounded-xl">
                         <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider pl-1">Classification:</span>
@@ -324,7 +347,8 @@ export function RawMaterialModal({
                                 placeholder="e.g. Sodium Chloride Powder"
                                 value={formName}
                                 onChange={e => setFormName(e.target.value)}
-                                className={`w-full p-2 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && !formName.trim() ? "border-red-500" : ""}`}
+                                className={`w-full p-2 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("name") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("name")}
                                 required
                             />
                         </div>
@@ -338,7 +362,8 @@ export function RawMaterialModal({
                                 placeholder="e.g. RM-SOD-001"
                                 value={formCode}
                                 onChange={e => setFormCode(e.target.value)}
-                                className={`w-full p-2 border rounded-lg text-xs font-mono font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && !formCode.trim() ? "border-red-500" : ""}`}
+                                className={`w-full p-2 border rounded-lg text-xs font-mono font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("code") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("code")}
                                 required
                             />
                         </div>
@@ -353,8 +378,9 @@ export function RawMaterialModal({
                                 onValueChange={(val: string) => setFormCategory(val)}
                                 onCreateOption={handleCreateCategory}
                                 placeholder="Category..."
-                                className="h-8.5 text-xs"
+                                className={`h-8.5 text-xs ${hasBaseValidationError("category") ? "border-red-500" : ""}`}
                                 disabled={sharedAttributesLocked}
+                                aria-invalid={hasBaseValidationError("category")}
                             />
                         </div>
                     </div>
@@ -463,7 +489,8 @@ export function RawMaterialModal({
                                 step="1"
                                 value={formMaintainingQuantity}
                                 onChange={event => setFormMaintainingQuantity(event.target.value)}
-                                className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("safetyStock") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("safetyStock")}
                             />
                         </div>
 
@@ -474,7 +501,7 @@ export function RawMaterialModal({
                         config={formPurchaseQa}
                         parameters={purchaseQaParameters}
                         loading={loadingPurchaseQa}
-                        error={purchaseQaError}
+                        error={validationErrors.base.purchaseQa || purchaseQaError}
                         onChange={setFormPurchaseQa}
                     />
 
@@ -492,9 +519,10 @@ export function RawMaterialModal({
                             <CreatableSelect
                                 options={uomOptions}
                                 value={String(formUom)}
-                                onValueChange={(val: string) => setFormUom(Number(val))}
+                                onValueChange={(val: string) => setFormUom(val ? Number(val) : "")}
                                 placeholder="UOM..."
-                                className={`h-8 text-xs ${showValidationErrors && !formUom ? "border-red-500" : ""}`}
+                                className={`h-8 text-xs ${hasBaseValidationError("uom") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("uom")}
                             />
                         </div>
 
@@ -507,24 +535,34 @@ export function RawMaterialModal({
                                 step="any"
                                 value={formUomCount}
                                 onChange={e => setFormUomCount(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formUomCount || !Number.isFinite(Number(formUomCount)) || Number(formUomCount) <= 0) ? "border-red-500" : ""}`}
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("uomCount") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("uomCount")}
                                 required
                             />
                         </div>
 
-                        <div className="space-y-1">
-                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Density (g/mL) <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="number"
-                                step="any"
-                                value={formDensity}
-                                onChange={e => setFormDensity(e.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${showValidationErrors && (!formDensity || !Number.isFinite(Number(formDensity)) || Number(formDensity) <= 0) ? "border-red-500" : ""}`}
-                                required
-                            />
-                        </div>
+                        {showPrimaryDensity && (
+                            <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Density (g/mL) <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={formDensity}
+                                    onChange={e => setFormDensity(e.target.value)}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("density") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("density")}
+                                    required
+                                />
+                                <p className="text-[10px] text-muted-foreground">Required for volumetric and gravimetric UOMs.</p>
+                            </div>
+                        )}
+                        {primaryDensityPolicyUnknown && (
+                            <p className="text-[10px] font-medium text-destructive self-end">
+                                Density rules are not configured for this UOM. Select a configured UOM before saving.
+                            </p>
+                        )}
 
                         <div className="col-span-2 sm:col-span-6 grid grid-cols-2 sm:grid-cols-5 gap-2.5 border-t pt-2">
                             <div className="space-y-1">
@@ -538,7 +576,8 @@ export function RawMaterialModal({
                                     placeholder="25.00"
                                     value={formNetWeight}
                                     onChange={e => setFormNetWeight(e.target.value)}
-                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isNetWeightInvalid) ? "border-red-500" : ""}`}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isNetWeightInvalid) || hasBaseValidationError("netWeight") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("netWeight")}
                                     required={isPackagingMaterial}
                                 />
                             </div>
@@ -554,7 +593,8 @@ export function RawMaterialModal({
                                     placeholder="0.00"
                                     value={formOuterCartonWeight}
                                     onChange={e => setFormOuterCartonWeight(e.target.value)}
-                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isOuterCartonWeightInvalid) ? "border-red-500" : ""}`}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isOuterCartonWeightInvalid) || hasBaseValidationError("outerCartonWeight") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("outerCartonWeight")}
                                     required={isPackagingMaterial}
                                 />
                             </div>
@@ -570,7 +610,8 @@ export function RawMaterialModal({
                                     placeholder="0.00"
                                     value={formPalletWeight}
                                     onChange={e => setFormPalletWeight(e.target.value)}
-                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isPalletWeightInvalid) ? "border-red-500" : ""}`}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${weightComponentsHaveError && (!componentValuesComplete || isPalletWeightInvalid) || hasBaseValidationError("palletWeight") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("palletWeight")}
                                     required={isPackagingMaterial}
                                 />
                             </div>
@@ -583,7 +624,8 @@ export function RawMaterialModal({
                                     type="text"
                                     readOnly
                                     value={calculatedGrossWeight > 0 ? calculatedGrossWeight.toFixed(3) : ""}
-                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none ${weightComponentsHaveError && calculatedGrossWeight <= 0 ? "border-red-500" : ""}`}
+                                    className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none ${weightComponentsHaveError && calculatedGrossWeight <= 0 || hasBaseValidationError("grossWeight") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("grossWeight")}
                                 />
                             </div>
 
@@ -596,7 +638,8 @@ export function RawMaterialModal({
                                     value={String(formWeightUnitId)}
                                     onValueChange={(val: string) => setFormWeightUnitId(Number(val))}
                                     placeholder="Unit..."
-                                    className={`h-8 text-xs ${weightUnitHasError ? "border-red-500" : ""}`}
+                                    className={`h-8 text-xs ${weightUnitHasError || hasBaseValidationError("weightUnit") ? "border-red-500" : ""}`}
+                                    aria-invalid={hasBaseValidationError("weightUnit")}
                                 />
                             </div>
                         </div>
@@ -632,8 +675,9 @@ export function RawMaterialModal({
                                             value={formParentId}
                                             onValueChange={(val: string) => setFormParentId(val)}
                                             placeholder="None (Standalone Base Parent)"
-                                            className="h-8 text-xs"
+                                            className={`h-8 text-xs ${hasBaseValidationError("parent") ? "border-red-500" : ""}`}
                                             disabled={parentSelectionLocked}
+                                            aria-invalid={hasBaseValidationError("parent")}
                                             aria-describedby={parentSelectionLocked ? "raw-material-parent-lock-message" : undefined}
                                         />
                                     </div>
@@ -656,7 +700,7 @@ export function RawMaterialModal({
                                 )}
                                 {parentRelationshipError && (
                                     <p role="alert" className="text-[10px] font-semibold text-rose-700">
-                                        {parentRelationshipError} Clear the parent selection before saving.
+                                        {parentRelationshipError}
                                     </p>
                                 )}
                             </div>
@@ -813,6 +857,9 @@ export function RawMaterialModal({
                                             ]
                                             : eligibleVariantUomOptions;
                                         const uomShortcut = matchedUom ? matchedUom.label.split("(")[1]?.replace(")", "") || matchedUom.label : "Unit";
+                                        const variantDensityRequirement = matchedUom?.requiresDensity ?? null;
+                                        const showVariantDensity = variantDensityRequirement === true;
+                                        const variantDensityPolicyUnknown = v.uomId !== "" && variantDensityRequirement === null;
                                         const baseUomShortcut = uomOptions.find(u => u.value === String(formUom))?.label.split("(")[1]?.replace(")", "") || "base unit";
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
                                         const variantNamePreview = formName.trim() || "Material";
@@ -864,7 +911,8 @@ export function RawMaterialModal({
                                                             value={String(v.uomId)}
                                                             onValueChange={(val: string) => handleUpdateVariant(vIdx, "uomId", Number(val))}
                                                             placeholder="Select Outer UOM..."
-                                                            className="h-8 text-xs"
+                                                            className={`h-8 text-xs ${hasVariantValidationError(vIdx, "uom") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "uom")}
                                                         />
                                                         {usesParentUom && (
                                                             <p className="mt-1 text-[10px] font-medium text-destructive">
@@ -881,21 +929,31 @@ export function RawMaterialModal({
                                                             placeholder="e.g. 25"
                                                             value={v.count}
                                                             onChange={e => handleUpdateVariant(vIdx, "count", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "count") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "count")}
                                                         />
                                                     </div>
 
-                                                    <div>
-                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Density (g/mL) *</label>
-                                                        <input
-                                                            type="number"
-                                                            step="any"
-                                                            placeholder="e.g. 1.00"
-                                                            value={v.density}
-                                                            onChange={e => handleUpdateVariant(vIdx, "density", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
-                                                        />
-                                                    </div>
+                                                    {showVariantDensity && (
+                                                        <div>
+                                                            <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Density (g/mL) *</label>
+                                                            <input
+                                                                type="number"
+                                                                step="any"
+                                                                placeholder="e.g. 1.00"
+                                                                value={v.density}
+                                                                onChange={e => handleUpdateVariant(vIdx, "density", e.target.value)}
+                                                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "density") ? "border-red-500" : ""}`}
+                                                                aria-invalid={hasVariantValidationError(vIdx, "density")}
+                                                                required
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    {variantDensityPolicyUnknown && (
+                                                        <p className="text-[10px] font-medium text-destructive self-end">
+                                                            Density rules are not configured for this UOM.
+                                                        </p>
+                                                    )}
 
                                                     <div>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">SKU Suffix *</label>
@@ -929,7 +987,8 @@ export function RawMaterialModal({
                                                             placeholder="0.00"
                                                             value={v.netWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "netWeight", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "netWeight") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "netWeight")}
                                                             required={isPackagingMaterial}
                                                         />
                                                     </div>
@@ -944,7 +1003,8 @@ export function RawMaterialModal({
                                                             placeholder="0.00"
                                                             value={v.outerCartonWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "outerCartonWeight", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "outerCartonWeight") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "outerCartonWeight")}
                                                             required={isPackagingMaterial}
                                                         />
                                                     </div>
@@ -959,7 +1019,8 @@ export function RawMaterialModal({
                                                             placeholder="0.00"
                                                             value={v.palletWeight}
                                                             onChange={e => handleUpdateVariant(vIdx, "palletWeight", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "palletWeight") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "palletWeight")}
                                                             required={isPackagingMaterial}
                                                         />
                                                     </div>
@@ -975,7 +1036,8 @@ export function RawMaterialModal({
                                                             readOnly={Boolean(calculatedWeight)}
                                                             value={calculatedWeight || v.weight}
                                                             onChange={e => handleUpdateVariant(vIdx, "weight", e.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-muted/50 outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "grossWeight") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "grossWeight")}
                                                         />
                                                     </div>
                                                     <div>
@@ -987,7 +1049,8 @@ export function RawMaterialModal({
                                                             value={String(v.weightUnitId)}
                                                             onValueChange={(val: string) => handleUpdateVariant(vIdx, "weightUnitId", Number(val))}
                                                             placeholder="Unit..."
-                                                            className="h-8 text-xs"
+                                                            className={`h-8 text-xs ${hasVariantValidationError(vIdx, "weightUnit") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "weightUnit")}
                                                         />
                                                     </div>
                                                 </div>
@@ -1014,7 +1077,8 @@ export function RawMaterialModal({
                                                             step="1"
                                                             value={v.maintainingQuantity}
                                                             onChange={event => handleUpdateVariant(vIdx, "maintainingQuantity", event.target.value)}
-                                                            className="w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary"
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "safetyStock") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "safetyStock")}
                                                         />
                                                     </div>
 
@@ -1029,7 +1093,7 @@ export function RawMaterialModal({
                                                     config={v.purchaseQa}
                                                     parameters={purchaseQaParameters}
                                                     loading={loadingPurchaseQa}
-                                                    error={purchaseQaError}
+                                                    error={validationErrors.variants[vIdx]?.purchaseQa || purchaseQaError}
                                                     onChange={config => handleUpdateVariant(vIdx, "purchaseQa", config)}
                                                 />
                                             </div>
@@ -1052,8 +1116,8 @@ export function RawMaterialModal({
                                 Cancel
                             </button>
                             <button
-                                type="submit"
-                                disabled={saving || loadingPurchaseQa || !purchaseQaReady || Boolean(parentRelationshipError)}
+                                type="button"
+                                onClick={onSaveClick}
                                 className="px-5 py-1.5 border border-transparent rounded-lg text-xs font-bold bg-primary hover:bg-primary/95 text-primary-foreground shadow-xs cursor-pointer transition-all flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {saving ? (

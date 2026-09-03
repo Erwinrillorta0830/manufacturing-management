@@ -2,6 +2,7 @@ export interface UnitOption {
     unit_id: number;
     unit_name: string;
     unit_shortcut: string;
+    requiresDensity: boolean | null;
 }
 
 export interface WeightUnitOption {
@@ -14,6 +15,7 @@ export interface SelectOption {
     value: string;
     label: string;
     disabled?: boolean;
+    requiresDensity?: boolean | null;
 }
 
 export interface TaxRateOption {
@@ -71,13 +73,19 @@ export interface PackagingVariantFormState {
     purchaseQa: PurchaseQaConfig;
 }
 
+export interface RawMaterialValidationErrors {
+    base: Record<string, string>;
+    variants: Record<number, Record<string, string>>;
+    global?: string;
+}
+
 export interface PackagingVariantPayload {
     product_id?: number;
     product_name?: string;
     product_code: string;
     unit_of_measurement: number;
     unit_of_measurement_count: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -108,7 +116,7 @@ export interface RegisterRawMaterialPayload {
     barcode?: string;
     unit_of_measurement: number;
     unit_of_measurement_count: number;
-    density_factor: number;
+    density_factor: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -148,7 +156,7 @@ export interface RawMaterialItem {
     unit_of_measurement_count?: number | null;
     cost_per_unit: number;
     estimated_unit_cost?: number;
-    density_factor?: number;
+    density_factor?: number | null;
     weight?: number | null;
     net_weight?: number | null;
     outer_carton_weight?: number | null;
@@ -159,6 +167,7 @@ export interface RawMaterialItem {
     product_brand?: number | string | { brand_id?: number; brand_name?: string } | null;
     brand_name?: string;
     product_type?: number | null;
+    product_type_name?: string | null;
     product_class?: number | null;
     product_segment?: number | null;
     product_section?: number | null;
@@ -178,6 +187,10 @@ export interface RawMaterialItem {
     isActive?: number;
     date_added?: string;
     last_updated?: string;
+    created_at?: string | null;
+    created_by?: number | string | null;
+    updated_at?: string | null;
+    updated_by?: number | string | null;
 }
 
 export interface SupplierItem {
@@ -190,14 +203,19 @@ export interface SupplierItem {
 }
 
 export interface BatchItem {
+    product_id?: number | null;
     lot_number?: string;
     expiration_date?: string | null;
     quantity_received?: number | string;
+    branch_name?: string | null;
+    branch_code?: string | null;
+    created_on?: string | null;
+    source_reference?: string | null;
     shipment_id?: {
         date_received?: string;
         reference_number?: string;
     } | null;
-    branch_id?: {
+    branch_id?: number | {
         branch_name?: string;
         branch_code?: string;
     } | null;
