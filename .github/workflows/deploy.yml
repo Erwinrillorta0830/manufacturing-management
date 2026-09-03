@@ -1,14 +1,21 @@
-name: Deploy Next.js
+name: CI/CD Pipeline
 
 on:
+  pull_request:
+    branches: [master]
   push:
-    branches:
-      - main 
+    branches: [master]
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: self-hosted # <--- This tells GitHub to use your Ubuntu server
- 
+    name: Lint, Build, and Deploy
+    runs-on: self-hosted # Runs directly on your Ubuntu server
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +37,14 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8055
+          NEXT_PUBLIC_DIRECTUS_URL: http://localhost:8055
+          DIRECTUS_STATIC_TOKEN: placeholder
+          DIRECTUS_TOKEN: placeholder
+          NEXT_PUBLIC_DIRECTUS_STATIC_TOKEN: placeholder
 
       - name: Restart PM2
+        # Only run this step if we are pushing to master, not on pull requests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: pm2 restart "my-next-app" || pm2 start npm --name "my-next-app" -- start
