@@ -19,7 +19,7 @@ type CatalogMaterial = {
     product_id: number;
     product_code?: string;
     product_name: string;
-    description?: string;
+    description?: string | null;
     parent_id?: number | null;
     unit_of_measurement?: {
         unit_id: number;

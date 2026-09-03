@@ -29,6 +29,7 @@ import {
     validateProductWeightForProductType
 } from "../../packaging-weight";
 import { resolveParentSharedAttributes } from "../parent-inheritance";
+import { formatRawMaterialDescription } from "../description-format";
 
 function emptyPurchaseQaConfig(): PurchaseQaConfig {
     return { inspectionRequired: false, specifications: [] };
@@ -275,7 +276,6 @@ export function useRawMaterialForm(
     // Form fields
     const [formName, setFormName] = useState("");
     const [formCode, setFormCode] = useState("");
-    const [formDesc, setFormDesc] = useState("");
     const [formUom, setFormUom] = useState<number | "">("");
     const [formDensity, setFormDensity] = useState("");
     const [formWeight, setFormWeight] = useState("");
@@ -329,6 +329,12 @@ export function useRawMaterialForm(
             : undefined,
         [formParentId, rawMaterials]
     );
+
+    const descriptionProductName = selectedParent?.product_name || formName;
+    const generatedDescription = useMemo(() => {
+        const selectedUom = units.find(unit => unit.unit_id === Number(formUom));
+        return formatRawMaterialDescription(descriptionProductName, selectedUom);
+    }, [descriptionProductName, formUom, units]);
 
     const uomOptions = useMemo(() => {
         return units.map(u => ({
@@ -780,7 +786,6 @@ export function useRawMaterialForm(
         supplierLinkRequestId.current += 1;
         setFormName("");
         setFormCode("");
-        setFormDesc("");
         setFormUom("");
         setFormDensity("");
         setFormWeight("");
@@ -840,7 +845,6 @@ export function useRawMaterialForm(
     const populateForm = useCallback((item: RawMaterialItem) => {
         setFormName(item.product_name || "");
         setFormCode(item.product_code || "");
-        setFormDesc(item.description || "");
         setFormBarcode(item.barcode || "");
         setFormMaintainingQuantity(String(item.maintaining_quantity ?? 0));
         setFormProductImage(item.product_image || null);
@@ -1183,7 +1187,6 @@ export function useRawMaterialForm(
         const payload = {
             product_name: formName.trim(),
             product_code: normalizedCode,
-            description: formDesc.trim() || undefined,
             unit_of_measurement: Number(formUom),
             density_factor: parsedDensity,
             weight: parsedBaseWeight,
@@ -1264,8 +1267,8 @@ export function useRawMaterialForm(
         setFormName,
         formCode,
         setFormCode,
-        formDesc,
-        setFormDesc,
+        descriptionProductName,
+        generatedDescription,
         formUom,
         setFormUom: handlePrimaryUomChange,
         formDensity,

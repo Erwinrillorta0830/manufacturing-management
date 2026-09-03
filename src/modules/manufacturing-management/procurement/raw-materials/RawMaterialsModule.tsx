@@ -72,6 +72,7 @@ export default function RawMaterialsModule({
                 saving={formHook.saving}
                 submitError={formHook.submitError}
                 loadingUnits={formHook.loadingUnits}
+                units={formHook.units}
                 suppliers={suppliers}
                 showValidationErrors={formHook.showValidationErrors}
                 validationErrors={formHook.validationErrors}
@@ -79,8 +80,8 @@ export default function RawMaterialsModule({
                 setFormName={formHook.setFormName}
                 formCode={formHook.formCode}
                 setFormCode={formHook.setFormCode}
-                formDesc={formHook.formDesc}
-                setFormDesc={formHook.setFormDesc}
+                generatedDescription={formHook.generatedDescription}
+                descriptionProductName={formHook.descriptionProductName}
                 formUom={formHook.formUom}
                 setFormUom={formHook.setFormUom}
                 formDensity={formHook.formDensity}

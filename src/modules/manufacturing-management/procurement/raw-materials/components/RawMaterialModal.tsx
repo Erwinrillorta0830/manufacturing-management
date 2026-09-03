@@ -1,8 +1,9 @@
 import React from "react";
 import { X, Plus, Trash2, Loader2, Layers } from "lucide-react";
-import { 
+import {
     RawMaterialItem, 
     SupplierItem, 
+    UnitOption,
     SelectOption,
     PackagingVariantFormState,
     PurchaseQaConfig,
@@ -16,6 +17,7 @@ import { ProductImageField } from "./ProductImageField";
 import { PurchaseQaEditor } from "./PurchaseQaEditor";
 import { SupplierMultiSelect } from "./SupplierMultiSelect";
 import { isPackagingMaterialProductType } from "../../packaging-weight";
+import { formatRawMaterialDescription } from "../description-format";
 
 interface RawMaterialModalProps {
     isOpen: boolean;
@@ -24,6 +26,7 @@ interface RawMaterialModalProps {
     saving: boolean;
     submitError: string | null;
     loadingUnits: boolean;
+    units: UnitOption[];
     suppliers: SupplierItem[];
     showValidationErrors: boolean;
     validationErrors: RawMaterialValidationErrors;
@@ -31,8 +34,8 @@ interface RawMaterialModalProps {
     setFormName: (v: string) => void;
     formCode: string;
     setFormCode: (v: string) => void;
-    formDesc: string;
-    setFormDesc: (v: string) => void;
+    generatedDescription: string;
+    descriptionProductName: string;
     formUom: number | "";
     setFormUom: (v: number | "") => void;
     formDensity: string;
@@ -127,6 +130,7 @@ export function RawMaterialModal({
     editingItem,
     saving,
     submitError,
+    units,
     suppliers,
     showValidationErrors,
     validationErrors,
@@ -134,8 +138,8 @@ export function RawMaterialModal({
     setFormName,
     formCode,
     setFormCode,
-    formDesc,
-    setFormDesc,
+    generatedDescription,
+    descriptionProductName,
     formUom,
     setFormUom,
     formDensity,
@@ -713,14 +717,21 @@ export function RawMaterialModal({
                             </div>
 
                             <div className="space-y-1">
-                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Notes & Description</label>
+                                <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                    Generated Description
+                                </label>
                                 <input
                                     type="text"
-                                    placeholder="Add safety notes, storage instructions, or chemical details..."
-                                    value={formDesc}
-                                    onChange={e => setFormDesc(e.target.value)}
-                                    className="w-full p-1.5 border rounded-lg text-xs bg-background outline-none focus:ring-1 focus:ring-primary"
+                                    value={generatedDescription}
+                                    placeholder="Select a material name and UOM"
+                                    readOnly
+                                    aria-readonly="true"
+                                    data-testid="raw-material-generated-description"
+                                    className="w-full p-1.5 border rounded-lg text-xs font-semibold uppercase bg-muted/40 text-foreground outline-none"
                                 />
+                                <p className="text-[10px] text-muted-foreground">
+                                    Automatically generated as Product Name - UOM. Use Regulatory Notes for additional details.
+                                </p>
                             </div>
                         </div>
 
@@ -850,6 +861,8 @@ export function RawMaterialModal({
                                         const cleanSuffix = v.codeSuffix.trim() || `${uomShortcut.toUpperCase()}${v.count}`;
                                         const variantNamePreview = formName.trim() || "Material";
                                         const variantIdentityPreview = `${variantNamePreview} - ${uomShortcut.toUpperCase()}`;
+                                        const variantUom = units.find(unit => unit.unit_id === Number(v.uomId));
+                                        const variantDescription = formatRawMaterialDescription(descriptionProductName, variantUom);
                                         const variantCodePreview = `${formCode.trim() || "SKU"}-${cleanSuffix}`;
                                         const variantComponentsComplete = v.netWeight.trim() !== "" && v.outerCartonWeight.trim() !== "" && v.palletWeight.trim() !== "";
                                         const calculatedWeight = variantComponentsComplete
@@ -885,6 +898,9 @@ export function RawMaterialModal({
 
                                                 <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
                                                     <span>Generated identity: <span className="font-semibold text-foreground">{variantIdentityPreview}</span></span>
+                                                    <span data-testid={`raw-material-variant-description-${vIdx}`}>
+                                                        Generated description: <span className="font-semibold text-foreground">{variantDescription || "Select an Outer UOM"}</span>
+                                                    </span>
                                                     <span className="font-semibold text-foreground">Classification: {classificationLabel} <span className="font-normal text-muted-foreground">(inherited)</span></span>
                                                     <label className={`flex items-center gap-1.5 px-2 py-1 rounded-md border font-bold cursor-pointer ${v.isActive ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700" : "bg-rose-500/10 border-rose-500/25 text-rose-700"}`}>
                                                         <input
