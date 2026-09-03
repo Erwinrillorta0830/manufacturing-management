@@ -45,7 +45,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
             "filter[invoice_no][_eq]": String(invoiceId), fields: "detail_id,product_id,unit_price,quantity,discount_amount,gross_amount,total_amount", limit: "-1",
         }));
         const productIds = [...new Set(detailRows.map((detail) => Number(detail.product_id)).filter(Boolean))];
-        const [orders, customers, salesmen, terms, types, products, templates] = await Promise.all([
+        const [orders, customers, salesmen, terms, types, products, templates, batchRows] = await Promise.all([
             rows("sales_order", new URLSearchParams({ "filter[order_id][_eq]": String(invoice.order_id), fields: "order_id,order_no,po_no", limit: "1" })),
             rows("customer", new URLSearchParams({ "filter[customer_code][_eq]": String(invoice.customer_code || ""), fields: "customer_code,customer_name,store_name,customer_tin,brgy,city,province", limit: "1" })),
             invoice.salesman_id ? rows("salesman", new URLSearchParams({ "filter[id][_eq]": String(invoice.salesman_id), fields: "id,salesman_name", limit: "1" })) : [],
@@ -53,6 +53,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
             invoice.invoice_type ? rows("sales_invoice_type", new URLSearchParams({ "filter[id][_eq]": String(invoice.invoice_type), fields: "id,type,isOfficial,max_length", limit: "1" })) : [],
             productIds.length ? rows("products", new URLSearchParams({ "filter[product_id][_in]": productIds.join(","), fields: "product_id,product_code,product_name,description,unit_of_measurement.unit_shortcut", limit: "-1" })) : [],
             invoice.invoice_type ? templateRows(new URLSearchParams({ "filter[sales_invoice_type_id][_eq]": String(invoice.invoice_type), fields: "id,template_config", limit: "1" })) : [],
+            rows("sales_invoice_batches", new URLSearchParams({ "filter[invoice_id][_eq]": String(invoiceId), fields: "id,invoice_detail_id,product_id,inventory_lot_id,batch_no,quantity", limit: "-1" })).catch(() => []),
         ]);
         const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
         const customer = customers[0];
@@ -84,6 +85,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
                 const product = productMap.get(Number(detail.product_id));
                 const gross = Number(detail.gross_amount || Number(detail.quantity) * Number(detail.unit_price));
                 const discount = Number(detail.discount_amount || 0);
+                const lineBatches = batchRows
+                    .filter((b) => Number(b.invoice_detail_id) === Number(detail.detail_id))
+                    .map((b) => ({
+                        batchNo: String(b.batch_no || ""),
+                        quantity: Number(b.quantity || 0),
+                        inventoryLotId: Number(b.inventory_lot_id || 0),
+                    }));
                 return {
                     detailId: Number(detail.detail_id),
                     productCode: String(product?.product_code || ""),
@@ -94,6 +102,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
                     discountAmount: discount,
                     grossAmount: gross,
                     netAmount: Number(detail.total_amount ?? gross - discount),
+                    batches: lineBatches,
                 };
             }),
             totals: {

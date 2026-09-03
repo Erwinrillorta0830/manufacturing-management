@@ -14,6 +14,7 @@ export interface LotAllocationDetail {
     expiryDate: string | null;
     manufacturingDate: string | null;
     quantity: number;
+    pickedQuantity?: number;
     inventoryLotId?: number;
     reservationIds?: number[];
     status?: string;
@@ -106,6 +107,7 @@ export async function GET(req: NextRequest) {
             product_id?: number;
             inventory_lot_id: number | { id?: number; inventory_lot_id?: number; lot_id?: number | { lot_id?: number; lot_name?: string }; batch_no?: string; lot_number?: string; expiry_date?: string; manufacturing_date?: string };
             quantity: number;
+            picked_quantity?: number;
             status?: string;
         }> = [];
 
@@ -117,10 +119,16 @@ export async function GET(req: NextRequest) {
                         { status: { _in: ["Reserved", "Picked", "Consumed"] } },
                     ],
                 }));
-                const soRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,status&limit=-1`,
+                let soRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=*&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
+                if (!soRes.ok) {
+                    soRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,status&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                }
                 if (soRes.ok) {
                     const rData = (await soRes.json()).data || [];
                     for (const row of rData) {
@@ -131,6 +139,7 @@ export async function GET(req: NextRequest) {
                             product_id: Number(row.product_id || productByDetail.get(Number(row.sales_order_detail_id)) || 0),
                             inventory_lot_id: row.inventory_lot_id,
                             quantity: Number(row.reserved_quantity ?? row.quantity ?? 0),
+                            picked_quantity: Number(row.picked_quantity ?? (row.status === "Picked" ? (row.reserved_quantity ?? row.quantity ?? 0) : 0)),
                             status: row.status,
                         });
                     }
@@ -337,13 +346,20 @@ export async function GET(req: NextRequest) {
                 const key = `${productId}:${lotId}:${batchNo}:${expiryDate || ""}`;
                 const existing = allocationMap.get(key);
                 const qty = Number(reservation.quantity || 0);
+                const isResPicked = reservation.status === "Picked";
+                const resPickedQty = isResPicked ? qty : Number(reservation.picked_quantity || 0);
                 const resId = Number(reservation.id || 0);
                 if (existing) {
                     existing.quantity += qty;
+                    existing.pickedQuantity = (existing.pickedQuantity || 0) + resPickedQty;
                     if (resId && existing.reservationIds && !existing.reservationIds.includes(resId)) {
                         existing.reservationIds.push(resId);
                     }
-                    if (reservation.status === "Reserved") {
+                    if (existing.pickedQuantity >= existing.quantity && existing.quantity > 0) {
+                        existing.status = "Picked";
+                    } else if (existing.pickedQuantity > 0) {
+                        existing.status = "Partial";
+                    } else {
                         existing.status = "Reserved";
                     }
                 } else {
@@ -356,9 +372,10 @@ export async function GET(req: NextRequest) {
                         expiryDate,
                         manufacturingDate,
                         quantity: qty,
+                        pickedQuantity: resPickedQty,
                         inventoryLotId: invLotId,
                         reservationIds: resId ? [resId] : [],
-                        status: reservation.status || "Reserved",
+                        status: isResPicked ? "Picked" : (resPickedQty > 0 ? "Partial" : "Reserved"),
                     });
                 }
             }

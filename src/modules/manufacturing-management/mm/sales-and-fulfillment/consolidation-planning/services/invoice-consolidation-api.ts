@@ -167,11 +167,14 @@ export async function startPicking(batchId: number): Promise<{ success: boolean;
     return handleResponse(res, "Failed to start picking");
 }
 
-export async function completePicking(batchId: number): Promise<{ success: boolean; message: string; status: string }> {
+export async function completePicking(
+    batchId: number,
+    orderDistributions?: Array<{ orderId: number; invoiceId?: number; productId: number; pickedQuantity: number }>
+): Promise<{ success: boolean; message: string; status: string }> {
     const res = await fetchWithSessionRetry("/api/manufacturing/invoice-consolidation/pick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batchId, action: "complete" }),
+        body: JSON.stringify({ batchId, action: "complete", orderDistributions }),
     });
     return handleResponse(res, "Failed to complete picking");
 }
