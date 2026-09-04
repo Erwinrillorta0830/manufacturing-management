@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Building2, Calendar, FileCheck2, FileText, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
@@ -72,11 +72,11 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     }, [onClose]);
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
 
-    const getLineInvoiceQty = (productId: number, fallback: number): number => {
+    const getLineInvoiceQty = useCallback((productId: number, fallback: number): number => {
         const val = lineInvoiceQtys[productId];
         if (val === undefined || val === "") return fallback;
         return Number(val) || 0;
-    };
+    }, [lineInvoiceQtys]);
 
     const handleLineInvoiceQtyChange = (productId: number, rawVal: string, maxQty: number) => {
         if (rawVal === "") {
@@ -126,7 +126,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             grandTotal,
             lineQtyMap,
         };
-    }, [candidate, availability, lineInvoiceQtys]);
+    }, [candidate, availability, lineInvoiceQtys, getLineInvoiceQty]);
 
     const shortfallLines = useMemo(() => {
         if (!availability) return [];
@@ -192,7 +192,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             }
         }
         return list;
-    }, [availability, candidate.details, lineInvoiceQtys]);
+    }, [availability, candidate.details, lineInvoiceQtys, getLineInvoiceQty]);
 
     const downloadReceipt = async (invoice: PrintableInvoice) => {
         const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
@@ -295,7 +295,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             if (!cancelled) setLoadingAvailability(false);
         });
         return () => { cancelled = true; };
-    }, [candidate.order_id, candidate.details]);
+    }, [candidate.order_id, candidate.order_no, candidate.details]);
 
     useEffect(() => {
         return () => {
