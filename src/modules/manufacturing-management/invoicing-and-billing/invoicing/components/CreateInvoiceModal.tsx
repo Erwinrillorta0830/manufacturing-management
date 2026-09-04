@@ -126,7 +126,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             grandTotal,
             lineQtyMap,
         };
-    }, [candidate, availability, lineInvoiceQtys, getLineInvoiceQty]);
+    }, [candidate, availability, getLineInvoiceQty]);
 
     const shortfallLines = useMemo(() => {
         if (!availability) return [];
@@ -192,7 +192,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             }
         }
         return list;
-    }, [availability, candidate.details, lineInvoiceQtys, getLineInvoiceQty]);
+    }, [availability, candidate.details, getLineInvoiceQty]);
 
     const downloadReceipt = async (invoice: PrintableInvoice) => {
         const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
