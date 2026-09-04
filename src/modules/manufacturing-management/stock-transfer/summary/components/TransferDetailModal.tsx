@@ -207,7 +207,6 @@ export function TransferDetailModal({
                   {group.items.map((item: OrderGroupItem) => {
                     const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
                     const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
-                    const barcode = product?.barcode || '—';
                     const unitPrice = calculateUnitPrice(item);
 
                     const productImage = getAssetUrl(product?.product_image);

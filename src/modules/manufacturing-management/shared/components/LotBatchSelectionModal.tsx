@@ -704,8 +704,7 @@ export function LotBatchSelectionModal({
     }, 0);
   }, [lotGroups]);
 
-  const quantityDifference = requestedQuantity - totalAllocated;
-  const isQuantityBalanced = totalAllocated === requestedQuantity;
+
 
   // Add a new storage lot allocation group
   const handleAddLotGroup = () => {

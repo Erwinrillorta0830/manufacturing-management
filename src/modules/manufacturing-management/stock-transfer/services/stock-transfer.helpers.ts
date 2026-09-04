@@ -181,7 +181,6 @@ export function formatQuantity(val: unknown): string {
 export function resolveBranchSalesman(
   branchId: number | string | null | undefined,
   branches: BranchRow[],
-  _getUserName?: (userId?: number | string | null) => string,
 ): string | undefined {
   if (!branchId) {
     console.log('[resolveBranchSalesman:Debug] No branchId provided.');

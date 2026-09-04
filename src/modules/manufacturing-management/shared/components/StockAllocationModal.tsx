@@ -63,7 +63,7 @@ export function StockAllocationModal({
   productId,
   productName,
   branchId,
-  targetBranchId,
+  targetBranchId: _targetBranchId,
   targetBranchName,
   isTargetBadStock,
   requestedQuantity,

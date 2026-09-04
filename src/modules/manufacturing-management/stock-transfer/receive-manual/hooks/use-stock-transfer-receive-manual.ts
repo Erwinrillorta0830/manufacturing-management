@@ -244,7 +244,7 @@ export function useStockTransferReceiveManual() {
             const rawItems = currentBaseGroup?.items || [];
 
             // Pre-assign destination lot (auto-fill target bad stock lot if target is bad branch, or match source lot in target branch)
-            const targetBranchObj = typeof (currentBaseGroup?.items?.[0]?.target_branch_id) === 'object' ? (currentBaseGroup?.items?.[0]?.target_branch_id as any) : null;
+            const targetBranchObj = typeof (currentBaseGroup?.items?.[0]?.target_branch_id) === 'object' && currentBaseGroup?.items?.[0]?.target_branch_id !== null ? (currentBaseGroup.items[0].target_branch_id as BranchRow) : null;
             const targetBranchName = currentBaseGroup?.targetBranchName || targetBranchObj?.branch_name || targetBranchObj?.name || '';
             const isTargetBadBranch = isBadStockLot(undefined, { branch_name: targetBranchName });
 
@@ -307,7 +307,7 @@ export function useStockTransferReceiveManual() {
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup?.targetBranch, base.selectedOrderNo]);
+  }, [selectedGroup?.targetBranch, base.selectedOrderNo, base.baseOrderGroups]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);

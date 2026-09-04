@@ -124,10 +124,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
     currentPage * itemsPerPage
   ) || [];
 
-  const isAllReceived = selectedGroup?.items.every((i: OrderGroupItem) => {
-    const targetQty = Math.max(0, i.scanned_quantity ?? i.picked_quantity ?? i.allocated_quantity ?? 0);
-    return (receivedQtys[i.id] ?? 0) >= targetQty;
-  }) ?? false;
+
 
   return (
     <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">

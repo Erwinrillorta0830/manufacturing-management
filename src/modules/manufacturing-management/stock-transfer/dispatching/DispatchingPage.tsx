@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Truck, ScanLine, Loader2, CheckCircle2, Radar, Edit2, Layers, FileText } from 'lucide-react';
+import { Truck, ScanLine, Loader2, Radar, Edit2, Layers, FileText } from 'lucide-react';
 import { useStockTransferDispatch } from './hooks/use-stock-transfer-dispatch';
 import { cn } from '@/lib/utils';
 import { ScanHistorySidebar } from '../shared/components/ScanHistorySidebar';

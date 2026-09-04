@@ -24,11 +24,13 @@ export function QuantityStepper({
   size = 'md'
 }: QuantityStepperProps) {
   const isSm = size === 'sm';
+  const [prevValue, setPrevValue] = useState(value);
   const [localVal, setLocalVal] = useState<string>(String(value ?? 0));
 
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value);
     setLocalVal(String(value ?? 0));
-  }, [value]);
+  }
 
   const handleDecrement = (e: React.MouseEvent) => {
     e.stopPropagation();

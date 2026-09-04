@@ -26,7 +26,7 @@ import { ProductSelectionModal } from '../shared/components/ProductSelectionModa
 import { EnrichedProduct } from '../types/stock-transfer.types';
 import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 
-export default function StockTransferRequestView({ salesmanName }: { salesmanName?: string }) {
+export default function StockTransferRequestView({ salesmanName: _salesmanName }: { salesmanName?: string }) {
   const {
     branches,
     loading,

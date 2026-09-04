@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PackageOpen, Printer, Loader2, CheckCircle2, Radar, Edit2, Layers, AlertTriangle } from 'lucide-react';
+import { PackageOpen, Printer, Loader2, Radar, Edit2, Layers, AlertTriangle } from 'lucide-react';
 import { useStockTransferReceive } from './hooks/use-stock-transfer-receive';
 import { OrderGroupItem, ProductRow, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';

@@ -1,6 +1,6 @@
 "use client";
 
-import  { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -164,11 +164,11 @@ export function StockConversionModal({
   }, [rawBranchOnhand, lots, activeDraftTargetAllocations, rawBranchInvLots]);
 
   // Auto-generate batch number helper
-  const generateBatchNo = () => {
+  const generateBatchNo = useCallback(() => {
     const dateStr = getPhCurrentTimestamp().slice(0, 10).replace(/-/g, "");
     const rand = Math.floor(1000 + Math.random() * 9000);
     return `CONV-${dateStr}-${rand}`;
-  };
+  }, []);
 
   useEffect(() => {
     if (isOpen && product) {

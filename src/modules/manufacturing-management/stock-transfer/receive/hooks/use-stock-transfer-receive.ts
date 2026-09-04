@@ -282,7 +282,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
           if (activeLots.length > 0) {
             const tempMap = buildLotStoredProductSummaryMap(onhand || [], activeLots, undefined, invLots || []);
             // Pre-assign destination lot (auto-fill target bad stock lot if target is bad branch, or match source lot in target branch)
-            const targetBranchObj = typeof (selectedGroup?.items?.[0]?.target_branch_id) === 'object' ? (selectedGroup?.items?.[0]?.target_branch_id as any) : null;
+            const targetBranchObj = typeof (selectedGroup?.items?.[0]?.target_branch_id) === 'object' && selectedGroup?.items?.[0]?.target_branch_id !== null ? (selectedGroup.items[0].target_branch_id as BranchRow) : null;
             const targetBranchName = selectedGroup?.targetBranchName || targetBranchObj?.branch_name || targetBranchObj?.name || '';
             const isTargetBadBranch = isBadStockLot(undefined, { branch_name: targetBranchName });
 
@@ -345,7 +345,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup?.targetBranch, selectedGroup?.items]);
+  }, [selectedGroup?.targetBranch, selectedGroup?.targetBranchName, selectedGroup?.items]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);

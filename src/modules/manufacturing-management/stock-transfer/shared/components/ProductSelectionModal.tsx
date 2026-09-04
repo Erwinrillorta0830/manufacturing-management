@@ -34,11 +34,13 @@ function ProductCardImage({
   alt: string;
   fallbackText?: string;
 }) {
+  const [prevImgUrl, setPrevImgUrl] = useState(imgUrl);
   const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
+  if (imgUrl !== prevImgUrl) {
+    setPrevImgUrl(imgUrl);
     setLoadError(false);
-  }, [imgUrl]);
+  }
 
   if (!imgUrl) {
     return (
@@ -81,11 +83,13 @@ function CartItemThumbnail({
   alt: string;
   fallbackText?: string;
 }) {
+  const [prevImgUrl, setPrevImgUrl] = useState(imgUrl);
   const [loadError, setLoadError] = useState(false);
 
-  useEffect(() => {
+  if (imgUrl !== prevImgUrl) {
+    setPrevImgUrl(imgUrl);
     setLoadError(false);
-  }, [imgUrl]);
+  }
 
   if (!imgUrl || loadError) {
     return (
