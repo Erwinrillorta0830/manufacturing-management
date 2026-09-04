@@ -60,11 +60,11 @@ export async function GET(req: NextRequest) {
 
         const [soRes, siRes] = await Promise.all([
             fetch(
-                `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=product_id,inventory_lot_id,reserved_quantity&limit=-1`,
+                `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=product_id,inventory_lot_id,reserved_quantity&limit=-1`,
                 { headers: directusHeaders, cache: "no-store" }
             ),
             fetch(
-                `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.quantity,quantity&limit=-1`,
+                `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=inventory_lot_id.id,inventory_lot_id.product_id,inventory_lot_id.quantity,quantity&limit=-1`,
                 { headers: directusHeaders, cache: "no-store" }
             ),
         ]);

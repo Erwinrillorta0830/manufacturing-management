@@ -110,7 +110,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const receivingsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&filter=${encodeURIComponent(
             JSON.stringify({ purchase_order_id: { _in: poIds } })
-        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted`;
+        )}&fields=purchase_order_id,receipt_no,receipt_date,total_amount,received_quantity,unit_price,isPosted,is_posted_amounts,is_reverted,purchase_order_product_id,product_id`;
 
         const receivingsRes = await fetch(receivingsUrl, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
@@ -120,6 +120,61 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         if (!receivingsRes.ok) throw new Error(await receivingsRes.text());
 
         const receivingsData = (await receivingsRes.json()).data || [];
+
+        const productIds = new Set<number>();
+        const popIds = new Set<number>();
+
+        for (const r of receivingsData) {
+            const pId = typeof r.product_id === 'object' ? Number(r.product_id?.product_id || r.product_id?.id) : Number(r.product_id);
+            if (!Number.isNaN(pId) && pId > 0) productIds.add(pId);
+            
+            const popId = typeof r.purchase_order_product_id === 'object' ? Number(r.purchase_order_product_id?.purchase_order_product_id || r.purchase_order_product_id?.id) : Number(r.purchase_order_product_id);
+            if (!Number.isNaN(popId) && popId > 0) popIds.add(popId);
+        }
+
+        const popToProductMap = new Map<number, number>();
+
+        if (popIds.size > 0) {
+            const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?limit=-1&filter=${encodeURIComponent(
+                JSON.stringify({ purchase_order_product_id: { _in: Array.from(popIds) } })
+            )}&fields=purchase_order_product_id,product_id`;
+            
+            const popRes = await fetch(popUrl, {
+                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
+                cache: "no-store"
+            });
+            if (popRes.ok) {
+                const popData = (await popRes.json()).data || [];
+                for (const pop of popData) {
+                    const pId = typeof pop.product_id === 'object' ? Number(pop.product_id?.product_id || pop.product_id?.id) : Number(pop.product_id);
+                    if (!Number.isNaN(pId) && pId > 0) {
+                        popToProductMap.set(Number(pop.purchase_order_product_id), pId);
+                        productIds.add(pId);
+                    }
+                }
+            }
+        }
+
+        const productTypeMap = new Map<number, number>();
+        if (productIds.size > 0) {
+            const productsUrl = `${DIRECTUS_URL}/items/products?limit=-1&filter=${encodeURIComponent(
+                JSON.stringify({ product_id: { _in: Array.from(productIds) } })
+            )}&fields=product_id,product_type`;
+            
+            const productsRes = await fetch(productsUrl, {
+                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
+                cache: "no-store"
+            });
+            if (productsRes.ok) {
+                const productsData = (await productsRes.json()).data || [];
+                for (const p of productsData) {
+                    const pType = typeof p.product_type === 'object' ? p.product_type?.id : p.product_type;
+                    if (pType !== undefined && pType !== null) {
+                        productTypeMap.set(Number(p.product_id), Number(pType));
+                    }
+                }
+            }
+        }
 
         const activeReceivingsByPoId = activeReceivingRowsByPurchaseOrder(receivingsData);
         const postedReceivingsByPoId = postedReceivingRowsByPurchaseOrder(receivingsData);
@@ -132,6 +187,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             date: string | null;
             amountDue: number;
             type: string;
+            breakdown?: { productType: number | null, amount: number }[];
         }> = [];
 
         for (const po of poList) {
@@ -171,17 +227,37 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             // Standard POs: Only receipt rows posted to inventory and to financial amounts
             // may contribute to the disbursement selection list.
             const receivings = postedReceivingsByPoId.get(poId) || [];
-            const grouped: Record<string, { transDate: string | null, totalLiability: number }> = {};
+            const grouped: Record<string, { transDate: string | null, totalLiability: number, breakdown: Record<string, number> }> = {};
 
             for (const por of receivings) {
                 const rNo = por.receipt_no || "NO-RECEIPT";
                 if (!grouped[rNo]) {
-                    grouped[rNo] = { transDate: null, totalLiability: 0 };
+                    grouped[rNo] = { transDate: null, totalLiability: 0, breakdown: {} };
                 }
                 const amt = por.total_amount !== null && por.total_amount !== undefined
                     ? Number(por.total_amount)
                     : (Number(por.received_quantity || 0) * Number(por.unit_price || 0));
-                grouped[rNo].totalLiability += amt || 0;
+                
+                const actualAmt = amt || 0;
+                grouped[rNo].totalLiability += actualAmt;
+                
+                let productType: number | null = null;
+                const rPId = typeof por.product_id === 'object' ? Number(por.product_id?.product_id || por.product_id?.id) : Number(por.product_id);
+                const popId = typeof por.purchase_order_product_id === 'object' ? Number(por.purchase_order_product_id?.purchase_order_product_id || por.purchase_order_product_id?.id) : Number(por.purchase_order_product_id);
+                
+                let resolvedProductId = null;
+                if (!Number.isNaN(rPId) && rPId > 0) {
+                    resolvedProductId = rPId;
+                } else if (!Number.isNaN(popId) && popId > 0) {
+                    resolvedProductId = popToProductMap.get(popId);
+                }
+
+                if (resolvedProductId) {
+                    productType = productTypeMap.get(resolvedProductId) || null;
+                }
+
+                const key = productType !== null ? String(productType) : "null";
+                grouped[rNo].breakdown[key] = (grouped[rNo].breakdown[key] || 0) + actualAmt;
 
                 const currentDateStr = por.receipt_date || null;
                 if (currentDateStr) {
@@ -197,6 +273,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 const remainingDue = Math.max(0, data.totalLiability);
 
                 if (remainingDue > 0.01) {
+                    const breakdownArray = Object.entries(data.breakdown).map(([key, amount]) => ({
+                        productType: key === "null" ? null : Number(key),
+                        amount: Number(Math.max(0, amount).toFixed(2))
+                    })).filter(b => b.amount > 0);
+
                     unpaidPos.push({
                         uniqueKey: `${poNo}-${receiptNo}`,
                         poId,
@@ -204,7 +285,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                         receiptNo,
                         date: data.transDate || (po.date ? po.date.split("T")[0] : null),
                         amountDue: Number(remainingDue.toFixed(2)),
-                        type: "RECEIPT"
+                        type: "RECEIPT",
+                        breakdown: breakdownArray
                     });
                 }
             }

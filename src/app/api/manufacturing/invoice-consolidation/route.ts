@@ -407,7 +407,7 @@ export async function POST(req: NextRequest) {
             const detData = detCheck;
             if (detailIds.length > 0) {
                 const reservationRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_eq]=Reserved&fields=sales_order_detail_id,reserved_quantity,quantity&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=sales_order_detail_id,reserved_quantity,quantity&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
                 if (reservationRes.ok) {

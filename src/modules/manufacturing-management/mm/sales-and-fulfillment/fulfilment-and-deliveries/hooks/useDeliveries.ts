@@ -21,25 +21,21 @@ export function computePreviewStatus(
         ordered_quantity: number;
         received_quantity: number;
         returned_quantity: number;
-        has_concern: boolean;
+        has_concern?: boolean;
         concern_notes?: string;
     }[]
 ): FulfillmentStatus {
     const totalOrdered = items.reduce((sum, i) => sum + Number(i.ordered_quantity || 0), 0);
     const totalReceived = items.reduce((sum, i) => sum + Number(i.received_quantity || 0), 0);
     const totalReturned = items.reduce((sum, i) => sum + Number(i.returned_quantity || 0), 0);
-    const hasAnyConcern = items.some((i) => Boolean(i.has_concern));
 
     if (totalReceived === 0 && totalReturned === totalOrdered) {
-        return "Unfulfilled";
+        return "Unfulfilled / Returns";
     }
     if (totalReceived > 0 && totalReturned > 0) {
         return "Fulfilled with Returns";
     }
-    if (totalReturned === 0 && totalReceived === totalOrdered && hasAnyConcern) {
-        return "Fulfilled with Concern";
-    }
-    if (totalReceived === totalOrdered && totalReturned === 0 && !hasAnyConcern) {
+    if (totalReceived === totalOrdered && totalReturned === 0) {
         return "Fulfilled";
     }
     if (totalReceived === 0 && totalReturned === 0) {

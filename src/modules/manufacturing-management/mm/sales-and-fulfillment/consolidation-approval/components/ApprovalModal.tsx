@@ -446,6 +446,15 @@ export function ApprovalModal({
                                                             <span className="font-mono text-emerald-600 font-bold">
                                                                 Picked: {prodItem.totalPicked} {prodItem.unit}
                                                             </span>
+                                                            {prodItem.totalPicked < prodItem.totalOrdered && (
+                                                                <>
+                                                                    <span>•</span>
+                                                                    <span className="inline-flex items-center gap-1 font-bold text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                                                        <AlertCircle className="h-3 w-3 shrink-0" />
+                                                                        Shortfall: {prodItem.totalOrdered - prodItem.totalPicked} {prodItem.unit}
+                                                                    </span>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -468,39 +477,87 @@ export function ApprovalModal({
                                                 </div>
                                             </div>
 
-                                            {prodAllocs.length > 0 && (
-                                                <div className="mt-3.5 pt-3 border-t border-border/40">
-                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
-                                                        <Layers className="h-3 w-3" />
-                                                        Allocated Storage Lots ({prodAllocs.length})
-                                                    </p>
-                                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                                        {prodAllocs.map((alloc, idx) => {
-                                                            const orderMatches = getLotOrderLabels(prodItem.orders, prodAllocs, idx);
+                                            {prodAllocs.length > 0 && (() => {
+                                                const pickedLotsCount = prodAllocs.filter((a) => {
+                                                    const cap = Number(a.quantity || 0);
+                                                    const p = a.pickedQuantity !== undefined ? Number(a.pickedQuantity) : (a.status === "Picked" ? cap : 0);
+                                                    return p >= cap && cap > 0;
+                                                }).length;
 
-                                                            return (
-                                                                <div
-                                                                    key={`${alloc.batchNo}-${idx}`}
-                                                                    className="rounded-lg border border-border/60 bg-background/60 p-2.5 text-xs"
-                                                                >
-                                                                    <div className="flex items-center justify-between font-bold text-foreground">
-                                                                        <span className="truncate">{alloc.lotName || `Lot #${alloc.lotId}`}</span>
-                                                                        <span className="font-mono text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[11px]">
-                                                                            {alloc.quantity} units
-                                                                        </span>
-                                                                    </div>
-                                                                    <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-                                                                        <span>Batch: {alloc.batchNo || "N/A"}</span>
-                                                                        {alloc.expiryDate && (
-                                                                            <span>Exp: {alloc.expiryDate}</span>
+                                                return (
+                                                    <div className="mt-3.5 pt-3 border-t border-border/40">
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
+                                                            <span className="flex items-center gap-1">
+                                                                <Layers className="h-3 w-3" />
+                                                                Allocated Storage Lots ({prodAllocs.length})
+                                                            </span>
+                                                            <span className="text-[10px] font-semibold text-muted-foreground normal-case">
+                                                                {pickedLotsCount} picked of {prodAllocs.length} lots
+                                                            </span>
+                                                        </div>
+                                                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                                            {prodAllocs.map((alloc, idx) => {
+                                                                const orderMatches = getLotOrderLabels(prodItem.orders, prodAllocs, idx);
+                                                                const lotCapacity = Number(alloc.quantity || 0);
+                                                                const lotPicked = alloc.pickedQuantity !== undefined
+                                                                    ? Number(alloc.pickedQuantity)
+                                                                    : (alloc.status === "Picked" ? lotCapacity : 0);
+                                                                const lotShortfall = Math.max(0, lotCapacity - lotPicked);
+                                                                const isLotFullyPicked = lotPicked >= lotCapacity && lotCapacity > 0;
+                                                                const isLotPartial = lotPicked > 0 && lotPicked < lotCapacity;
+
+                                                                return (
+                                                                    <div
+                                                                        key={`${alloc.batchNo}-${idx}`}
+                                                                        className={`rounded-xl border p-2.5 text-xs transition-all ${
+                                                                            isLotFullyPicked
+                                                                                ? "border-emerald-500/40 bg-emerald-500/5 dark:bg-emerald-950/15"
+                                                                                : isLotPartial
+                                                                                ? "border-amber-500/50 bg-amber-500/10 dark:bg-amber-950/20"
+                                                                                : "border-amber-500/40 bg-amber-500/5 dark:bg-amber-950/10 opacity-90"
+                                                                        }`}
+                                                                    >
+                                                                        <div className="flex items-center justify-between font-bold text-foreground">
+                                                                            <span className={`truncate ${isLotFullyPicked ? "text-foreground font-bold" : "text-foreground"}`}>
+                                                                                {alloc.lotName || `Lot #${alloc.lotId}`}
+                                                                            </span>
+                                                                            <span className={`font-mono px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                                                                isLotFullyPicked
+                                                                                    ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 border-emerald-500/30"
+                                                                                    : isLotPartial
+                                                                                    ? "text-amber-700 dark:text-amber-300 bg-amber-500/20 border-amber-500/40"
+                                                                                    : "text-amber-700 dark:text-amber-300 bg-amber-500/15 border-amber-500/30"
+                                                                            }`}>
+                                                                                {isLotFullyPicked
+                                                                                    ? `Picked: ${lotCapacity} / ${lotCapacity} units`
+                                                                                    : `Picked: ${lotPicked} / ${lotCapacity} units`}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+                                                                            <span>Batch: {alloc.batchNo || "N/A"}</span>
+                                                                            {alloc.expiryDate && (
+                                                                                <span>Exp: {alloc.expiryDate}</span>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {/* Dynamic Shortfall Callout */}
+                                                                        {lotShortfall > 0 && (
+                                                                            <div className="mt-1.5 flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/25 px-1.5 py-0.5 rounded">
+                                                                                <AlertCircle className="h-3 w-3 shrink-0" />
+                                                                                <span>Shortfall: -{lotShortfall} units unpicked</span>
+                                                                            </div>
                                                                         )}
-                                                                    </div>
+
                                                                     {orderMatches.length > 0 && (
                                                                         <div className="flex flex-wrap items-center gap-1 mt-1.5 pt-1.5 border-t border-border/40">
                                                                             {orderMatches.map((m, mIdx) => (
                                                                                 <span
                                                                                     key={mIdx}
-                                                                                    className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border bg-muted/70 border-border/80 text-foreground/80"
+                                                                                    className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                                                                        isLotFullyPicked
+                                                                                            ? "bg-emerald-600/10 border-emerald-600/20 text-emerald-800 dark:text-emerald-200"
+                                                                                            : "bg-muted/70 border-border/80 text-foreground/70"
+                                                                                    }`}
                                                                                 >
                                                                                     <FileText className="h-2.5 w-2.5 text-primary shrink-0" />
                                                                                     <span>For {m.orderNo}</span>
@@ -515,7 +572,8 @@ export function ApprovalModal({
                                                         })}
                                                     </div>
                                                 </div>
-                                            )}
+                                            );
+                                        })()}
                                         </motion.div>
                                     );
                                 })

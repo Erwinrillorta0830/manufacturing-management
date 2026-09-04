@@ -157,11 +157,14 @@ export async function startPicking(batchId: number): Promise<{ success: boolean;
     return handleResponse(res, "Failed to start picking");
 }
 
-export async function completePicking(batchId: number): Promise<{ success: boolean; message: string; status: string }> {
+export async function completePicking(
+    batchId: number,
+    orderDistributions?: import("./consolidation-types").OrderDistributionItem[]
+): Promise<{ success: boolean; message: string; status: string }> {
     const res = await fetchWithSessionRetry(`${BASE}/consolidation-picking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batchId, action: "complete" }),
+        body: JSON.stringify({ batchId, action: "complete", orderDistributions }),
     });
     return handleResponse(res, "Failed to complete picking");
 }
@@ -192,6 +195,7 @@ export interface LotAllocation {
     expiryDate: string | null;
     manufacturingDate: string | null;
     quantity: number;
+    pickedQuantity?: number;
     inventoryLotId?: number;
     reservationIds?: number[];
     status?: string;

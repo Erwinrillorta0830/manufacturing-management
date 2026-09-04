@@ -403,13 +403,13 @@ export async function getInvoiceReservationSummaries(branchId: number, search?: 
         const soFilter = encodeURIComponent(JSON.stringify({
             _and: [
                 { sales_order_detail_id: { _in: detailIds } },
-                { status: { _eq: "Reserved" } },
+                { status: { _in: ["Reserved", "Picked"] } },
             ],
         }));
         const siFilter = encodeURIComponent(JSON.stringify({
             _and: [
                 { sales_invoice_detail_id: { _in: detailIds } },
-                { status: { _eq: "Reserved" } },
+                { status: { _in: ["Reserved", "Picked"] } },
             ],
         }));
         const [soRes, siRes] = await Promise.all([
@@ -688,7 +688,6 @@ async function fetchLotsAndMovements(productIds: number[], branchId?: number): P
 
         if (branchId && bId && bId !== branchId) continue;
         if (!pId || !productIdSet.has(pId)) continue;
-        if (onhandTotal <= 0) continue;
 
         const masterLot = masterLotMap.get(lId);
         const expDate = String(sb.expirationDate || sb.expiration_date || sb.expiryDate || sb.expiry_date || "") || null;
@@ -759,6 +758,47 @@ async function fetchLotsAndMovements(productIds: number[], branchId?: number): P
                 source_reference: (sb.sourceReference as string | null) || (sb.source_reference as string | null) || null,
             });
         }
+    }
+
+    // 2. Also synthesize any registered inventory lots from Directus that have 0 onhand
+    for (const row of mmInvLots) {
+        const id = Number(row.inventory_lot_id || row.id);
+        const pId = Number(typeof row.product_id === "object" ? (row.product_id as { product_id?: number })?.product_id : row.product_id);
+        const bId = Number(typeof row.branch_id === "object" ? (row.branch_id as { branch_id?: number })?.branch_id : row.branch_id) || branchId || 0;
+        const rawBatchStr = String(row.batch_no || (row as { lot_number?: string }).lot_number || "").trim() || "LOT-N/A";
+        const rawLotId = typeof row.lot_id === "object" && row.lot_id !== null
+            ? (row.lot_id as { lot_id?: number; id?: number }).lot_id || (row.lot_id as { lot_id?: number; id?: number }).id
+            : row.lot_id;
+        const physLotId = Number(rawLotId || 0);
+
+        if (branchId && bId && bId !== branchId) continue;
+        if (!pId || !productIdSet.has(pId)) continue;
+        if (!id) continue;
+
+        const stockKey = `${pId}:${bId}:${physLotId}:${rawBatchStr.toUpperCase()}`;
+        if (seenStockKeys.has(stockKey)) continue;
+        seenStockKeys.add(stockKey);
+
+        const mLot = masterLotMap.get(physLotId);
+        const resolvedLotName = mLot?.lot_name || "Unknown";
+        const expDate = String(row.expiry_date || row.expiration_date || "") || null;
+        const mfgDate = String(row.manufacturing_date || row.created_on || "") || null;
+        const condition = String(row.qa_status || row.inventory_condition || "Passed");
+
+        synthesizedLots.push({
+            id,
+            product_id: pId,
+            branch_id: bId || branchId || 0,
+            lot_id: { lot_id: physLotId || id, lot_name: resolvedLotName },
+            lot_number: rawBatchStr,
+            batch_no: rawBatchStr,
+            quantity: 0,
+            qa_status: condition === "Passed" || condition === "GOOD" ? "Approved" : "Quarantine",
+            expiry_date: expDate,
+            created_on: mfgDate,
+            source_type: null,
+            source_reference: null,
+        });
     }
 
     return { synthesizedLots, movements: [] };
@@ -938,16 +978,19 @@ export async function allocateInvoice(invoiceId: number, userId: number) {
     const reservedByStock = new Map<string, number>();
     const reservedByDetail = new Map<number, number>();
     if (lotIds.length > 0) {
-        const reservationFilter = encodeURIComponent(JSON.stringify({
-            _and: [
-                { inventory_lot_id: { _in: lotIds } },
-                { status: { _eq: "Reserved" } },
-            ],
+        const [soRes, siRes] = await Promise.all([
+            directusJson(`${DIRECTUS_URL}/items/sales_order_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=reservation_id,sales_order_detail_id,inventory_lot_id,reserved_quantity,status&limit=-1`).catch(() => ({ data: [] })),
+            directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=id,sales_invoice_detail_id,inventory_lot_id,quantity,status&limit=-1`).catch(() => ({ data: [] })),
+        ]);
+        const mappedSo: ReservationRow[] = (soRes.data || []).map((r: { reservation_id?: number; id?: number; sales_order_detail_id: number; inventory_lot_id: number; reserved_quantity?: number; quantity?: number; status: ReservationStatus }) => ({
+            id: Number(r.reservation_id || r.id),
+            sales_invoice_detail_id: r.sales_order_detail_id,
+            inventory_lot_id: r.inventory_lot_id,
+            quantity: Number(r.reserved_quantity ?? r.quantity ?? 0),
+            status: r.status,
         }));
-        const activeReservationsJson = await directusJson(
-            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter=${reservationFilter}&fields=id,sales_invoice_detail_id,inventory_lot_id,quantity,status&limit=-1`
-        ).catch(() => ({ data: [] }));
-        for (const reservation of (activeReservationsJson.data || []) as ReservationRow[]) {
+        const allReservations = [...mappedSo, ...(siRes.data || [])];
+        for (const reservation of allReservations) {
             const lotId = inventoryLotId(reservation);
             const detId = detailId(reservation);
             const key = keyByLotId.get(lotId);
@@ -1219,8 +1262,8 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
     let reservations: ReservationRow[] = [];
     if (lotIds.length > 0) {
         const [soRes, siRes] = await Promise.all([
-            directusJson(`${DIRECTUS_URL}/items/sales_order_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_eq]=Reserved&fields=reservation_id,sales_order_detail_id,inventory_lot_id,reserved_quantity,status&limit=-1`).catch(() => ({ data: [] })),
-            directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_eq]=Reserved&fields=id,sales_invoice_detail_id,inventory_lot_id,quantity,status&limit=-1`).catch(() => ({ data: [] })),
+            directusJson(`${DIRECTUS_URL}/items/sales_order_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=reservation_id,sales_order_detail_id,inventory_lot_id,reserved_quantity,status&limit=-1`).catch(() => ({ data: [] })),
+            directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=id,sales_invoice_detail_id,inventory_lot_id,quantity,status&limit=-1`).catch(() => ({ data: [] })),
         ]);
         const mappedSo: ReservationRow[] = (soRes.data || []).map((r: { reservation_id?: number; id?: number; sales_order_detail_id: number; inventory_lot_id: number; reserved_quantity?: number; quantity?: number; status: ReservationStatus }) => ({
             id: Number(r.reservation_id || r.id),
@@ -1259,7 +1302,7 @@ export async function previewConsolidationAllocations(branchId: number, invoiceI
     }));
     const availableByLot = new Map(lots.map((lot) => [
         lot.id,
-        Math.max(0, Number(lot.quantity || 0) - (reservedByStock.get(lot.stockKey) || 0)),
+        Number(lot.quantity || 0) - (reservedByStock.get(lot.stockKey) || 0),
     ]));
 
     // Build available batches list for manual allocation
@@ -1513,8 +1556,8 @@ export async function calculateSalesOrderAvailability(salesOrderId: number) {
     const reservedByStock = new Map<string, number>();
     if (lotIds.length > 0) {
         const [soRes, siRes] = await Promise.all([
-            directusJson(`${DIRECTUS_URL}/items/sales_order_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id,reserved_quantity&limit=-1`).catch(() => ({ data: [] })),
-            directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_eq]=Reserved&fields=inventory_lot_id,quantity&limit=-1`).catch(() => ({ data: [] })),
+            directusJson(`${DIRECTUS_URL}/items/sales_order_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=inventory_lot_id,reserved_quantity&limit=-1`).catch(() => ({ data: [] })),
+            directusJson(`${DIRECTUS_URL}/items/sales_invoice_reservation?filter[inventory_lot_id][_in]=${lotIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=inventory_lot_id,quantity&limit=-1`).catch(() => ({ data: [] })),
         ]);
         for (const reservation of (soRes.data || [])) {
             const id = typeof reservation.inventory_lot_id === "object" ? Number(reservation.inventory_lot_id?.inventory_lot_id || reservation.inventory_lot_id?.id || 0) : Number(reservation.inventory_lot_id || 0);
