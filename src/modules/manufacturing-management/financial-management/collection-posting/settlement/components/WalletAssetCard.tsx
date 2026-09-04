@@ -188,8 +188,8 @@ export default function WalletAssetCard({
             )}
 
             <div className={`flex justify-between gap-2 text-[10px] ${item.customerName || item.invoiceId ? 'mt-1 border-t border-border/50 pt-1' : 'mt-1.5'}`}>
-                <div className="min-w-0 flex-1"><p className="text-[7px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-0.5">Original</p><p className="font-mono truncate leading-none">₱{item.originalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p></div>
-                <div className="text-right min-w-0 flex-1"><p className="text-[7px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-0.5">Remaining</p><p className={`font-mono font-black truncate leading-none ${isExhausted ? 'text-muted-foreground' : (item.balanceTypeId === 1 ? 'text-red-600' : 'text-emerald-600')}`}>₱{remaining.toLocaleString(undefined, {minimumFractionDigits: 2})}</p></div>
+                <div className="min-w-0 flex-1"><p className="text-[7px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-0.5">Original</p><p className="font-mono truncate leading-none">{item.type === 'ADJUSTMENT' && item.balanceTypeId === 1 ? '-' : ''}₱{item.originalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p></div>
+                <div className="text-right min-w-0 flex-1"><p className="text-[7px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-0.5">Remaining</p><p className={`font-mono font-black truncate leading-none ${isExhausted ? 'text-muted-foreground' : (item.balanceTypeId === 1 ? 'text-red-600' : 'text-emerald-600')}`}>{item.type === 'ADJUSTMENT' && item.balanceTypeId === 1 ? '-' : ''}₱{remaining.toLocaleString(undefined, {minimumFractionDigits: 2})}</p></div>
             </div>
         </div>
     );

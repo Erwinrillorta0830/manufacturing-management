@@ -48,6 +48,7 @@ export async function POST(request: Request) {
                     collection_id: collectionId,
                     type: bucket.coaId,
                     payment_method: bucket.paymentMethodId,
+                    encoder_id: payload.encoderId,
                     bank: bucket.bankId,
                     customer_code: bucket.customerCode,
                     check_no: bucket.referenceNo,
