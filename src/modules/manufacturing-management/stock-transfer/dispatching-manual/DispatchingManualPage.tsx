@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Truck, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Hand, Layers, FileText } from 'lucide-react';
 import { useStockTransferDispatchManual } from './hooks/use-stock-transfer-dispatch-manual';
-import { OrderGroupItem, CurrentUser, ProductRow, ScannedItem } from '../types/stock-transfer.types';
+import { OrderGroupItem, ProductRow, ScannedItem } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
 import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 
-export default function StockTransferDispatchManualView(_props: { currentUser: CurrentUser }) {
+export default function StockTransferDispatchManualView() {
   const {
     branches,
     orderGroups,
