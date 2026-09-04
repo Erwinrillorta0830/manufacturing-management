@@ -16,12 +16,6 @@ jobs:
 
     steps:
       - name: Pull Code, Build, and Restart
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://localhost:8055
-          NEXT_PUBLIC_DIRECTUS_URL: http://localhost:8055
-          DIRECTUS_STATIC_TOKEN: placeholder
-          DIRECTUS_TOKEN: placeholder
-          NEXT_PUBLIC_DIRECTUS_STATIC_TOKEN: placeholder
         run: |
           cd /home/vertex/manufacturing-management
           git fetch --all
