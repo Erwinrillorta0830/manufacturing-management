@@ -66,10 +66,18 @@ const isSameCustomer = (
     target: { customerCode?: string; customerName?: string },
 ) => {
     const targetCode = normalizeCustomerValue(target.customerCode);
-    if (targetCode) return normalizeCustomerValue(source.customerCode) === targetCode;
-
     const targetName = normalizeCustomerValue(target.customerName);
-    return Boolean(targetName) && normalizeCustomerValue(source.customerName) === targetName;
+    const sourceCode = normalizeCustomerValue(source.customerCode);
+    const sourceName = normalizeCustomerValue(source.customerName);
+
+    if (targetCode && targetCode === sourceCode) return true;
+    if (targetName && targetName === sourceName) return true;
+    
+    // Cross-match fallback (in case of data swap in the source cart)
+    if (targetName && targetName === sourceCode) return true;
+    if (targetCode && targetCode === sourceName) return true;
+
+    return false;
 };
 
 export interface WalletItem extends SettlementPrintableWalletItem {
@@ -239,28 +247,17 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         if (activeInvoice?.customerCode) {
             return [activeInvoice.customerCode.trim().toUpperCase()];
         }
-        if (cartInvoices.length > 0) {
-            const codes = cartInvoices.map(inv => inv.customerCode?.trim().toUpperCase()).filter(Boolean);
-            return Array.from(new Set(codes)) as string[];
-        }
         return [];
-    }, [activeInvoice, cartInvoices]);
+    }, [activeInvoice]);
 
     const creditCustomerNames = useMemo(() => {
         if (activeInvoice?.customerName && !activeInvoice.customerCode) {
             return [activeInvoice.customerName.trim().toUpperCase()];
         }
-        if (cartInvoices.length > 0) {
-            const names = cartInvoices
-                .filter(inv => !inv.customerCode && inv.customerName)
-                .map(inv => inv.customerName?.trim().toUpperCase())
-                .filter(Boolean);
-            return Array.from(new Set(names)) as string[];
-        }
         return [];
-    }, [activeInvoice, cartInvoices]);
+    }, [activeInvoice]);
 
-    const loadCreditsPage = useCallback(async (page: number, append: boolean) => {
+    const loadCreditsPage = useCallback(async (page: number, append: boolean = false, codes: string[] = [], names: string[] = [], sId: number | null = null) => {
         creditRequestController.current?.abort();
         const controller = new AbortController();
         creditRequestController.current = controller;
@@ -270,8 +267,9 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         setCreditsError(null);
         try {
             const customerFilter = new URLSearchParams();
-            if (creditCustomerCodes.length > 0) customerFilter.set("customerCodes", creditCustomerCodes.join("|"));
-            if (creditCustomerNames.length > 0) customerFilter.set("customerNames", creditCustomerNames.join("|"));
+            if (codes.length > 0) customerFilter.set("customerCodes", codes.join("|"));
+            if (names.length > 0) customerFilter.set("customerNames", names.join("|"));
+            if (sId !== null) customerFilter.set("salesmanId", String(sId));
             const customerQuery = customerFilter.toString();
             const [memosResult, returnsResult] = await Promise.allSettled([
                 page === 1
@@ -335,7 +333,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         } finally {
             if (creditRequestVersion.current === version) setIsLoadingCredits(false);
         }
-    }, [creditCustomerCodes, creditCustomerNames, pouchId]);
+    }, [pouchId]);
 
     useEffect(() => {
         creditRequestController.current?.abort();
@@ -353,18 +351,18 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         setCredits([]);
         setCreditsPage(0);
         setHasMoreCredits(false);
-        void loadCreditsPage(1, false);
+        void loadCreditsPage(1, false, creditCustomerCodes, creditCustomerNames, salesmanId);
         return () => creditRequestController.current?.abort();
-    }, [creditCustomerCodes, creditCustomerNames, loadCreditsPage]);
+    }, [creditCustomerCodes, creditCustomerNames, loadCreditsPage, salesmanId]);
 
     const loadMoreCredits = useCallback(() => {
-        if (!hasMoreCredits || isLoadingCredits || creditsPage === 0) return;
-        void loadCreditsPage(creditsPage + 1, true);
-    }, [creditsPage, hasMoreCredits, isLoadingCredits, loadCreditsPage]);
+        if (!hasMoreCredits || isLoadingCredits || creditCustomerCodes.length === 0) return;
+        void loadCreditsPage(creditsPage + 1, true, creditCustomerCodes, creditCustomerNames, salesmanId);
+    }, [hasMoreCredits, isLoadingCredits, creditsPage, loadCreditsPage, creditCustomerCodes, creditCustomerNames, salesmanId]);
 
     const retryCredits = useCallback(() => {
-        void loadCreditsPage(1, false);
-    }, [loadCreditsPage]);
+        void loadCreditsPage(1, false, creditCustomerCodes, creditCustomerNames, salesmanId);
+    }, [loadCreditsPage, creditCustomerCodes, creditCustomerNames, salesmanId]);
 
     useEffect(() => {
         if (!salesmanId || !dispatchDate) return;

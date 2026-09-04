@@ -22,7 +22,22 @@ export async function GET(request: Request) {
         if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
         
         const data = await res.json();
-        return NextResponse.json(data.data || []);
+        const rawInvoices = data.data || [];
+
+        const mappedInvoices = rawInvoices.map((inv: any) => ({
+            id: inv.invoice_id,
+            invoiceId: inv.invoice_id,
+            invoiceNo: inv.invoice_no,
+            customerCode: inv.customer_code,
+            customerName: inv.customer_name || inv.customer_code,
+            originalAmount: Number(inv.net_amount) || 0,
+            remainingBalance: inv.remaining_balance !== undefined ? Number(inv.remaining_balance) : (Number(inv.net_amount) || 0),
+            transactionDate: inv.invoice_date,
+            dueDate: inv.due_date,
+            paymentStatus: inv.payment_status,
+        }));
+
+        return NextResponse.json(mappedInvoices);
     } catch (e) {
         console.error("API Error fetching dispatch plan invoices:", e);
         return NextResponse.json({ error: (e as Error).message }, { status: 500 });
