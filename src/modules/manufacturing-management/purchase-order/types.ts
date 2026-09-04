@@ -199,3 +199,11 @@ export interface PurchaseOrderApprovalCommand {
     expectedRuleId?: number;
     remarks?: string;
 }
+
+export interface FinanceApprovalDetailResponse {
+    data: {
+        shipment: import("../procurement/types").IncomingShipment;
+        lineItems: import("../procurement/types").ShipmentLineItem[];
+        approvalDetail: PurchaseOrderApprovalDetail;
+    };
+}
