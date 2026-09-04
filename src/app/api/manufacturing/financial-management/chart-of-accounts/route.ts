@@ -86,7 +86,7 @@ function buildCOAListQuery(req: NextRequest) {
   const params = new URLSearchParams();
   params.set("limit", String(pageSize));
   params.set("offset", String(offset));
-  params.set("sort", "coa_id"); // stable
+  params.set("sort", "-coa_id"); // stable latest first
   params.set("meta", "filter_count,total_count");
 
   // fields: keep simple (IDs), UI maps IDs via lookups
@@ -103,6 +103,8 @@ function buildCOAListQuery(req: NextRequest) {
       "description",
       "added_by.*",
       "date_added",
+      "status_updated_by.*",
+      "status_updated_at",
       "is_payment",
       "isPayment",
     ].join(",")

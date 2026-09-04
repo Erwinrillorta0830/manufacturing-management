@@ -16,16 +16,26 @@ async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?
             headers: directusHeaders,
             body: JSON.stringify({
                 order_status: "For Invoicing",
-                for_invoicing_at: phNow,
                 modified_date: phNow,
                 modified_by: userId,
-                updated_at: phNow,
             }),
         });
         if (patchRes.ok) {
             updated++;
         } else {
-            errors.push(`Order ${orderId}: status update failed HTTP ${patchRes.status}`);
+            // Retry with just order_status if modified_date/modified_by fails
+            const retryRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                method: "PATCH",
+                headers: directusHeaders,
+                body: JSON.stringify({
+                    order_status: "For Invoicing",
+                }),
+            });
+            if (retryRes.ok) {
+                updated++;
+            } else {
+                errors.push(`Order ${orderId}: status update failed HTTP ${patchRes.status}`);
+            }
         }
     }
     return { updated, errors };
@@ -118,17 +128,6 @@ export async function POST(req: NextRequest) {
         const junctions = (await invRes.json()).data || [];
         const details = (await detRes.json()).data || [];
 
-        // Reconfirm full picking before audit
-        const shortDetails = details.filter(
-            (d: { ordered_quantity: number; picked_quantity: number }) => Number(d.picked_quantity || 0) < Number(d.ordered_quantity || 0)
-        );
-        if (shortDetails.length > 0) {
-            const shortProductIds = shortDetails.map((d: { product_id: number }) => d.product_id);
-            return NextResponse.json({
-                message: `Cannot audit: products ${shortProductIds.join(", ")} are not fully picked`,
-            }, { status: 422 });
-        }
-
         // Apply picked quantities (idempotent — PATCH to final value)
         for (const d of details) {
             const patchRes = await fetch(`${DIRECTUS_URL}/items/consolidator_details/${d.id}`, {
@@ -143,18 +142,6 @@ export async function POST(req: NextRequest) {
 
         if (junctions.length > 0) {
             const invoiceIds = junctions.map((j: { invoice_id: number }) => j.invoice_id);
-            // Dispatch invoices (idempotent — if already dispatched, PATCH still succeeds)
-            const bulkRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice`, {
-                method: "PATCH",
-                headers: directusHeaders,
-                body: JSON.stringify({
-                    query: { filter: { invoice_id: { _in: invoiceIds } } },
-                    data: { isDispatched: true },
-                }),
-            });
-            if (!bulkRes.ok) {
-                return NextResponse.json({ message: `Failed to dispatch invoices (HTTP ${bulkRes.status})` }, { status: bulkRes.status });
-            }
 
             const [sodRes, sidRes] = await Promise.all([
                 fetch(
@@ -175,32 +162,36 @@ export async function POST(req: NextRequest) {
                 const phNow = getPhTimestamp();
                 const [soRes, siRes] = await Promise.all([
                     fetch(
-                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=reservation_id&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=*&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     ),
                     fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=id&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${allDetailIds.join(",")}&filter[status][_in]=Picked,Reserved&fields=*&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     ),
                 ]);
                 if (soRes.ok) {
-                    const soRows: { reservation_id?: number; id?: number }[] = (await soRes.json()).data || [];
+                    const soRows: Array<{ reservation_id?: number; id?: number; status?: string; picked_quantity?: number }> = (await soRes.json()).data || [];
                     for (const r of soRows) {
                         const id = Number(r.reservation_id || r.id);
+                        const isPicked = r.status === "Picked" || Number(r.picked_quantity || 0) > 0;
+                        const targetStatus = isPicked ? "Consumed" : "Released";
                         await fetch(`${DIRECTUS_URL}/items/sales_order_reservation/${id}`, {
                             method: "PATCH",
                             headers: directusHeaders,
-                            body: JSON.stringify({ status: "Consumed", updated_by: userId, updated_at: phNow }),
+                            body: JSON.stringify({ status: targetStatus, updated_by: userId, updated_at: phNow }),
                         }).catch(() => null);
                     }
                 }
                 if (siRes.ok) {
-                    const siRows: { id: number }[] = (await siRes.json()).data || [];
+                    const siRows: Array<{ id: number; status?: string }> = (await siRes.json()).data || [];
                     for (const r of siRows) {
+                        const isPicked = r.status === "Picked";
+                        const targetStatus = isPicked ? "Consumed" : "Released";
                         await fetch(`${DIRECTUS_URL}/items/sales_invoice_reservation/${r.id}`, {
                             method: "PATCH",
                             headers: directusHeaders,
-                            body: JSON.stringify({ status: "Consumed", updated_by: userId, updated_at: phNow }),
+                            body: JSON.stringify({ status: targetStatus, updated_by: userId, updated_at: phNow }),
                         }).catch(() => null);
                     }
                 }

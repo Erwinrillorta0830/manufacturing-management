@@ -212,12 +212,22 @@ export default function BatchTable({
                                             </div>
                                         </TableCell>
                                         <TableCell className="font-semibold">
-                                            {batch.quantity.toLocaleString()}
-                                            {unitLabel && (
-                                                <span className="text-xs text-muted-foreground font-normal ml-1">
-                                                    {unitLabel}
+                                            <div className="flex flex-col">
+                                                <span className={batch.quantity < 0 ? "text-rose-600 dark:text-rose-400 font-black font-mono" : ""}>
+                                                    {batch.quantity.toLocaleString()}
+                                                    {unitLabel && (
+                                                        <span className="text-xs text-muted-foreground font-normal ml-1">
+                                                            {unitLabel}
+                                                        </span>
+                                                    )}
                                                 </span>
-                                            )}
+                                                {batch.quantity < 0 && (
+                                                    <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 w-fit">
+                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                        Negative Balance
+                                                    </span>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-xs text-muted-foreground">
                                             {batch.manufacturingDate ? batch.manufacturingDate.slice(0, 10) : "-"}

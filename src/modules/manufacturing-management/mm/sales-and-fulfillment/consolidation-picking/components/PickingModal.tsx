@@ -82,11 +82,15 @@ export function getLotOrderLabels(
     return matched;
 }
 
+export function getLotKey(productId: number, alloc: LotAllocation, idx: number): string {
+    return `${productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${alloc.inventoryLotId || alloc.lotId || idx}:${idx}`;
+}
+
 export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Props) {
     const [fullBatch, setFullBatch] = useState<InvoiceConsolidation | null>(batch);
     const [allocations, setAllocations] = useState<LotAllocation[]>([]);
     const [pickedQtys, setPickedQtys] = useState<Record<number, number>>({});
-    const [pickedLotKeys, setPickedLotKeys] = useState<Set<string>>(new Set());
+    const [lotPickedQtys, setLotPickedQtys] = useState<Record<string, number>>({});
     const [loadingAllocations, setLoadingAllocations] = useState(false);
     const [saving, setSaving] = useState(false);
     const [completing, setCompleting] = useState(false);
@@ -118,8 +122,8 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 setPickedQtys(freshMap);
                 setAllocations(allocs || []);
 
-                // Pre-mark lot keys based on actual backend reservation status
-                const preMarkedLots = new Set<string>();
+                // Initialize lot picked quantities based on reservations or details
+                const initialLotMap: Record<string, number> = {};
                 const prodAllocMap = new Map<number, LotAllocation[]>();
                 for (const a of allocs || []) {
                     const list = prodAllocMap.get(a.productId) || [];
@@ -128,32 +132,19 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 }
 
                 prodAllocMap.forEach((prodAllocs, pId) => {
-                    const hasExplicitPickedStatus = prodAllocs.some((a) => a.status === "Picked");
-                    if (hasExplicitPickedStatus) {
-                        for (let i = 0; i < prodAllocs.length; i++) {
-                            const alloc = prodAllocs[i];
-                            const key = `${pId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${i}`;
-                            if (alloc.status === "Picked") {
-                                preMarkedLots.add(key);
-                            }
-                        }
-                    } else {
-                        const totalPickedForProd = (b.details || [])
-                            .filter((d) => d.productId === pId)
-                            .reduce((sum, d) => sum + (freshMap[d.id] || 0), 0);
-                        let budget = totalPickedForProd;
-                        for (let i = 0; i < prodAllocs.length; i++) {
-                            const alloc = prodAllocs[i];
-                            const key = `${pId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${i}`;
-                            const allocQty = Number(alloc.quantity || 0);
-                            if (budget >= allocQty && allocQty > 0) {
-                                preMarkedLots.add(key);
-                                budget -= allocQty;
-                            }
+                    for (let i = 0; i < prodAllocs.length; i++) {
+                        const alloc = prodAllocs[i];
+                        const key = getLotKey(pId, alloc, i);
+                        if (alloc.pickedQuantity !== undefined) {
+                            initialLotMap[key] = Number(alloc.pickedQuantity);
+                        } else if (alloc.status === "Picked") {
+                            initialLotMap[key] = Number(alloc.quantity || 0);
+                        } else {
+                            initialLotMap[key] = 0;
                         }
                     }
                 });
-                setPickedLotKeys(preMarkedLots);
+                setLotPickedQtys(initialLotMap);
             })
             .finally(() => setLoadingAllocations(false));
     }, [batch]);
@@ -271,53 +262,46 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         }
         setPickedQtys(newPickedMap);
 
-        // Synchronize lot keys for this product
+        // Synchronize lot quantities for this product sequentially
         const prodAllocs = allocationsByProduct.get(productId) || [];
-        const nextKeys = new Set(pickedLotKeys);
+        const nextLotMap = { ...lotPickedQtys };
         let budget = clamped;
         for (let i = 0; i < prodAllocs.length; i++) {
             const a = prodAllocs[i];
-            const key = `${productId}:${a.batchNo || a.lotName}:${a.quantity}:${i}`;
+            const key = getLotKey(productId, a, i);
             const allocQty = Number(a.quantity || 0);
-            if (budget >= allocQty && allocQty > 0) {
-                nextKeys.add(key);
-                budget -= allocQty;
-            } else {
-                nextKeys.delete(key);
-            }
+            const assign = Math.min(budget, allocQty);
+            nextLotMap[key] = assign;
+            budget = Math.max(0, budget - assign);
         }
-        setPickedLotKeys(nextKeys);
+        setLotPickedQtys(nextLotMap);
     };
 
     // Click on individual batch/lot card to pick / unpick for consolidated product
     const handleToggleLotPick = (productId: number, maxQty: number, alloc: LotAllocation, allocIdx: number) => {
-        const key = `${productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${allocIdx}`;
-        const isCurrentlyPicked = pickedLotKeys.has(key);
+        const key = getLotKey(productId, alloc, allocIdx);
+        const lotCapacity = Number(alloc.quantity || 0);
+        const currentLotPicked = Number(lotPickedQtys[key] || 0);
 
-        const nextPicked = new Set(pickedLotKeys);
-        if (isCurrentlyPicked) {
-            nextPicked.delete(key);
-        } else {
-            nextPicked.add(key);
-        }
+        const nextLotPicked = currentLotPicked > 0 ? 0 : lotCapacity;
+        const nextLotMap = {
+            ...lotPickedQtys,
+            [key]: nextLotPicked,
+        };
+        setLotPickedQtys(nextLotMap);
 
         // Recalculate total picked for this product
         const prodAllocs = allocationsByProduct.get(productId) || [];
-        let totalLotPicked = 0;
+        let totalProductPicked = 0;
         for (let i = 0; i < prodAllocs.length; i++) {
-            const a = prodAllocs[i];
-            const k = `${productId}:${a.batchNo || a.lotName}:${a.quantity}:${i}`;
-            if (nextPicked.has(k)) {
-                totalLotPicked += Number(a.quantity || 0);
-            }
+            const k = getLotKey(productId, prodAllocs[i], i);
+            totalProductPicked += Number(nextLotMap[k] || 0);
         }
-
-        setPickedLotKeys(nextPicked);
 
         // Distribute to detail records
         const item = consolidatedProducts.find((p) => p.productId === productId);
         if (item) {
-            let budget = Math.min(maxQty, totalLotPicked);
+            let budget = Math.min(maxQty, totalProductPicked);
             const newPickedMap = { ...pickedQtys };
             for (const d of item.details) {
                 const dMax = Number(d.orderedQuantity || 0);
@@ -329,26 +313,88 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         }
     };
 
+    // Direct quantity input on individual batch/lot card
+    const handleLotPickedQtyChange = (
+        productId: number,
+        maxQty: number,
+        alloc: LotAllocation,
+        allocIdx: number,
+        val: number
+    ) => {
+        const key = getLotKey(productId, alloc, allocIdx);
+        const lotCapacity = Number(alloc.quantity || 0);
+        const nextQty = Math.max(0, Math.min(lotCapacity, isNaN(val) ? 0 : val));
+
+        const nextLotMap = {
+            ...lotPickedQtys,
+            [key]: nextQty,
+        };
+        setLotPickedQtys(nextLotMap);
+
+        // Recalculate total picked for this product
+        const prodAllocs = allocationsByProduct.get(productId) || [];
+        let totalProductPicked = 0;
+        for (let i = 0; i < prodAllocs.length; i++) {
+            const k = getLotKey(productId, prodAllocs[i], i);
+            totalProductPicked += Number(nextLotMap[k] || 0);
+        }
+
+        // Distribute to detail records
+        const item = consolidatedProducts.find((p) => p.productId === productId);
+        if (item) {
+            let budget = Math.min(maxQty, totalProductPicked);
+            const newPickedMap = { ...pickedQtys };
+            for (const d of item.details) {
+                const dMax = Number(d.orderedQuantity || 0);
+                const assign = Math.min(budget, dMax);
+                newPickedMap[d.id] = assign;
+                budget -= assign;
+            }
+            setPickedQtys(newPickedMap);
+        }
+    };
+
+    // Helper to get structured per-lot picked data
+    const getLotPickedItems = (): import("../../shared/consolidation-types").LotPickedItem[] => {
+        if (!activeBatch) return [];
+        const items: import("../../shared/consolidation-types").LotPickedItem[] = [];
+        for (const d of activeBatch.details || []) {
+            const prodAllocs = allocationsByProduct.get(d.productId) || [];
+            for (let i = 0; i < prodAllocs.length; i++) {
+                const alloc = prodAllocs[i];
+                const key = getLotKey(d.productId, alloc, i);
+                const pickedQty = Number(lotPickedQtys[key] ?? 0);
+                items.push({
+                    productId: d.productId,
+                    inventoryLotId: alloc.inventoryLotId,
+                    lotId: alloc.lotId,
+                    batchNo: alloc.batchNo,
+                    expiryDate: alloc.expiryDate,
+                    pickedQuantity: pickedQty,
+                    capacity: Number(alloc.quantity || 0),
+                    reservationIds: alloc.reservationIds || [],
+                });
+            }
+        }
+        return items;
+    };
+
     // Save partial progress
     const handleSave = async () => {
         if (!activeBatch) return;
         setSaving(true);
         try {
+            const lotPickedItems = getLotPickedItems();
             const pickedReservationIds: number[] = [];
             const pickedLotIds: number[] = [];
 
-            for (const d of activeBatch.details || []) {
-                const prodAllocs = allocationsByProduct.get(d.productId) || [];
-                for (let i = 0; i < prodAllocs.length; i++) {
-                    const alloc = prodAllocs[i];
-                    const key = `${d.productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${i}`;
-                    if (pickedLotKeys.has(key)) {
-                        if (alloc.reservationIds && alloc.reservationIds.length > 0) {
-                            pickedReservationIds.push(...alloc.reservationIds);
-                        }
-                        if (alloc.inventoryLotId) {
-                            pickedLotIds.push(alloc.inventoryLotId);
-                        }
+            for (const item of lotPickedItems) {
+                if (item.pickedQuantity > 0) {
+                    if (item.reservationIds && item.reservationIds.length > 0) {
+                        pickedReservationIds.push(...item.reservationIds);
+                    }
+                    if (item.inventoryLotId) {
+                        pickedLotIds.push(item.inventoryLotId);
                     }
                 }
             }
@@ -361,6 +407,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 })),
                 pickedReservationIds,
                 pickedLotIds,
+                lotPickedItems,
             };
             const result = await savePickedQuantities(payload);
             toast.success(result.message || "Picking progress saved");
@@ -373,30 +420,22 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         }
     };
 
-    // Complete picking
-    const handleComplete = async () => {
+    // Core execution function for completing picking
+    const executeCompletePicking = async () => {
         if (!activeBatch) return;
-        if (!isFullyPicked) {
-            toast.error(`Please pick all items before completing (${totalPicked} / ${totalOrdered} pcs picked)`);
-            return;
-        }
         setCompleting(true);
         try {
+            const lotPickedItems = getLotPickedItems();
             const pickedReservationIds: number[] = [];
             const pickedLotIds: number[] = [];
 
-            for (const d of activeBatch.details || []) {
-                const prodAllocs = allocationsByProduct.get(d.productId) || [];
-                for (let i = 0; i < prodAllocs.length; i++) {
-                    const alloc = prodAllocs[i];
-                    const key = `${d.productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${i}`;
-                    if (pickedLotKeys.has(key)) {
-                        if (alloc.reservationIds && alloc.reservationIds.length > 0) {
-                            pickedReservationIds.push(...alloc.reservationIds);
-                        }
-                        if (alloc.inventoryLotId) {
-                            pickedLotIds.push(alloc.inventoryLotId);
-                        }
+            for (const item of lotPickedItems) {
+                if (item.pickedQuantity > 0) {
+                    if (item.reservationIds && item.reservationIds.length > 0) {
+                        pickedReservationIds.push(...item.reservationIds);
+                    }
+                    if (item.inventoryLotId) {
+                        pickedLotIds.push(item.inventoryLotId);
                     }
                 }
             }
@@ -410,9 +449,10 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                 })),
                 pickedReservationIds,
                 pickedLotIds,
+                lotPickedItems,
             });
 
-            // Complete picking
+            // Complete picking directly
             const result = await completePicking(activeBatch.id);
             toast.success(result.message || `Batch ${activeBatch.consolidatorNo} successfully marked as Picked!`);
             onSuccess();
@@ -423,6 +463,17 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
         } finally {
             setCompleting(false);
         }
+    };
+
+    // Complete picking handler
+    const handleComplete = async () => {
+        if (!activeBatch) return;
+        if (totalPicked === 0) {
+            toast.error("Cannot complete picking with 0 units picked.");
+            return;
+        }
+
+        await executeCompletePicking();
     };
 
     if (!activeBatch) return null;
@@ -666,26 +717,32 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                         ) : prodAllocations.length > 0 ? (
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                                 {prodAllocations.map((alloc, idx) => {
-                                                    const lotKey = `${prodItem.productId}:${alloc.batchNo || alloc.lotName}:${alloc.quantity}:${idx}`;
-                                                    const isPicked = pickedLotKeys.has(lotKey);
+                                                    const lotKey = getLotKey(prodItem.productId, alloc, idx);
+                                                    const lotCapacity = Number(alloc.quantity || 0);
+                                                    const currentLotPicked = Number(lotPickedQtys[lotKey] || 0);
                                                     const orderMatches = getLotOrderLabels(prodItem.orders, prodAllocations, idx);
 
+                                                    const isFull = currentLotPicked === lotCapacity && lotCapacity > 0;
+                                                    const isPartial = currentLotPicked > 0 && currentLotPicked < lotCapacity;
+
                                                     return (
-                                                        <motion.button
+                                                        <motion.div
                                                             key={idx}
-                                                            type="button"
-                                                            whileHover={{ scale: 1.01, y: -1 }}
-                                                            whileTap={{ scale: 0.98 }}
-                                                            onClick={() => handleToggleLotPick(prodItem.productId, maxQty, alloc, idx)}
-                                                            className={`flex items-center justify-between text-xs p-2.5 rounded-xl border transition-all cursor-pointer text-left ${
-                                                                isPicked
+                                                            whileHover={{ scale: 1.005, y: -1 }}
+                                                            className={`flex items-center justify-between text-xs p-2.5 rounded-xl border transition-all text-left ${
+                                                                isFull
                                                                     ? "border-emerald-500 bg-emerald-500/10 text-foreground dark:bg-emerald-500/15 dark:border-emerald-500 shadow-xs"
+                                                                    : isPartial
+                                                                    ? "border-amber-500/60 bg-amber-500/10 text-foreground dark:bg-amber-500/15 dark:border-amber-500/50 shadow-xs"
                                                                     : "border-border/70 bg-background/80 hover:border-primary/50 hover:bg-muted/40"
                                                             }`}
                                                         >
-                                                            <div className="min-w-0 pr-2">
+                                                            <div
+                                                                className="min-w-0 pr-2 flex-1 cursor-pointer"
+                                                                onClick={() => handleToggleLotPick(prodItem.productId, maxQty, alloc, idx)}
+                                                            >
                                                                 <span className={`font-bold block truncate text-xs ${
-                                                                    isPicked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"
+                                                                    isFull ? "text-emerald-700 dark:text-emerald-300" : isPartial ? "text-amber-700 dark:text-amber-300" : "text-foreground"
                                                                 }`}>
                                                                     Lot: {alloc.lotName || alloc.batchNo || "Unknown"}
                                                                 </span>
@@ -700,8 +757,10 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                             <span
                                                                                 key={mIdx}
                                                                                 className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
-                                                                                    isPicked
+                                                                                    isFull
                                                                                         ? "bg-emerald-600/15 border-emerald-600/30 text-emerald-800 dark:text-emerald-200"
+                                                                                        : isPartial
+                                                                                        ? "bg-amber-500/15 border-amber-500/30 text-amber-800 dark:text-amber-200"
                                                                                         : "bg-muted/70 border-border/80 text-foreground/80"
                                                                                 }`}
                                                                             >
@@ -715,17 +774,53 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                                                                 )}
                                                             </div>
 
-                                                            <Badge
-                                                                variant={isPicked ? "default" : "secondary"}
-                                                                className={`font-mono font-bold text-xs shrink-0 ml-2 ${
-                                                                    isPicked
-                                                                        ? "bg-emerald-600 hover:bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950"
-                                                                        : "text-muted-foreground"
-                                                                }`}
+                                                            {/* Editable Picked Quantity input */}
+                                                            <div
+                                                                className="flex items-center gap-1.5 shrink-0 ml-2"
+                                                                onClick={(e) => e.stopPropagation()}
                                                             >
-                                                                {alloc.quantity} units
-                                                            </Badge>
-                                                        </motion.button>
+                                                                <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                                                                    Picked:
+                                                                </span>
+                                                                <div className="flex items-center gap-1">
+                                                                    <Input
+                                                                        type="number"
+                                                                        min={0}
+                                                                        max={lotCapacity}
+                                                                        value={currentLotPicked === 0 ? "" : currentLotPicked}
+                                                                        placeholder="0"
+                                                                        onChange={(e) => {
+                                                                            const raw = e.target.value;
+                                                                            const val = raw === "" ? 0 : parseInt(raw, 10);
+                                                                            handleLotPickedQtyChange(prodItem.productId, maxQty, alloc, idx, val);
+                                                                        }}
+                                                                        className={`h-7 w-14 text-center font-mono font-bold text-xs rounded-lg px-1 transition-all ${
+                                                                            isFull
+                                                                                ? "border-emerald-500 bg-emerald-500/20 text-emerald-900 dark:text-emerald-100 font-black focus-visible:ring-emerald-500"
+                                                                                : isPartial
+                                                                                ? "border-amber-500 bg-amber-500/20 text-amber-900 dark:text-amber-100 font-bold focus-visible:ring-amber-500"
+                                                                                : "border-border bg-background/90"
+                                                                        }`}
+                                                                    />
+                                                                    <span className="text-xs font-mono font-bold text-muted-foreground whitespace-nowrap">
+                                                                        / {lotCapacity} units
+                                                                    </span>
+                                                                </div>
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    variant={isFull ? "default" : "outline"}
+                                                                    onClick={() => handleToggleLotPick(prodItem.productId, maxQty, alloc, idx)}
+                                                                    className={`h-7 px-2 text-[10px] font-bold rounded-lg cursor-pointer ${
+                                                                        isFull
+                                                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                                            : "text-muted-foreground hover:text-foreground"
+                                                                    }`}
+                                                                >
+                                                                    {isFull ? <Check className="h-3 w-3" /> : "Pick All"}
+                                                                </Button>
+                                                            </div>
+                                                        </motion.div>
                                                     );
                                                 })}
                                             </div>
@@ -784,7 +879,7 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
                         <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                             <Button
                                 onClick={handleComplete}
-                                disabled={saving || completing || !isFullyPicked}
+                                disabled={saving || completing || totalPicked === 0}
                                 className="rounded-xl font-black px-5 uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-600 dark:hover:bg-emerald-700 cursor-pointer shadow-sm"
                             >
                                 {completing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <PackageCheck className="h-4 w-4 mr-1.5" />}

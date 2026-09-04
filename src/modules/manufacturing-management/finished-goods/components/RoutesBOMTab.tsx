@@ -421,14 +421,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                             </div>
                         </div>
                         {editedRoutes.length > 0 && (() => {
-                            const stepRates = editedRoutes.map(r => {
-                                const batchQty = Number(r.step_batch_size || 1);
-                                const totalHours = Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0);
-                                const validHours = totalHours > 0 ? totalHours : 1;
-                                return batchQty / validHours;
+                            const stepCapacities = editedRoutes.map(r => {
+                                const matchedWc = workCenters.find(wc => wc.work_center_id === r.work_center_id) || r.work_center;
+                                return Number(matchedWc?.capacity_per_hour ?? 0);
                             });
-                            const bottleneckRate = Math.min(...stepRates);
-                            const avgRate = stepRates.reduce((sum, rate) => sum + rate, 0) / stepRates.length;
+                            const validCapacities = stepCapacities.filter(cap => cap > 0);
+                            const capacitiesToUse = validCapacities.length > 0 ? validCapacities : stepCapacities;
+                            const bottleneckRate = capacitiesToUse.length > 0 ? Math.min(...capacitiesToUse) : 0;
+                            const avgRate = capacitiesToUse.length > 0 ? capacitiesToUse.reduce((sum, cap) => sum + cap, 0) / capacitiesToUse.length : 0;
 
                             return (
                                 <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">

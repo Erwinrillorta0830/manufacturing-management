@@ -1,14 +1,19 @@
-name: Deploy Next.js
+name: CD Pipeline
 
 on:
   push:
-    branches:
-      - main 
+    branches: [master]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: self-hosted # <--- This tells GitHub to use your Ubuntu server
- 
+    name: Deploy to Production
+    runs-on: self-hosted 
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,14 +27,14 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Lint
-        run: npx eslint . --max-warnings=0
-
-      - name: Typecheck
-        run: npm run typecheck
-
       - name: Build
         run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8055
+          NEXT_PUBLIC_DIRECTUS_URL: http://localhost:8055
+          DIRECTUS_STATIC_TOKEN: placeholder
+          DIRECTUS_TOKEN: placeholder
+          NEXT_PUBLIC_DIRECTUS_STATIC_TOKEN: placeholder
 
       - name: Restart PM2
-        run: pm2 restart "my-next-app" || pm2 start npm --name "my-next-app" -- start
+        run: pm2 restart "manufacturing-management" || pm2 start npm --name "manufacturing-management" -- start

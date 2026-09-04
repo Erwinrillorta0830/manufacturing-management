@@ -472,7 +472,20 @@ export default function CreateConsolidationModal({
         [batchesByProduct, getManualKey, manualAllocations]
     );
 
-    // Validation: all selected invoice lines must be balanced AND total allocations per batch must not exceed available quantity
+    // Batch total allocated quantity across all selected invoices
+    const batchTotalAllocatedMap = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const [key, qty] of Object.entries(manualAllocations)) {
+            if (Number(qty) > 0) {
+                const [, productIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                const batchKey = `${productIdStr}:${invLotIdStr || 0}:${batchNo}:${lotIdStr || 0}`;
+                map.set(batchKey, (map.get(batchKey) || 0) + Number(qty));
+            }
+        }
+        return map;
+    }, [manualAllocations]);
+
+    // Validation: all selected invoice lines must be balanced
     const isManualValid = useMemo(() => {
         if (selectedInvoices.length === 0) return false;
 
@@ -484,33 +497,8 @@ export default function CreateConsolidationModal({
             }
         }
 
-        // 2. Total allocated per batch across ALL invoices must not exceed available quantity
-        const totalAllocatedPerBatch = new Map<string, number>();
-        for (const [key, qty] of Object.entries(manualAllocations)) {
-            if (qty > 0) {
-                const [, productIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
-                const batchKey = `${productIdStr}:${invLotIdStr}:${batchNo}:${lotIdStr}`;
-                totalAllocatedPerBatch.set(batchKey, (totalAllocatedPerBatch.get(batchKey) || 0) + qty);
-            }
-        }
-
-        for (const [batchKey, totalQty] of totalAllocatedPerBatch.entries()) {
-            const [productIdStr, invLotIdStr, batchNo, lotIdStr] = batchKey.split(":");
-            const productId = Number(productIdStr);
-            const invLotId = Number(invLotIdStr);
-            const lotId = Number(lotIdStr);
-            const batch = (allocationPreview?.availableBatches || []).find(
-                (b) =>
-                    b.productId === productId &&
-                    ((invLotId > 0 && b.inventoryLotId === invLotId) || (b.batchNo === batchNo && b.lotId === lotId))
-            );
-            if (batch && totalQty > batch.availableQuantity) {
-                return false;
-            }
-        }
-
         return true;
-    }, [selectedInvoices, getManualLineSummary, manualAllocations, allocationPreview]);
+    }, [selectedInvoices, getManualLineSummary]);
 
     const handleManualQtyChange = (
         invoiceId: number,
@@ -521,7 +509,7 @@ export default function CreateConsolidationModal({
         maxAvail: number,
         val: string
     ) => {
-        const parsed = Math.max(0, Math.min(maxAvail, Number(val) || 0));
+        const parsed = Math.max(0, Number(val) || 0);
         const key = getManualKey(invoiceId, productId, inventoryLotId, lotId, batchNo);
         setManualAllocations((prev) => ({
             ...prev,
@@ -2141,6 +2129,10 @@ export default function CreateConsolidationModal({
                                                                                                             );
                                                                                                             const currentQty = Number(manualAllocations[key] || 0);
                                                                                                             const isAllocated = currentQty > 0;
+                                                                                                            const batchKey = `${prod.productId}:${b.inventoryLotId || 0}:${b.batchNo}:${b.lotId || 0}`;
+                                                                                                            const totalBatchAlloc = batchTotalAllocatedMap.get(batchKey) || 0;
+                                                                                                            const isNegativeBalance = b.availableQuantity < 0 || totalBatchAlloc > b.availableQuantity;
+                                                                                                            const isZeroQuantity = b.availableQuantity === 0 && totalBatchAlloc <= 0;
 
                                                                                                             return (
                                                                                                                 <tr
@@ -2161,13 +2153,32 @@ export default function CreateConsolidationModal({
                                                                                                                         )}
                                                                                                                     </td>
                                                                                                                     <td className="p-2.5 font-mono">
-                                                                                                                        {isAllocated ? (
-                                                                                                                            <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
-                                                                                                                                {b.batchNo}
-                                                                                                                            </span>
-                                                                                                                        ) : (
-                                                                                                                            <span className="text-muted-foreground">{b.batchNo}</span>
-                                                                                                                        )}
+                                                                                                                        <div className="flex flex-col gap-1">
+                                                                                                                            <div>
+                                                                                                                                {isAllocated ? (
+                                                                                                                                    <span className="font-bold text-foreground bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
+                                                                                                                                        {b.batchNo}
+                                                                                                                                    </span>
+                                                                                                                                ) : (
+                                                                                                                                    <span className="text-muted-foreground">{b.batchNo}</span>
+                                                                                                                                )}
+                                                                                                                            </div>
+                                                                                                                            {isNegativeBalance && (
+                                                                                                                                <div>
+                                                                                                                                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-black uppercase">
+                                                                                                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                                                                                                        Negative Balance Warning
+                                                                                                                                    </span>
+                                                                                                                                </div>
+                                                                                                                            )}
+                                                                                                                            {isZeroQuantity && (
+                                                                                                                                <div>
+                                                                                                                                    <span className="inline-flex items-center gap-1 rounded bg-muted text-muted-foreground border border-border/70 px-1.5 py-0.5 text-[9px] font-bold uppercase">
+                                                                                                                                        Zero Quantity
+                                                                                                                                    </span>
+                                                                                                                                </div>
+                                                                                                                            )}
+                                                                                                                        </div>
                                                                                                                     </td>
                                                                                                                     <td className="p-2.5 text-muted-foreground font-medium">
                                                                                                                         <div className="flex items-center gap-1.5">
@@ -2184,15 +2195,16 @@ export default function CreateConsolidationModal({
                                                                                                                             {b.inventoryCondition}
                                                                                                                         </span>
                                                                                                                     </td>
-                                                                                                                    <td className="p-2.5 text-right font-black text-foreground">
-                                                                                                                        {b.availableQuantity}
+                                                                                                                    <td className="p-2.5 text-right font-black">
+                                                                                                                        <span className={b.availableQuantity < 0 ? "text-rose-600 dark:text-rose-400 font-mono font-black" : b.availableQuantity === 0 ? "text-muted-foreground font-mono" : "text-foreground font-mono font-black"}>
+                                                                                                                            {b.availableQuantity}
+                                                                                                                        </span>
                                                                                                                     </td>
                                                                                                                     <td className="p-2.5 text-right">
                                                                                                                         <div className="flex items-center justify-end gap-1.5">
                                                                                                                             <Input
                                                                                                                                 type="number"
                                                                                                                                 min={0}
-                                                                                                                                max={b.availableQuantity}
                                                                                                                                 value={currentQty || ""}
                                                                                                                                 placeholder="0"
                                                                                                                                 onChange={(e) =>
@@ -2223,7 +2235,7 @@ export default function CreateConsolidationModal({
                                                                                                                                     const totalAlloc = lineSummary.allocated;
                                                                                                                                     const totalReq = prod.quantity;
                                                                                                                                     const diff = totalReq - (totalAlloc - currentQty);
-                                                                                                                                    const fillAmount = Math.min(b.availableQuantity, Math.max(0, diff));
+                                                                                                                                    const fillAmount = Math.max(0, diff);
                                                                                                                                     handleManualQtyChange(
                                                                                                                                         inv.invoiceId,
                                                                                                                                         prod.productId,
@@ -2497,17 +2509,33 @@ export default function CreateConsolidationModal({
                                                         </td>
                                                         <td className="p-3.5">
                                                             {assignedBatches.length > 0 ? (
-                                                                <div className="flex flex-wrap gap-1 max-w-md">
-                                                                    {assignedBatches.map((b, bIdx) => (
-                                                                        <span
-                                                                            key={`assigned-batch-${p.productId}-${b.batchNo}-${bIdx}`}
-                                                                            className="inline-flex items-center gap-1 rounded-lg border border-border/70 bg-card px-2 py-0.5 text-[10px] font-medium shadow-xs"
-                                                                        >
-                                                                            <span className="font-bold text-foreground">{b.lotName}</span>
-                                                                            <span className="font-mono text-muted-foreground">({b.batchNo})</span>
-                                                                            <span className="font-black text-primary ml-0.5">· {b.quantity} qty</span>
-                                                                        </span>
-                                                                    ))}
+                                                                <div className="flex flex-wrap gap-1.5 max-w-md">
+                                                                    {assignedBatches.map((b, bIdx) => {
+                                                                        const batchInfo = (allocationPreview?.availableBatches || []).find(
+                                                                            (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
+                                                                        );
+                                                                        const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
+
+                                                                        return (
+                                                                            <span
+                                                                                key={`assigned-batch-${p.productId}-${b.batchNo}-${bIdx}`}
+                                                                                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-medium shadow-xs ${
+                                                                                    isNegative
+                                                                                        ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300"
+                                                                                        : "border-border/70 bg-card"
+                                                                                }`}
+                                                                            >
+                                                                                <span className="font-bold text-foreground">{b.lotName}</span>
+                                                                                <span className="font-mono text-muted-foreground">({b.batchNo})</span>
+                                                                                <span className="font-black text-primary ml-0.5">· {b.quantity} qty</span>
+                                                                                {isNegative && (
+                                                                                    <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1 py-0.2 text-[8px] font-black uppercase">
+                                                                                        <AlertTriangle className="h-2 w-2" /> Negative Balance
+                                                                                    </span>
+                                                                                )}
+                                                                            </span>
+                                                                        );
+                                                                    })}
                                                                 </div>
                                                             ) : (
                                                                 <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>

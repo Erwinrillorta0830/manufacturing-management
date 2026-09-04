@@ -341,9 +341,10 @@ export async function GET(request: Request) {
             const matchedP = productsList.find((p) => Number(p.product_id) === productId);
 
             // Compute live onhand quantity and unit cost from movements if present
-            const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
+            // Prioritize comprehensive lot/product/batch movements which aggregates all transactions for this batch
             const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
-            const movementInfo = movementByInvId || movementByLotProdBatch;
+            const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
+            const movementInfo = movementByLotProdBatch || movementByInvId;
 
             const quantity = movementInfo !== undefined
                 ? Number(movementInfo.onhand || 0)

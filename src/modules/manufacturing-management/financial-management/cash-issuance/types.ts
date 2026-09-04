@@ -159,6 +159,7 @@ export interface UnpaidPoDto {
     date: string;
     amountDue: number;
     type: string;
+    breakdown?: { productType: number | null, amount: number }[];
 }
 
 export interface MemoDto {

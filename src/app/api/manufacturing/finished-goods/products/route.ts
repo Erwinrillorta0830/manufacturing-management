@@ -111,11 +111,13 @@ export async function GET(request: Request) {
         const limit = parseInt(searchParams.get("limit") || "-1");
         const excludeRollup = searchParams.get("excludeRollup") === "true";
         const rawMaterialsScope = searchParams.get("productScope") === "raw-materials";
+        const isActive = searchParams.get("isActive");
         const productScopeFilter = rawMaterialsScope ? "&filter[product_type][_in]=389,390" : "";
+        const statusFilter = isActive ? `&filter[isActive][_eq]=${encodeURIComponent(isActive)}` : "";
 
         const explicitFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,item_group_id.item_group_id,item_group_id.group_code,item_group_id.group_name,tax_rate_id.TaxID,tax_rate_id.VATRate,tax_rate_id.WithholdingRate,regulatory_code,regulatory_notes,created_at,created_by,updated_at,updated_by";
         const legacyFields = "product_id,product_name,product_code,description,short_description,status,isActive,cost_per_unit,price_per_unit,product_brand,barcode,parent_id,parent_id.product_id,parent_id.product_name,product_category.category_id,product_category.category_name,product_class,product_segment,product_section,product_shelf_life,product_image,maintaining_quantity,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,unit_of_measurement_count,density_factor,weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id,product_type,created_at,created_by,updated_at,updated_by";
-        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}${productScopeFilter}`;
+        let url = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${explicitFields}${productScopeFilter}${statusFilter}`;
         if (search && search.trim()) {
             url += `&search=${encodeURIComponent(search.trim())}`;
         }
@@ -123,7 +125,7 @@ export async function GET(request: Request) {
         const fetchProducts = async () => {
             const response = await fetch(url, { headers, cache: "no-store" });
             if (response.ok) return response;
-            const legacyUrl = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${legacyFields}${productScopeFilter}${search && search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`;
+            const legacyUrl = `${DIRECTUS_URL}/items/products?limit=${limit}&sort=-product_id&fields=${legacyFields}${productScopeFilter}${statusFilter}${search && search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`;
             console.warn("Product shared-attribute fields are not available; using the legacy product projection.");
             return fetch(legacyUrl, { headers, cache: "no-store" });
         };
