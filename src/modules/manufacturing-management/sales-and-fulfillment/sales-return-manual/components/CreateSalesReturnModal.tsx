@@ -195,6 +195,9 @@ ReasonInputSection.displayName = "ReasonInputSection";
 export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   const searchParams = useSearchParams();
   const fromClearance = searchParams.get("fromClearance");
+  const invoiceNoParam = searchParams.get("invoiceNo");
+  const orderNoParam = searchParams.get("orderNo");
+  const customerCodeParam = searchParams.get("customerCode");
   // --- 1. FORM STATE ---
   const [returnDate, setReturnDate] = useState(() => {
     const manilaMs = Date.now() + 8 * 60 * 60 * 1000;
@@ -508,70 +511,190 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         }
       };
       fetchInv();
+    } else if (customerCode) {
+      const fetchInv = async () => {
+        try {
+          const data = await SalesReturnProvider.getInvoiceReturnList(
+            undefined,
+            customerCode,
+          );
+          setInvoiceOptions(data);
+        } catch (error) {
+          console.error("Failed to fetch invoices", error);
+          setInvoiceOptions([]);
+        }
+      };
+      fetchInv();
     } else {
       setInvoiceOptions([]);
     }
-  }, [selectedSalesmanId, customerCode, handleSelectSalesman, handleSelectCustomer]);
+  }, [selectedSalesmanId, customerCode]);
 
-  // --- 5c. PRE-FILL FROM CLEARANCE ---
+  // --- 5c. PRE-FILL FROM CLEARANCE / URL PARAMS ---
   useEffect(() => {
-    if (isOpen && fromClearance === "true" && customers.length > 0) {
-      const storedData = localStorage.getItem('scm_dispatch_return_data');
-      if (storedData) {
-        try {
-          const data = JSON.parse(storedData);
+    if (!isOpen || customers.length === 0) return;
 
-          // 1. Find and set Customer (DO THIS FIRST as it clears other fields)
-          const foundCustomer = customers.find(c =>
-            (data.customerCode && c.code === data.customerCode) ||
-            (data.customerName && c.name === data.customerName)
-          );
+    
+    const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
 
-          if (foundCustomer) {
-            handleSelectCustomer(foundCustomer);
-          } else {
-            setCustomerCode(data.customerCode || "");
-            setCustomerSearch(data.customerName || "");
-          }
-
-          // 1.5 Find and set Salesman
-          const foundSalesman = salesmen.find(s =>
-            (data.salesmanId && s.id === data.salesmanId) ||
-            (data.salesmanCode && s.code === data.salesmanCode) ||
-            (data.salesmanName && s.name === data.salesmanName)
-          );
-          if (foundSalesman) {
-            handleSelectSalesman(foundSalesman);
-          } else {
-            setSelectedSalesmanId(data.salesmanId || "");
-            setSalesmanCode(data.salesmanCode || "");
-            setSalesmanSearch(data.salesmanName || "");
-          }
-
-          // 2. Set Invoice & Order
-          setInvoiceNo(data.invoiceNo || "");
-          setInvoiceSearch(data.invoiceNo || "");
-          setOrderNo(data.orderNo || "");
-          setOrderSearch(data.orderNo || "");
-          setRemarks(data.remarks || "");
-
-          // 2.5 Set Branch (Override if foundSalesman sets it)
-          if (data.branchName) {
-            setBranchName(data.branchName);
-          }
-
-          // 4. Cleanup to prevent re-triggering
-          localStorage.removeItem('scm_dispatch_return_data');
-          // Clear query param from URL without reloading
-          const url = new URL(window.location.href);
-          url.searchParams.delete('fromClearance');
-          window.history.replaceState({}, '', url.toString());
-        } catch (e) {
-          console.error("Failed to parse clearance return data", e);
-        }
+    let data: {
+      customerCode?: string;
+      customerName?: string;
+      invoiceNo?: string;
+      orderNo?: string;
+      salesmanId?: string;
+      salesmanCode?: string;
+      salesmanName?: string;
+      branchName?: string;
+      remarks?: string;
+    } = {};
+    if (storedRaw) {
+      try {
+        data = JSON.parse(storedRaw);
+      } catch (e) {
+        console.error("Failed to parse clearance return data", e);
       }
     }
-  }, [isOpen, fromClearance, customers, salesmen, handleSelectCustomer, handleSelectSalesman]);
+
+    const targetCustomerCode = customerCodeParam || data.customerCode || "";
+    const targetCustomerName = data.customerName || "";
+    const targetInvoiceNo = invoiceNoParam || data.invoiceNo || "";
+    const targetOrderNo = orderNoParam || data.orderNo || "";
+    const targetSalesmanId = data.salesmanId || "";
+    const targetSalesmanCode = data.salesmanCode || "";
+    const targetSalesmanName = data.salesmanName || "";
+    const targetBranchName = data.branchName || "";
+    const targetRemarks = data.remarks || "";
+
+    // 1. Resolve Customer
+    const foundCustomer = customers.find(
+      (c) =>
+        (targetCustomerCode && c.code === targetCustomerCode) ||
+        (targetCustomerName && c.name === targetCustomerName)
+    );
+
+    if (foundCustomer) {
+      setSelectedCustomerId(foundCustomer.id.toString());
+      setCustomerSearch(foundCustomer.name);
+      setCustomerCode(foundCustomer.code || "");
+      if (foundCustomer.price_type_id) {
+        const pt = priceTypeOptions.find(
+          (p) => p.price_type_id.toString() === foundCustomer.price_type_id?.toString()
+        );
+        setPriceType(pt ? pt.price_type_name : foundCustomer.price_type_id.toString());
+      }
+    } else if (targetCustomerCode) {
+      setCustomerCode(targetCustomerCode);
+      setCustomerSearch(targetCustomerName || targetCustomerCode);
+    }
+
+    // 2. Set Invoice, Order, and Remarks
+    if (targetInvoiceNo) {
+      setInvoiceNo(targetInvoiceNo);
+      setInvoiceSearch(targetInvoiceNo);
+    }
+    if (targetOrderNo) {
+      setOrderNo(targetOrderNo);
+      setOrderSearch(targetOrderNo);
+    }
+    if (targetRemarks) {
+      setRemarks(targetRemarks);
+    }
+
+    // 3. Fetch Invoices and link matching invoice / salesman
+    const fetchAndLinkInvoice = async () => {
+      try {
+        const invList = await SalesReturnProvider.getInvoiceReturnList(
+          undefined,
+          targetCustomerCode || undefined
+        );
+        setInvoiceOptions(invList);
+
+        const matchedInv = invList.find(
+          (inv) =>
+            (targetInvoiceNo && inv.invoice_no === targetInvoiceNo) ||
+            (targetOrderNo && inv.order_id === targetOrderNo)
+        );
+
+        if (matchedInv) {
+          setInvoiceNo(matchedInv.invoice_no);
+          setInvoiceSearch(matchedInv.invoice_no);
+          setOrderNo(matchedInv.order_id);
+          setOrderSearch(matchedInv.order_id);
+          setAppliedInvoiceId(Number(matchedInv.id));
+
+          if (matchedInv.salesman_id) {
+            const foundSalesman = salesmen.find(
+              (s) => Number(s.id) === Number(matchedInv.salesman_id)
+            );
+            if (foundSalesman) {
+              setSelectedSalesmanId(foundSalesman.id.toString());
+              setSalesmanCode(foundSalesman.code);
+              setSalesmanSearch(foundSalesman.name);
+
+              if (foundSalesman.priceType && (!foundCustomer || !foundCustomer.price_type_id)) {
+                const pt = priceTypeOptions.find(
+                  (p) => p.price_type_id.toString() === foundSalesman.priceType.toString()
+                );
+                setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
+              }
+
+              const linkedBranch = branches.find((b) => b.id === foundSalesman.branchId);
+              if (linkedBranch) {
+                setBranchName(linkedBranch.name);
+                setBranchId(Number(linkedBranch.id));
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch/link invoice for clearance return", err);
+      }
+    };
+
+    fetchAndLinkInvoice();
+
+    // 4. Fallback Salesman / Branch from data if not resolved from invoice
+    const foundSalesman = salesmen.find(
+      (s) =>
+        (targetSalesmanId && s.id.toString() === targetSalesmanId.toString()) ||
+        (targetSalesmanCode && s.code === targetSalesmanCode) ||
+        (targetSalesmanName && s.name === targetSalesmanName)
+    );
+    if (foundSalesman) {
+      setSelectedSalesmanId(foundSalesman.id.toString());
+      setSalesmanCode(foundSalesman.code);
+      setSalesmanSearch(foundSalesman.name);
+      if (foundSalesman.priceType && (!foundCustomer || !foundCustomer.price_type_id)) {
+        const pt = priceTypeOptions.find(
+          (p) => p.price_type_id.toString() === foundSalesman.priceType.toString()
+        );
+        setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
+      }
+      const linkedBranch = branches.find((b) => b.id === foundSalesman.branchId);
+      if (linkedBranch) {
+        setBranchName(linkedBranch.name);
+        setBranchId(Number(linkedBranch.id));
+      }
+    } else if (targetBranchName) {
+      setBranchName(targetBranchName);
+    }
+
+    // 5. Cleanup
+    if (storedRaw) {
+      localStorage.removeItem("scm_dispatch_return_data");
+    }
+  }, [
+    isOpen,
+    fromClearance,
+    invoiceNoParam,
+    orderNoParam,
+    customerCodeParam,
+    customers,
+    salesmen,
+    branches,
+    priceTypeOptions,
+  ]);
 
   // --- 6. CLICK OUTSIDE HANDLERS ---
   useEffect(() => {
@@ -1847,6 +1970,19 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 setInvoiceNo(inv.invoice_no);
                                 setInvoiceSearch(inv.invoice_no);
                                 setAppliedInvoiceId(Number(inv.id));
+                                if (inv.salesman_id) {
+                                  const foundSalesman = salesmen.find(s => Number(s.id) === Number(inv.salesman_id));
+                                  if (foundSalesman) {
+                                    setSelectedSalesmanId(foundSalesman.id.toString());
+                                    setSalesmanSearch(foundSalesman.name);
+                                    setSalesmanCode(foundSalesman.code);
+                                    const linkedBranch = branches.find(b => b.id === foundSalesman.branchId);
+                                    if (linkedBranch) {
+                                      setBranchName(linkedBranch.name);
+                                      setBranchId(Number(linkedBranch.id));
+                                    }
+                                  }
+                                }
                               }}
                             >
                               <div className="flex flex-col">
@@ -1915,6 +2051,19 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 // Auto-fill order
                                 setOrderNo(inv.order_id);
                                 setOrderSearch(inv.order_id);
+                                if (inv.salesman_id) {
+                                  const foundSalesman = salesmen.find(s => Number(s.id) === Number(inv.salesman_id));
+                                  if (foundSalesman) {
+                                    setSelectedSalesmanId(foundSalesman.id.toString());
+                                    setSalesmanSearch(foundSalesman.name);
+                                    setSalesmanCode(foundSalesman.code);
+                                    const linkedBranch = branches.find(b => b.id === foundSalesman.branchId);
+                                    if (linkedBranch) {
+                                      setBranchName(linkedBranch.name);
+                                      setBranchId(Number(linkedBranch.id));
+                                    }
+                                  }
+                                }
                               }}
                             >
                               <div className="flex flex-col">
