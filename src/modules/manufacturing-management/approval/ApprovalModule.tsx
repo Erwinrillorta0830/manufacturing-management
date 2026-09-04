@@ -115,7 +115,7 @@ function FinanceDecisionControls({
         try {
             setSubmitting("approve");
             await approve(shipment.shipment_id);
-            toast.success("Finance approval completed. The purchase order is now available in QA Receiving.");
+            toast.success("Finance approval completed. The purchase order is now available in Warehouse Receiving.");
         } catch (error) {
             await handleActionError(error);
         } finally {

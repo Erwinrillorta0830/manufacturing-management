@@ -118,7 +118,7 @@ export interface IncomingShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
     is_posted?: number | boolean | null;
@@ -182,6 +182,13 @@ export interface ShipmentLineItem {
     discount_percent?: number;
     vat_percent?: number;
     withholding_percent?: number;
+    warehouse_receipt?: {
+        receiving_header_id: number | null;
+        receipt_number: string;
+        receipt_date?: string | null;
+        receipt_type?: string | null;
+        received_quantity: number;
+    } | null;
 }
 
 export interface ShipmentExpense {
@@ -503,7 +510,7 @@ export interface DirectusShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
     payment_type?: number | null;
@@ -594,7 +601,7 @@ export interface ShipmentData {
     exchange_rate: string;
     total_foreign_currency: string;
     total_php_value: string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
     date_received: string;

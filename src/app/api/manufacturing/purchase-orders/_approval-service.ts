@@ -456,7 +456,7 @@ async function submitPurchaseOrderApprovalUnlocked(
         ? INVENTORY_STATUS.REJECTED
         : command.action === "cancel"
             ? INVENTORY_STATUS.CANCELLED
-            : INVENTORY_STATUS.FOR_PICKUP;
+            : INVENTORY_STATUS.APPROVED;
     const update: Record<string, unknown> = {
         workflow_revision: nextRevision,
         inventory_status: targetStatus,
@@ -538,8 +538,8 @@ async function submitPurchaseOrderApprovalUnlocked(
         success: true,
         action,
         stage,
-        status: targetStatus === INVENTORY_STATUS.FOR_PICKUP
-            ? "Receiving (QA)"
+        status: targetStatus === INVENTORY_STATUS.APPROVED
+            ? "Approved"
             : targetStatus === INVENTORY_STATUS.CANCELLED
                 ? "Cancelled"
                 : "Rejected",

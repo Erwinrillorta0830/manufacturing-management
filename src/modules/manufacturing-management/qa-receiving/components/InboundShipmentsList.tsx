@@ -113,7 +113,6 @@ export default function InboundShipmentsList({
                         >
                             <option value="">All Statuses</option>
                             <option value="Receiving (QA)">QA (Receiving)</option>
-                            <option value="Approved">Finance Approved</option>
                             <option value="Partially Received">Partially Received / Receiving (QA)</option>
                             <option value="Received">Received</option>
                         </select>
@@ -167,7 +166,7 @@ export default function InboundShipmentsList({
                                 <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-extrabold border ${
                                     s.isForceReceived
                                         ? "bg-violet-500/10 text-violet-600 border-violet-500/20"
-                                        : s.status === "Receiving (QA)" || s.status === "For Pickup" || s.status === "Approved"
+                                        : s.status === "Receiving (QA)" || s.status === "For Pickup"
                                         ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
                                         : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                                 }`}>

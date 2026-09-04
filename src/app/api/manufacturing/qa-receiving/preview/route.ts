@@ -249,13 +249,13 @@ export async function POST(request: Request) {
         const [headerResponse, lineResponse, receivingResponseWithLine, movementTypeResponse, productResponse] = await Promise.all([
             procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`),
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
-            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`),
+            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`),
             procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1"),
             procurementDirectusFetch(`/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`)
         ]);
         let receivingResponse = receivingResponseWithLine;
         if (!receivingResponse.ok) {
-            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`);
+            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`);
         }
         if (headerResponse.status === 404) throw new ReceivingPreviewError("Purchase order not found.", 404);
         if (!headerResponse.ok || !lineResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok || !productResponse.ok) {

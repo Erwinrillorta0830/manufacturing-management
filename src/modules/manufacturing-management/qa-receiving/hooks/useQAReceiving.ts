@@ -274,7 +274,7 @@ export function useQAReceiving({
 
     const filteredShipments = useMemo(() => {
         return shipments.filter(s => {
-            // Finance-approved orders can enter QA directly; legacy For Pickup orders remain supported.
+            // Warehouse-received orders enter QA; legacy For Pickup orders remain supported.
             if (!isReceivingQueueShipmentStatus(s.inventory_status ?? s.status) && s.status !== "Received") return false;
 
             // 1. PO# filter (case-insensitive search on reference_number or shipment_id)
@@ -475,7 +475,7 @@ export function useQAReceiving({
             ? String(purchaseOrderBranchId)
             : "";
         if (!isReplacement && !isReceivingQueueShipmentStatus(shipment.inventory_status ?? shipment.status) && !isReceived) {
-            toast.error("The purchase order must be Finance-approved before it can be received.");
+            toast.error("The purchase order must complete Warehouse Receiving before QA inspection.");
             clearInspection();
             return;
         }
@@ -533,6 +533,8 @@ export function useQAReceiving({
                 const historicalReceipt = !isReplacement && isReceived;
                 const latestReceipt = historicalReceipt ? l.latest_receipt : null;
                 const latestStorageLotId = historicalReceipt ? (latestReceipt?.storage_lot_id ?? l.lot_id ?? null) : null;
+                const warehouseReceipt = !isReplacement ? l.warehouse_receipt : null;
+                const isWarehouseHandoff = Boolean(warehouseReceipt);
                 const isPkg = l.category_type === "PACKAGING";
                 
                 const orderedQuantity = Number(l.quantity_ordered || 0);
@@ -554,6 +556,8 @@ export function useQAReceiving({
                         ? replacementContext?.remainingQuantity || ""
                         : isReceived
                         ? existingReceivedQuantity
+                        : isWarehouseHandoff
+                            ? warehouseReceipt?.received_quantity || 0
                         : isPartiallyReceived
                             ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
@@ -561,6 +565,8 @@ export function useQAReceiving({
                         ? replacementContext?.remainingQuantity || ""
                         : isReceived
                         ? existingAcceptedQuantity
+                        : isWarehouseHandoff
+                            ? warehouseReceipt?.received_quantity || 0
                         : isPartiallyReceived
                             ? (remainingAcceptedForLine > 0 ? remainingAcceptedForLine : 0)
                             : "",
@@ -585,16 +591,18 @@ export function useQAReceiving({
 
             const storedReceivingTicketNumber = lines
                 .map(line => {
+                    const warehouseReceipt = line.warehouse_receipt?.receipt_number?.trim() || "";
+                    if (warehouseReceipt) return warehouseReceipt;
                     const receipt = line.latest_receipt?.receipt_number?.trim() || "";
                     const suffix = `-${line.line_id}`;
                     return receipt.endsWith(suffix) ? receipt.slice(0, -suffix.length) : receipt;
                 })
                 .find(Boolean) || "";
-            setReceivingTicketNumber(!isReplacement && isReceived ? storedReceivingTicketNumber : "");
+            setReceivingTicketNumber(!isReplacement && (isReceived || lines.some(line => Boolean(line.warehouse_receipt))) ? storedReceivingTicketNumber : "");
             const storedReceiptDate = lines
-                .map(line => line.latest_receipt?.receipt_date || "")
+                .map(line => line.warehouse_receipt?.receipt_date || line.latest_receipt?.receipt_date || "")
                 .find(Boolean) || "";
-            setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
+            setReceiptDate(!isReplacement && (isReceived || lines.some(line => Boolean(line.warehouse_receipt))) && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             const selectedBranch = branchCatalog.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));

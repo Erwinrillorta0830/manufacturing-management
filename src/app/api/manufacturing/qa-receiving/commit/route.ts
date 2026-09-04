@@ -32,6 +32,7 @@ import { quantityStatusFromReceivingStatus } from "../_receiving-status";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
+    fetchWarehouseReceivingTicket,
     markReceivingTicketFailed,
     markReceivingTicketPosted,
     ReceivingTicketError
@@ -577,16 +578,19 @@ export async function POST(request: Request) {
                 quantity: allocation.quantity
                 })));
             });
-        const receivingTicket = await allocateReceivingTicket({
-            purchaseOrderId: parsed.data.shipmentId,
-            branchId: purchaseOrderBranchId,
-            receiptNumber: parsed.data.receiptNumber,
-            receiptDate: parsed.data.receiptDate,
-            quantityStatus: preview.quantityStatus,
-            workflowRevision: parsed.data.workflowRevision,
-            idempotencyKey,
-            createdBy: actor.userId
-        });
+        const warehouseTicket = parsed.data.replacementDispositionId
+            ? null
+            : await fetchWarehouseReceivingTicket(parsed.data.shipmentId, parsed.data.workflowRevision);
+        const receivingTicket = warehouseTicket || await allocateReceivingTicket({
+                purchaseOrderId: parsed.data.shipmentId,
+                branchId: purchaseOrderBranchId,
+                receiptNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
+                quantityStatus: preview.quantityStatus,
+                workflowRevision: parsed.data.workflowRevision,
+                idempotencyKey,
+                createdBy: actor.userId
+            });
         allocatedTicketId = receivingTicket.id;
         if (!receivingTicket.receiving_ticket_no) {
             throw new CommitError(503, "The submitted Receipt Number was not persisted.");

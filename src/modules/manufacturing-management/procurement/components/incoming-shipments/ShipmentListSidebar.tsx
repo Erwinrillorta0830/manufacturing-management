@@ -116,6 +116,7 @@ export function ShipmentListSidebar({
                         <option value="All">All Statuses</option>
                         <option value={canonicalDrafting ? "For Approval" : "Ordered"}>{canonicalDrafting ? "For Approval" : "Ordered"}</option>
                         <option value="Approved">Approved</option>
+                        <option value="Warehouse Receiving">Warehouse Receiving</option>
                         <option value="Awaiting Payment">Awaiting Payment</option>
                         <option value="Cancelled">Cancelled</option>
                         <option value="Receiving (QA)">Receiving (QA)</option>
