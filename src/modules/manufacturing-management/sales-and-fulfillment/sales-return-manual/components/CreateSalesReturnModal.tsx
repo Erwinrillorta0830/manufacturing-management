@@ -537,9 +537,17 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     const hasUrlParams = fromClearance === "true" || !!invoiceNoParam || !!orderNoParam || !!customerCodeParam;
     const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
 
-    if (!hasUrlParams && !storedRaw) return;
-
-    let data: any = {};
+    let data: {
+      customerCode?: string;
+      customerName?: string;
+      invoiceNo?: string;
+      orderNo?: string;
+      salesmanId?: string;
+      salesmanCode?: string;
+      salesmanName?: string;
+      branchName?: string;
+      remarks?: string;
+    } = {};
     if (storedRaw) {
       try {
         data = JSON.parse(storedRaw);
