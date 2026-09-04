@@ -130,7 +130,7 @@ export function useQuotation() {
         // Fetch product types and master catalog products
         setLoadingProducts(true);
         Promise.all([
-            fetch("/api/manufacturing/finished-goods/products?limit=-1").then(r => r.ok ? r.json() : []),
+            fetch("/api/manufacturing/finished-goods/products?limit=-1&isActive=1").then(r => r.ok ? r.json() : []),
             fetch("/api/manufacturing/sales-order?action=create-lookups").then(r => r.ok ? r.json() : {})
         ]).then(([productsData, lookupsData]: [Record<string, unknown>[], Record<string, unknown>]) => {
             const fgOnly = productsData.filter((p: Record<string, unknown>) => p.has_versions === true);

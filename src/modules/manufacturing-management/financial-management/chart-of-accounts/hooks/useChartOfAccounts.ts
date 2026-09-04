@@ -11,6 +11,10 @@ type EditState =
   | { open: false; row: null }
   | { open: true; row: COARow };
 
+const getPHLocalTime = () => {
+  return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace(" ", "T");
+};
+
 export function useChartOfAccounts() {
   const [glCode, setGlCode] = React.useState("");
   const [accountTitle, setAccountTitle] = React.useState("");
@@ -141,6 +145,7 @@ export function useChartOfAccounts() {
       const body = {
         ...payload,
         added_by: payload.added_by || currentUser?.id || null,
+        date_added: getPHLocalTime(),
       } as Parameters<typeof api.createCOA>[0];
       await api.createCOA(body);
       toast.success("Account created");
@@ -156,7 +161,8 @@ export function useChartOfAccounts() {
     try {
       const body = {
         ...payload,
-        added_by: currentUser?.id || payload.added_by || null,
+        status_updated_at: getPHLocalTime(),
+        status_updated_by: currentUser?.id || null,
       } as Parameters<typeof api.updateCOA>[1];
       await api.updateCOA(id, body);
       toast.success("Changes saved");

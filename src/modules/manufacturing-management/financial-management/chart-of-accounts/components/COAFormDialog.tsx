@@ -28,7 +28,83 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { ChevronsUpDown, Check } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+function SearchableCombobox({
+  items,
+  value,
+  onValueChange,
+  placeholder,
+  disabled
+}: {
+  items: { id: string, label: string }[];
+  value: string;
+  onValueChange: (v: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const selectedLabel = items.find(x => x.id === value)?.label || placeholder;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen} modal={true}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal px-3"
+          disabled={disabled}
+        >
+          <span className="truncate">{selectedLabel}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0" align="start" style={{ width: "var(--radix-popover-trigger-width)" }}>
+        <Command>
+          <CommandInput placeholder={`Search...`} />
+          <CommandList className="max-h-[200px]">
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup>
+              {items.map((item) => (
+                <CommandItem
+                  key={item.id}
+                  value={item.label}
+                  onSelect={() => {
+                    onValueChange(item.id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === item.id ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  {item.label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 type Mode = "create" | "edit";
 
@@ -273,7 +349,7 @@ export default function COAFormDialog(props: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={isEdit ? "sm:max-w-5xl" : "sm:max-w-xl"}>
+      <DialogContent className={cn("max-h-[90vh] overflow-y-auto", isEdit ? "sm:max-w-5xl" : "sm:max-w-xl")}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -295,60 +371,39 @@ export default function COAFormDialog(props: {
                   <label className="text-sm font-medium">
                     BS/IS Type <span className="text-destructive">*</span>
                   </label>
-                  <Select value={bsisCode} onValueChange={setBsisCode} disabled={lookupsLoading}>
-                    <SelectTrigger className="w-full">
-                      <div className="truncate text-left">
-                        <SelectValue placeholder="Select a BS/IS type" />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bsisTypes.map((x) => (
-                        <SelectItem key={x.id} value={String(x.id)}>
-                          <span className="truncate">{x.bsis_code}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableCombobox
+                    items={bsisTypes.map(x => ({ id: String(x.id), label: x.bsis_code }))}
+                    value={bsisCode}
+                    onValueChange={setBsisCode}
+                    placeholder="Select a BS/IS type"
+                    disabled={lookupsLoading}
+                  />
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
                     Account Type <span className="text-destructive">*</span>
                   </label>
-                  <Select value={accountType} onValueChange={setAccountType} disabled={lookupsLoading}>
-                    <SelectTrigger className="w-full">
-                      <div className="truncate text-left">
-                        <SelectValue placeholder="Select an account type" />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accountTypes.map((x) => (
-                        <SelectItem key={x.id} value={String(x.id)}>
-                          <span className="truncate">{x.account_name}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableCombobox
+                    items={accountTypes.map(x => ({ id: String(x.id), label: x.account_name }))}
+                    value={accountType}
+                    onValueChange={setAccountType}
+                    placeholder="Select an account type"
+                    disabled={lookupsLoading}
+                  />
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
                     Balance Type <span className="text-destructive">*</span>
                   </label>
-                  <Select value={balanceType} onValueChange={setBalanceType} disabled={lookupsLoading}>
-                    <SelectTrigger className="w-full">
-                      <div className="truncate text-left">
-                        <SelectValue placeholder="Select a balance type" />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {balanceTypes.map((x) => (
-                        <SelectItem key={x.id} value={String(x.id)}>
-                          <span className="truncate">{x.balance_name}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableCombobox
+                    items={balanceTypes.map(x => ({ id: String(x.id), label: x.balance_name }))}
+                    value={balanceType}
+                    onValueChange={setBalanceType}
+                    placeholder="Select a balance type"
+                    disabled={lookupsLoading}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -498,60 +553,39 @@ export default function COAFormDialog(props: {
               <label className="text-sm font-medium">
                 BS/IS Type <span className="text-destructive">*</span>
               </label>
-              <Select value={bsisCode} onValueChange={setBsisCode} disabled={lookupsLoading}>
-                <SelectTrigger className="w-full">
-                  <div className="truncate text-left">
-                    <SelectValue placeholder="Select a BS/IS type" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {bsisTypes.map((x) => (
-                    <SelectItem key={x.id} value={String(x.id)}>
-                      <span className="truncate">{x.bsis_code}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableCombobox
+                items={bsisTypes.map(x => ({ id: String(x.id), label: x.bsis_code }))}
+                value={bsisCode}
+                onValueChange={setBsisCode}
+                placeholder="Select a BS/IS type"
+                disabled={lookupsLoading}
+              />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">
                 Account Type <span className="text-destructive">*</span>
               </label>
-              <Select value={accountType} onValueChange={setAccountType} disabled={lookupsLoading}>
-                <SelectTrigger className="w-full">
-                  <div className="truncate text-left">
-                    <SelectValue placeholder="Select an account type" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {accountTypes.map((x) => (
-                    <SelectItem key={x.id} value={String(x.id)}>
-                      <span className="truncate">{x.account_name}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableCombobox
+                items={accountTypes.map(x => ({ id: String(x.id), label: x.account_name }))}
+                value={accountType}
+                onValueChange={setAccountType}
+                placeholder="Select an account type"
+                disabled={lookupsLoading}
+              />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">
                 Balance Type <span className="text-destructive">*</span>
               </label>
-              <Select value={balanceType} onValueChange={setBalanceType} disabled={lookupsLoading}>
-                <SelectTrigger className="w-full">
-                  <div className="truncate text-left">
-                    <SelectValue placeholder="Select a balance type" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {balanceTypes.map((x) => (
-                    <SelectItem key={x.id} value={String(x.id)}>
-                      <span className="truncate">{x.balance_name}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableCombobox
+                items={balanceTypes.map(x => ({ id: String(x.id), label: x.balance_name }))}
+                value={balanceType}
+                onValueChange={setBalanceType}
+                placeholder="Select a balance type"
+                disabled={lookupsLoading}
+              />
             </div>
 
             <div className="space-y-2">
