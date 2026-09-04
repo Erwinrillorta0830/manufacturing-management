@@ -42,7 +42,7 @@ export function TagRFIDStep() {
 
     const continueToQaReceiving = () => {
         if (!selectedPO?.id) return;
-        window.location.assign(`/mm/qa-receiving?poId=${encodeURIComponent(selectedPO.id)}`);
+        window.location.assign(`/mm/qa-receiving/${encodeURIComponent(selectedPO.id)}`);
     };
 
     React.useEffect(() => {

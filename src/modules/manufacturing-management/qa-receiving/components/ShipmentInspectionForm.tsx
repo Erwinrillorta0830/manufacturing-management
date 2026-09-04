@@ -782,14 +782,14 @@ export default function ShipmentInspectionForm({
     }, [branches, selectedShipment.branch_id]);
 
     return (
-        <form onSubmit={handleSubmitInspection} className="flex flex-col h-full">
+        <form onSubmit={handleSubmitInspection} className="flex flex-col">
             <div className="p-4 border-b bg-muted/20 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="md:hidden p-2 hover:bg-muted rounded-xl border text-muted-foreground transition-colors shrink-0 flex items-center justify-center animate-in fade-in slide-in-from-left-2 duration-200"
-                        title="Back to Queue"
+                        className="md:hidden min-h-10 min-w-10 rounded-xl border p-2 text-muted-foreground transition-colors hover:bg-muted shrink-0 flex items-center justify-center animate-in fade-in slide-in-from-left-2 duration-200"
+                        title="Back to Inbound QA Queue"
                     >
                         <ArrowLeft className="h-5 w-5" />
                     </button>
@@ -884,7 +884,7 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 p-4 border-b bg-background shrink-0">
+            <div className="grid grid-cols-1 gap-3 border-b bg-background p-4 lg:grid-cols-5">
                 <div className="space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Receipt Number {!readOnly && <span className="text-red-500">*</span>}
@@ -1033,7 +1033,7 @@ export default function ShipmentInspectionForm({
             )}
 
             {/* Manifest Items Table */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="space-y-4 p-4">
                 {loadingLines ? (
                     <div className="p-8 text-center text-xs text-muted-foreground">Fetching manifest detail...</div>
                 ) : (
@@ -1168,7 +1168,7 @@ export default function ShipmentInspectionForm({
                                     const rejectedEquiv = rejectedVal * convFactor;
 
                                      return (
-                                         <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+                                         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                                              {/* Received Quantity Stepper */}
                                              <div className="space-y-1">
                                                  <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
@@ -1481,7 +1481,7 @@ export default function ShipmentInspectionForm({
                     onClick={onCancel}
                     className="px-5 py-2.5 border rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted h-11 flex items-center justify-center cursor-pointer"
                 >
-                    {readOnly ? "Back to Queue" : "Cancel Inspection"}
+                    {readOnly ? "Back to Inbound QA Queue" : "Cancel Inspection"}
                 </button>
                 {canForceReceive && (
                     <button
