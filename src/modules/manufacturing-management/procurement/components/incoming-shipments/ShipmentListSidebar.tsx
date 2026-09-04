@@ -1,9 +1,11 @@
 import React from "react";
+import Link from "next/link";
 import { Anchor, Plus, Search, X, Globe, MapPin } from "lucide-react";
 import { IncomingShipment, Supplier } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 
 export interface ShipmentListSidebarProps {
+    fullWidth?: boolean;
     totalItems: number;
     search: string;
     setSearch: (s: string) => void;
@@ -15,17 +17,22 @@ export interface ShipmentListSidebarProps {
     setCurrentPage: React.Dispatch<React.SetStateAction<number>>;
     totalPages: number;
     listLoading: boolean;
+    listError?: string | null;
+    onRetry?: () => void;
     hasListFilters: boolean;
     canonicalDrafting: boolean;
     paginatedShipments: IncomingShipment[];
     suppliers: Supplier[];
     activeShipment: IncomingShipment | null;
     setSelectedShipment: (s: IncomingShipment | null) => void;
+    getShipmentHref?: (shipmentId: number) => string;
+    createHref?: string;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
     onOpenCreateModal: () => void;
 }
 
 export function ShipmentListSidebar({
+    fullWidth = false,
     totalItems,
     search,
     setSearch,
@@ -37,17 +44,21 @@ export function ShipmentListSidebar({
     setCurrentPage,
     totalPages,
     listLoading,
+    listError = null,
+    onRetry,
     hasListFilters,
     canonicalDrafting,
     paginatedShipments,
     suppliers,
     activeShipment,
     setSelectedShipment,
+    getShipmentHref,
+    createHref,
     isSupplierForeign,
     onOpenCreateModal
 }: ShipmentListSidebarProps) {
     return (
-        <div className="w-full lg:w-2/5 flex flex-col border rounded-xl bg-card overflow-hidden shadow-sm">
+        <div className={`${fullWidth ? "w-full flex-1" : "w-full lg:w-2/5"} flex min-h-0 flex-col border rounded-xl bg-card overflow-hidden shadow-sm`}>
             <div className="p-4 border-b space-y-3 shrink-0 bg-muted/20">
                 <div className="flex items-center justify-between">
                     <h3 className="font-bold text-sm text-foreground flex items-center gap-1.5 min-w-0">
@@ -55,12 +66,21 @@ export function ShipmentListSidebar({
                         <span className="truncate">Procurement Registry</span>
                         <span className="text-[10px] text-muted-foreground shrink-0">({totalItems})</span>
                     </h3>
-                    <button
-                        onClick={onOpenCreateModal}
-                        className="inline-flex items-center gap-1 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-2.5 py-1.5 rounded-lg text-xs transition-all shadow-sm shrink-0 cursor-pointer"
-                    >
-                        <Plus className="h-3.5 w-3.5" /> {canonicalDrafting ? "Create PO" : "Log Cargo"}
-                    </button>
+                    {createHref ? (
+                        <Link
+                            href={createHref}
+                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90"
+                        >
+                            <Plus className="h-3.5 w-3.5" /> Create PO
+                        </Link>
+                    ) : (
+                        <button
+                            onClick={onOpenCreateModal}
+                            className="inline-flex items-center gap-1 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-2.5 py-1.5 rounded-lg text-xs transition-all shadow-sm shrink-0 cursor-pointer"
+                        >
+                            <Plus className="h-3.5 w-3.5" /> {canonicalDrafting ? "Create PO" : "Log Cargo"}
+                        </button>
+                    )}
                 </div>
                 <div className="flex gap-2">
                     <div className="relative flex-1">
@@ -99,7 +119,6 @@ export function ShipmentListSidebar({
                         <option value="Awaiting Payment">Awaiting Payment</option>
                         <option value="Cancelled">Cancelled</option>
                         <option value="Receiving (QA)">Receiving (QA)</option>
-                        <option value="Receiving (QA)">Receiving (QA)</option>
                         <option value="Partially Received">Partially Received</option>
                         <option value="Received">Received</option>
                         <option value="Rejected">Rejected</option>
@@ -117,6 +136,20 @@ export function ShipmentListSidebar({
                                 <div className="h-2 w-2/5 rounded bg-muted" />
                             </div>
                         ))}
+                    </div>
+                ) : listError ? (
+                    <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-8 text-center text-xs text-muted-foreground" role="alert">
+                        <p className="font-semibold text-destructive">Unable to load purchase orders.</p>
+                        <p className="max-w-md">{listError}</p>
+                        {onRetry && (
+                            <button
+                                type="button"
+                                onClick={onRetry}
+                                className="min-h-9 rounded-lg bg-primary px-3 py-2 font-semibold text-primary-foreground hover:bg-primary/90"
+                            >
+                                Retry
+                            </button>
+                        )}
                     </div>
                 ) : paginatedShipments.length === 0 ? (
                     <div className="flex min-h-48 flex-col items-center justify-center gap-2 p-8 text-center text-xs text-muted-foreground">
@@ -150,21 +183,17 @@ export function ShipmentListSidebar({
                         const matchedSupplier = suppliers.find(sup => sup.id === supId)
                             || (typeof s.supplier_id === "object" ? s.supplier_id : null);
                         const supName = matchedSupplier ? (matchedSupplier as Supplier).supplier_name || `Supplier #${supId}` : `Supplier ID: ${s.supplier_id}`;
-                        return (
-                            <button
-                                key={s.shipment_id}
-                                onClick={() => setSelectedShipment(s)}
-                                aria-current={activeShipment?.shipment_id === s.shipment_id ? "true" : undefined}
-                                className={`w-full text-left p-4 hover:bg-muted/40 transition-all flex flex-col gap-2 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03)] focus:bg-primary/5 active:translate-y-0 ${
-                                    activeShipment?.shipment_id === s.shipment_id ? "bg-primary/5 border-l-2 border-primary" : ""
-                                }`}
-                            >
+                        const rowClassName = `w-full text-left p-4 hover:bg-muted/40 transition-all flex flex-col gap-2 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03)] focus:bg-primary/5 active:translate-y-0 ${
+                            activeShipment?.shipment_id === s.shipment_id ? "bg-primary/5 border-l-2 border-primary" : ""
+                        }`;
+                        const rowContent = (
+                            <>
                                 <div className="flex items-start justify-between gap-2">
-                                    <span className="font-bold text-xs text-foreground truncate">{canonicalDrafting ? `PO: ${s.purchase_order_no || s.reference_number}` : `BL/PO: ${s.reference_number}`}</span>
+                                    <span className="min-w-0 truncate font-bold text-xs text-foreground">{canonicalDrafting ? `PO: ${s.purchase_order_no || s.reference_number}` : `BL/PO: ${s.reference_number}`}</span>
                                     {getStatusBadge(displayShipmentStatus(s, canonicalDrafting))}
                                 </div>
-                                <div className="flex items-center justify-between text-[11px] text-muted-foreground font-semibold">
-                                    <div className="flex items-center gap-1.5 truncate">
+                                <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground font-semibold">
+                                    <div className="flex min-w-0 items-center gap-1.5 truncate">
                                         {matchedSupplier && (
                                             isSupplierForeign(matchedSupplier) ? (
                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase shrink-0" title="Foreign Supplier">
@@ -178,16 +207,36 @@ export function ShipmentListSidebar({
                                         )}
                                         <span className="truncate">{supName}</span>
                                     </div>
-                                    <span className="font-mono shrink-0">{formatMoney(s.total_php_value)}</span>
+                                    <span className="shrink-0 font-mono">{formatMoney(s.total_php_value)}</span>
                                 </div>
-                                <div className="text-[10px] text-muted-foreground flex justify-between">
+                                <div className="flex justify-between gap-3 text-[10px] text-muted-foreground">
                                     <span>{s.created_at ? `Created: ${new Date(s.created_at).toLocaleDateString()}` : "Purchase order"}</span>
                                     <span>
-                                        {s.status === "Received" 
-                                            ? `Received: ${s.date_received ? new Date(s.date_received).toLocaleDateString() : "N/A"}` 
+                                        {s.status === "Received"
+                                            ? `Received: ${s.date_received ? new Date(s.date_received).toLocaleDateString() : "N/A"}`
                                             : `ETA: ${s.lead_time_receiving ? new Date(s.lead_time_receiving).toLocaleDateString() : "Pending"}`}
                                     </span>
                                 </div>
+                            </>
+                        );
+                        return getShipmentHref ? (
+                            <Link
+                                key={s.shipment_id}
+                                href={getShipmentHref(s.shipment_id)}
+                                aria-label={`Open ${s.purchase_order_no || s.reference_number}`}
+                                className={rowClassName}
+                            >
+                                {rowContent}
+                            </Link>
+                        ) : (
+                            <button
+                                key={s.shipment_id}
+                                type="button"
+                                onClick={() => setSelectedShipment(s)}
+                                aria-current={activeShipment?.shipment_id === s.shipment_id ? "true" : undefined}
+                                className={rowClassName}
+                            >
+                                {rowContent}
                             </button>
                         );
                     })
@@ -205,7 +254,7 @@ export function ShipmentListSidebar({
                                 setItemsPerPage(Number(e.target.value));
                                 setCurrentPage(1);
                             }}
-                            className="rounded border bg-background px-1.5 py-0.5 outline-none font-semibold text-foreground focus:ring-1 focus:ring-primary text-[11px]"
+                            className="min-h-9 rounded border bg-background px-2 py-1 outline-none font-semibold text-foreground focus:ring-1 focus:ring-primary text-[11px]"
                         >
                             <option value={5}>5</option>
                             <option value={10}>10</option>
@@ -219,7 +268,7 @@ export function ShipmentListSidebar({
                                 type="button"
                                 disabled={currentPage === 1}
                                 onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                className="px-2 py-1 border rounded text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                                className="min-h-9 min-w-16 border rounded px-2 py-1 text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                             >
                                 Prev
                             </button>
@@ -230,7 +279,7 @@ export function ShipmentListSidebar({
                                 type="button"
                                 disabled={currentPage === totalPages}
                                 onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                className="px-2 py-1 border rounded text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                                className="min-h-9 min-w-16 border rounded px-2 py-1 text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                             >
                                 Next
                             </button>
