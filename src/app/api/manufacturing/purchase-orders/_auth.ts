@@ -9,8 +9,8 @@ export const PURCHASE_ORDER_MODULE_PATHS = {
     suppliers: "/mm/suppliers",
     rawMaterials: "/mm/raw-materials",
     financeApproval: "/mm/finance-approval",
+    warehouseReceiving: "/mm/warehouse-receiving",
     receiving: "/mm/qa-receiving",
-    rfidReceiving: "/mm/supplier-management/purchase-order/purchase-order-receiving-rfid",
     expenses: "/mm/shipment-expenses"
 } as const;
 
