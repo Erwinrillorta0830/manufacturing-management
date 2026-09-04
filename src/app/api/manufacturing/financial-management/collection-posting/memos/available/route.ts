@@ -55,7 +55,7 @@ export async function GET(request: Request) {
         }
 
         // We check BOTH customer_id OR customer_reference to catch bad mappings
-        const idOrRefConditions: any[] = [];
+        const idOrRefConditions: Record<string, unknown>[] = [];
         if (customerIds.length > 0) {
             idOrRefConditions.push({ customer_id: { _in: customerIds } });
         }
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
             return NextResponse.json([], { headers: noCacheHeaders });
         }
 
-        const memoFilter: any = {
+        const memoFilter: { _and: Record<string, unknown>[] } = {
             _and: [
                 { _or: idOrRefConditions },
                 { status: { _in: ["APPROVED", "PARTIALLY APPLIED"] } }
@@ -88,8 +88,19 @@ export async function GET(request: Request) {
 
         const fallbackCode = codes.length === 1 ? codes[0] : undefined;
 
+        type MemoRecord = {
+            id: number;
+            memo_number: string;
+            salesman_id: string | number;
+            customer_id: string | number | { id: number } | null;
+            customer_reference: string;
+            amount: string | number;
+            applied_amount: string | number;
+            status: string;
+        };
+
         const mappedMemos = memos
-            .filter((m: any) => {
+            .filter((m: MemoRecord) => {
                 // VERY STRICT IN-MEMORY FIREWALL
                 // Directus sometimes ignores relational _or filters and dumps unassigned memos.
                 // We MUST verify the memo truly belongs to the requested customers before mapping it.
@@ -101,9 +112,9 @@ export async function GET(request: Request) {
                 
                 return matchedById || matchedByRef;
             })
-            .map((m: any) => {
+            .map((m: MemoRecord) => {
                 const customerIdVal = typeof m.customer_id === "object" && m.customer_id !== null ? m.customer_id.id : m.customer_id;
-                const customer = (customerIdVal !== undefined ? customerMap.get(customerIdVal) : undefined) || {};
+                const customer = (customerIdVal !== undefined && customerIdVal !== null ? customerMap.get(Number(customerIdVal)) : undefined) || {};
                 
                 const amount = Number(m.amount) || 0;
                 const appliedAmount = Number(m.applied_amount) || 0;
@@ -119,7 +130,7 @@ export async function GET(request: Request) {
                     status: m.status
                 };
             })
-            .filter((m: any) => (m.amount - m.appliedAmount) > 0.009);
+            .filter((m: { amount: number; appliedAmount: number }) => (m.amount - m.appliedAmount) > 0.009);
 
         return NextResponse.json(mappedMemos, { headers: noCacheHeaders });
     } catch (e) {

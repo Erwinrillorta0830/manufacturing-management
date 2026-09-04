@@ -45,7 +45,7 @@ export async function GET(request: Request) {
                 const custRes = await fetch(customerUrl, { headers, cache: "no-store" });
                 if (custRes.ok) {
                     const custData = await custRes.json();
-                    validCustomerCodes = (custData.data || []).map((c: any) => c.customer_code).filter(Boolean);
+                    validCustomerCodes = (custData.data || []).map((c: { customer_code: string }) => c.customer_code).filter(Boolean);
                 }
             } catch (e) {
                 console.warn("Failed to fetch customers:", e);
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
         }
 
         // Build strict Directus JSON filter
-        const returnFilter: any = {
+        const returnFilter: { _and: Record<string, unknown>[] } = {
             _and: [
                 { isApplied: { _neq: 1 } }
             ]
@@ -80,8 +80,19 @@ export async function GET(request: Request) {
         const data = await res.json();
         const rawReturns = data.data || [];
 
+        type ReturnRecord = {
+            return_id: number;
+            return_number: string;
+            customer_code: string;
+            customer_name?: string;
+            salesman_id: string | number;
+            total_amount: string | number;
+            isApplied: number | boolean;
+            status: string;
+        };
+
         const mappedReturns = rawReturns
-            .filter((ret: any) => {
+            .filter((ret: ReturnRecord) => {
                 // VERY STRICT IN-MEMORY FIREWALL
                 // Ensure Directus didn't dump unassigned returns due to _in array parsing flaws
                 if (salesmanId && String(ret.salesman_id) !== String(salesmanId)) return false;
@@ -92,7 +103,7 @@ export async function GET(request: Request) {
                 
                 return false;
             })
-            .map((ret: any) => ({
+            .map((ret: ReturnRecord) => ({
                 id: ret.return_id,
                 returnNumber: ret.return_number,
                 customerCode: ret.customer_code,

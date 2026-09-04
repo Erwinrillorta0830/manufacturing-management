@@ -24,7 +24,17 @@ export async function GET(request: Request) {
         const data = await res.json();
         const rawInvoices = data.data || [];
 
-        const mappedInvoices = rawInvoices.map((inv: any) => ({
+        const mappedInvoices = rawInvoices.map((inv: {
+            invoice_id: number | string;
+            invoice_no: string;
+            customer_code: string;
+            customer_name?: string;
+            net_amount: number | string;
+            remaining_balance?: number | string;
+            invoice_date: string;
+            due_date: string;
+            payment_status: string;
+        }) => ({
             id: inv.invoice_id,
             invoiceId: inv.invoice_id,
             invoiceNo: inv.invoice_no,
