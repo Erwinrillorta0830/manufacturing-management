@@ -234,7 +234,7 @@ export async function getRawInvoices(
   customerCode?: string,
 ) {
   let url =
-    "/items/sales_invoice?limit=-1&fields=invoice_id,invoice_no,customer_code,order_id,salesman_id,isPosted,total_amount&filter[payment_status][_eq]=Unpaid";
+    "/items/sales_invoice?limit=-1&fields=invoice_id,invoice_no,customer_code,order_id,salesman_id,isPosted,total_amount";
 
   if (customerCode) {
     url += `&filter[customer_code][_eq]=${encodeURIComponent(customerCode)}`;
