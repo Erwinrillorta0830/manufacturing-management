@@ -63,7 +63,6 @@ export function StockAllocationModal({
   productId,
   productName,
   branchId,
-  targetBranchId: _targetBranchId,
   targetBranchName,
   isTargetBadStock,
   requestedQuantity,
@@ -77,6 +76,7 @@ export function StockAllocationModal({
   const [allowExpiredOverride, setAllowExpiredOverride] = useState(false);
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
   const [isManualMode, setIsManualMode] = useState(false);
+  const [prevOpen, setPrevOpen] = useState(open);
 
   const isTargetBranchBadStock = useMemo(() => {
     if (isTargetBadStock !== undefined) return isTargetBadStock;
@@ -84,12 +84,13 @@ export function StockAllocationModal({
     return false;
   }, [isTargetBadStock, targetBranchName]);
 
-  // Auto-toggle expired stock override if target branch is designated as bad stock
-  useEffect(() => {
+  // Adjust state during render when modal opens
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (open && isTargetBranchBadStock) {
       setAllowExpiredOverride(true);
     }
-  }, [open, isTargetBranchBadStock]);
+  }
 
   // Load batches when modal opens
   useEffect(() => {

@@ -384,35 +384,28 @@ export function StockConversionModal({
   }, [liveProductQty, sourceBatches, product?.quantity]);
 
   // ── Initialize Target Lot Groups (without auto-fill or auto-selection) ──
-  useEffect(() => {
-    if (wholeUnits > 0 && lots.length > 0) {
-      setTargetLotGroups((prev) => {
-        if (prev.length === 0) {
-          return [
-            {
-              lot_id: 0,
-              lot_name: "",
-              max_batch_capacity: 10,
-              unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
-              unit_name: targetUnit?.name || null,
-              current_stock_quantity: 0,
-              allocated_quantity: 0,
-              batches: [
-                {
-                  batch_no: "",
-                  quantity: 0,
-                  manufacturing_date: todayStr,
-                  expiry_date: defaultExpDate || null,
-                  qa_status: "GOOD",
-                },
-              ],
-            },
-          ];
-        }
-        return prev;
-      });
-    }
-  }, [wholeUnits, lots, targetUnit, defaultExpDate, todayStr]);
+  if (wholeUnits > 0 && lots.length > 0 && targetLotGroups.length === 0) {
+    setTargetLotGroups([
+      {
+        lot_id: 0,
+        lot_name: "",
+        max_batch_capacity: 10,
+        unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
+        unit_name: targetUnit?.name || null,
+        current_stock_quantity: 0,
+        allocated_quantity: 0,
+        batches: [
+          {
+            batch_no: "",
+            quantity: 0,
+            manufacturing_date: todayStr,
+            expiry_date: defaultExpDate || null,
+            qa_status: "GOOD",
+          },
+        ],
+      },
+    ]);
+  }
 
   // Total allocated across all target lot groups and batches
   const totalTargetAllocated = useMemo(() => {

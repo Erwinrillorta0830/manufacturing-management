@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 
-export default function StockTransferDispatchManualView({ currentUser: _currentUser }: { currentUser: CurrentUser }) {
+export default function StockTransferDispatchManualView(_props: { currentUser: CurrentUser }) {
   const {
     branches,
     orderGroups,
