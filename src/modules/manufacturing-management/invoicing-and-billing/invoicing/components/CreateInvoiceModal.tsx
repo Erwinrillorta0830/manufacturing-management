@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Boxes, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, Users, X } from "lucide-react";
+import { AlertTriangle, Building2, Calendar, FileCheck2, FileText, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
-import { BatchItem, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineAvailability, LineBatchAllocation, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability } from "../types";
+import { CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineBatchAllocation, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability, SiblingConsolidatedOrder } from "../types";
 import { generateInvoiceReceiptPdf } from "../utils/generateInvoiceReceiptPdf";
 import { DEFAULT_RECEIPT_TEMPLATE, normalizeReceiptTemplate } from "../receipt-template";
 import { ReceiptPreview } from "./ReceiptPreview";
@@ -55,7 +55,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [archiveStatus, setArchiveStatus] = useState<"idle" | "saved" | "failed">("idle");
     const [availability, setAvailability] = useState<SalesOrderAvailability | null>(null);
     const [loadingAvailability, setLoadingAvailability] = useState(true);
-    const [selectedBatchProduct, setSelectedBatchProduct] = useState<LineAvailability | null>(null);
     const [previewingBeforeCreate, setPreviewingBeforeCreate] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(false);
     const [template, setTemplate] = useState<ORTemplate>(DEFAULT_RECEIPT_TEMPLATE);
@@ -63,7 +62,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [printingDirectly, setPrintingDirectly] = useState(false);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmationNotes, setConfirmationNotes] = useState("");
-    const [batchAllocQtys, setBatchAllocQtys] = useState<Record<string, number>>({});
+    const [lineInvoiceQtys, setLineInvoiceQtys] = useState<Record<number, number | string>>({});
     const pdfBlobRef = useRef<Blob | null>(null);
     const prevPreviewUrlRef = useRef("");
     const printingDirectlyRef = useRef(false);
@@ -73,51 +72,49 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     }, [onClose]);
     const selectedType = receiptTypes.find((type) => type.id === invoiceTypeId);
 
-    const getBatchKey = (productId: number, b: BatchItem, idx: number) => {
-        return `${productId}:${b.inventoryLotId || b.lotId || b.batchNo || idx}`;
+    const getLineInvoiceQty = (productId: number, fallback: number): number => {
+        const val = lineInvoiceQtys[productId];
+        if (val === undefined || val === "") return fallback;
+        return Number(val) || 0;
     };
 
-    const updateBatchAllocQty = (key: string, newQty: number, maxQty: number) => {
-        const validQty = Math.max(0, Math.min(Number(newQty) || 0, maxQty));
-        setBatchAllocQtys((prev) => ({
-            ...prev,
-            [key]: validQty,
-        }));
+    const handleLineInvoiceQtyChange = (productId: number, rawVal: string, maxQty: number) => {
+        if (rawVal === "") {
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: "" }));
+            return;
+        }
+        const num = Number(rawVal);
+        if (!isNaN(num)) {
+            const clamped = Math.max(0, Math.min(num, maxQty));
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: clamped }));
+        }
+    };
+
+    const handleLineInvoiceQtyBlur = (productId: number, fallback: number) => {
+        const val = lineInvoiceQtys[productId];
+        if (val === "" || val === undefined || isNaN(Number(val))) {
+            setLineInvoiceQtys((prev) => ({ ...prev, [productId]: fallback }));
+        }
     };
 
     const lineTotals = useMemo(() => {
-        if (!availability) {
-            return {
-                subtotal: Number(candidate.net_amount || candidate.total_amount || 0),
-                discount: 0,
-                grandTotal: Number(candidate.net_amount || candidate.total_amount || 0),
-                lineQtyMap: new Map<number, number>(),
-            };
-        }
-
         const lineQtyMap = new Map<number, number>();
         let subtotal = 0;
 
-        for (const line of availability.lines) {
-            let lineTotalQty = 0;
-            if (line.batches && line.batches.length > 0) {
-                for (let i = 0; i < line.batches.length; i++) {
-                    const b = line.batches[i];
-                    const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
-                    const qty = batchAllocQtys[key] ?? Number(b.pickedQuantity || 0);
-                    lineTotalQty += qty;
-                }
-            } else {
-                lineTotalQty = Number(line.pickedQuantity ?? line.requiredQuantity);
-            }
-            lineQtyMap.set(line.productId, lineTotalQty);
+        for (const detail of candidate.details) {
+            const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+            const orderedQty = Number(detail.ordered_quantity || 0);
+            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+            const availPool = lineAvail?.totalPoolQuantity !== undefined
+                ? lineAvail.totalPoolQuantity
+                : (lineAvail?.pickedQuantity ?? orderedQty);
+            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
 
-            const matchedDetail = candidate.details.find(d => {
-                const pId = typeof d.product_id === "object" ? d.product_id?.product_id : d.product_id;
-                return pId === line.productId;
-            });
-            const unitPrice = Number(matchedDetail?.unit_price || 0);
-            subtotal += lineTotalQty * unitPrice;
+            lineQtyMap.set(pId, invoiceQty);
+
+            const unitPrice = Number(detail.unit_price || 0);
+            subtotal += invoiceQty * unitPrice;
         }
 
         const discount = 0;
@@ -129,7 +126,73 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             grandTotal,
             lineQtyMap,
         };
-    }, [availability, batchAllocQtys, candidate]);
+    }, [candidate, availability, lineInvoiceQtys]);
+
+    const shortfallLines = useMemo(() => {
+        if (!availability) return [];
+        const list: Array<{
+            productId: number;
+            productName: string;
+            uomStr: string;
+            currentInvoiceQty: number;
+            totalConsolidatedPool: number;
+            remainingForSiblings: number;
+            siblingDemand: number;
+            siblingShortfall: number;
+            unInvoicedSiblings: SiblingConsolidatedOrder[];
+        }> = [];
+
+        for (const detail of candidate.details) {
+            const product = typeof detail.product_id === "object" ? detail.product_id : null;
+            const pId = product ? Number(product.product_id) : Number(detail.product_id);
+            const displayName = product?.description || product?.product_name || `Product #${detail.product_id}`;
+            const uomStr = product?.uom || "PCS";
+            const orderedQty = Number(detail.ordered_quantity || 0);
+
+            const lineAvail = availability.lines.find((l) => l.productId === pId);
+            const availPool = lineAvail?.totalPoolQuantity !== undefined
+                ? lineAvail.totalPoolQuantity
+                : (lineAvail?.pickedQuantity ?? orderedQty);
+            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
+
+            const siblingOrders = lineAvail?.siblingOrders || [];
+            const unInvoicedSiblings = siblingOrders.filter((s) => !s.isInvoiced);
+            const siblingDemand = unInvoicedSiblings.reduce((sum, s) => sum + Number(s.orderedQuantity || 0), 0);
+            const detailReservations = (availability.rawReservations || []).filter(
+                (r) => Number(r.sales_order_detail_id) === Number(detail.detail_id)
+            );
+            const rawDetailPickedQty = detailReservations.length > 0
+                ? detailReservations.reduce((sum, r) => sum + Number(r.picked_quantity || 0), 0)
+                : Number(lineAvail?.pickedQuantity ?? 0);
+            const fallbackBatchPool = (lineAvail?.batches || []).reduce(
+                (sum, b) => sum + Number(b.totalBatchPickedPool || b.pickedQuantity || b.onhandQuantity || 0),
+                0
+            ) || rawDetailPickedQty;
+
+            const totalConsolidatedPool = (lineAvail?.totalPoolQuantity !== undefined && lineAvail.totalPoolQuantity > 0)
+                ? lineAvail.totalPoolQuantity
+                : fallbackBatchPool;
+
+            const remainingForSiblings = Math.max(0, totalConsolidatedPool - invoiceQty);
+            const siblingShortfall = Math.max(0, siblingDemand - remainingForSiblings);
+
+            if (siblingDemand > 0 && siblingShortfall > 0) {
+                list.push({
+                    productId: pId,
+                    productName: displayName,
+                    uomStr,
+                    currentInvoiceQty: invoiceQty,
+                    totalConsolidatedPool,
+                    remainingForSiblings,
+                    siblingDemand,
+                    siblingShortfall,
+                    unInvoicedSiblings,
+                });
+            }
+        }
+        return list;
+    }, [availability, candidate.details, lineInvoiceQtys]);
 
     const downloadReceipt = async (invoice: PrintableInvoice) => {
         const doc = await generateInvoiceReceiptPdf(invoice, { includeBackground: false });
@@ -172,22 +235,67 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         });
         void fetchSalesOrderAvailability(candidate.order_id).then(data => {
             if (!cancelled) {
-                setAvailability(data);
-                const initialMap: Record<string, number> = {};
-                for (const line of data?.lines || []) {
-                    for (let i = 0; i < (line.batches || []).length; i++) {
-                        const b = line.batches[i];
-                        const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
-                        initialMap[key] = Number(b.pickedQuantity || 0);
+                console.group(`[Invoicing Debug] Availability & Picked Quantities for Order #${candidate.order_no} (ID: ${candidate.order_id})`);
+                console.log("Consolidator Batch:", data?.consolidatorNo || "None (Standalone)");
+                console.log("Raw Availability Payload:", data);
+                if (data?.rawDetails && data.rawDetails.length > 0) {
+                    console.group("Raw sales_order_details");
+                    console.table(data.rawDetails);
+                    console.groupEnd();
+                }
+                if (data?.rawReservations && data.rawReservations.length > 0) {
+                    console.group("Raw sales_order_reservation");
+                    console.table(data.rawReservations);
+                    console.groupEnd();
+                }
+                if (data?.lines) {
+                    console.table(data.lines.map((l) => ({
+                        "Product ID": l.productId,
+                        "Product Name": l.productName,
+                        "Ordered Qty": l.requiredQuantity,
+                        "Picked Qty": l.pickedQuantity,
+                        "Consolidation Pool Qty": l.totalPoolQuantity,
+                        "On-Hand Qty": l.onhandQuantity,
+                        "Batches Count": l.batches?.length || 0,
+                    })));
+                    for (const l of data.lines) {
+                        if (l.batches && l.batches.length > 0) {
+                            console.group(`Batches for ${l.productName} (ID: ${l.productId})`);
+                            console.table(l.batches.map((b) => ({
+                                "Batch No": b.batchNo,
+                                "Lot Name": b.lotName || `Lot #${b.lotId}`,
+                                "Picked Qty (This Order)": b.pickedQuantity,
+                                "Reserved (This Order)": b.thisOrderReserved,
+                                "Total Batch Picked Pool": b.totalBatchPickedPool,
+                                "Condition": b.inventoryCondition,
+                                "Expiry": b.expirationDate,
+                                "Shared Siblings": b.siblingOrders?.length || 0,
+                            })));
+                            console.groupEnd();
+                        }
                     }
                 }
-                setBatchAllocQtys(initialMap);
+                console.groupEnd();
+
+                setAvailability(data);
+                const initialMap: Record<number, number | string> = {};
+                for (const detail of candidate.details) {
+                    const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+                    const orderedQty = Number(detail.ordered_quantity || 0);
+                    const lineAvail = data.lines?.find((l: LineAvailability) => l.productId === pId);
+                    const availPool = lineAvail?.totalPoolQuantity !== undefined
+                        ? lineAvail.totalPoolQuantity
+                        : (lineAvail?.pickedQuantity ?? orderedQty);
+                    const maxInv = Math.min(orderedQty, Math.max(0, availPool));
+                    initialMap[pId] = maxInv;
+                }
+                setLineInvoiceQtys(initialMap);
             }
         }).finally(() => {
             if (!cancelled) setLoadingAvailability(false);
         });
         return () => { cancelled = true; };
-    }, [candidate.order_id]);
+    }, [candidate.order_id, candidate.details]);
 
     useEffect(() => {
         return () => {
@@ -201,20 +309,32 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     };
 
     const create = async (customRemarks?: string) => {
-        const lineAllocations: LineAllocationPayload[] = (availability?.lines || []).map((line) => {
-            const batchAllocations: LineBatchAllocation[] = (line.batches || []).map((b, i) => {
-                const key = `${line.productId}:${b.inventoryLotId || b.lotId || b.batchNo || i}`;
+        const lineAllocations: LineAllocationPayload[] = candidate.details.map((detail) => {
+            const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
+            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+            const orderedQty = Number(detail.ordered_quantity || 0);
+            const availPool = lineAvail?.totalPoolQuantity !== undefined
+                ? lineAvail.totalPoolQuantity
+                : (lineAvail?.pickedQuantity ?? orderedQty);
+            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const targetInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
+
+            let remainingToAlloc = targetInvoiceQty;
+            const batchAllocations: LineBatchAllocation[] = (lineAvail?.batches || []).map((b) => {
+                const batchCap = Number(b.pickedQuantity || b.onhandQuantity || 0);
+                const alloc = Math.min(remainingToAlloc, batchCap);
+                remainingToAlloc = Math.max(0, remainingToAlloc - alloc);
                 return {
                     inventoryLotId: b.inventoryLotId,
                     lotId: b.lotId,
                     batchNo: b.batchNo,
-                    quantity: batchAllocQtys[key] ?? Number(b.pickedQuantity || 0),
+                    quantity: alloc,
                 };
             });
-            const totalLineQty = batchAllocations.reduce((sum, b) => sum + b.quantity, 0);
+
             return {
-                productId: line.productId,
-                quantity: totalLineQty,
+                productId: pId,
+                quantity: targetInvoiceQty,
                 batchAllocations,
             };
         });
@@ -334,8 +454,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         }
     };
 
-    const gross = candidate.details.reduce((sum, line) => sum + Number(line.unit_price || 0) * Number(line.ordered_quantity || 0), 0);
-    const net = Number(candidate.net_amount ?? candidate.total_amount ?? gross);
     const provisional: PrintableInvoice = {
         invoiceId: 0,
         invoiceNo: invoiceNo.trim() || "PREVIEW",
@@ -353,10 +471,24 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         paymentTermName: "N/A",
         lines: candidate.details.map(line => {
             const product = typeof line.product_id === "object" ? line.product_id : null;
-            const lineGross = Number(line.unit_price || 0) * Number(line.ordered_quantity || 0);
-            return { detailId: line.detail_id, productCode: product?.product_code || "", productName: product?.product_name || `Product #${line.product_id}`, quantity: Number(line.ordered_quantity), unit: product?.uom || "PCS", unitPrice: Number(line.unit_price), discountAmount: 0, grossAmount: lineGross, netAmount: Number(line.net_amount ?? lineGross) };
+            const pId = product ? Number(product.product_id) : Number(line.product_id);
+            const orderedQty = Number(line.ordered_quantity || 0);
+            const invoiceQty = getLineInvoiceQty(pId, orderedQty);
+            const unitPrice = Number(line.unit_price || 0);
+            const lineGross = unitPrice * invoiceQty;
+            return {
+                detailId: line.detail_id,
+                productCode: product?.product_code || "",
+                productName: product?.description || product?.product_name || `Product #${line.product_id}`,
+                quantity: invoiceQty,
+                unit: product?.uom || "PCS",
+                unitPrice: unitPrice,
+                discountAmount: 0,
+                grossAmount: lineGross,
+                netAmount: lineGross,
+            };
         }),
-        totals: { gross, discount: Math.max(0, gross - net), vat: 0, net },
+        totals: { gross: lineTotals.subtotal, discount: lineTotals.discount, vat: 0, net: lineTotals.grandTotal },
         templateConfig: template,
     };
 
@@ -437,7 +569,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                 <span className="text-[10px] font-extrabold uppercase tracking-wider">Total Payable</span>
                                 <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
                             </div>
-                            <p className="text-xs font-black text-primary truncate">₱{net.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                            <p className="text-xs font-black text-primary truncate">₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                             <p className="text-[10px] text-muted-foreground">Net Invoice Total</p>
                         </div>
                     </div>
@@ -531,41 +663,172 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                     <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
                         {/* Main Body Grid */}
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start p-5 sm:p-6 overflow-y-auto flex-1">
-                            {/* Left Column: Order Items & Picked Batches (span 7) */}
+                            {/* Left Column: Order Items & Invoice Quantities (span 7) */}
                             <div className="lg:col-span-7 space-y-4">
-                                {/* Sales Order Items Card */}
+                                {/* Sales Order Items & Invoicing Quantities Card */}
                                 <div className="overflow-hidden rounded-xl border bg-background shadow-xs">
                                     <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-2.5 text-[10px] font-extrabold uppercase text-muted-foreground">
                                         <div className="flex items-center gap-1.5">
                                             <Package className="h-3.5 w-3.5 text-primary" />
-                                            <span>Sales Order Items</span>
+                                            <span>Sales Order Items & Invoice Quantities</span>
                                         </div>
-                                        <span className="rounded-full border bg-muted/60 px-2 py-0.5 font-bold">
-                                            {candidate.details.length} {candidate.details.length === 1 ? "Line" : "Lines"}
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="rounded-full border bg-muted/60 px-2 py-0.5 font-bold">
+                                                {candidate.details.length} {candidate.details.length === 1 ? "Line" : "Lines"}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="max-h-48 divide-y overflow-y-auto">
+
+                                    {loadingAvailability && (
+                                        <div className="flex items-center justify-center gap-2 border-b bg-muted/10 py-2.5 text-[10px] font-medium text-muted-foreground">
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                            <span>Verifying warehouse stock and picked quantities...</span>
+                                        </div>
+                                    )}
+
+                                    <div className="max-h-[55vh] divide-y overflow-y-auto">
                                         {candidate.details.map(line => {
                                             const product = typeof line.product_id === "object" ? line.product_id : null;
+                                            const pId = product ? Number(product.product_id) : Number(line.product_id);
                                             const displayName = product?.description || product?.product_name || `Product #${line.product_id}`;
+                                            const uomStr = product?.uom || "PCS";
+                                            const unitPrice = Number(line.unit_price || 0);
+                                            const orderedQty = Number(line.ordered_quantity || 0);
+                                            const lineAvail = availability?.lines.find((l) => l.productId === pId);
+                                            const availablePool = lineAvail?.totalPoolQuantity !== undefined
+                                                ? lineAvail.totalPoolQuantity
+                                                : (lineAvail?.pickedQuantity ?? orderedQty);
+                                            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availablePool));
+                                            const defaultQty = maxInvoiceable;
+                                            const currentInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, defaultQty));
+                                            const rawInputValue = lineInvoiceQtys[pId] !== undefined ? lineInvoiceQtys[pId] : defaultQty;
+                                            const lineBilledTotal = currentInvoiceQty * unitPrice;
+                                            const lineShortfall = shortfallLines.find((s) => s.productId === pId);
+
                                             return (
-                                                <div key={line.detail_id} className="flex items-center justify-between gap-4 px-4 py-2.5 text-xs hover:bg-muted/10 transition-colors">
-                                                    <div className="min-w-0">
-                                                        <p className="truncate font-bold text-foreground">{displayName}</p>
-                                                        <p className="text-[9px] text-muted-foreground font-mono">
-                                                            {product?.product_code || ""} · {line.bom_version_name || "No version"}
-                                                        </p>
+                                                <div key={line.detail_id} className="p-4 space-y-3 hover:bg-muted/5 transition-colors">
+                                                    {/* Top Row: Product Info & Line Total */}
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="min-w-0 space-y-0.5">
+                                                            <p className="font-bold text-foreground text-xs leading-snug">{displayName}</p>
+                                                            <p className="text-[10px] text-muted-foreground font-mono">
+                                                                {product?.product_code || `ID: ${pId}`} · {line.bom_version_name || "Standard Version"} · ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} / {uomStr}
+                                                            </p>
+                                                        </div>
+                                                        <div className="shrink-0 text-right">
+                                                            <span className="text-[9px] uppercase font-extrabold text-muted-foreground block">Line Total</span>
+                                                            <span className="font-mono text-xs font-black text-primary">
+                                                                ₱{lineBilledTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            </span>
+                                                        </div>
                                                     </div>
-                                                    <div className="shrink-0 text-right">
-                                                        <p className="font-bold text-foreground">{line.ordered_quantity} {product?.uom || ""}</p>
-                                                        <p className="text-[10px] font-mono font-semibold text-primary">
-                                                            {line.net_amount != null ? `₱${Number(line.net_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : ""}
-                                                        </p>
+
+                                                    {/* Middle Row: Demand Info Badge */}
+                                                    <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                                                        <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
+                                                            Ordered: <strong>{orderedQty} {uomStr}</strong>
+                                                        </span>
+                                                        {maxInvoiceable < orderedQty && (
+                                                            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({orderedQty - maxInvoiceable} {uomStr} consumed by linked order)
+                                                            </span>
+                                                        )}
                                                     </div>
+
+                                                    {/* Bottom Row: Sales Invoice Qty Controls */}
+                                                    <div className="flex items-center justify-between rounded-xl border bg-muted/20 p-2.5">
+                                                        <div className="space-y-0.5">
+                                                            <span className="text-[10px] font-extrabold uppercase text-foreground block">Sales Invoice Qty</span>
+                                                            <span className="text-[9px] text-muted-foreground">
+                                                                Billed quantity for this invoice (max: {maxInvoiceable} {uomStr})
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(Math.max(0, currentInvoiceQty - 1)), maxInvoiceable)}
+                                                                disabled={currentInvoiceQty <= 0}
+                                                                className="h-8 w-8 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                aria-label="Decrease quantity"
+                                                            >
+                                                                -
+                                                            </button>
+                                                            <input
+                                                                type="number"
+                                                                min={0}
+                                                                max={maxInvoiceable}
+                                                                value={rawInputValue}
+                                                                onChange={(e) => handleLineInvoiceQtyChange(pId, e.target.value, maxInvoiceable)}
+                                                                onBlur={() => handleLineInvoiceQtyBlur(pId, defaultQty)}
+                                                                onFocus={(e) => e.currentTarget.select()}
+                                                                onClick={(e) => e.currentTarget.select()}
+                                                                className="h-8 w-16 rounded-lg border bg-background text-center font-mono text-xs font-black focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-2xs"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(Math.min(maxInvoiceable, currentInvoiceQty + 1)), maxInvoiceable)}
+                                                                disabled={currentInvoiceQty >= maxInvoiceable}
+                                                                className="h-8 w-8 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
+                                                                aria-label="Increase quantity"
+                                                            >
+                                                                +
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleLineInvoiceQtyChange(pId, String(maxInvoiceable), maxInvoiceable)}
+                                                                className="h-8 rounded-lg border bg-background px-2.5 text-[10px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shadow-2xs"
+                                                            >
+                                                                Max
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Dynamic Consolidation Shortfall Alert */}
+                                                    <AnimatePresence>
+                                                        {lineShortfall && (
+                                                            <motion.div
+                                                                initial={{ opacity: 0, height: 0 }}
+                                                                animate={{ opacity: 1, height: "auto" }}
+                                                                exit={{ opacity: 0, height: 0 }}
+                                                                transition={{ duration: 0.18 }}
+                                                                className="overflow-hidden"
+                                                            >
+                                                                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+                                                                    <div className="flex items-start gap-2">
+                                                                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                                                                        <div className="space-y-1">
+                                                                            <div className="font-bold flex items-center gap-1.5">
+                                                                                <span>Consolidation Shortfall Warning</span>
+                                                                                <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                    -{lineShortfall.siblingShortfall} {uomStr} Deficit
+                                                                                </span>
+                                                                            </div>
+                                                                            <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+                                                                                Invoicing <strong>{lineShortfall.currentInvoiceQty} {uomStr}</strong> leaves only <strong>{lineShortfall.remainingForSiblings} {uomStr}</strong> in the shared consolidation pool (Total Allocated: {lineShortfall.totalConsolidatedPool} {uomStr}).
+                                                                                {lineShortfall.remainingForSiblings === 0 ? (
+                                                                                    <span className="block mt-0.5 font-bold text-amber-700 dark:text-amber-300">
+                                                                                        ⚠️ Other linked order(s) will have a 100% shortfall (0 {uomStr} left)!
+                                                                                    </span>
+                                                                                ) : (
+                                                                                    <span className="block mt-0.5 font-medium text-amber-700 dark:text-amber-300">
+                                                                                        ⚠️ Linked order(s) ({lineShortfall.unInvoicedSiblings.map((s) => s.orderNo).join(", ")}) requested {lineShortfall.siblingDemand} {uomStr} and will have an unfulfilled deficit of {lineShortfall.siblingShortfall} {uomStr}.
+                                                                                    </span>
+                                                                                )}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </motion.div>
+                                                        )}
+                                                    </AnimatePresence>
                                                 </div>
                                             );
                                         })}
                                     </div>
+
+                                    {/* Card Summary Footer */}
                                     <div className="flex justify-between items-center border-t bg-muted/20 px-4 py-2.5 text-xs font-black">
                                         <span className="text-muted-foreground uppercase text-[10px] font-extrabold">Original Demand Subtotal</span>
                                         <span className="text-xs font-bold text-muted-foreground font-mono">
@@ -579,232 +842,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                         </span>
                                     </div>
                                 </div>
-
-                                {/* Active Picked Inventory & Batch Allocation Card */}
-                                {loadingAvailability ? (
-                                    <div className="flex items-center justify-center rounded-xl border border-dashed py-8 bg-muted/5">
-                                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                                        <span className="ml-2.5 text-xs font-bold text-muted-foreground">Loading verified warehouse batches...</span>
-                                    </div>
-                                ) : availability ? (
-                                    <div className="overflow-hidden rounded-xl border border-emerald-500/30 bg-emerald-500/5 shadow-xs">
-                                        <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-[10px] font-extrabold uppercase text-emerald-700 dark:text-emerald-400">
-                                            <div className="flex items-center gap-1.5">
-                                                <PackageCheck className="h-4 w-4 text-emerald-600" />
-                                                <span>Active Warehouse Batch Allocation</span>
-                                            </div>
-                                            {availability.consolidatorNo && (
-                                                <span className="rounded-md border border-emerald-500/30 bg-background px-2 py-0.5 font-mono text-[9px] font-bold text-emerald-700 dark:text-emerald-300">
-                                                    Batch: {availability.consolidatorNo}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="divide-y divide-emerald-500/10">
-                                            {availability.lines.map((line: LineAvailability) => {
-                                                const product = typeof candidate.details.find(d => {
-                                                    const pId = typeof d.product_id === "object" ? d.product_id?.product_id : d.product_id;
-                                                    return pId === line.productId;
-                                                })?.product_id === "object"
-                                                    ? candidate.details.find(d => {
-                                                        const pId = typeof d.product_id === "object" ? d.product_id?.product_id : d.product_id;
-                                                        return pId === line.productId;
-                                                    })!.product_id as { uom?: string }
-                                                    : null;
-                                                const uomStr = product?.uom || "PCS";
-                                                const lineAllocatedQty = lineTotals.lineQtyMap.get(line.productId) ?? 0;
-                                                const siblingOrders = line.siblingOrders || [];
-                                                const unInvoicedSiblings = siblingOrders.filter(s => !s.isInvoiced);
-                                                const siblingDemand = unInvoicedSiblings.reduce((sum, s) => sum + Number(s.orderedQuantity || 0), 0);
-                                                const totalConsolidatedPool = (line.batches || []).reduce((sum, b) => sum + Number(b.onhandQuantity || b.pickedQuantity || 0), 0);
-                                                const remainingForSiblings = Math.max(0, totalConsolidatedPool - lineAllocatedQty);
-                                                const siblingShortfall = Math.max(0, siblingDemand - remainingForSiblings);
-                                                const hasSiblingWarning = siblingDemand > 0 && siblingShortfall > 0;
-
-                                                return (
-                                                    <div key={line.productId} className="space-y-2.5 p-4 bg-background/60">
-                                                        {/* Product Line Header */}
-                                                        <div className="flex items-center justify-between gap-3 text-xs">
-                                                            <div className="min-w-0">
-                                                                <span className="font-bold text-foreground block truncate">{line.productName}</span>
-                                                                <span className="text-[10px] text-muted-foreground font-mono">
-                                                                    Demand: {line.requiredQuantity} {uomStr} · Picked Pool: {totalConsolidatedPool} {uomStr}
-                                                                </span>
-                                                            </div>
-                                                            <div className="shrink-0 text-right">
-                                                                <span className="text-[10px] uppercase font-extrabold text-muted-foreground block">Allocated to Invoice</span>
-                                                                <span className={`font-mono text-sm font-black ${lineAllocatedQty < line.requiredQuantity ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                                                                    {lineAllocatedQty} / {line.requiredQuantity} {uomStr}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Sibling Orders in Shared Batch */}
-                                                        {siblingOrders.length > 0 && (
-                                                            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-1.5 text-[10px]">
-                                                                <Users className="h-3 w-3 text-primary shrink-0" />
-                                                                <span className="font-bold text-muted-foreground">Linked Batch Orders:</span>
-                                                                {siblingOrders.map((sib) => (
-                                                                    <span
-                                                                        key={sib.orderId}
-                                                                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-primary/10 text-primary border border-primary/20"}`}
-                                                                    >
-                                                                        {sib.orderNo} ({sib.customerCode || "Client"}): {sib.orderedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-
-                                                        {/* Consolidation Shortfall Warning Alert */}
-                                                        {hasSiblingWarning && (
-                                                            <motion.div
-                                                                initial={{ opacity: 0, y: -4 }}
-                                                                animate={{ opacity: 1, y: 0 }}
-                                                                className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200"
-                                                            >
-                                                                <div className="flex items-start gap-2">
-                                                                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-                                                                    <div className="space-y-1">
-                                                                        <div className="font-bold flex items-center gap-1.5">
-                                                                            <span>Consolidation Shortfall Warning</span>
-                                                                            <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] text-amber-700 dark:text-amber-300">
-                                                                                -{siblingShortfall} {uomStr} Shortfall
-                                                                            </span>
-                                                                        </div>
-                                                                        <p className="text-[11px] leading-relaxed">
-                                                                            Allocating <strong>{lineAllocatedQty} units</strong> to this invoice leaves only <strong>{remainingForSiblings} units</strong> in the shared consolidation batch.
-                                                                            {remainingForSiblings === 0 ? (
-                                                                                <span className="block mt-0.5 font-bold text-amber-700 dark:text-amber-300">
-                                                                                    ⚠️ Other linked order(s) will have a 100% shortfall (0 units left)!
-                                                                                </span>
-                                                                            ) : (
-                                                                                <span className="block mt-0.5 font-medium text-amber-700 dark:text-amber-300">
-                                                                                    ⚠️ Linked orders ({unInvoicedSiblings.map(s => `${s.orderNo}`).join(", ")}) requested {siblingDemand} units and will have an unfulfilled balance.
-                                                                                </span>
-                                                                            )}
-                                                                        </p>
-                                                                    </div>
-                                                                </div>
-                                                            </motion.div>
-                                                        )}
-
-                                                        {/* Interactive Batch Allocation Items */}
-                                                        <div className="space-y-2">
-                                                            <div className="flex items-center justify-between text-[9px] font-extrabold uppercase text-muted-foreground px-1">
-                                                                <span>Allocated Picked Lots for this Order</span>
-                                                                <span>Billed Allocation</span>
-                                                            </div>
-                                                            {line.batches.map((b: BatchItem, idx: number) => {
-                                                                const key = getBatchKey(line.productId, b, idx);
-                                                                const capacity = Number(b.totalBatchPickedPool ?? b.onhandQuantity ?? b.pickedQuantity ?? 0);
-                                                                const thisOrderReserved = Number(b.thisOrderReserved ?? b.pickedQuantity ?? capacity);
-                                                                const currentAlloc = batchAllocQtys[key] ?? 0;
-
-                                                                const batchSiblings = b.siblingOrders || [];
-                                                                const unInvoicedBatchSiblings = batchSiblings.filter(s => !s.isInvoiced);
-                                                                const siblingDemandInBatch = unInvoicedBatchSiblings.reduce((sum, s) => sum + Number(s.reservedQuantity || 0), 0);
-                                                                const remainingInBatch = Math.max(0, capacity - currentAlloc);
-                                                                const batchShortfall = Math.max(0, siblingDemandInBatch - remainingInBatch);
-                                                                const hasBatchWarning = siblingDemandInBatch > 0 && batchShortfall > 0;
-
-                                                                return (
-                                                                    <div
-                                                                        key={key}
-                                                                        className={`space-y-2 rounded-xl border p-3 transition-colors ${currentAlloc > 0 ? "border-emerald-500/30 bg-emerald-500/5" : "border-border/50 bg-background"}`}
-                                                                    >
-                                                                        <div className="flex items-center justify-between gap-3">
-                                                                            <div className="min-w-0 space-y-0.5">
-                                                                                <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-foreground truncate">
-                                                                                    <span>{b.lotName || `Lot #${b.lotId}`}</span>
-                                                                                    {b.batchNo && <span className="text-[10px] text-muted-foreground font-normal">({b.batchNo})</span>}
-                                                                                </div>
-                                                                                <div className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground font-mono">
-                                                                                    <span className="font-bold text-foreground">Picked in Batch: {capacity} {uomStr}</span>
-                                                                                    <span>·</span>
-                                                                                    <span>Planned for this Order: {thisOrderReserved} {uomStr}</span>
-                                                                                    {b.expirationDate && (
-                                                                                        <>
-                                                                                            <span>·</span>
-                                                                                            <span>Exp: {new Date(b.expirationDate).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "2-digit" })}</span>
-                                                                                        </>
-                                                                                    )}
-                                                                                </div>
-                                                                            </div>
-
-                                                                            {/* Interactive Stepper & Input Controls */}
-                                                                            <div className="flex items-center gap-1.5 shrink-0">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => updateBatchAllocQty(key, currentAlloc - 1, capacity)}
-                                                                                    disabled={currentAlloc <= 0}
-                                                                                    className="h-7 w-7 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
-                                                                                >
-                                                                                    -
-                                                                                </button>
-                                                                                <input
-                                                                                    type="number"
-                                                                                    min={0}
-                                                                                    max={capacity}
-                                                                                    value={currentAlloc}
-                                                                                    onChange={(e) => updateBatchAllocQty(key, Number(e.target.value), capacity)}
-                                                                                    className="h-7 w-14 rounded-lg border bg-background text-center font-mono text-xs font-black focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-2xs"
-                                                                                />
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => updateBatchAllocQty(key, currentAlloc + 1, capacity)}
-                                                                                    disabled={currentAlloc >= capacity}
-                                                                                    className="h-7 w-7 rounded-lg border bg-background font-bold hover:bg-muted text-xs flex items-center justify-center disabled:opacity-30 transition-colors shadow-2xs"
-                                                                                >
-                                                                                    +
-                                                                                </button>
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => updateBatchAllocQty(key, Math.min(capacity, thisOrderReserved), capacity)}
-                                                                                    className="h-7 rounded-lg border bg-muted/40 px-2 text-[10px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                                                                                >
-                                                                                    Fill
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-
-                                                                        {/* Sibling Orders in this Specific Batch */}
-                                                                        {batchSiblings.length > 0 && (
-                                                                            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/30 bg-muted/20 px-2 py-1 text-[9px]">
-                                                                                <Users className="h-3 w-3 text-muted-foreground shrink-0" />
-                                                                                <span className="font-semibold text-muted-foreground">Shared with:</span>
-                                                                                {batchSiblings.map((sib) => (
-                                                                                    <span
-                                                                                        key={sib.orderId}
-                                                                                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.2 font-mono text-[9px] font-semibold ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-primary/10 text-primary"}`}
-                                                                                    >
-                                                                                        {sib.orderNo} ({sib.customerCode || "Client"}): {sib.reservedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
-                                                                                    </span>
-                                                                                ))}
-                                                                            </div>
-                                                                        )}
-
-                                                                        {/* Per-Batch Shortfall Warning */}
-                                                                        {hasBatchWarning && (
-                                                                            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-900 dark:text-amber-200 flex items-start gap-1.5">
-                                                                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-                                                                                <div>
-                                                                                    <strong>Batch Allocation Shortfall:</strong> Allocating {currentAlloc} units from &apos;{b.batchNo}&apos; leaves only {remainingInBatch} units for sibling order(s) ({unInvoicedBatchSiblings.map(s => s.orderNo).join(", ")}).
-                                                                                </div>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-2.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                                        ✓ Picked inventory verified
-                                    </div>
-                                )}
                             </div>
 
                             {/* Right Column: Invoice Setup Parameters (span 5) */}
@@ -963,115 +1000,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 )}
             </motion.div>
         <AnimatePresence>
-            {selectedBatchProduct && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
-                    <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                        transition={{ duration: 0.18 }}
-                        className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border bg-card p-4 shadow-2xl space-y-3 sm:p-5"
-                    >
-                        <div className="flex items-center justify-between border-b pb-3">
-                            <div className="flex items-center gap-2.5">
-                                <div className="rounded-xl border border-primary/20 bg-primary/10 p-2 text-primary">
-                                    <Boxes className="h-5 w-5" />
-                                </div>
-                                <div className="min-w-0">
-                                    <h3 className="text-sm font-black uppercase tracking-wide truncate">Available Batches by Lot</h3>
-                                    <p className="text-[10px] text-muted-foreground truncate">{selectedBatchProduct.productName} {selectedBatchProduct.productCode ? `(${selectedBatchProduct.productCode})` : ""}</p>
-                                </div>
-                            </div>
-                            <button type="button" onClick={() => setSelectedBatchProduct(null)} aria-label="Close batches modal" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
-                                <X className="h-4 w-4" />
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2.5 rounded-xl border bg-muted/20 p-3 text-xs">
-                            <div>
-                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Order Quantity</span>
-                                <p className="font-bold text-foreground">{selectedBatchProduct.requiredQuantity}</p>
-                            </div>
-                            <div className="text-right">
-                                <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Picked</span>
-                                <p className="font-black text-emerald-600 dark:text-emerald-400">
-                                    {selectedBatchProduct.pickedQuantity || selectedBatchProduct.requiredQuantity}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="max-h-72 space-y-2.5 overflow-y-auto pr-1">
-                            {selectedBatchProduct.batches.length === 0 ? (
-                                <p className="text-center py-6 text-xs text-muted-foreground italic">No specific batch reservation records found.</p>
-                            ) : (
-                                (() => {
-                                    const lotMap = new Map<string, { lotId: number; lotName: string; totalPicked: number; batches: BatchItem[] }>();
-                                    for (const b of selectedBatchProduct.batches) {
-                                        const lotKey = b.lotName || `Lot #${b.lotId}`;
-                                        const existing = lotMap.get(lotKey);
-                                        const qty = b.pickedQuantity ?? b.onhandQuantity;
-                                        if (existing) {
-                                            existing.totalPicked += qty;
-                                            existing.batches.push(b);
-                                        } else {
-                                            lotMap.set(lotKey, {
-                                                lotId: b.lotId,
-                                                lotName: b.lotName || `Lot #${b.lotId}`,
-                                                totalPicked: qty,
-                                                batches: [b],
-                                            });
-                                        }
-                                    }
-                                    return Array.from(lotMap.values()).sort((a, b) => b.totalPicked - a.totalPicked).map((group) => (
-                                        <div key={group.lotId || group.lotName} className="rounded-xl border bg-muted/10 overflow-hidden">
-                                            <div className="flex items-center justify-between bg-muted/30 px-3 py-1.5 border-b text-xs font-bold text-foreground">
-                                                <div className="flex items-center gap-1.5">
-                                                    <Layers className="h-3.5 w-3.5 text-primary" />
-                                                    <span>{group.lotName}</span>
-                                                </div>
-                                                <span className="text-[10px] font-mono text-muted-foreground">
-                                                    Picked in Lot: <strong className="text-emerald-600 dark:text-emerald-400">{group.totalPicked}</strong>
-                                                </span>
-                                            </div>
-                                            <div className="divide-y divide-border/30 text-[11px]">
-                                                {group.batches.map((b, idx) => (
-                                                    <div key={idx} className="flex items-center justify-between px-3 py-1.5 hover:bg-muted/20 transition-colors">
-                                                        <div className="space-y-0.5">
-                                                            <p className="font-mono font-bold text-foreground">{b.batchNo}</p>
-                                                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                                                <span>Condition: <strong className="text-foreground">{b.inventoryCondition || "GOOD"}</strong></span>
-                                                                {b.expirationDate && (
-                                                                    <span>Exp: {b.expirationDate.slice(0, 10)}</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">{b.pickedQuantity ?? b.onhandQuantity}</span>
-                                                            <p className="text-[9px] text-muted-foreground">picked</p>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ));
-                                })()
-                            )}
-                        </div>
-
-                        <div className="flex items-center justify-end border-t pt-3">
-                            <button
-                                type="button"
-                                onClick={() => setSelectedBatchProduct(null)}
-                                className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground hover:bg-primary/90 transition-colors"
-                            >
-                                Done
-                            </button>
-                        </div>
-                    </motion.div>
-                </div>
-            )}
-        </AnimatePresence>
-        <AnimatePresence>
             {showConfirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
                     <motion.div 
@@ -1112,7 +1040,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                 </div>
                                 <div>
                                     <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Total Amount</span>
-                                    <p className="font-black text-primary">₱{net.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                    <p className="font-black text-primary">₱{lineTotals.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
                                 </div>
                                 <div>
                                     <span className="text-[9px] font-extrabold uppercase text-muted-foreground">Invoice Date</span>
@@ -1123,6 +1051,25 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                     <p className="font-bold text-foreground">{dueDate}</p>
                                 </div>
                             </div>
+
+                            {shortfallLines.length > 0 && (
+                                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
+                                    <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                                        <span>Consolidation Shortfall Notice</span>
+                                    </div>
+                                    <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+                                        Invoicing these quantities will leave an unfulfilled deficit for other linked order(s) in this consolidation:
+                                    </p>
+                                    <ul className="list-disc list-inside space-y-1 text-[11px] font-medium">
+                                        {shortfallLines.map((s, idx) => (
+                                            <li key={idx}>
+                                                <strong>{s.productName}</strong>: -{s.siblingShortfall} {s.uomStr} deficit for {s.unInvoicedSiblings.map((sib) => sib.orderNo).join(", ")}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
 
                             <label className="block space-y-1.5">
                                 <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Confirmation Notes / Remarks</span>

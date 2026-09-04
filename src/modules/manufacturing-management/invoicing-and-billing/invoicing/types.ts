@@ -195,10 +195,25 @@ export interface LineAvailability {
     onhandQuantity: number;
     pickedQuantity?: number;
     totalPoolQuantity?: number;
+    siblingInvoicedQuantity?: number;
     isAvailable: boolean;
     isPicked?: boolean;
     batches: BatchItem[];
     siblingOrders?: SiblingConsolidatedOrder[];
+}
+
+export interface RawSalesOrderReservation {
+    reservation_id: number;
+    sales_order_detail_id: number;
+    product_id: number;
+    inventory_lot_id: number;
+    reserved_quantity: number;
+    picked_quantity: number;
+    status: "Reserved" | "Released" | "Picked" | "Consumed" | string;
+    created_at?: string;
+    created_by?: number;
+    updated_at?: string;
+    updated_by?: number;
 }
 
 export interface SalesOrderAvailability {
@@ -210,6 +225,8 @@ export interface SalesOrderAvailability {
     isFullyPicked?: boolean;
     lines: LineAvailability[];
     siblingOrders?: SiblingConsolidatedOrder[];
+    rawReservations?: RawSalesOrderReservation[];
+    rawDetails?: Array<{ detail_id: number; product_id: number; ordered_quantity: number }>;
 }
 
 export type StockStatus = "Available" | "Partial" | "Unavailable";
