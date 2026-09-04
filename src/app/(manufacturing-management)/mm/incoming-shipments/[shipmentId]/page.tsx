@@ -34,7 +34,7 @@ export default async function IncomingShipmentDetailPage({
             <PurchaseOrderModule
                 mode="detail"
                 shipmentId={numericShipmentId}
-                backHref={returnTo}
+                backHref={returnTo || "/mm/incoming-shipments"}
             />
         </IncomingShipmentsPageShell>
     );
