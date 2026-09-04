@@ -12,6 +12,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 import PurchaseOrderApprovalModule from "@/modules/manufacturing-management/purchase-order-approval/PurchaseOrderApprovalModule";
 import type { PurchaseOrderDecisionStage } from "@/modules/manufacturing-management/purchase-order/types";
+import type { PurchaseOrderApprovalMode } from "@/modules/manufacturing-management/purchase-order-approval/hooks/usePurchaseOrderApproval";
 
 const COOKIE_NAME = "vos_access_token";
 
@@ -47,10 +48,19 @@ function buildHeaderUserFromToken(token: string | null) {
     };
 }
 
-export default async function PurchaseOrderApprovalPage({ stage }: { stage: PurchaseOrderDecisionStage }) {
+export default async function PurchaseOrderApprovalPage({
+    stage,
+    mode = "queue",
+    purchaseOrderId
+}: {
+    stage: PurchaseOrderDecisionStage;
+    mode?: PurchaseOrderApprovalMode;
+    purchaseOrderId?: number;
+}) {
     const token = (await cookies()).get(COOKIE_NAME)?.value ?? null;
     const headerUser = buildHeaderUserFromToken(token);
-    const label = `${stage} Approval`;
+    const isDetail = mode === "detail" && purchaseOrderId;
+    const label = isDetail ? `${stage} Approval · PO ${purchaseOrderId}` : `${stage} Approval`;
 
     return (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -65,7 +75,13 @@ export default async function PurchaseOrderApprovalPage({ stage }: { stage: Purc
                                 <BreadcrumbSeparator className="hidden shrink-0 md:block" />
                                 <BreadcrumbItem className="hidden shrink-0 md:block"><BreadcrumbLink href="#">Sourcing &amp; Supply Chain</BreadcrumbLink></BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden shrink-0 md:block" />
-                                <BreadcrumbItem className="min-w-0 overflow-hidden"><BreadcrumbPage className="max-w-[56vw] truncate">{label}</BreadcrumbPage></BreadcrumbItem>
+                                <BreadcrumbItem className="min-w-0 overflow-hidden">
+                                    {isDetail ? (
+                                        <BreadcrumbLink href="/mm/finance-approval" className="max-w-[56vw] truncate">{label}</BreadcrumbLink>
+                                    ) : (
+                                        <BreadcrumbPage className="max-w-[56vw] truncate">{label}</BreadcrumbPage>
+                                    )}
+                                </BreadcrumbItem>
                             </BreadcrumbList>
                         </Breadcrumb>
                     </div>
@@ -73,7 +89,7 @@ export default async function PurchaseOrderApprovalPage({ stage }: { stage: Purc
                 <div className="flex h-full max-w-[48vw] shrink-0 items-center overflow-hidden px-2 sm:max-w-none sm:px-4"><NavUser user={headerUser} /></div>
             </header>
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background p-2 sm:p-4">
-                <PurchaseOrderApprovalModule stage={stage} />
+                <PurchaseOrderApprovalModule stage={stage} mode={mode} purchaseOrderId={purchaseOrderId} />
             </main>
         </div>
     );
