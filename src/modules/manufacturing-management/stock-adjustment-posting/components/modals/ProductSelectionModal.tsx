@@ -590,7 +590,7 @@ export function ProductSelectionModal({
                 cartItems.map((item) => {
                   const pid = Number(item.product_id);
                   const cost = Number(item.cost_per_unit || 0);
-                  const qty = item.quantity || 1;
+                  const qty = item.quantity !== undefined && item.quantity !== null ? item.quantity : 1;
                   const total = cost * qty;
 
                   return (
@@ -622,16 +622,40 @@ export function ProductSelectionModal({
                           </button>
                           <input
                             type="number"
-                            value={qty === 0 ? "" : qty}
+                            value={qty === 0 || qty === undefined || qty === null ? "" : qty}
+                            placeholder="0"
+                            onFocus={(e) => e.target.select()}
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
                             onChange={(e) => {
-                              let val = parseInt(e.target.value, 10);
-                              if (isNaN(val) || val < 1) val = 1;
+                              const raw = e.target.value;
+                              if (raw === "") {
+                                setCartItems(cartItems.map((cItem) => {
+                                  if (Number(cItem.product_id) === pid) {
+                                    return { ...cItem, quantity: 0 };
+                                  }
+                                  return cItem;
+                                }));
+                                return;
+                              }
+                              let val = parseInt(raw, 10);
+                              if (isNaN(val) || val < 0) val = 0;
                               setCartItems(cartItems.map((cItem) => {
                                 if (Number(cItem.product_id) === pid) {
                                   return { ...cItem, quantity: val };
                                 }
                                 return cItem;
                               }));
+                            }}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (isNaN(val) || val < 1) {
+                                setCartItems(cartItems.map((cItem) => {
+                                  if (Number(cItem.product_id) === pid) {
+                                    return { ...cItem, quantity: 1 };
+                                  }
+                                  return cItem;
+                                }));
+                              }
                             }}
                             className="w-12 h-9 text-center text-sm font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             min={1}

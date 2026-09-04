@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { ScanHistorySidebar } from '../shared/components/ScanHistorySidebar';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { resolveBranchSalesman } from '../services/stock-transfer.helpers';
 import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
 import { checkLotProductTypeCompatibility, isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 
@@ -30,6 +31,7 @@ import { Input } from '@/components/ui/input';
 
 export default function StockTransferReceiveView({ currentUser }: { currentUser: CurrentUser }) {
   const {
+    branches,
     orderGroups,
     selectedGroup,
     selectedOrderNo,
@@ -199,26 +201,33 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
               <Table>
                 <TableHeader>
                   <TableRow className="border-b border-border bg-muted/40 hover:bg-muted/40">
-                    <TableHead className="text-[10px] uppercase font-bold py-4 px-6">Product Details</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Unit</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Expected</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-center w-[130px]">Verified</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold w-[130px] print:hidden">Source Branch</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold w-[140px] print:hidden">Target Lot</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold w-[140px] print:hidden">Target Batch No</TableHead>
-                    <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6 print:hidden w-[100px]">Status</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold py-4 px-6">Product Name</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">UOM</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Allocated Qty</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Dispatched Qty</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-center w-[130px]">Received Qty</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold w-[160px] print:hidden">Lot</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold w-[140px] print:hidden">Batch</TableHead>
+                    <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6 w-[110px]">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                     {paginatedItems.map((item: OrderGroupItem) => {
-                      const targetQty = item.picked_quantity ?? item.allocated_quantity ?? 0;
+                      const allocatedQty = item.allocated_quantity ?? 0;
+                      const dispatchedQty = item.picked_quantity ?? item.allocated_quantity ?? 0;
+                      const targetQty = dispatchedQty;
                       const progress = targetQty > 0 ? (item.receivedQty || 0) / targetQty : 0;
-                    const complete = progress >= 1;
-                    const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
-                    const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
+                      const complete = progress >= 1;
+                      const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
+                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
+                      const unitName = typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null 
+                        ? (product.unit_of_measurement as { unit_name?: string }).unit_name 
+                        : 'PCS';
+                      const itemAmount = Number(item.amount) || (dispatchedQty * Number(product?.cost_per_unit || 0));
 
                     return (
                       <TableRow key={item.id} className="border-b border-border/50 group hover:bg-muted/20 transition-colors">
+                        {/* 1. Product Name */}
                         <TableCell className="py-4 px-6">
                           <div className="flex items-center gap-3">
                             {getAssetUrl(product?.product_image) ? (
@@ -258,19 +267,26 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             </div>
                           </div>
                         </TableCell>
+
+                        {/* 2. UOM */}
                         <TableCell className="text-center">
                            <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest border-border/50 bg-muted/30 mx-auto w-fit">
-                            {typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null 
-                              ? (product.unit_of_measurement as { unit_name?: string }).unit_name 
-                              : 'PCS'}
+                            {unitName}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-center font-mono font-bold text-sm">{item.picked_quantity ?? item.allocated_quantity ?? 0}</TableCell>
+
+                        {/* 3. Allocated Qty */}
+                        <TableCell className="text-center font-mono font-bold text-sm text-muted-foreground">{allocatedQty}</TableCell>
+
+                        {/* 4. Dispatched Qty */}
+                        <TableCell className="text-center font-mono font-bold text-sm">{dispatchedQty}</TableCell>
+
+                        {/* 5. Received Qty */}
                         <TableCell className="text-center">
                           {item.isLoosePack ? (
                             <QuantityStepper 
                               value={item.receivedQty || 0}
-                              max={item.picked_quantity ?? item.allocated_quantity ?? 0}
+                              max={dispatchedQty}
                               onChange={(val) => updateManualQty(Number(product?.product_id || item.product_id), val)}
                               className="h-8 w-fit mx-auto"
                               size="sm"
@@ -286,11 +302,8 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="print:hidden py-2">
-                          <Badge variant="outline" className="font-semibold text-[10px] px-2 py-0.5 max-w-[130px] truncate border-border/70 bg-muted/40 text-foreground">
-                            {getBranchName(selectedGroup.sourceBranch)}
-                          </Badge>
-                        </TableCell>
+
+                        {/* 6. Lot */}
                         <TableCell className="print:hidden py-2">
                           {(() => {
                             const itemClass = getItemClassification(item);
@@ -302,9 +315,16 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             return (
                               <div className="space-y-1">
                                 {(() => {
-                                  const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD');
+                                  const productUom = typeof product?.unit_of_measurement === 'object' ? product.unit_of_measurement : null;
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                  const itemUomId = Number(productUom?.unit_id || (product as any)?.unit_id || 0);
+
+                                  const targetBranchObj = branches.find((b) => Number(b.id) === Number(selectedGroup.targetBranch));
+                                  const isTargetBadStock = isBadStockLot(undefined, targetBranchObj || { branch_name: getBranchName(selectedGroup.targetBranch) });
+                                  const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadStock;
                                   const compatibleLots = targetLots.filter((l) => {
                                     if (l.status && l.status !== 'ACTIVE') return false;
+                                    if (l.unit_id && itemUomId && Number(l.unit_id) !== Number(itemUomId)) return false;
                                     const stored = lotStoredSummaryMap.get(Number(l.lot_id));
                                     const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
                                     if (!tCompat.isCompatible) return false;
@@ -314,9 +334,10 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                                     return true;
                                   });
 
-                                  const optionsLots = targetLots.filter(
+                                  const matchedOptions = targetLots.filter(
                                     (l) => Number(l.lot_id) === Number(destinationLotIds[item.id]) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
                                   );
+                                  const optionsLots = matchedOptions.length > 0 ? matchedOptions : targetLots.filter((l) => !l.status || l.status === 'ACTIVE');
 
                                   return (
                                     <SearchableSelect
@@ -383,28 +404,20 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             );
                           })()}
                         </TableCell>
+
+                        {/* 7. Batch */}
                         <TableCell className="print:hidden py-2">
                           <Input
-                            value={destinationBatchNos[item.id] ?? item.batch_no ?? `TRF-${selectedGroup.orderNo}-${item.id}`}
+                            value={destinationBatchNos[item.id] ?? item.batch_no ?? ''}
                             onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
                             className="h-8 text-xs font-mono w-[130px] border-border bg-background"
                             placeholder="Batch No"
                           />
                         </TableCell>
-                        <TableCell className="text-right px-6 print:hidden">
-                          {complete ? (
-                            <div className="flex items-center justify-end text-blue-500 gap-1.5 animate-in fade-in zoom-in duration-500">
-                              <CheckCircle2 className="w-5 h-5" />
-                              <span className="text-[10px] font-bold uppercase tracking-tighter">Verified</span>
-                            </div>
-                          ) : (
-                            <div className="w-full max-w-[60px] ml-auto h-1.5 bg-muted rounded-full overflow-hidden border border-border/50">
-                              <div 
-                                className="h-full bg-amber-500 transition-all duration-500 ease-out"
-                                style={{ width: `${Math.min(100, progress * 100)}%` }}
-                              />
-                            </div>
-                          )}
+
+                        {/* 8. Amount */}
+                        <TableCell className="text-right py-4 px-6 font-mono text-xs font-semibold text-foreground">
+                          ₱{itemAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                         </TableCell>
                       </TableRow>
                     );
@@ -437,7 +450,7 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
           items={selectedGroup.items}
           sourceBranch={getBranchName(selectedGroup.sourceBranch)}
           targetBranch={getBranchName(selectedGroup.targetBranch)}
-          salesmanName={currentUser.name}
+          salesmanName={resolveBranchSalesman(selectedGroup.targetBranch, branches)}
         />
       )}
     </div>

@@ -122,10 +122,14 @@ const ProductTableRow = React.memo(function ProductTableRow({
 
   const totalCost = Number(quantity || 0) * Number(costPerUnit || 0);
 
+  const handleQuantityChange = (newQty: number) => {
+    const safeQty = Math.max(0, newQty);
+    setValue(`items.${index}.quantity`, safeQty, { shouldValidate: true });
+  };
+
   const handleUpdateQuantity = (delta: number) => {
     const currentQty = Number(quantity || 0);
-    const newQty = Math.max(0, currentQty + delta);
-    setValue(`items.${index}.quantity`, newQty, { shouldValidate: true });
+    handleQuantityChange(currentQty + delta);
   };
 
   const batches = useMemo(() => {
@@ -199,14 +203,13 @@ const ProductTableRow = React.memo(function ProductTableRow({
                   <Layers className="w-2.5 h-2.5 text-emerald-600" />
                   AUTO — FEFO {batchLabel}
                 </Badge>
-                {!isReadOnly && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenLotBatch?.(index)}
-                    className="text-[10px] text-primary hover:underline font-semibold cursor-pointer"
+                {qaStatus && (
+                  <Badge
+                    variant={qaStatus === "GOOD" ? "outline" : qaStatus === "DAMAGED" ? "destructive" : "secondary"}
+                    className="text-[9px] py-0 h-3.5 px-1 font-mono"
                   >
-                    [View Allocation]
-                  </button>
+                    {qaStatus}
+                  </Badge>
                 )}
               </div>
             ) : (
@@ -214,9 +217,9 @@ const ProductTableRow = React.memo(function ProductTableRow({
                 {lotBatchDisplayInfo ? (
                   <Badge
                     variant="outline"
-                    className="text-[10px] py-0 h-4 px-1.5 font-mono bg-muted/40 gap-1 cursor-pointer hover:border-primary/50"
                     onClick={() => onOpenLotBatch?.(index)}
-                    title={batches.length > 0 ? `Allocations:\n${batches.join("\n")}` : undefined}
+                    title={lotBatchDisplayInfo}
+                    className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-primary/10 text-primary border-primary/30 gap-1 cursor-pointer hover:bg-primary/20 transition-colors"
                   >
                     <Layers className="w-2.5 h-2.5 text-primary" />
                     {lotBatchDisplayInfo}
@@ -281,20 +284,23 @@ const ProductTableRow = React.memo(function ProductTableRow({
             </button>
             <input
               type="number"
-              value={quantity === undefined || quantity === null ? "" : quantity}
+              value={quantity === 0 || quantity === undefined || quantity === null ? "" : quantity}
+              placeholder="0"
+              onFocus={(e) => e.target.select()}
+              onClick={(e) => (e.target as HTMLInputElement).select()}
               onChange={(e) => {
                 const raw = e.target.value;
                 if (raw === "") {
-                  setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
+                  handleQuantityChange(0);
                   return;
                 }
                 const val = parseInt(raw, 10);
-                setValue(`items.${index}.quantity`, isNaN(val) ? 0 : Math.max(0, val), { shouldValidate: true });
+                handleQuantityChange(isNaN(val) ? 0 : Math.max(0, val));
               }}
               onBlur={(e) => {
                 const val = parseInt(e.target.value, 10);
                 if (isNaN(val) || val < 0) {
-                  setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
+                  handleQuantityChange(0);
                 }
               }}
               className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -1254,16 +1260,50 @@ export function StockAdjustmentManualForm({
   // ——————————————————————————————————————————————————————————————————————————————
   const onSubmit = useCallback(
     async (values: StockAdjustmentManualFormValues) => {
-      const unassignedIdx = (values.items || []).findIndex(
+      const itemsList = values.items || [];
+
+      // 1. Lot & Batch Assignment Validation
+      const unassignedIdx = itemsList.findIndex(
         (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
       );
       if (unassignedIdx !== -1) {
-        const item = values.items[unassignedIdx];
+        const item = itemsList[unassignedIdx];
         toast.error(
           `Lot & Batch required: Please assign Lot & Batch details for item #${unassignedIdx + 1} (${item.product_name || "Product"}).`,
           { duration: 5000 }
         );
         return;
+      }
+
+      // 2. Quantity vs Allocated Batches Validation
+      for (let i = 0; i < itemsList.length; i++) {
+        const item = itemsList[i];
+        const lineQty = Number(item.quantity || 0);
+
+        if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+          const allocatedSum = item.lot_allocations.reduce((sum, g) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return sum + (g.batches || []).reduce((bSum: number, b: any) => bSum + Number(b.quantity || 0), 0);
+          }, 0);
+
+          if (lineQty !== allocatedSum) {
+            toast.error(
+              `Quantity mismatch on line #${i + 1} (${item.product_name || "Product"}): Table quantity (${lineQty.toLocaleString()}) does not match allocated batches sum (${allocatedSum.toLocaleString()}). Please open the allocation modal to update batches or adjust the table quantity.`,
+              { duration: 6000 }
+            );
+            return;
+          }
+        } else if (Array.isArray(item.allocations) && item.allocations.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const allocatedSum = item.allocations.reduce((sum: number, a: any) => sum + Number(a.allocated_quantity || a.quantity || 0), 0);
+          if (lineQty !== allocatedSum) {
+            toast.error(
+              `Quantity mismatch on line #${i + 1} (${item.product_name || "Product"}): Table quantity (${lineQty.toLocaleString()}) does not match allocated quantity (${allocatedSum.toLocaleString()}). Please update allocations.`,
+              { duration: 6000 }
+            );
+            return;
+          }
+        }
       }
 
       setLoading(true);

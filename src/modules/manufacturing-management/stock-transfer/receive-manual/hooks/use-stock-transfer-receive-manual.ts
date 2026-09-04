@@ -87,10 +87,18 @@ export function useStockTransferReceiveManual() {
   const orderGroups = useMemo(() => {
     return base.baseOrderGroups.map((group: OrderGroup) => {
       const enrichedItems = group.items.map((st: OrderGroupItem) => {
+        const allocs = itemLotAllocations[st.id] ?? st.lot_allocations;
+        const batchTotalQty = (allocs && allocs.length > 0)
+          ? allocs.reduce((sum, g) => sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0)
+          : undefined;
+        const defaultQty = batchTotalQty !== undefined
+          ? batchTotalQty
+          : Math.max(0, st.scanned_quantity ?? st.picked_quantity ?? st.allocated_quantity ?? 0);
+
         return {
           ...st,
-          receivedQty: receivedQtys[st.id] ?? 0, 
-          lot_allocations: itemLotAllocations[st.id],
+          receivedQty: receivedQtys[st.id] ?? defaultQty,
+          lot_allocations: allocs,
         };
       });
 
@@ -207,27 +215,81 @@ export function useStockTransferReceiveManual() {
         if (isMounted) {
           setRawBranchOnhand(onhand || []);
           setRawBranchInvLots(invLots || []);
-          const activeLots = (lots || []).filter(
-            l => Number(l.branch_id) === destBranchId && (l.status === 'ACTIVE' || !l.status)
-          );
+          const sQtyMap = new Map<number, number>();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (onhand || []).forEach((bo: any) => {
+            const lId = Number(bo.lotId);
+            if (lId > 0) {
+              sQtyMap.set(lId, (sQtyMap.get(lId) || 0) + Number(bo.onhandQuantity || 0));
+            }
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (invLots || []).forEach((ib: any) => {
+            const lId = Number(ib.lot_id);
+            if (lId > 0 && !sQtyMap.has(lId)) {
+              sQtyMap.set(lId, Number(ib.available_quantity || 0));
+            }
+          });
+
+          const activeLots = (lots || [])
+            .filter(l => Number(l.branch_id) === destBranchId && (l.status === 'ACTIVE' || !l.status))
+            .map(l => ({
+              ...l,
+              current_stock_quantity: sQtyMap.get(Number(l.lot_id)) ?? l.current_stock_quantity ?? 0,
+            }));
           setTargetLots(activeLots);
           if (activeLots.length > 0) {
             const tempMap = buildLotStoredProductSummaryMap(onhand || [], activeLots, undefined, invLots || []);
-            // Pre-assign compatible lot to items if not yet set or belonging to another branch
+            const currentBaseGroup = base.baseOrderGroups.find(g => g.orderNo === base.selectedOrderNo);
+            const rawItems = currentBaseGroup?.items || [];
+
+            // Pre-assign destination lot (auto-fill target bad stock lot if target is bad branch, or match source lot in target branch)
+            const targetBranchObj = typeof (currentBaseGroup?.items?.[0]?.target_branch_id) === 'object' ? (currentBaseGroup?.items?.[0]?.target_branch_id as any) : null;
+            const targetBranchName = currentBaseGroup?.targetBranchName || targetBranchObj?.branch_name || targetBranchObj?.name || '';
+            const isTargetBadBranch = isBadStockLot(undefined, { branch_name: targetBranchName });
+
             setDestinationLotIds(prev => {
               const updated = { ...prev };
-              selectedGroup.items.forEach(item => {
+              rawItems.forEach(item => {
                 const currentLotId = updated[item.id];
                 const isValid = activeLots.some(l => l.lot_id === currentLotId);
                 if (!currentLotId || !isValid) {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const p = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
-                  const itemClass = resolveProductClassification(p.product_type, p.product_category, p.product_code, p.product_name);
-                  const matchedLot = activeLots.find(l => {
-                    const stored = tempMap.get(Number(l.lot_id));
-                    return checkLotProductTypeCompatibility(stored, itemClass).isCompatible;
-                  }) || activeLots[0];
-                  updated[item.id] = matchedLot.lot_id;
+                  const itemAny = item as any;
+                  const sourceLotId = itemAny.source_lot_id || itemAny.lot_id || itemAny.lot_allocations?.[0]?.lot_id;
+                  const sourceLotName = itemAny.source_lot_name || itemAny.lot_name || itemAny.lot_allocations?.[0]?.lot_name;
+                  const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadBranch;
+
+                  // 1. If target branch is bad stock branch or item is bad stock, auto-fill bad stock lot in target branch
+                  if (isTargetBadBranch || itemIsBad) {
+                    const badStockLot = activeLots.find(l => isBadStockLot(l)) || activeLots[0];
+                    if (badStockLot) {
+                      updated[item.id] = badStockLot.lot_id;
+                      return;
+                    }
+                  }
+
+                  // 2. Otherwise for standard target branch, match exact source lot if present in target branch
+                  if (sourceLotId || sourceLotName) {
+                    const matchedTargetLot = activeLots.find(l => {
+                      if (sourceLotId && Number(l.lot_id) === Number(sourceLotId)) return true;
+                      if (sourceLotName && l.lot_name.trim().toLowerCase() === String(sourceLotName).trim().toLowerCase()) return true;
+                      return false;
+                    });
+
+                    if (matchedTargetLot) {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      const p = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
+                      const itemClass = resolveProductClassification(p.product_type, p.product_category, p.product_code, p.product_name);
+                      const stored = tempMap.get(Number(matchedTargetLot.lot_id));
+                      if (checkLotProductTypeCompatibility(stored, itemClass).isCompatible) {
+                        updated[item.id] = matchedTargetLot.lot_id;
+                        return;
+                      }
+                    }
+                  }
+                  // Do not auto-fill for regular target branch if no matching source lot exists
+                  delete updated[item.id];
                 }
               });
               return updated;
@@ -245,7 +307,7 @@ export function useStockTransferReceiveManual() {
     return () => {
       isMounted = false;
     };
-  }, [selectedGroup?.targetBranch, selectedGroup?.items]);
+  }, [selectedGroup?.targetBranch, base.selectedOrderNo]);
 
   const receiveOrder = async (orderNo: string) => {
     const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);
@@ -256,6 +318,20 @@ export function useStockTransferReceiveManual() {
         description: 'Please upload at least one file to finalize this manual deposit.'
       });
       return;
+    }
+
+    // Validate that every line item has a destination lot selected
+    for (const item of group.items) {
+      const allocs = itemLotAllocations[item.id];
+      const assignedLotId = destinationLotIds[item.id];
+      const hasAllocatedLot = (allocs && allocs.length > 0 && allocs.some(a => Number(a.lot_id) > 0)) || Number(assignedLotId || 0) > 0;
+      if (!hasAllocatedLot) {
+        const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+        toast.error("Destination Storage Lot Required", {
+          description: `Please select a destination storage lot for "${prodName}" before finalizing manual deposit.`
+        });
+        return;
+      }
     }
 
     // Validate product type compatibility for all destination lots
@@ -291,6 +367,19 @@ export function useStockTransferReceiveManual() {
             });
             return;
           }
+
+          // Lot Capacity Validation (current_stock + allocated_quantity <= max_batch_capacity)
+          const currentStock = Number(lot?.current_stock_quantity || 0);
+          const maxCap = Number(lot?.max_batch_capacity || 0);
+          const allocQty = (g.batches || []).reduce((sum: number, b: { quantity?: number | null }) => sum + Number(b.quantity || 0), 0);
+          if (maxCap > 0 && (currentStock + allocQty) > maxCap) {
+            const overage = (currentStock + allocQty) - maxCap;
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Destination Lot Capacity Exceeded", {
+              description: `Storage lot "${lot?.lot_name || `Lot #${g.lot_id}`}" has current stock of ${currentStock} and max capacity of ${maxCap}. Allocating ${allocQty} of "${prodName}" exceeds lot capacity by ${overage}. Please choose a lot with sufficient capacity.`
+            });
+            return;
+          }
         }
       } else {
         const assignedLotId = destinationLotIds[item.id];
@@ -303,6 +392,21 @@ export function useStockTransferReceiveManual() {
             const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
             toast.error("Destination Storage Lot Conflict", {
               description: `Storage lot "${lot?.lot_name || `Lot #${assignedLotId}`}" currently stores ${stored?.is_draft_allocation ? "items in current form draft" : "warehouse stock"} of type "${stored?.primary_classification_label || "Other"}", which is incompatible with "${prodName}" (${itemClass.label}). Please choose a matching or empty storage lot.`
+            });
+            return;
+          }
+
+          // UOM Validation
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const productObj = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : {};
+          const productUom = typeof productObj.unit_of_measurement === 'object' ? productObj.unit_of_measurement : null;
+          const itemUnitId = Number(productUom?.unit_id || productObj.unit_id || 0);
+          const lotUnitId = Number(lot?.unit_id || 0);
+          if (lotUnitId > 0 && itemUnitId > 0 && lotUnitId !== itemUnitId) {
+            const prodName = productObj.product_name || `Product #${item.product_id}`;
+            const itemUomName = productUom?.unit_name || 'units';
+            toast.error("Destination Storage Lot UOM Conflict", {
+              description: `Storage lot "${lot?.lot_name}" is configured for unit "${lot?.unit_name || 'units'}", which is incompatible with product "${prodName}" UOM (${itemUomName}). Please select a lot matching the product's unit.`
             });
             return;
           }
@@ -320,6 +424,19 @@ export function useStockTransferReceiveManual() {
             const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
             toast.error("Storage Lot Conflict", {
               description: `Item "${prodName}" is GOOD stock and cannot be placed into Bad Stock / Quarantine storage lot "${lot?.lot_name}".`
+            });
+            return;
+          }
+
+          // Lot Capacity Validation (current_stock + received_quantity <= max_batch_capacity)
+          const currentStock = Number(lot?.current_stock_quantity || 0);
+          const maxCap = Number(lot?.max_batch_capacity || 0);
+          const rcvQty = Number(item.receivedQty || item.received_quantity || item.allocated_quantity || 0);
+          if (maxCap > 0 && (currentStock + rcvQty) > maxCap) {
+            const overage = (currentStock + rcvQty) - maxCap;
+            const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
+            toast.error("Destination Lot Capacity Exceeded", {
+              description: `Storage lot "${lot?.lot_name || `Lot #${assignedLotId}`}" has current stock of ${currentStock} and max capacity of ${maxCap}. Receiving ${rcvQty} of "${prodName}" exceeds lot capacity by ${overage}. Please choose a lot with sufficient capacity.`
             });
             return;
           }
@@ -359,13 +476,18 @@ export function useStockTransferReceiveManual() {
       // 2. Submit status update with attachments, remarks, and structured multi-lot allocations
       await stockTransferLifecycleService.submitStatusUpdate({
         items: group.items.map((i: OrderGroupItem) => {
+          const effectiveAllocs = itemLotAllocations[i.id] || (i.lot_allocations ? i.lot_allocations.map(g => ({
+            ...g,
+            lot_id: destinationLotIds[i.id] || g.lot_id,
+          })) : undefined);
+
           return {
             id: i.id,
             status: 'Received',
             received_quantity: i.receivedQty || 0,
             destination_lot_id: destinationLotIds[i.id] || null,
-            destination_batch_no: destinationBatchNos[i.id] || i.batch_no || `TRF-${group.orderNo}-${i.id}`,
-            lot_allocations: itemLotAllocations[i.id],
+            destination_batch_no: destinationBatchNos[i.id] || i.batch_no || i.lot_allocations?.[0]?.batches?.[0]?.batch_no || `TRF-${group.orderNo}-${i.id}`,
+            lot_allocations: effectiveAllocs,
             remarks: remarks.trim() || undefined,
           };
         }),

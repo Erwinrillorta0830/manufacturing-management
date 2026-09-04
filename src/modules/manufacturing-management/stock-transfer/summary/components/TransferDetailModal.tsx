@@ -36,10 +36,52 @@ import {
 } from 'lucide-react';
 import type { OrderGroupItem, ProductRow, BranchRow } from '../../types/stock-transfer.types';
 import type { SummaryOrderGroup, SummaryAttachmentItem } from '../hooks/use-stock-transfer-summary';
-import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
+import { calculateUnitPrice, formatQuantity, resolveBranchSalesman, formatStatusForUi } from '../../services/stock-transfer.helpers';
 import { formatPhDateTime } from '../../utils/date-utils';
 import { SummaryPrintPreview } from './SummaryPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
+
+function formatBranchLabel(nameOrCode: string | undefined): string {
+  if (!nameOrCode) return 'Unknown Branch';
+  if (nameOrCode.includes('_')) {
+    return nameOrCode
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+  return nameOrCode;
+}
+
+function getStatusBadgeClass(status?: string | null): string {
+  const normalized = status?.toLowerCase().replace(/[_\s-]+/g, '');
+  switch (normalized) {
+    case 'requested':
+      return 'bg-muted text-muted-foreground border-muted';
+    case 'forapproval':
+    case 'pendingapproval':
+      return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800';
+    case 'forpicking':
+      return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800';
+    case 'picking':
+      return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800';
+    case 'picked':
+      return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800';
+    case 'forloading':
+      return 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800';
+    case 'intransit':
+    case 'dispatched':
+      return 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800';
+    case 'received':
+    case 'completed':
+      return 'bg-emerald-600 text-white border-emerald-600';
+    case 'rejected':
+      return 'bg-destructive text-white border-destructive';
+    case 'cancelled':
+      return 'bg-destructive/80 text-white border-destructive/80';
+    default:
+      return 'bg-muted text-muted-foreground border-border';
+  }
+}
 
 function formatFileSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return '';
@@ -114,16 +156,10 @@ export function TransferDetailModal({
                   variant="outline" 
                   className={cn(
                     "font-black uppercase tracking-widest text-[10px] rounded-[4px] px-2 py-0.5 border shadow-none",
-                    group.status === 'Requested' && "bg-muted text-muted-foreground border-muted",
-                    group.status === 'For Picking' && "bg-amber-100 text-amber-700 border-amber-200",
-                    group.status === 'Picking' && "bg-blue-100 text-blue-700 border-blue-200",
-                    group.status === 'Picked' && "bg-emerald-100 text-emerald-700 border-emerald-200",
-                    group.status === 'For Loading' && "bg-sky-100 text-sky-700 border-sky-200",
-                    group.status === 'Received' && "bg-emerald-600 text-white border-emerald-600",
-                    group.status === 'Rejected' && "bg-destructive text-white border-destructive"
+                    getStatusBadgeClass(group.status)
                   )}
                 >
-                  {group.status}
+                  {formatStatusForUi(group.status)}
                 </Badge>
               </div>
             </div>
@@ -131,11 +167,15 @@ export function TransferDetailModal({
             <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-6 p-4 rounded-xl border border-border bg-background/50">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Source Branch</p>
-                <p className="font-semibold text-sm truncate" title={getBranchName(group.sourceBranch)}>{getBranchName(group.sourceBranch)}</p>
+                <p className="font-semibold text-sm truncate" title={formatBranchLabel(getBranchName(group.sourceBranch))}>
+                  {formatBranchLabel(getBranchName(group.sourceBranch))}
+                </p>
               </div>
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Target Branch</p>
-                <p className="font-semibold text-sm truncate" title={getBranchName(group.targetBranch)}>{getBranchName(group.targetBranch)}</p>
+                <p className="font-semibold text-sm truncate" title={formatBranchLabel(getBranchName(group.targetBranch))}>
+                  {formatBranchLabel(getBranchName(group.targetBranch))}
+                </p>
               </div>
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-1">Requested On</p>
@@ -193,7 +233,36 @@ export function TransferDetailModal({
                             )}
                             <div className="flex flex-col min-w-0">
                               <span className="font-bold text-sm truncate" title={productName}>{productName}</span>
-                              <span className="text-[10px] text-muted-foreground font-mono">Barcode: {barcode}</span>
+                              <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                                {item.lot_allocations && item.lot_allocations.length > 0 ? (
+                                  item.lot_allocations.map((g, idx) => {
+                                    const lotClean = g.lot_name ? g.lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim() : (g.lot_id ? `${g.lot_id}` : '—');
+                                    return (
+                                      <span key={idx} className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">
+                                        Lot {lotClean}
+                                      </span>
+                                    );
+                                  })
+                                ) : (item.source_lot_name || item.source_lot_id) ? (
+                                  <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">
+                                    Lot {item.source_lot_name ? item.source_lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim() : item.source_lot_id}
+                                  </span>
+                                ) : null}
+                                {item.lot_allocations && item.lot_allocations.length > 0 ? (
+                                  item.lot_allocations.flatMap(g => g.batches || []).map((b, bIdx) => {
+                                    const bNo = String(b.batch_no || 'N/A').replace(/^batch\s*[:#-]?\s*/i, '').trim();
+                                    return (
+                                      <span key={bIdx} className="text-[9px] bg-muted text-foreground px-1.5 py-0.2 rounded border border-border/50 font-mono font-semibold">
+                                        Batch: {bNo}
+                                      </span>
+                                    );
+                                  })
+                                ) : item.batch_no ? (
+                                  <span className="text-[9px] bg-muted text-foreground px-1.5 py-0.2 rounded border border-border/50 font-mono font-semibold">
+                                    Batch: {String(item.batch_no).replace(/^batch\s*[:#-]?\s*/i, '').trim()}
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
@@ -386,12 +455,7 @@ export function TransferDetailModal({
           getBranchName={getBranchName}
           getUserName={getUserName}
           getUnitName={getUnitName}
-          salesmanName={(() => {
-            const targetBranchObj = branches?.find(b => b.id === group.targetBranch);
-            return (targetBranchObj && (targetBranchObj.branch_description || targetBranchObj.branch_head))
-              ? (targetBranchObj.branch_description || getUserName(targetBranchObj.branch_head))
-              : getUserName(group.encoderId);
-          })()}
+          salesmanName={resolveBranchSalesman(group.targetBranch, branches || [])}
         />
       </Dialog>
 

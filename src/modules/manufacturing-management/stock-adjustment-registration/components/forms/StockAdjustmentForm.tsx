@@ -216,9 +216,17 @@ const StockAdjustmentItemRow = React.memo(function StockAdjustmentItemRow({
               </button>
               <input
                 type="number"
-                value={quantity === undefined || quantity === null ? "" : quantity}
+                value={quantity === 0 || quantity === undefined || quantity === null ? "" : quantity}
+                placeholder="0"
+                onFocus={(e) => e.target.select()}
+                onClick={(e) => (e.target as HTMLInputElement).select()}
                 onChange={(e) => {
-                  let val = parseInt(e.target.value, 10);
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setValue(`items.${index}.quantity`, 0, { shouldValidate: true });
+                    return;
+                  }
+                  let val = parseInt(raw, 10);
                   if (isNaN(val) || val < 0) val = 0;
                   setValue(`items.${index}.quantity`, val, { shouldValidate: true });
                 }}

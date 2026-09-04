@@ -77,6 +77,8 @@ export interface FormSiblingAllocation {
   batches?: Array<{ quantity?: number | null; batch_no?: string | null; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: QAStatus | null }>;
 }
 
+
+
 interface LotBatchSelectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -494,12 +496,44 @@ export function LotBatchSelectionModal({
 
         // 1. If item already has structured lot allocations, restore them cleanly
         if (initialLotAllocations && initialLotAllocations.length > 0) {
+          const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
+          const preferBad = initialValues?.qa_status && initialValues.qa_status !== 'GOOD';
+
+          const compatibleLot = (lotsData || []).find((l) => {
+            if (l.status && l.status !== 'ACTIVE') return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            const lotIsBad = isBadStockLot(l);
+            if (preferBad && !lotIsBad) return false;
+            if (!preferBad && lotIsBad) return false;
+            const stored = storedMap.get(Number(l.lot_id));
+            if (!stored || stored.is_empty) return true;
+            if (targetClass.code === 'OTHER') return true;
+            return stored.primary_classification === targetClass.code;
+          }) || (lotsData || []).find((l) => {
+            if (l.status && l.status !== 'ACTIVE') return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            const lotIsBad = isBadStockLot(l);
+            if (preferBad && !lotIsBad) return false;
+            if (!preferBad && lotIsBad) return false;
+            return true;
+          }) || (lotsData || []).find((l) => {
+            if (l.status && l.status !== 'ACTIVE') return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            return true;
+          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id)) : undefined) || lotsData?.[0];
+
           const hydrated = initialLotAllocations.map((g) => {
-            const matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === Number(g.lot_id));
-            const lId = Number(g.lot_id);
+            let matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === Number(g.lot_id));
+            if (!matchedLot && compatibleLot) {
+              matchedLot = compatibleLot;
+            }
+            const lId = Number(matchedLot?.lot_id || g.lot_id);
+            const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
+
             return {
               ...g,
-              lot_name: matchedLot?.lot_name || g.lot_name || `Lot #${g.lot_id}`,
+              lot_id: lId,
+              lot_name: matchedLot?.lot_name || g.lot_name || `Lot #${lId}`,
               max_batch_capacity: matchedLot?.max_batch_capacity || g.max_batch_capacity || 10,
               unit_id: matchedLot?.unit_id !== undefined ? matchedLot.unit_id : g.unit_id,
               unit_name: matchedLot?.unit_name || g.unit_name,
@@ -507,12 +541,46 @@ export function LotBatchSelectionModal({
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: (g.batches || []).map((b) => ({
                 ...b,
+                manufacturing_date: b.manufacturing_date ? String(b.manufacturing_date).substring(0, 10) : '',
+                expiry_date: b.expiry_date ? String(b.expiry_date).substring(0, 10) : '',
                 quantity: Number(b.quantity ?? 0),
-                qa_status: b.qa_status || 'GOOD',
+                qa_status: (b.qa_status && b.qa_status !== 'GOOD')
+                  ? b.qa_status
+                  : (isLotBad ? ('EXPIRED' as QAStatus) : (b.qa_status || 'GOOD')),
               })),
             };
           });
-          setLotGroups(hydrated);
+
+          // Merge groups that share the same lot_id (e.g. source lots remapped to the same destination lot)
+          const mergedGroupMap = new Map<number, LotAllocationGroup>();
+          for (const grp of hydrated) {
+            if (!mergedGroupMap.has(grp.lot_id)) {
+              mergedGroupMap.set(grp.lot_id, {
+                ...grp,
+                allocated_quantity: 0,
+                batches: [],
+              });
+            }
+            const existing = mergedGroupMap.get(grp.lot_id)!;
+            for (const b of grp.batches) {
+              existing.batches.push(b);
+              existing.allocated_quantity += Number(b.quantity || 0);
+            }
+          }
+
+          const finalGroups = Array.from(mergedGroupMap.values());
+          setLotGroups(finalGroups);
+
+          // Populate toolbar dates from the first batch
+          const firstBatch = finalGroups[0]?.batches?.[0];
+          if (firstBatch?.manufacturing_date || firstBatch?.expiry_date) {
+            setToolbarDates({
+              0: {
+                mfg: firstBatch.manufacturing_date ? String(firstBatch.manufacturing_date).substring(0, 10) : '',
+                exp: firstBatch.expiry_date ? String(firstBatch.expiry_date).substring(0, 10) : '',
+              },
+            });
+          }
           return;
         }
 
@@ -520,6 +588,7 @@ export function LotBatchSelectionModal({
         if (initialValues?.lot_id && initialValues?.batch_no) {
           const lId = Number(initialValues.lot_id);
           const matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === lId);
+          const initialQty = requestedQuantity !== undefined && requestedQuantity !== null ? requestedQuantity : 0;
           setLotGroups([
             {
               lot_id: lId,
@@ -527,7 +596,7 @@ export function LotBatchSelectionModal({
               max_batch_capacity: matchedLot?.max_batch_capacity || 10,
               unit_id: matchedLot?.unit_id ?? null,
               unit_name: matchedLot?.unit_name ?? null,
-              allocated_quantity: 0,
+              allocated_quantity: initialQty,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: [
@@ -536,7 +605,7 @@ export function LotBatchSelectionModal({
                   batch_no: initialValues.batch_no || '',
                   manufacturing_date: initialValues.manufacturing_date || '',
                   expiry_date: initialValues.expiry_date || '',
-                  quantity: 0,
+                  quantity: initialQty,
                   unit_cost: initialValues.unit_cost,
                   qa_status: initialValues.qa_status || 'GOOD',
                 },
@@ -578,8 +647,9 @@ export function LotBatchSelectionModal({
           const lId = Number(compatibleLot.lot_id);
           const isLotBad = isBadStockLot(compatibleLot);
           const defaultQA: QAStatus = isLotBad
-            ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'DAMAGED')
-            : 'GOOD';
+            ? (initialValues?.qa_status && initialValues.qa_status !== 'GOOD' ? initialValues.qa_status : 'EXPIRED')
+            : (initialValues?.qa_status || 'GOOD');
+          const defaultInitialQty = requestedQuantity !== undefined && requestedQuantity !== null ? requestedQuantity : 0;
           setLotGroups([
             {
               lot_id: lId,
@@ -587,20 +657,28 @@ export function LotBatchSelectionModal({
               max_batch_capacity: compatibleLot.max_batch_capacity || 10,
               unit_id: compatibleLot.unit_id ?? null,
               unit_name: compatibleLot.unit_name ?? null,
-              allocated_quantity: 0,
+              allocated_quantity: defaultInitialQty,
               active_batch_count: bCountMap.get(lId) || 0,
               current_stock_quantity: sQtyMap.get(lId) || 0,
               batches: [
                 {
-                  batch_no: '',
-                  manufacturing_date: '',
-                  expiry_date: '',
-                  quantity: 0,
+                  batch_no: initialValues?.batch_no || '',
+                  manufacturing_date: initialValues?.manufacturing_date || '',
+                  expiry_date: initialValues?.expiry_date || '',
+                  quantity: defaultInitialQty,
                   qa_status: defaultQA,
                 },
               ],
             },
           ]);
+          if (initialValues?.manufacturing_date || initialValues?.expiry_date) {
+            setToolbarDates({
+              0: {
+                mfg: initialValues.manufacturing_date ? String(initialValues.manufacturing_date).substring(0, 10) : '',
+                exp: initialValues.expiry_date ? String(initialValues.expiry_date).substring(0, 10) : '',
+              },
+            });
+          }
         } else {
           setLotGroups([]);
         }
@@ -824,17 +902,9 @@ export function LotBatchSelectionModal({
       return errors;
     }
 
-    // 1. Target Requested Quantity vs Total Allocating Quantity Check
-    if (totalAllocated !== requestedQuantity) {
-      if (totalAllocated < requestedQuantity) {
-        errors.push(
-          `Under-allocated! Allocating ${totalAllocated.toLocaleString()} ${productUomName} total, but requested target is ${requestedQuantity.toLocaleString()} ${productUomName} (short by ${(requestedQuantity - totalAllocated).toLocaleString()} ${productUomName}).`
-        );
-      } else {
-        errors.push(
-          `Over-allocated! Allocating ${totalAllocated.toLocaleString()} ${productUomName} total, exceeding requested target of ${requestedQuantity.toLocaleString()} ${productUomName} (excess of ${(totalAllocated - requestedQuantity).toLocaleString()} ${productUomName}).`
-        );
-      }
+    // 1. Total Allocating Quantity Check (Must be greater than 0)
+    if (totalAllocated <= 0) {
+      errors.push('Total allocating quantity must be greater than 0.');
     }
 
     lotGroups.forEach((g, gIdx) => {
@@ -926,7 +996,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, requestedQuantity, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots]);
+  }, [lotGroups, totalAllocated, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots]);
 
   const isValid = validationErrors.length === 0;
 
@@ -982,7 +1052,7 @@ export function LotBatchSelectionModal({
             <div className="text-right">
               <div className="text-[10px] uppercase font-bold text-muted-foreground">Target Quantity</div>
               <div className="text-base font-mono font-black text-primary">
-                {requestedQuantity.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{productUomName}</span>
+                {(requestedQuantity !== undefined && requestedQuantity !== null ? requestedQuantity : totalAllocated).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{productUomName}</span>
               </div>
             </div>
           </div>
@@ -999,35 +1069,28 @@ export function LotBatchSelectionModal({
             <>
               {/* ALLOCATION SUMMARY TRACKER BAR */}
               <div
-                className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${isQuantityBalanced
+                className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${totalAllocated > 0
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300'
-                  : quantityDifference > 0
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'
-                    : 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-300'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'
                   }`}
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base ${isQuantityBalanced
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-base ${totalAllocated > 0
                       ? 'bg-emerald-500 text-white'
-                      : quantityDifference > 0
-                        ? 'bg-amber-500 text-white'
-                        : 'bg-rose-500 text-white'
+                      : 'bg-amber-500 text-white'
                       }`}
                   >
-                    {isQuantityBalanced ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                    {totalAllocated > 0 ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
                   </div>
                   <div>
                     <div className="text-xs font-black uppercase tracking-wider">
-                      {isQuantityBalanced
+                      {totalAllocated > 0
                         ? 'Quantity Balanced & Ready'
-                        : quantityDifference > 0
-                          ? `Under-Allocated: ${quantityDifference.toLocaleString()} ${productUomName} Remaining`
-                          : `Over-Allocated: ${Math.abs(quantityDifference).toLocaleString()} ${productUomName} Excess`}
+                        : 'No Quantity Allocated'}
                     </div>
                     <div className="text-xs opacity-80 mt-0.5">
-                      Total Allocating: <strong className="font-mono font-black">{totalAllocated.toLocaleString()}</strong> / Target:{' '}
-                      <strong className="font-mono font-black">{requestedQuantity.toLocaleString()}</strong> {productUomName} across {lotGroups.length} lot(s).
+                      Total Allocating: <strong className="font-mono font-black">{totalAllocated.toLocaleString()}</strong> {productUomName} across {lotGroups.length} lot(s).
                     </div>
                   </div>
                 </div>
@@ -1429,7 +1492,7 @@ export function LotBatchSelectionModal({
                     </div>
 
                     {/* WARNING ALERTS */}
-                    {(!isTypeMatch || !isUomMatch || isCapacityExceeded || isNearCapacity) && (
+                    {/* {(!isTypeMatch || !isUomMatch || isCapacityExceeded || isNearCapacity) && (
                       <div className="p-2.5 mx-4 mt-3 rounded-lg text-xs space-y-1.5 bg-muted/30 border border-border">
                         {!isTypeMatch && (
                           <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold">
@@ -1481,7 +1544,7 @@ export function LotBatchSelectionModal({
                           </div>
                         )}
                       </div>
-                    )}
+                    )} */}
 
                     {/* BATCHES SUB-TABLE */}
                     <div className="p-4 space-y-3">
@@ -1592,7 +1655,10 @@ export function LotBatchSelectionModal({
                                 <Input
                                   type="number"
                                   min={0}
-                                  value={batch.quantity === undefined || batch.quantity === null ? '' : batch.quantity}
+                                  value={batch.quantity === 0 || batch.quantity === undefined || batch.quantity === null ? '' : batch.quantity}
+                                  placeholder="0"
+                                  onFocus={(e) => e.target.select()}
+                                  onClick={(e) => (e.target as HTMLInputElement).select()}
                                   onChange={(e) => {
                                     const raw = e.target.value;
                                     if (raw === '') {

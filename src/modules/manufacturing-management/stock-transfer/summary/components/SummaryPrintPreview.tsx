@@ -16,6 +16,7 @@ import { SummaryOrderGroup } from '../hooks/use-stock-transfer-summary';
 import { CompanyData, StockTransferRow } from '../../types/stock-transfer.types';
 import { calculateUnitPrice, formatQuantity } from '../../services/stock-transfer.helpers';
 import { formatPhDateTime } from '../../utils/date-utils';
+import { extractLotGroups, formatHierarchicalLotBatches } from '../../utils/generate-stock-transfer-pdf';
 import { PrintTemplate } from './PrintTemplate';
 
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -194,9 +195,16 @@ export function SummaryPrintPreview({
          const unitPrice = calculateUnitPrice(item as unknown as StockTransferRow);
          const qty = item.received_quantity || item.allocated_quantity || item.ordered_quantity || 0;
          const rowTotal = qty * unitPrice;
+         let prodDesc = product?.product_name || `ID: ${item.product_id}`;
+         const lotGroups = extractLotGroups(item);
+         if (lotGroups.length > 0) {
+           const batchDetails = formatHierarchicalLotBatches(lotGroups);
+           prodDesc += `\n${batchDetails}`;
+         }
+
          return [
            brand || 'N/A',
-           product?.product_name || `ID: ${item.product_id}`,
+           prodDesc,
            unit,
            formatQuantity(item.ordered_quantity),
            formatQuantity(item.allocated_quantity),
@@ -216,6 +224,7 @@ export function SummaryPrintPreview({
           cellPadding: { top: 3, bottom: 3, left: 2, right: 2 },
           textColor: [0, 0, 0],
           lineWidth: 0,
+          overflow: 'linebreak',
         },
         headStyles: {
           fillColor: [249, 249, 249],

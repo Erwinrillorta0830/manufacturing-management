@@ -383,76 +383,36 @@ export function StockConversionModal({
     return Number(product?.quantity) || 0;
   }, [liveProductQty, sourceBatches, product?.quantity]);
 
-  // ── Auto-Initialize / Auto-Sync Target Lot Groups ────────────────
+  // ── Initialize Target Lot Groups (without auto-fill or auto-selection) ──
   useEffect(() => {
     if (wholeUnits > 0 && lots.length > 0) {
-      const timer = setTimeout(() => {
-        setTargetLotGroups((prev) => {
-          // If empty, create initial lot group with 1 batch
-          if (prev.length === 0) {
-            // Find active, UOM-matching, and product type compatible lot
-            const matchingLot =
-              lots.find((l) => {
-                if (l.status && l.status !== "ACTIVE") return false;
-                if (targetUnit && l.unit_id && Number(l.unit_id) !== Number(targetUnit.unitId)) return false;
-                const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                return checkLotProductTypeCompatibility(stored, targetClassification).isCompatible;
-              }) ||
-              lots.find((l) => targetUnit && l.unit_id && Number(l.unit_id) === Number(targetUnit.unitId)) ||
-              lots[0];
-
-            return [
-              {
-                lot_id: matchingLot.lot_id,
-                lot_name: matchingLot.lot_name,
-                max_batch_capacity: matchingLot.max_batch_capacity || 10,
-                unit_id: matchingLot.unit_id,
-                unit_name: matchingLot.unit_name,
-                current_stock_quantity: matchingLot.current_stock_quantity || 0,
-                allocated_quantity: wholeUnits,
-                batches: [
-                  {
-                    batch_no: generateBatchNo(),
-                    quantity: wholeUnits,
-                    manufacturing_date: todayStr,
-                    expiry_date: defaultExpDate || null,
-                    qa_status: "GOOD",
-                  },
-                ],
-              },
-            ];
-          }
-
-          // If there's exactly 1 lot and 1 batch, automatically sync quantity with wholeUnits
-          if (prev.length === 1 && prev[0].batches.length === 1) {
-            const singleLot = prev[0];
-            const matchedLot = lots.find((l) => Number(l.lot_id) === Number(singleLot.lot_id)) || singleLot;
-            return [
-              {
-                ...singleLot,
-                max_batch_capacity: matchedLot.max_batch_capacity || singleLot.max_batch_capacity,
-                unit_id: matchedLot.unit_id,
-                unit_name: matchedLot.unit_name,
-                current_stock_quantity: matchedLot.current_stock_quantity || singleLot.current_stock_quantity,
-                allocated_quantity: wholeUnits,
-                batches: [
-                  {
-                    ...singleLot.batches[0],
-                    quantity: wholeUnits,
-                    expiry_date: singleLot.batches[0].expiry_date || defaultExpDate || null,
-                  },
-                ],
-              },
-            ];
-          }
-
-          return prev;
-        });
-      }, 0);
-
-      return () => clearTimeout(timer);
+      setTargetLotGroups((prev) => {
+        if (prev.length === 0) {
+          return [
+            {
+              lot_id: 0,
+              lot_name: "",
+              max_batch_capacity: 10,
+              unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
+              unit_name: targetUnit?.name || null,
+              current_stock_quantity: 0,
+              allocated_quantity: 0,
+              batches: [
+                {
+                  batch_no: "",
+                  quantity: 0,
+                  manufacturing_date: todayStr,
+                  expiry_date: defaultExpDate || null,
+                  qa_status: "GOOD",
+                },
+              ],
+            },
+          ];
+        }
+        return prev;
+      });
     }
-  }, [wholeUnits, lots, targetUnit, defaultExpDate, todayStr, lotStoredSummaryMap, targetClassification]);
+  }, [wholeUnits, lots, targetUnit, defaultExpDate, todayStr]);
 
   // Total allocated across all target lot groups and batches
   const totalTargetAllocated = useMemo(() => {
@@ -469,34 +429,21 @@ export function StockConversionModal({
 
   const handleAddLotGroup = () => {
     if (lots.length === 0) return;
-    const availableLots = lots.filter((l) => !targetLotGroups.some((g) => Number(g.lot_id) === Number(l.lot_id)));
-    const chosenLot =
-      availableLots.find((l) => {
-        if (l.status && l.status !== "ACTIVE") return false;
-        if (targetUnit && l.unit_id && Number(l.unit_id) !== Number(targetUnit.unitId)) return false;
-        const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-        return checkLotProductTypeCompatibility(stored, targetClassification).isCompatible;
-      }) ||
-      availableLots.find((l) => targetUnit && l.unit_id && Number(l.unit_id) === Number(targetUnit.unitId)) ||
-      availableLots[0] ||
-      lots[0];
-
-    const fillQty = Math.max(0, targetQuantityDiff);
 
     setTargetLotGroups((prev) => [
       ...prev,
       {
-        lot_id: chosenLot.lot_id,
-        lot_name: chosenLot.lot_name,
-        max_batch_capacity: chosenLot.max_batch_capacity || 10,
-        unit_id: chosenLot.unit_id,
-        unit_name: chosenLot.unit_name,
-        current_stock_quantity: chosenLot.current_stock_quantity || 0,
-        allocated_quantity: fillQty,
+        lot_id: 0,
+        lot_name: "",
+        max_batch_capacity: 10,
+        unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
+        unit_name: targetUnit?.name || null,
+        current_stock_quantity: 0,
+        allocated_quantity: 0,
         batches: [
           {
-            batch_no: generateBatchNo(),
-            quantity: fillQty,
+            batch_no: "",
+            quantity: 0,
             manufacturing_date: todayStr,
             expiry_date: defaultExpDate || null,
             qa_status: "GOOD",
@@ -532,7 +479,6 @@ export function StockConversionModal({
   };
 
   const handleAddBatchRow = (gIdx: number) => {
-    const fillQty = Math.max(0, targetQuantityDiff);
     setTargetLotGroups((prev) =>
       prev.map((g, idx) => {
         if (idx !== gIdx) return g;
@@ -541,8 +487,8 @@ export function StockConversionModal({
           batches: [
             ...g.batches,
             {
-              batch_no: generateBatchNo(),
-              quantity: fillQty,
+              batch_no: "",
+              quantity: 0,
               manufacturing_date: todayStr,
               expiry_date: defaultExpDate || null,
               qa_status: "GOOD",
@@ -686,6 +632,11 @@ export function StockConversionModal({
 
       // Per-Lot Validations
       targetLotGroups.forEach((group, gIdx) => {
+        if (!group.lot_id || Number(group.lot_id) === 0) {
+          errs.push(`Storage Rack #${gIdx + 1}: Please select a storage rack / lot.`);
+          return;
+        }
+
         const lotUomId = group.unit_id ? Number(group.unit_id) : null;
         const isUomMismatch = Boolean(lotUomId && targetUnit && Number(targetUnit.unitId) !== lotUomId);
         const groupQty = (group.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
@@ -1234,6 +1185,8 @@ export function StockConversionModal({
                                 min={0}
                                 max={maxAvail}
                                 value={allocated || ""}
+                                onFocus={(e) => e.target.select()}
+                                onClick={(e) => (e.target as HTMLInputElement).select()}
                                 onChange={(e) => {
                                   const val = Math.min(maxAvail, Math.max(0, Number(e.target.value) || 0));
                                   setManualAllocations((prev) => ({
@@ -1464,8 +1417,8 @@ export function StockConversionModal({
                                   return true;
                                 });
 
-                                const optionsLots = lots.filter(
-                                  (l) => Number(l.lot_id) === Number(group.lot_id) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
+                                const optionsLots = (lots || []).filter(
+                                  (l) => (group.lot_id && Number(l.lot_id) === Number(group.lot_id)) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id)) || compatibleLots.length === 0
                                 );
 
                                 return (
@@ -1524,7 +1477,7 @@ export function StockConversionModal({
                                         badgeClassName: badgeClass,
                                       };
                                     })}
-                                    value={String(group.lot_id)}
+                                    value={group.lot_id ? String(group.lot_id) : ""}
                                     onValueChange={(val) => handleChangeLot(gIdx, val)}
                                     placeholder="Select Storage Rack / Lot..."
                                     searchPlaceholder="Search lot name..."
@@ -1863,7 +1816,7 @@ export function StockConversionModal({
                                 <Input
                                   value={batch.batch_no}
                                   onChange={(e) => handleBatchChange(gIdx, bIdx, "batch_no", e.target.value)}
-                                  placeholder="e.g. CONV-202608-0001"
+                                  placeholder="Please enter batch no"
                                   className="h-8 text-xs font-mono font-medium"
                                 />
                               </div>
@@ -1882,9 +1835,19 @@ export function StockConversionModal({
                                 </div>
                                 <Input
                                   type="number"
-                                  min={1}
-                                  value={batch.quantity || ""}
-                                  onChange={(e) => handleBatchChange(gIdx, bIdx, "quantity", e.target.value)}
+                                  min={0}
+                                  value={batch.quantity === 0 || batch.quantity === undefined || batch.quantity === null ? "" : batch.quantity}
+                                  onFocus={(e) => e.target.select()}
+                                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "") {
+                                      handleBatchChange(gIdx, bIdx, "quantity", 0);
+                                    } else {
+                                      const num = parseInt(val, 10);
+                                      handleBatchChange(gIdx, bIdx, "quantity", isNaN(num) ? 0 : Math.max(0, num));
+                                    }
+                                  }}
                                   placeholder="0"
                                   className="h-8 text-xs font-bold font-mono"
                                 />
