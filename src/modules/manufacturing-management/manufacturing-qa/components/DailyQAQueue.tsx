@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { deriveDailyQAOutcome, getDailyQAAuditStatus } from "../daily-qa-outcome";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface DailyQAQueueProps {
     yieldLedger: any[];
@@ -42,6 +43,7 @@ interface DailyQAQueueProps {
     qaTemplates: any[];
     qaParamValues: Record<number, string>;
     setQaParamValues: (val: Record<number, string>) => void;
+    onFiltersChange?: (search: string) => void;
 }
 
 export function DailyQAQueue({
@@ -75,8 +77,15 @@ export function DailyQAQueue({
     jobOrders,
     qaTemplates,
     qaParamValues,
-    setQaParamValues
+    setQaParamValues,
+    onFiltersChange
 }: DailyQAQueueProps) {
+    const [searchQuery, setSearchQuery] = React.useState("");
+    const visibleYieldLedger = React.useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        if (!query) return yieldLedger;
+        return yieldLedger.filter((entry: any) => `${entry.job_order_no || ""} ${entry.job_order_id || ""} ${entry.shift_name || ""} ${entry.lot_number || ""}`.toLowerCase().includes(query));
+    }, [yieldLedger, searchQuery]);
 
     // Filter qaLogs to find matching operator checklist parameter entries for selected yield ledger entry's job_order_id, shift, and selectedRouteId
     const matchingLogs = React.useMemo(() => {
@@ -150,6 +159,32 @@ export function DailyQAQueue({
         });
     }, [qaParamValues, activeParameters]);
 
+    const renderLedgerCard = (entry: any, idx: number) => {
+        const audits = dailyInspections.filter((ins: any) => Number(ins.ledger_id) === Number(entry.ledger_id || entry.id));
+        const rowJo = jobOrders.find((j: any) => Number(j.job_order_id || j.id) === Number(entry.job_order_id));
+        const rowRoutes = rowJo ? [...(rowJo.routing_tasks || rowJo.routingTasks || [])].sort((a, b) => Number(a.sequence_order || 0) - Number(b.sequence_order || 0)) : [];
+        const outcome = deriveDailyQAOutcome(audits, rowRoutes.map((route: any) => route.id));
+        return (
+            <div key={entry.id || entry.ledger_id || idx} className="rounded-xl border bg-card p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="font-mono text-base font-bold">{entry.job_order_no || `JO #${entry.job_order_id}`}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{entry.shift_name || "Shift not specified"} · {formatPhtTimestamp(entry.logged_at)}</p>
+                    </div>
+                    <Badge variant={outcome.status === "Passed" ? "default" : outcome.status === "Pending" ? "outline" : "destructive"} className={outcome.status === "Passed" ? "min-h-7 bg-emerald-600 text-sm" : "min-h-7 text-sm"}>
+                        {outcome.status === "Pending" ? "Pending Audit" : outcome.status}
+                    </Badge>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div><dt className="text-muted-foreground">Yield quantity</dt><dd className="font-mono font-semibold">{Number(entry.yield_quantity || 0).toLocaleString()} pcs</dd></div>
+                    <div><dt className="text-muted-foreground">Completed steps</dt><dd className="font-semibold">{audits.length} / {rowRoutes.length || 1}</dd></div>
+                </dl>
+                {audits.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{audits.map((audit: any, auditIdx: number) => <Badge key={audit.id || audit.inspection_id || `${entry.id}-${auditIdx}`} variant={getDailyQAAuditStatus(audit) === "Passed" ? "secondary" : "destructive"} className="min-h-7 text-sm">{getDailyQAAuditStatus(audit)}</Badge>)}</div>}
+                {outcome.status === "Pending" && <Button className="mt-4 min-h-11 w-full gap-2" onClick={() => handleOpenDailyAuditDialog(entry)}><ClipboardCheck className="h-4 w-4" />Perform Audit</Button>}
+            </div>
+        );
+    };
+
     if (loadingDailyQA) {
         return (
             <div className="flex justify-center items-center py-12">
@@ -161,17 +196,25 @@ export function DailyQAQueue({
     return (
         <div className="space-y-4">
             <div className="rounded-xl border bg-card shadow-sm">
-                <div className="p-4 border-b">
-                    <h3 className="font-bold text-base">Shift Yield Progress Logs</h3>
-                    <p className="text-xs text-muted-foreground">List of all yields logged. Record in-process daily QA inspections to authorize releases.</p>
+                <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h3 className="font-bold text-base">Shift Yield Progress Logs</h3>
+                        <p className="text-xs text-muted-foreground">List of all yields logged. Record in-process daily QA inspections to authorize releases.</p>
+                    </div>
+                    <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
+                        <Input value={searchQuery} onChange={(event) => { const search = event.target.value; setSearchQuery(search); onFiltersChange?.(search); }} placeholder="Search JO or shift..." aria-label="Search daily yield logs" className="h-11 w-full text-sm md:w-64" />
+                        {searchQuery && <Button type="button" variant="outline" className="min-h-11" onClick={() => { setSearchQuery(""); onFiltersChange?.(""); }}>Clear</Button>}
+                    </div>
                 </div>
 
-                {yieldLedger.length === 0 ? (
+                {visibleYieldLedger.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground italic text-sm">
                         No yields recorded in the ledger yet. Daily shift yields will display here once logged from WIP terminals.
                     </div>
                 ) : (
-                    <Table>
+                    <ResponsiveDataView
+                        table={(
+                        <Table>
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="font-mono text-xs">Job Order No</TableHead>
@@ -183,7 +226,7 @@ export function DailyQAQueue({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {yieldLedger.map((entry: any, idx: number) => {
+                            {visibleYieldLedger.map((entry: any, idx: number) => {
                                 const audits = dailyInspections.filter((ins: any) => Number(ins.ledger_id) === Number(entry.ledger_id || entry.id));
                                 const rowJo = jobOrders.find((j: any) => Number(j.job_order_id || j.id) === Number(entry.job_order_id));
                                 const rowRoutes = rowJo 
@@ -289,7 +332,7 @@ export function DailyQAQueue({
                                                 <Button 
                                                     size="xs" 
                                                     onClick={() => handleOpenDailyAuditDialog(entry)}
-                                                    className="bg-primary hover:bg-primary/90 text-white font-bold h-7 text-[11px]"
+                                                    className="bg-primary hover:bg-primary/90 text-white font-bold min-h-11 text-sm"
                                                 >
                                                     Perform Audit
                                                 </Button>
@@ -299,13 +342,21 @@ export function DailyQAQueue({
                                 );
                             })}
                         </TableBody>
-                    </Table>
+                        </Table>
+                        )}
+                        cards={(
+                            <div className="space-y-3 p-3">
+                                {visibleYieldLedger.map(renderLedgerCard)}
+                            </div>
+                        )}
+                        minTableWidth="wide"
+                    />
                 )}
             </div>
 
             {/* DIALOG: Record Daily Yield QA Audit */}
             <Dialog open={isDailyAuditOpen} onOpenChange={setIsDailyAuditOpen}>
-                <DialogContent className="w-[95vw] sm:max-w-[850px] max-h-[90vh] overflow-y-auto bg-background border border-border text-foreground scrollbar-thin">
+                <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-[850px] max-h-[calc(100dvh-1rem)] overflow-hidden bg-background border border-border text-foreground flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
                             <ClipboardCheck className="h-5 w-5" /> Record In-Process QA Audit
@@ -315,7 +366,7 @@ export function DailyQAQueue({
                         </DialogDescription>
                     </DialogHeader>
 
-                    <form onSubmit={(e) => { e.preventDefault(); handleSubmitDailyAudit(); }} className="space-y-4 py-2 text-xs">
+                    <form onSubmit={(e) => { e.preventDefault(); handleSubmitDailyAudit(); }} className="min-h-0 flex-1 space-y-4 overflow-y-auto py-2 text-sm scrollbar-thin">
                         
                         {/* Operator Logged Checklist Parameters (Collapsible) */}
                         <div className="border-b pb-2 mb-1 border-border">
@@ -338,12 +389,12 @@ export function DailyQAQueue({
                                                     <div key={log.id} className="p-2 bg-muted/50 border border-border rounded-md text-[10px] space-y-1">
                                                         <div className="flex justify-between items-center">
                                                             <span className="font-semibold text-foreground">{stepName}</span>
-                                                            <Badge variant={log.qa_status === "Passed" ? "secondary" : "destructive"} className="text-[8px] py-0 px-1 h-3.5 leading-none">
+                        <Badge variant={log.qa_status === "Passed" ? "secondary" : "destructive"} className="text-[10px] py-0 px-1 min-h-5 leading-none">
                                                                 {log.qa_status}
                                                             </Badge>
                                                         </div>
                                                         <p className="text-muted-foreground font-medium">{log.comments || "No comments recorded."}</p>
-                                                        <div className="text-[9px] text-muted-foreground/80 font-mono">
+                    <div className="text-[10px] text-muted-foreground/80 font-mono">
                                                             Qty: Expected {log.expected_quantity.toLocaleString()} | Actual {log.actual_quantity.toLocaleString()} | Defect {log.deviation_quantity.toLocaleString()}
                                                         </div>
                                                     </div>
@@ -401,11 +452,11 @@ export function DailyQAQueue({
                                                     Step {r.sequence_order}: {r.name || `Step #${r.id}`}
                                                 </span>
                                                 {stepAudited ? (
-                                                    <Badge variant="secondary" className="text-[8px] py-0 px-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                <Badge variant="secondary" className="text-[10px] py-0 px-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                                         Audited
                                                     </Badge>
                                                 ) : (
-                                                    <Badge variant="outline" className="text-[8px] py-0 px-1 border-amber-500/30 text-amber-400">
+                                <Badge variant="outline" className="text-[10px] py-0 px-1 border-amber-500/30 text-amber-400">
                                                         Pending
                                                     </Badge>
                                                 )}
@@ -432,13 +483,13 @@ export function DailyQAQueue({
                                                                     <span className="font-semibold text-foreground/90 text-[11px] flex items-center gap-1">
                                                                         {param.test_name}
                                                                         {param.is_critical && (
-                                                                            <span className="bg-red-500/10 text-red-500 text-[8px] font-bold px-1 py-0.2 rounded border border-red-500/20 scale-90 origin-left">
+                            <span className="bg-red-500/10 text-red-500 text-[10px] font-bold px-1 py-0.5 rounded border border-red-500/20">
                                                                                 CRITICAL
                                                                             </span>
                                                                         )}
                                                                     </span>
                                                                     {param.test_type === "Numeric" && (
-                                                                        <span className="text-[9px] text-muted-foreground font-medium">
+                            <span className="text-[10px] text-muted-foreground font-medium">
                                                                             Limit: [{param.min_value ?? "-∞"} – {param.max_value ?? "+∞"}]
                                                                         </span>
                                                                     )}
@@ -447,7 +498,7 @@ export function DailyQAQueue({
                                                                 {/* Right side: Input field & PASS/FAIL badge */}
                                                                 <div className="flex items-center gap-2 shrink-0">
                                                                     {val && (
-                                                                        <span className={`text-[8px] font-bold px-1 py-0.5 rounded ${isOutOfRange ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
+                        <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${isOutOfRange ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
                                                                             {isOutOfRange ? "FAIL" : "PASS"}
                                                                         </span>
                                                                     )}
@@ -513,7 +564,7 @@ export function DailyQAQueue({
                                                     })}
                                                 </div>
                                             ) : (
-                                                <div className="text-[9px] text-muted-foreground/80 italic pt-1 pl-1">
+                        <div className="text-[10px] text-muted-foreground/80 italic pt-1 pl-1">
                                                     No parameter checklist needed.
                                                 </div>
                                             )}
@@ -531,7 +582,7 @@ export function DailyQAQueue({
                                     id="sensory"
                                     value={sensoryStatus}
                                     onChange={(e) => setSensoryStatus(e.target.value as any)}
-                                    className="flex h-9 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
+                                    className="flex min-h-11 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
                                 >
                                     <option value="Passed">Passed (Color/Texture Pass)</option>
                                     <option value="Failed">Failed (Deviation/Reject)</option>
@@ -545,7 +596,7 @@ export function DailyQAQueue({
                                     id="action"
                                     value={dailyActionTaken}
                                     onChange={(e) => setDailyActionTaken(e.target.value as any)}
-                                    className="flex h-9 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
+                                    className="flex min-h-11 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
                                 >
                                     <option value="Released">Release Shift Yield</option>
                                     <option value="Quarantined">Hold / Quarantine Yield</option>
@@ -562,7 +613,7 @@ export function DailyQAQueue({
                                     id="lab"
                                     value={dailyLabStatus}
                                     onChange={(e) => setDailyLabStatus(e.target.value as any)}
-                                    className="flex h-9 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
+                                    className="flex min-h-11 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
                                 >
                                     <option value="Passed">Passed (Lab Verified)</option>
                                     <option value="Pending">Pending Analysis</option>
@@ -593,19 +644,19 @@ export function DailyQAQueue({
                             />
                         </div>
 
-                        <DialogFooter className="pt-2 border-t border-border gap-2 flex items-center justify-end">
+                    <DialogFooter className="sticky bottom-0 z-10 pt-3 border-t border-border gap-2 flex items-center justify-end bg-background/95 backdrop-blur">
                             <Button
                                 type="button"
                                 variant="outline"
                                 onClick={() => setIsDailyAuditOpen(false)}
-                                className="border-border hover:bg-muted text-foreground h-8 text-xs font-semibold"
+                                className="border-border hover:bg-muted text-foreground min-h-11 text-sm font-semibold"
                             >
                                 Cancel
                             </Button>
                             <Button
                                 type="submit"
                                 disabled={actionLoading}
-                                className="bg-primary hover:bg-primary/95 text-white font-bold h-8 text-xs px-4"
+                                className="bg-primary hover:bg-primary/95 text-white font-bold min-h-11 text-sm px-4"
                             >
                                 {actionLoading ? "Saving Audit..." : "Save Audit & Authorize"}
                             </Button>

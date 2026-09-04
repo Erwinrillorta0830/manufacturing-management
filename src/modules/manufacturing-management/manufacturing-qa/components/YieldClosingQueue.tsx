@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { JobOrder } from "../types";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface PendingHold {
     jo_id: string | number;
@@ -30,6 +31,31 @@ export function YieldClosingQueue({
     handleOpenYieldDialog,
     pendingHolds = []
 }: YieldClosingQueueProps) {
+    const renderCard = (jo: JobOrder) => {
+        const isHeld = pendingHolds.some((h: PendingHold) => String(h.jo_id) === String(jo.jo_id));
+        const blocked = isHeld || jo.status === "On Hold" || jo.status === "QA Hold";
+        return (
+            <Card key={jo.jo_id} className="border p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="font-mono text-base font-bold text-foreground">{jo.jo_id}</p>
+                        <p className="mt-1 truncate text-sm font-semibold">{jo.product_name}</p>
+                    </div>
+                    <Badge variant={blocked ? "destructive" : "secondary"} className="min-h-7 text-sm">{isHeld ? "QA Quarantine" : jo.status}</Badge>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                    <div><dt className="text-muted-foreground">Target quantity</dt><dd className="font-mono font-semibold">{Number(jo.quantity || 0).toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Branch</dt><dd className="truncate font-semibold">{getBranchName(jo.branch_id)}</dd></div>
+                    <div><dt className="text-muted-foreground">Due date</dt><dd className="font-mono font-semibold">{jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "N/A"}</dd></div>
+                </dl>
+                <Button className="mt-4 min-h-11 w-full gap-2" onClick={() => handleOpenYieldDialog(jo)} disabled={blocked} title={blocked ? "Unlock quarantine hold first" : "Close yield"}>
+                    <TrendingUp className="h-4 w-4" />
+                    Close Yield
+                </Button>
+            </Card>
+        );
+    };
+
     return (
         <Card>
             <CardHeader className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -48,7 +74,7 @@ export function YieldClosingQueue({
                         placeholder="Search JO # or Product..."
                         value={joSearch}
                         onChange={e => setJoSearch(e.target.value)}
-                        className="pl-8 h-9 text-sm"
+                        className="pl-8 min-h-11 text-sm"
                     />
                 </div>
             </CardHeader>
@@ -67,7 +93,8 @@ export function YieldClosingQueue({
                         </p>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto border rounded-lg">
+                    <ResponsiveDataView
+                        table={(
                         <Table>
                             <TableHeader>
                                 <TableRow>
@@ -123,7 +150,7 @@ export function YieldClosingQueue({
                                                     <Button 
                                                         variant="default" 
                                                         size="sm" 
-                                                        className="h-8 font-semibold text-xs transition-all"
+                                                        className="min-h-11 font-semibold text-sm transition-all"
                                                         onClick={() => handleOpenYieldDialog(jo)}
                                                         disabled={isHeld || jo.status === "On Hold" || jo.status === "QA Hold"}
                                                         title={isHeld ? "Unlock quarantine hold first" : jo.status === "On Hold" || jo.status === "QA Hold" ? "Unlock override hold first" : ""}
@@ -138,7 +165,13 @@ export function YieldClosingQueue({
                                 ))}
                             </TableBody>
                         </Table>
-                    </div>
+                        )}
+                        cards={(
+                            <div className="space-y-3">
+                                {activeJobOrders.map(renderCard)}
+                            </div>
+                        )}
+                    />
                 )}
             </CardContent>
         </Card>
