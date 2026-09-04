@@ -26,18 +26,23 @@ interface Props {
     onBack: () => void;
     onSaveHeader: (payload: {
         branch_id: number;
-        stock_type: StockType;
+        stock_type?: StockType;
         product_type_id?: number | null;
         price_type_id?: number | null;
-        starting_date: string;
-        cutoff_date: string;
-        remarks: string;
+        starting_date?: string;
+        cutoff_date?: string;
+        remarks?: string;
     }) => Promise<void>;
     onPopulateSheet?: (productTypeId?: number | null) => Promise<void>;
     onOpenAddDetailModal: (lotId?: number) => void;
     onRemoveDetail: (detail: MmPhysicalInventoryDetail) => void;
     onSaveInlineCount?: (detail: MmPhysicalInventoryDetail, newPhysCount: number | null) => Promise<void>;
     onSaveInlineRemark?: (detail: MmPhysicalInventoryDetail, remarks: string) => Promise<void>;
+    onSaveDraftBatch?: (
+        headerPayload?: { remarks?: string },
+        modifiedCounts?: Array<{ detailId: number; physical_count: number | null }>,
+        modifiedRemarks?: Array<{ detailId: number; remarks: string }>
+    ) => Promise<void>;
     onOpenOffsettingModal?: () => void;
     onSubmit: () => void;
     onReturnToDraft?: () => void;
@@ -58,6 +63,7 @@ export default function PhysicalInventoryForm({
     onRemoveDetail,
     onSaveInlineCount,
     onSaveInlineRemark,
+    onSaveDraftBatch,
     onSubmit,
     onReturnToDraft,
 }: Props) {
@@ -148,6 +154,23 @@ export default function PhysicalInventoryForm({
         });
     }, [existingSheets, branchId, sheet?.physical_inventory_id]);
 
+    const lastCommittedCutoffDate = useMemo(() => {
+        if (!branchId || branchId <= 0 || !existingSheets || existingSheets.length === 0) return null;
+        const committedBranchSheets = existingSheets.filter((s) => {
+            const bId = typeof s.branch_id === "object" ? s.branch_id?.id : s.branch_id;
+            const isCancelled = s.isCancelled === true || s.isCancelled === 1 || s.status === "CANCELLED";
+            const isCommitted = s.isCommitted === true || s.isCommitted === 1 || String(s.status) === "COMMITTED" || String(s.status) === "POSTED";
+            return bId === branchId && !isCancelled && isCommitted && s.physical_inventory_id !== sheet?.physical_inventory_id;
+        });
+        if (committedBranchSheets.length === 0) return null;
+        committedBranchSheets.sort((a, b) => {
+            const dateA = new Date(a.cutoff_date || a.starting_date || a.created_at || 0).getTime();
+            const dateB = new Date(b.cutoff_date || b.starting_date || b.created_at || 0).getTime();
+            return dateB - dateA;
+        });
+        return committedBranchSheets[0].cutoff_date || null;
+    }, [existingSheets, branchId, sheet?.physical_inventory_id]);
+
     const [stockType, setStockType] = useState<StockType>(() => {
         if (sheet?.stock_type) return sheet.stock_type;
         return branchHasCommittedOpening ? "REGULAR" : "OPENING";
@@ -175,7 +198,11 @@ export default function PhysicalInventoryForm({
             } else if (priceTypes.length > 0) {
                 setPriceTypeId((prev) => (prev > 0 ? prev : priceTypes[0].price_type_id));
             }
-            if (sheet.starting_date) setStartingDate(formatDateTimeInput(sheet.starting_date));
+            if (sheet.starting_date) {
+                setStartingDate(formatDateTimeInput(sheet.starting_date));
+            } else if (lastCommittedCutoffDate) {
+                setStartingDate(formatDateTimeInput(lastCommittedCutoffDate));
+            }
             if (sheet.cutoff_date) setCutoffDate(formatDateTimeInput(sheet.cutoff_date));
             setRemarks(sheet.remarks || "");
         } else {
@@ -183,8 +210,11 @@ export default function PhysicalInventoryForm({
                 setPriceTypeId((prev) => (prev > 0 ? prev : priceTypes[0].price_type_id));
             }
             setStockType(branchHasCommittedOpening ? "REGULAR" : "OPENING");
+            if (lastCommittedCutoffDate) {
+                setStartingDate(formatDateTimeInput(lastCommittedCutoffDate));
+            }
         }
-    }, [sheet, priceTypes, branchHasCommittedOpening]);
+    }, [sheet, priceTypes, branchHasCommittedOpening, lastCommittedCutoffDate]);
 
     const handleHeaderSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -212,42 +242,102 @@ export default function PhysicalInventoryForm({
         }
     };
 
+    const details = useMemo(() => sheet?.details || [], [sheet?.details]);
+
+    // Unsaved Changes / Dirty State Tracking
+    const isHeaderRemarksDirty = useMemo(() => {
+        return remarks.trim() !== (sheet?.remarks || "").trim();
+    }, [remarks, sheet?.remarks]);
+
+    const isCountsDirty = useMemo(() => {
+        for (const [dIdStr, valStr] of Object.entries(countsMap)) {
+            if (valStr === undefined) continue;
+            const dId = Number(dIdStr);
+            const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
+            if (!detailObj) continue;
+
+            const origPhys = detailObj.physical_count;
+            const origStr = origPhys !== null && origPhys !== undefined ? String(Math.round(Number(origPhys))) : "";
+            if (valStr.trim() !== origStr.trim()) {
+                return true;
+            }
+        }
+        return false;
+    }, [countsMap, details]);
+
+    const isItemRemarksDirty = useMemo(() => {
+        for (const [dIdStr, remarkStr] of Object.entries(remarksMap)) {
+            if (remarkStr === undefined) continue;
+            const dId = Number(dIdStr);
+            const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
+            if (!detailObj) continue;
+
+            const origRemark = (detailObj.remarks || "").trim();
+            if (remarkStr.trim() !== origRemark) {
+                return true;
+            }
+        }
+        return false;
+    }, [remarksMap, details]);
+
+    const hasUnsavedChanges = isHeaderRemarksDirty || isCountsDirty || isItemRemarksDirty;
+
     const handleSaveDraft = async () => {
         setError(null);
         setSavingDraft(true);
         try {
-            if (sheet?.physical_inventory_id) {
-                await onSaveHeader({
-                    branch_id: branchId,
-                    product_type_id: productTypeId > 0 ? productTypeId : null,
-                    price_type_id: priceTypeId > 0 ? priceTypeId : null,
-                    stock_type: stockType,
-                    starting_date: startingDate,
-                    cutoff_date: cutoffDate,
-                    remarks: remarks,
-                });
-            }
+            const modifiedHeader = isHeaderRemarksDirty ? { remarks: remarks.trim() } : undefined;
 
-            const detailEntries = Object.entries(countsMap);
-            for (const [dIdStr, valStr] of detailEntries) {
+            const modifiedCounts: Array<{ detailId: number; physical_count: number | null }> = [];
+            for (const [dIdStr, valStr] of Object.entries(countsMap)) {
                 const dId = Number(dIdStr);
                 const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
-                if (detailObj && onSaveInlineCount && valStr !== undefined && valStr !== "") {
-                    const valNum = Number(valStr);
-                    if (!isNaN(valNum) && valNum >= 0) {
-                        await onSaveInlineCount(detailObj, valNum);
+                if (!detailObj) continue;
+
+                const origPhys = detailObj.physical_count;
+                const origStr = origPhys !== null && origPhys !== undefined ? String(Math.round(Number(origPhys))) : "";
+                if (valStr.trim() !== origStr.trim()) {
+                    const num = valStr.trim() === "" ? null : Math.round(Number(valStr));
+                    if (num === null || (!isNaN(num) && num >= 0)) {
+                        modifiedCounts.push({ detailId: dId, physical_count: num });
                     }
                 }
             }
 
-            const remarkEntries = Object.entries(remarksMap);
-            for (const [dIdStr, remarkStr] of remarkEntries) {
+            const modifiedRemarks: Array<{ detailId: number; remarks: string }> = [];
+            for (const [dIdStr, remarkStr] of Object.entries(remarksMap)) {
                 const dId = Number(dIdStr);
                 const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
-                if (detailObj && onSaveInlineRemark && remarkStr !== undefined) {
-                    await onSaveInlineRemark(detailObj, remarkStr.trim());
+                if (!detailObj) continue;
+
+                const origRemark = (detailObj.remarks || "").trim();
+                if (remarkStr.trim() !== origRemark) {
+                    modifiedRemarks.push({ detailId: dId, remarks: remarkStr.trim() });
                 }
             }
+
+            if (onSaveDraftBatch) {
+                await onSaveDraftBatch(modifiedHeader, modifiedCounts, modifiedRemarks);
+            } else {
+                if (modifiedHeader && sheet?.physical_inventory_id) {
+                    await onSaveHeader({ branch_id: branchId, remarks: remarks.trim() });
+                }
+                for (const item of modifiedCounts) {
+                    const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === item.detailId);
+                    if (detailObj && onSaveInlineCount) {
+                        await onSaveInlineCount(detailObj, item.physical_count);
+                    }
+                }
+                for (const item of modifiedRemarks) {
+                    const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === item.detailId);
+                    if (detailObj && onSaveInlineRemark) {
+                        await onSaveInlineRemark(detailObj, item.remarks);
+                    }
+                }
+            }
+
+            setCountsMap({});
+            setRemarksMap({});
 
             setDraftSavedToast(true);
             setTimeout(() => setDraftSavedToast(false), 4500);
@@ -258,8 +348,6 @@ export default function PhysicalInventoryForm({
             setSavingDraft(false);
         }
     };
-
-    const details = useMemo(() => sheet?.details || [], [sheet?.details]);
 
     const groupedByLot = React.useMemo(() => {
         const map = new Map<string, { lotName: string; lotObj: unknown; items: MmPhysicalInventoryDetail[] }>();
@@ -399,16 +487,24 @@ export default function PhysicalInventoryForm({
                             <button
                                 type="button"
                                 onClick={handleSaveDraft}
-                                disabled={loading || saving || savingDraft}
-                                className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-card hover:bg-accent border border-border rounded-lg transition-colors shadow-xs disabled:opacity-50"
-                                title="Save current progress as draft without submitting for review or posting stock adjustments"
+                                disabled={!hasUnsavedChanges || loading || saving || savingDraft}
+                                className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg transition-all shadow-xs disabled:opacity-50 disabled:cursor-not-allowed ${hasUnsavedChanges
+                                    ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20 ring-2 ring-emerald-500/30 cursor-pointer"
+                                    : "bg-card text-slate-500 dark:text-slate-400 border border-border cursor-not-allowed"
+                                    }`}
+                                title={hasUnsavedChanges ? "Click to save draft progress" : "All changes saved"}
                             >
                                 {savingDraft ? (
-                                    <Loader2 className="h-4 w-4 animate-spin text-emerald-600 dark:text-emerald-400" />
+                                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                                ) : hasUnsavedChanges ? (
+                                    <Save className="h-4 w-4 text-white" />
                                 ) : (
-                                    <Save className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                                 )}
-                                {savingDraft ? "Saving Draft..." : "Save Draft"}
+                                <span>{savingDraft ? "Saving Draft..." : hasUnsavedChanges ? "Save Draft" : "Draft Saved"}</span>
+                                {hasUnsavedChanges && (
+                                    <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse ml-0.5" />
+                                )}
                             </button>
                             <button
                                 type="button"
@@ -519,7 +615,29 @@ export default function PhysicalInventoryForm({
                                 sublabel: b.branch_code || b.branchCode || undefined,
                             }))}
                             value={branchId}
-                            onChange={(val) => setBranchId(Number(val))}
+                            onChange={(val) => {
+                                const newBId = Number(val);
+                                setBranchId(newBId);
+                                if (!sheet || isNew) {
+                                    const committedForNewBranch = existingSheets.filter((s) => {
+                                        const bId = typeof s.branch_id === "object" ? s.branch_id?.id : s.branch_id;
+                                        const isCancelled = s.isCancelled === true || s.isCancelled === 1 || s.status === "CANCELLED";
+                                        const isCommitted = s.isCommitted === true || s.isCommitted === 1 || String(s.status) === "COMMITTED" || String(s.status) === "POSTED";
+                                        return bId === newBId && !isCancelled && isCommitted && s.physical_inventory_id !== sheet?.physical_inventory_id;
+                                    });
+                                    if (committedForNewBranch.length > 0) {
+                                        committedForNewBranch.sort((a, b) => {
+                                            const dateA = new Date(a.cutoff_date || a.starting_date || a.created_at || 0).getTime();
+                                            const dateB = new Date(b.cutoff_date || b.starting_date || b.created_at || 0).getTime();
+                                            return dateB - dateA;
+                                        });
+                                        const lastCutoff = committedForNewBranch[0].cutoff_date;
+                                        if (lastCutoff) {
+                                            setStartingDate(formatDateTimeInput(lastCutoff));
+                                        }
+                                    }
+                                }
+                            }}
                             placeholder="Select Branch..."
                             searchPlaceholder="Search branches..."
                             disabled={isReadOnly || (details.length > 0 && !isNew)}
@@ -603,9 +721,13 @@ export default function PhysicalInventoryForm({
                             className="w-full px-3 py-2 text-sm bg-background border rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary/20 disabled:opacity-70"
                             required
                         />
-                        {details.length > 0 && !isNew && (
+                        {details.length > 0 && !isNew ? (
                             <p className="text-[10px] text-amber-600 mt-0.5">Starting date locked while sheet contains detail rows.</p>
-                        )}
+                        ) : lastCommittedCutoffDate ? (
+                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
+                                ✓ Auto-set from branch&apos;s last committed cutoff date ({formatDateTimeInput(lastCommittedCutoffDate).replace("T", " ")})
+                            </p>
+                        ) : null}
                     </div>
 
                     <div>
@@ -676,13 +798,12 @@ export default function PhysicalInventoryForm({
                         <div className="bg-card border p-3.5 rounded-xl shadow-xs">
                             <div className="text-xs text-muted-foreground font-medium">Total Variance</div>
                             <div
-                                className={`text-lg font-bold font-mono mt-0.5 ${
-                                    summaryPieces.totalVariancePieces > 0
-                                        ? "text-emerald-600"
-                                        : summaryPieces.totalVariancePieces < 0
+                                className={`text-lg font-bold font-mono mt-0.5 ${summaryPieces.totalVariancePieces > 0
+                                    ? "text-emerald-600"
+                                    : summaryPieces.totalVariancePieces < 0
                                         ? "text-rose-600"
                                         : "text-foreground"
-                                }`}
+                                    }`}
                             >
                                 {summaryPieces.totalVariancePieces > 0
                                     ? `+${formatQty(summaryPieces.totalVariancePieces)}`
@@ -716,11 +837,10 @@ export default function PhysicalInventoryForm({
                                     <button
                                         type="button"
                                         onClick={() => setViewMode("GROUPED")}
-                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
-                                            viewMode === "GROUPED"
-                                                ? "bg-background text-foreground font-bold shadow-xs"
-                                                : "text-muted-foreground hover:text-foreground"
-                                        }`}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${viewMode === "GROUPED"
+                                            ? "bg-background text-foreground font-bold shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                            }`}
                                     >
                                         <LayoutGrid className="h-3.5 w-3.5" />
                                         Grouped by Lot
@@ -728,11 +848,10 @@ export default function PhysicalInventoryForm({
                                     <button
                                         type="button"
                                         onClick={() => setViewMode("FLAT")}
-                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${
-                                            viewMode === "FLAT"
-                                                ? "bg-background text-foreground font-bold shadow-xs"
-                                                : "text-muted-foreground hover:text-foreground"
-                                        }`}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all ${viewMode === "FLAT"
+                                            ? "bg-background text-foreground font-bold shadow-xs"
+                                            : "text-muted-foreground hover:text-foreground"
+                                            }`}
                                     >
                                         <List className="h-3.5 w-3.5" />
                                         Flat Table
@@ -759,7 +878,7 @@ export default function PhysicalInventoryForm({
                                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-primary-foreground bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-xs"
                                         >
                                             <Plus className="h-3.5 w-3.5" />
-                                            Add Product Count
+                                            Add Storage Lot
                                         </button>
                                     </div>
                                 )}
@@ -827,44 +946,44 @@ export default function PhysicalInventoryForm({
                                         lotVarPcs > 0
                                             ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300"
                                             : lotVarPcs < 0
-                                            ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300"
-                                            : "bg-muted/60 text-muted-foreground border-border";
+                                                ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300"
+                                                : "bg-muted/60 text-muted-foreground border-border";
 
                                     const getGroupLotUom = (g: { lotObj: unknown; items: MmPhysicalInventoryDetail[] }) => {
-                                         if (typeof g.lotObj === "object" && g.lotObj !== null) {
-                                             const l = g.lotObj as Record<string, unknown>;
-                                             const u = l.unit_id;
-                                             if (typeof u === "object" && u !== null) {
-                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
-                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             } else if (typeof u === "string" || typeof u === "number") {
-                                                 if (u) return String(u);
-                                             }
-                                             if (typeof l.unit_shortcut === "string" && l.unit_shortcut) return l.unit_shortcut;
-                                             if (typeof l.unit_name === "string" && l.unit_name) return l.unit_name;
-                                         }
-                                         if (g.items.length > 0) {
-                                             const first = g.items[0];
-                                             const u = first.unit_id;
-                                             if (typeof u === "object" && u !== null) {
-                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
-                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             }
-                                             const p = first.product_id;
-                                             if (typeof p === "object" && p !== null) {
-                                                 const pObj = p as { unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } };
-                                                 const shortcut = pObj.unit_of_measurement?.unit_shortcut || pObj.unit_of_measurement?.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             }
-                                         }
-                                         return "";
-                                     };
+                                        if (typeof g.lotObj === "object" && g.lotObj !== null) {
+                                            const l = g.lotObj as Record<string, unknown>;
+                                            const u = l.unit_id;
+                                            if (typeof u === "object" && u !== null) {
+                                                const uObj = u as { unit_shortcut?: string; unit_name?: string };
+                                                const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
+                                                if (shortcut) return shortcut;
+                                            } else if (typeof u === "string" || typeof u === "number") {
+                                                if (u) return String(u);
+                                            }
+                                            if (typeof l.unit_shortcut === "string" && l.unit_shortcut) return l.unit_shortcut;
+                                            if (typeof l.unit_name === "string" && l.unit_name) return l.unit_name;
+                                        }
+                                        if (g.items.length > 0) {
+                                            const first = g.items[0];
+                                            const u = first.unit_id;
+                                            if (typeof u === "object" && u !== null) {
+                                                const uObj = u as { unit_shortcut?: string; unit_name?: string };
+                                                const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
+                                                if (shortcut) return shortcut;
+                                            }
+                                            const p = first.product_id;
+                                            if (typeof p === "object" && p !== null) {
+                                                const pObj = p as { unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } };
+                                                const shortcut = pObj.unit_of_measurement?.unit_shortcut || pObj.unit_of_measurement?.unit_name || "";
+                                                if (shortcut) return shortcut;
+                                            }
+                                        }
+                                        return "";
+                                    };
 
-                                     const lotUomName = getGroupLotUom(group) || "UOM";
+                                    const lotUomName = getGroupLotUom(group) || "UOM";
 
-                                     return (
+                                    return (
                                         <div key={group.lotName} className="bg-card border rounded-xl shadow-xs overflow-hidden transition-all hover:shadow-md">
                                             {/* Lot Section Header */}
                                             <div className="p-4 border-b bg-muted/40 flex flex-wrap items-center justify-between gap-3">
@@ -875,11 +994,11 @@ export default function PhysicalInventoryForm({
                                                     <div>
                                                         <div className="flex items-center gap-2 flex-wrap">
                                                             <h4 className="text-sm font-bold text-foreground">{group.lotName}</h4>
-                                                             {lotUomName && lotUomName !== "UOM" && (
-                                                                 <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 tracking-wider">
-                                                                     UOM: {lotUomName}
-                                                                 </span>
-                                                             )}
+                                                            {lotUomName && lotUomName !== "UOM" && (
+                                                                <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 tracking-wider">
+                                                                    UOM: {lotUomName}
+                                                                </span>
+                                                            )}
                                                             <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-primary/15 text-primary">
                                                                 {group.items.length} {group.items.length === 1 ? "item" : "items"}
                                                             </span>
@@ -920,7 +1039,7 @@ export default function PhysicalInventoryForm({
                                                             title={`Add a new batch or product count to ${group.lotName}`}
                                                         >
                                                             <Plus className="h-3.5 w-3.5" />
-                                                            Add Batch
+                                                            Add Line Item
                                                         </button>
                                                     )}
                                                 </div>
@@ -964,8 +1083,8 @@ export default function PhysicalInventoryForm({
                                                                 varQty > 0
                                                                     ? "text-emerald-600 dark:text-emerald-400 font-bold"
                                                                     : varQty < 0
-                                                                    ? "text-rose-600 dark:text-rose-400 font-bold"
-                                                                    : "text-muted-foreground";
+                                                                        ? "text-rose-600 dark:text-rose-400 font-bold"
+                                                                        : "text-muted-foreground";
 
                                                             return (
                                                                 <tr key={dId} className="hover:bg-muted/30 transition-colors">
@@ -1014,15 +1133,6 @@ export default function PhysicalInventoryForm({
                                                                                         const val = e.target.value;
                                                                                         setCountsMap((prev) => ({ ...prev, [dId]: val }));
                                                                                     }}
-                                                                                    onBlur={async (e) => {
-                                                                                        const valStr = e.target.value;
-                                                                                        const num = valStr.trim() === "" ? null : Math.round(Number(valStr));
-                                                                                        const curPhys = d.physical_count;
-                                                                                        const curNum = curPhys !== null && curPhys !== undefined ? Number(curPhys) : null;
-                                                                                        if (num !== curNum && (num === null || (!isNaN(num) && num >= 0)) && onSaveInlineCount) {
-                                                                                            await onSaveInlineCount(d, num);
-                                                                                        }
-                                                                                    }}
                                                                                     onKeyDown={(e) => {
                                                                                         if (e.key === "Enter") {
                                                                                             (e.target as HTMLInputElement).blur();
@@ -1042,65 +1152,57 @@ export default function PhysicalInventoryForm({
                                                                     <td className="px-3 py-2.5 text-right font-mono">{formatMoney(unitCost)}</td>
                                                                     <td className="px-3 py-2.5 text-right font-mono font-semibold">{formatMoney(diffCost)}</td>
                                                                     <td className="px-3 py-2.5 min-w-[180px] max-w-xs">
-                                                             {isDraft ? (
-                                                                 <div className="space-y-0.5">
-                                                                     <input
-                                                                         type="text"
-                                                                         value={remarksMap[dId] !== undefined ? remarksMap[dId] : (d.remarks || "")}
-                                                                         onChange={(e) => {
-                                                                             const val = e.target.value;
-                                                                             setRemarksMap((prev) => ({ ...prev, [dId]: val }));
-                                                                         }}
-                                                                         onBlur={async (e) => {
-                                                                             const rVal = e.target.value;
-                                                                             const curRemark = d.remarks || "";
-                                                                             if (rVal.trim() !== curRemark.trim() && onSaveInlineRemark) {
-                                                                                 await onSaveInlineRemark(d, rVal.trim());
-                                                                             }
-                                                                         }}
-                                                                         onKeyDown={(e) => {
-                                                                             if (e.key === "Enter") {
-                                                                                 (e.target as HTMLInputElement).blur();
-                                                                             }
-                                                                         }}
-                                                                         placeholder={Math.abs(varQty) > 0.0001 ? "Reason required *" : "Remarks..."}
-                                                                         className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${
-                                                                             Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
-                                                                                 ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
-                                                                                 : "border-input focus:ring-primary/20"
-                                                                         }`}
-                                                                     />
-                                                                     {Math.abs(varQty) > 0.0001 && !d.remarks?.trim() && (
-                                                                         <p className="text-[10px] font-semibold text-rose-600">Variance reason required</p>
-                                                                     )}
-                                                                 </div>
-                                                             ) : (
-                                                                 <span className="truncate text-muted-foreground">{d.remarks || "—"}</span>
-                                                             )}
-                                                         </td>
+                                                                        {isDraft ? (
+                                                                            <div className="space-y-0.5">
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={remarksMap[dId] !== undefined ? remarksMap[dId] : (d.remarks || "")}
+                                                                                    onChange={(e) => {
+                                                                                        const val = e.target.value;
+                                                                                        setRemarksMap((prev) => ({ ...prev, [dId]: val }));
+                                                                                    }}
+                                                                                    onKeyDown={(e) => {
+                                                                                        if (e.key === "Enter") {
+                                                                                            (e.target as HTMLInputElement).blur();
+                                                                                        }
+                                                                                    }}
+                                                                                    placeholder={Math.abs(varQty) > 0.0001 ? "Reason required *" : "Remarks..."}
+                                                                                    className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
+                                                                                        ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
+                                                                                        : "border-input focus:ring-primary/20"
+                                                                                        }`}
+                                                                                />
+                                                                                {Math.abs(varQty) > 0.0001 && !d.remarks?.trim() && (
+                                                                                    <p className="text-[10px] font-semibold text-rose-600">Variance reason required</p>
+                                                                                )}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span className="truncate text-muted-foreground">{d.remarks || "—"}</span>
+                                                                        )}
+                                                                    </td>
                                                                     {isDraft && (
-                                                                         <td className="px-3 py-2.5 text-right">
-                                                                             {sys <= 0 && (!d.remarks || !String(d.remarks).toLowerCase().includes("auto-populated")) ? (
-                                                                                 <button
-                                                                                     type="button"
-                                                                                     onClick={() => onRemoveDetail(d)}
-                                                                                     className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
-                                                                                     title="Remove Detail"
-                                                                                 >
-                                                                                     <Trash2 className="h-3.5 w-3.5" />
-                                                                                 </button>
-                                                                             ) : (
-                                                                                 <button
-                                                                                     type="button"
-                                                                                     disabled
-                                                                                     className="p-1 text-muted-foreground/30 cursor-not-allowed rounded"
-                                                                                     title="Deletion restricted for system stock line items"
-                                                                                 >
-                                                                                     <Trash2 className="h-3.5 w-3.5" />
-                                                                                 </button>
-                                                                             )}
-                                                                         </td>
-                                                                     )}
+                                                                        <td className="px-3 py-2.5 text-right">
+                                                                            {sys <= 0 && (!d.remarks || !String(d.remarks).toLowerCase().includes("auto-populated")) ? (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => onRemoveDetail(d)}
+                                                                                    className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded transition-colors"
+                                                                                    title="Remove Detail"
+                                                                                >
+                                                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                                                </button>
+                                                                            ) : (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    disabled
+                                                                                    className="p-1 text-muted-foreground/30 cursor-not-allowed rounded"
+                                                                                    title="Deletion restricted for system stock line items"
+                                                                                >
+                                                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                                                </button>
+                                                                            )}
+                                                                        </td>
+                                                                    )}
                                                                 </tr>
                                                             );
                                                         })}
@@ -1152,8 +1254,8 @@ export default function PhysicalInventoryForm({
                                                     varQty > 0
                                                         ? "text-emerald-600 dark:text-emerald-400 font-bold"
                                                         : varQty < 0
-                                                        ? "text-rose-600 dark:text-rose-400 font-bold"
-                                                        : "text-muted-foreground";
+                                                            ? "text-rose-600 dark:text-rose-400 font-bold"
+                                                            : "text-muted-foreground";
 
                                                 return (
                                                     <tr key={dId} className="hover:bg-muted/30 transition-colors">
@@ -1252,11 +1354,10 @@ export default function PhysicalInventoryForm({
                                                                             }
                                                                         }}
                                                                         placeholder={Math.abs(varQty) > 0.0001 ? "Reason required *" : "Remarks..."}
-                                                                        className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${
-                                                                            Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
-                                                                                ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
-                                                                                : "border-input focus:ring-primary/20"
-                                                                        }`}
+                                                                        className={`w-full px-2 py-1 text-xs bg-background border rounded-lg focus:outline-hidden focus:ring-2 ${Math.abs(varQty) > 0.0001 && !d.remarks?.trim()
+                                                                            ? "border-rose-400 focus:ring-rose-400 bg-rose-50/50 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 placeholder:text-rose-400 font-medium"
+                                                                            : "border-input focus:ring-primary/20"
+                                                                            }`}
                                                                     />
                                                                     {Math.abs(varQty) > 0.0001 && !d.remarks?.trim() && (
                                                                         <p className="text-[10px] font-semibold text-rose-600">Variance reason required</p>
