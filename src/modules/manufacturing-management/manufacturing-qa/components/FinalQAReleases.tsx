@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import type { FinalQACoa } from "../services/qa-api";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface FinalQAReleasesProps {
     lots: any[];
@@ -44,6 +45,7 @@ interface FinalQAReleasesProps {
     handleOpenFinalQAAudit: (lot: any) => void;
     handlePrintFinalQACoa: () => void;
     coaPrintLoading: boolean;
+    onFiltersChange?: (search: string) => void;
 }
 
 export function FinalQAReleases({
@@ -80,18 +82,26 @@ export function FinalQAReleases({
     finalQAAuditError,
     handleOpenFinalQAAudit,
     handlePrintFinalQACoa,
-    coaPrintLoading
+    coaPrintLoading,
+    onFiltersChange
 }: FinalQAReleasesProps) {
 
     // Filter to show only finished goods lots
     const fgLots = React.useMemo(() => {
         return lots;
     }, [lots]);
+    const [searchQuery, setSearchQuery] = React.useState("");
 
     const getProductName = (productId: number) => {
         const prod = lotsProducts.find(p => Number(p.product_id) === Number(productId));
         return prod?.product_name || `Product #${productId}`;
     };
+
+    const visibleLots = React.useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        if (!query) return fgLots;
+        return fgLots.filter((lot) => `${getProductName(lot.product_id)} ${lot.lot_number || ""} ${lot.batch_no || ""}`.toLowerCase().includes(query));
+    }, [fgLots, searchQuery, lotsProducts]);
 
     const getCanonicalLotId = (lot: any) => {
         if (lot?.canonical_lot_id) return Number(lot.canonical_lot_id);
@@ -136,6 +146,33 @@ export function FinalQAReleases({
         return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
     };
 
+    const renderLotCard = (lot: any, index: number) => {
+        const release = getReleaseForLot(lot);
+        const status = dispositionStatus(release);
+        const isApproved = status === "approved";
+        const isQuarantined = status === "quarantined";
+        const isRejected = status === "rejected";
+        const product = lotsProducts.find(p => Number(p.product_id) === Number(lot.product_id));
+        return (
+            <div key={getLotRowKey(lot, index)} className="rounded-xl border bg-card p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="truncate text-base font-bold text-foreground">{getProductName(lot.product_id)}</p>
+                        <p className="mt-1 font-mono text-sm font-semibold text-muted-foreground">Lot {lot.lot_number}</p>
+                    </div>
+                    {isApproved ? <Badge className="min-h-7 bg-emerald-950 px-2 text-sm text-emerald-400">Released</Badge> : isRejected ? <Badge className="min-h-7 bg-red-950 px-2 text-sm text-red-400">Rejected</Badge> : isQuarantined ? <Badge className="min-h-7 bg-amber-950 px-2 text-sm text-amber-400">Quarantined</Badge> : <Badge variant="outline" className="min-h-7 text-sm">Pending QA</Badge>}
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div><dt className="text-muted-foreground">Stock quantity</dt><dd className="font-mono font-semibold">{Number(lot.quantity_received || lot.quantity || 0).toLocaleString()} {product?.is_finished_good ? "packs" : "pcs"}</dd></div>
+                    <div><dt className="text-muted-foreground">Expiry</dt><dd className="font-mono font-semibold">{lot.expiration_date ? new Date(lot.expiration_date).toLocaleDateString() : "No Expiry"}</dd></div>
+                </dl>
+                <Button className="mt-4 min-h-11 w-full" variant={release ? "secondary" : "default"} onClick={() => release ? handleOpenFinalQAAudit(lot) : handleOpenFinalReleaseDialog(lot)}>
+                    {release ? (isApproved ? "Inspect / Print COA" : "View QA Audit") : "Release Audit"}
+                </Button>
+            </div>
+        );
+    };
+
     if (loadingFinalQA) {
         return (
             <div className="flex justify-center items-center py-12">
@@ -147,17 +184,25 @@ export function FinalQAReleases({
     return (
         <div className="space-y-4">
             <div className="rounded-xl border bg-card shadow-sm">
-                <div className="p-4 border-b">
-                    <h3 className="font-bold text-base">Finished Goods & Sub-Assembly Lot Releases</h3>
-                    <p className="text-xs text-muted-foreground">Perform microbiological analyses, packaging seal audits, and publish COAs to unlock stock lots for shipping or production consumption.</p>
+                <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h3 className="font-bold text-base">Finished Goods & Sub-Assembly Lot Releases</h3>
+                        <p className="text-xs text-muted-foreground">Perform microbiological analyses, packaging seal audits, and publish COAs to unlock stock lots for shipping or production consumption.</p>
+                    </div>
+                    <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
+                        <Input value={searchQuery} onChange={(event) => { const search = event.target.value; setSearchQuery(search); onFiltersChange?.(search); }} placeholder="Search product or lot..." aria-label="Search final QA lots" className="h-11 w-full text-sm md:w-64" />
+                        {searchQuery && <Button type="button" variant="outline" className="min-h-11" onClick={() => { setSearchQuery(""); onFiltersChange?.(""); }}>Clear</Button>}
+                    </div>
                 </div>
 
-                {fgLots.length === 0 ? (
+                {visibleLots.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground italic text-sm">
                         No inventory lots found in the system.
                     </div>
                 ) : (
-                    <Table>
+                    <ResponsiveDataView
+                        table={(
+                        <Table>
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="text-xs">Product Name</TableHead>
@@ -169,7 +214,7 @@ export function FinalQAReleases({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {fgLots.map((lot, index) => {
+                            {visibleLots.map((lot, index) => {
                                 const release = getReleaseForLot(lot);
                                 const status = dispositionStatus(release);
                                 const isApproved = status === "approved";
@@ -183,11 +228,11 @@ export function FinalQAReleases({
                                                 {(() => {
                                                     const prod = lotsProducts.find(p => Number(p.product_id) === Number(lot.product_id));
                                                     return prod?.is_finished_good ? (
-                                                        <Badge variant="secondary" className="w-fit text-[8px] py-0 px-1 font-bold leading-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                        <Badge variant="secondary" className="w-fit text-[10px] py-0 px-1 font-bold leading-none bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                                             Finished Good
                                                         </Badge>
                                                     ) : (
-                                                        <Badge variant="outline" className="w-fit text-[8px] py-0 px-1 font-bold leading-none border-blue-500/30 text-blue-400">
+                                                        <Badge variant="outline" className="w-fit text-[10px] py-0 px-1 font-bold leading-none border-blue-500/30 text-blue-400">
                                                             Sub-Assembly
                                                         </Badge>
                                                     );
@@ -228,7 +273,7 @@ export function FinalQAReleases({
                                                     size="xs"
                                                     variant={isApproved ? "outline" : "secondary"}
                                                     onClick={() => handleOpenFinalQAAudit(lot)}
-                                                    className="font-bold h-7 text-[11px]"
+                                                    className="font-bold min-h-11 text-sm"
                                                 >
                                                     {isApproved ? "Inspect / Print COA" : "View QA Audit"}
                                                 </Button>
@@ -237,7 +282,7 @@ export function FinalQAReleases({
                                                     size="xs"
                                                     variant="default"
                                                     onClick={() => handleOpenFinalReleaseDialog(lot)}
-                                                    className="font-bold h-7 text-[11px]"
+                                                    className="font-bold min-h-11 text-sm"
                                                 >
                                                     Release Audit
                                                 </Button>
@@ -247,13 +292,21 @@ export function FinalQAReleases({
                                 );
                             })}
                         </TableBody>
-                    </Table>
+                        </Table>
+                        )}
+                        cards={(
+                            <div className="space-y-3 p-3">
+                                {visibleLots.map(renderLotCard)}
+                            </div>
+                        )}
+                        minTableWidth="wide"
+                    />
                 )}
             </div>
 
             {/* DIALOG: Record Final Batch QA Release & COA */}
             <Dialog open={isFinalReleaseOpen} onOpenChange={setIsFinalReleaseOpen}>
-                <DialogContent className="sm:max-w-[480px] bg-background border border-border text-foreground">
+                <DialogContent className="w-[calc(100vw-1rem)] max-w-[480px] max-h-[calc(100dvh-1rem)] bg-background border border-border text-foreground flex flex-col overflow-hidden">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
                             <ClipboardCheck className="h-5 w-5" /> Finished Goods QA release inspection
@@ -263,7 +316,7 @@ export function FinalQAReleases({
                         </DialogDescription>
                     </DialogHeader>
 
-                    <form onSubmit={(e) => { e.preventDefault(); handleSubmitFinalRelease(); }} className="space-y-4 py-2 text-xs">
+                    <form onSubmit={(e) => { e.preventDefault(); handleSubmitFinalRelease(); }} className="min-h-0 flex-1 space-y-4 overflow-y-auto py-2 text-sm scrollbar-thin">
                         <div className="grid grid-cols-2 gap-4">
                             {/* Inspected Quantity */}
                             <div className="space-y-1.5">
@@ -273,7 +326,7 @@ export function FinalQAReleases({
                                     type="number"
                                     value={inspectedQty}
                                     onChange={(e) => setInspectedQty(e.target.value)}
-                                    className="h-9 bg-background border-border text-foreground text-xs focus-visible:ring-primary font-bold font-mono"
+                                    className="min-h-11 bg-background border-border text-sm focus-visible:ring-primary font-bold font-mono"
                                     required
                                 />
                             </div>
@@ -286,7 +339,7 @@ export function FinalQAReleases({
                                     type="number"
                                     value={defectQty}
                                     onChange={(e) => setDefectQty(e.target.value)}
-                                    className="h-9 bg-background border-border text-foreground text-xs focus-visible:ring-primary font-bold font-mono"
+                                    className="min-h-11 bg-background border-border text-sm focus-visible:ring-primary font-bold font-mono"
                                     required
                                 />
                             </div>
@@ -300,7 +353,7 @@ export function FinalQAReleases({
                                     id="microbio"
                                     value={microbiologicalStatus}
                                     onChange={(e) => setMicrobiologicalStatus(e.target.value as any)}
-                                    className="flex h-9 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                    className="flex min-h-11 w-full rounded-md border border-border bg-background text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                                 >
                                     <option value="Passed">Passed (Coliforms/Yeast Clean)</option>
                                     <option value="Pending">Pending Lab Culturing</option>
@@ -315,7 +368,7 @@ export function FinalQAReleases({
                                     id="coa"
                                     value={coaRefNo}
                                     onChange={(e) => setCoaRefNo(e.target.value)}
-                                    className="h-9 bg-background border-border text-foreground text-xs focus-visible:ring-primary font-bold font-mono"
+                                    className="min-h-11 bg-background border-border text-sm focus-visible:ring-primary font-bold font-mono"
                                     placeholder="e.g. COA-12345"
                                 />
                             </div>
@@ -329,7 +382,7 @@ export function FinalQAReleases({
                                     id="disposition"
                                     value={overallDisposition}
                                     onChange={(e) => setOverallDisposition(e.target.value as any)}
-                                    className="flex h-9 w-full rounded-md border border-border bg-background text-foreground px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                    className="flex min-h-11 w-full rounded-md border border-border bg-background text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                                 >
                                     <option value="Approved">Approved (Release to WMS)</option>
                                     <option value="Quarantined">Quarantine Hold (Audit Lock)</option>
@@ -372,19 +425,19 @@ export function FinalQAReleases({
                             />
                         </div>
 
-                        <DialogFooter className="pt-2 border-t border-border gap-2 flex items-center justify-end">
+                        <DialogFooter className="sticky bottom-0 z-10 pt-3 border-t border-border gap-2 flex items-center justify-end bg-background/95 backdrop-blur">
                             <Button
                                 type="button"
                                 variant="outline"
                                 onClick={() => setIsFinalReleaseOpen(false)}
-                                className="border-border hover:bg-muted text-foreground h-8 text-xs font-semibold"
+                                className="border-border hover:bg-muted text-foreground min-h-11 text-sm font-semibold"
                             >
                                 Cancel
                             </Button>
                             <Button
                                 type="submit"
                                 disabled={actionLoading}
-                                className="bg-primary hover:bg-primary/95 text-white font-bold h-8 text-xs px-4"
+                                className="bg-primary hover:bg-primary/95 text-white font-bold min-h-11 text-sm px-4"
                             >
                                 {actionLoading ? "Saving Release..." : "Save & Release Lot"}
                             </Button>
@@ -396,7 +449,7 @@ export function FinalQAReleases({
             {/* DIALOG: Read-only persisted Final QA audit and COA */}
             <Dialog open={isFinalQAAuditOpen} onOpenChange={setIsFinalQAAuditOpen}>
                 <DialogContent
-                    className="sm:max-w-[600px] bg-background border border-border text-foreground"
+                    className="w-[calc(100vw-1rem)] max-w-[600px] max-h-[calc(100dvh-1rem)] bg-background border border-border text-foreground flex flex-col overflow-hidden"
                     data-testid="final-qa-read-only-audit"
                 >
                     <DialogHeader>
@@ -418,7 +471,7 @@ export function FinalQAReleases({
                             <span>{finalQAAuditError}</span>
                         </div>
                     ) : selectedFinalQAAudit ? (
-                        <div className="space-y-4 py-2 text-xs">
+                        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto py-2 text-sm scrollbar-thin">
                             <div className="grid grid-cols-2 gap-x-5 gap-y-3">
                                 <div><div className="text-muted-foreground font-semibold">Product</div><div className="font-bold">{selectedFinalQAAudit.product_name}</div></div>
                                 <div><div className="text-muted-foreground font-semibold">Product Code</div><div className="font-mono font-bold">{selectedFinalQAAudit.product_code || "—"}</div></div>
@@ -451,12 +504,12 @@ export function FinalQAReleases({
                         </div>
                     ) : null}
 
-                    <DialogFooter className="pt-2 border-t border-border gap-2 flex items-center justify-end">
+                    <DialogFooter className="sticky bottom-0 z-10 pt-3 border-t border-border gap-2 flex items-center justify-end bg-background/95 backdrop-blur">
                         <Button
                             type="button"
                             variant="outline"
                             onClick={() => setIsFinalQAAuditOpen(false)}
-                            className="border-border hover:bg-muted text-foreground h-8 text-xs font-semibold"
+                            className="border-border hover:bg-muted text-foreground min-h-11 text-sm font-semibold"
                         >
                             Close
                         </Button>
@@ -465,7 +518,7 @@ export function FinalQAReleases({
                                 type="button"
                                 onClick={handlePrintFinalQACoa}
                                 disabled={loadingFinalQAAudit || coaPrintLoading}
-                                className="bg-primary hover:bg-primary/95 text-white font-bold h-8 text-xs px-4"
+                            className="bg-primary hover:bg-primary/95 text-white font-bold min-h-11 text-sm px-4"
                             >
                                 {coaPrintLoading ? "Preparing COA..." : "Print COA"}
                             </Button>

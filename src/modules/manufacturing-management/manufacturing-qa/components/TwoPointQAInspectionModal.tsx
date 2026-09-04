@@ -59,7 +59,7 @@ export function TwoPointQAInspectionModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-2xl max-h-[92vh] overflow-y-auto p-0 gap-0">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[calc(100dvh-1rem)] overflow-hidden p-0 gap-0 flex flex-col">
                 <TwoPointQAFormContent
                     key={jobOrder.job_order_id || jobOrder.id}
                     jobOrder={jobOrder}
@@ -259,7 +259,7 @@ function TwoPointQAFormContent({
                     </div>
                 </DialogHeader>
 
-                <form onSubmit={handleSubmit} className="p-5 space-y-5">
+                <form onSubmit={handleSubmit} className="min-h-0 flex-1 overflow-y-auto p-5 space-y-5 scrollbar-thin">
                     {/* SECTION 1: 2-Point Yield Entry Form */}
                     <div className="rounded-xl border bg-card p-4 space-y-4 shadow-xs">
                         <div className="flex items-center justify-between border-b pb-2">
@@ -382,14 +382,14 @@ function TwoPointQAFormContent({
                                 onValueChange={setRejectionReasonId}
                                 required={hasRejections}
                             >
-                                <SelectTrigger id="rejection-reason" className="bg-background text-xs font-medium h-10 border-amber-500/30 focus:ring-amber-500">
+                                <SelectTrigger id="rejection-reason" className="bg-background text-sm font-medium min-h-11 border-amber-500/30 focus:ring-amber-500">
                                     <SelectValue placeholder="-- Select Primary Defect / Non-Conformance Reason --" />
                                 </SelectTrigger>
                                 <SelectContent className="max-h-56">
                                     {rejectionReasons.map(r => (
                                         <SelectItem key={r.id} value={String(r.id)} className="text-xs py-2">
                                             <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="font-mono text-[9px] px-1 py-0 uppercase">
+                                                <Badge variant="outline" className="font-mono text-[10px] px-1 py-0 uppercase">
                                                     {r.reason_code}
                                                 </Badge>
                                                 <span className="font-semibold">{r.reason_name}</span>
@@ -430,7 +430,7 @@ function TwoPointQAFormContent({
                             <div>
                                 <p className="font-bold text-emerald-800 dark:text-emerald-200">100% Quality Clearance Verification</p>
                                 <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                                    Zero rejections detected. Job Order <code className="font-mono font-bold text-foreground">{joNo}</code> will transition status to <Badge variant="default" className="text-[9px] px-1 py-0 bg-emerald-600">COMPLETED</Badge> in the database and audit trail, and <strong>{numPass} units</strong> will be received into the <code className="text-foreground">inventory_movements</code> ledger.
+                                    Zero rejections detected. Job Order <code className="font-mono font-bold text-foreground">{joNo}</code> will transition status to <Badge variant="default" className="text-[10px] px-1 py-0 bg-emerald-600">COMPLETED</Badge> in the database and audit trail, and <strong>{numPass} units</strong> will be received into the <code className="text-foreground">inventory_movements</code> ledger.
                                 </p>
                             </div>
                         </div>
@@ -455,7 +455,7 @@ function TwoPointQAFormContent({
                                         value={lotNumber}
                                         onChange={e => setLotNumber(e.target.value)}
                                         placeholder={`MFG-${joNo}`}
-                                        className="font-mono text-xs h-9"
+                                    className="font-mono text-sm min-h-11"
                                     />
                                 </div>
                                 <div className="space-y-1">
@@ -468,7 +468,7 @@ function TwoPointQAFormContent({
                                         type="date"
                                         value={manufacturingDate}
                                         onChange={e => setManufacturingDate(e.target.value)}
-                                        className="text-xs h-9"
+                                        className="text-sm min-h-11"
                                     />
                                 </div>
                                 <div className="space-y-1">
@@ -481,7 +481,7 @@ function TwoPointQAFormContent({
                                         type="date"
                                         value={expiryDate}
                                         onChange={e => setExpiryDate(e.target.value)}
-                                        className="text-xs h-9"
+                                        className="text-sm min-h-11"
                                     />
                                 </div>
                             </div>
@@ -504,20 +504,20 @@ function TwoPointQAFormContent({
                         />
                     </div>
 
-                    <DialogFooter className="p-0 pt-2 border-t flex flex-col sm:flex-row gap-2 sm:justify-end">
+                    <DialogFooter className="sticky bottom-0 z-10 bg-background/95 p-3 pt-3 border-t flex flex-col sm:flex-row gap-2 sm:justify-end backdrop-blur">
                         <Button
                             type="button"
                             variant="outline"
                             onClick={onClose}
                             disabled={actionLoading}
-                            className="text-xs"
+                            className="min-h-11 text-sm"
                         >
                             Cancel
                         </Button>
                         <Button
                             type="submit"
                             disabled={actionLoading || numInsp <= 0 || (hasRejections && !rejectionReasonId)}
-                            className="text-xs font-bold gap-1.5 shadow-sm"
+                            className="min-h-11 text-sm font-bold gap-1.5 shadow-sm"
                         >
                             {actionLoading ? (
                                 <>
