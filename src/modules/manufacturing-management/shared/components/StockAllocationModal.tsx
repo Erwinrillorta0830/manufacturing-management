@@ -109,14 +109,14 @@ export function StockAllocationModal({
         ]);
 
         if (isMounted) {
-          const lotMap = new Map<number, string>();
+          const lotMap = new Map<number, { name: string; unit_id?: number | null; unit_name?: string }>();
           (branchLots || []).forEach((l) => {
             if (l.lot_id && l.lot_name) {
-              lotMap.set(l.lot_id, l.lot_name);
+              lotMap.set(l.lot_id, { name: l.lot_name, unit_id: l.unit_id, unit_name: l.unit_name });
             }
           });
 
-          // Group and aggregate onhand quantities by batchNo for the selected branch
+          // Group onhand quantities distinctly by lotId, inventoryLotId, and batchNo for the selected branch
           const batchMap = new Map<string, {
             inventoryLotId: number;
             lotId: number;
@@ -134,12 +134,16 @@ export function StockAllocationModal({
 
           for (const oh of onhandData) {
             if (Number(oh.branchId) !== Number(branchId)) continue;
-            const key = oh.batchNo || `lot-${oh.inventoryLotId || oh.lotId}`;
+            const lotIdNum = Number(oh.lotId || 0);
+            const invLotIdNum = Number(oh.inventoryLotId || 0);
+            const batchStr = oh.batchNo ? String(oh.batchNo).trim() : `lot-${invLotIdNum || lotIdNum}`;
+            const key = `${lotIdNum}:${invLotIdNum}:${batchStr}`;
+
             const existing = batchMap.get(key);
             const qty = Number(oh.onhandQuantity || 0);
 
-            const lotIdNum = Number(oh.lotId || 0);
-            const resolvedLotName = (lotIdNum > 0 ? lotMap.get(lotIdNum) : undefined) || oh.lotName;
+            const lotInfo = lotIdNum > 0 ? lotMap.get(lotIdNum) : undefined;
+            const resolvedLotName = lotInfo?.name || oh.lotName;
             const cleanLotName = resolvedLotName
               ? resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, '').trim()
               : (lotIdNum > 0 ? `${lotIdNum}` : '');
@@ -152,12 +156,12 @@ export function StockAllocationModal({
               if (!existing.manufacturingDate && oh.manufacturingDate) {
                 existing.manufacturingDate = oh.manufacturingDate;
               }
-              if (oh.inventoryLotId && Number(oh.inventoryLotId) > 0) {
-                existing.inventoryLotId = Number(oh.inventoryLotId);
+              if (invLotIdNum > 0) {
+                existing.inventoryLotId = invLotIdNum;
               }
             } else {
               batchMap.set(key, {
-                inventoryLotId: Number(oh.inventoryLotId || oh.lotId || 1),
+                inventoryLotId: invLotIdNum || lotIdNum || 1,
                 lotId: lotIdNum,
                 branchId: Number(oh.branchId),
                 productId: Number(oh.productId || productId),

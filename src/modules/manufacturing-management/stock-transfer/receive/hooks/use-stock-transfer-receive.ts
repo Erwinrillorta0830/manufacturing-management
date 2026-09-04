@@ -14,7 +14,7 @@ import {
 } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import type { MMLot, MMInventoryLot } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
-import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser } from '../../types/stock-transfer.types';
+import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser, BranchRow } from '../../types/stock-transfer.types';
 
 const LOCAL_STORAGE_KEY_RECEIVE = 'scm_receive_scans_v1';
 

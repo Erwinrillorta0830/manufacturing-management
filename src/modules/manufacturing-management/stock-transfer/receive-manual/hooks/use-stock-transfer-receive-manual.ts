@@ -14,7 +14,7 @@ import {
 } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import type { MMLot, MMInventoryLot, LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 import { toast } from 'sonner';
-import type { OrderGroup, OrderGroupItem, ProductRow } from '../../types/stock-transfer.types';
+import type { OrderGroup, OrderGroupItem, ProductRow, BranchRow } from '../../types/stock-transfer.types';
 
 /**
  * Hook for managing the "Stock Transfer Receive" phase (Manual Entry with Target Lot/Batch selection).
