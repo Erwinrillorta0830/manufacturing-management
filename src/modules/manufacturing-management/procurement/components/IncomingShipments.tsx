@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { IncomingShipmentsProps } from "./incoming-shipments/types";
 import { ShipmentListSidebar } from "./incoming-shipments/ShipmentListSidebar";
 import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
@@ -12,6 +13,9 @@ export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } 
 
 export default function IncomingShipments(props: IncomingShipmentsProps) {
     const {
+        displayMode = "split",
+        backHref,
+        onExitCreate,
         shipments,
         suppliers,
         rawMaterials,
@@ -31,6 +35,12 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         onUpdateShipmentStatus,
         loading = false,
         listLoading = false,
+        detailLoading = false,
+        listError = null,
+        detailError = null,
+        referenceError = null,
+        onRetryList,
+        onRetryDetail,
         serverList,
         canonicalDrafting = false,
         jobOrders = [],
@@ -40,11 +50,22 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     } = props;
 
     const onServerQueryChange = serverList?.onQueryChange;
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const isQueueMode = displayMode === "queue";
+    const isDetailMode = displayMode === "detail";
+    const isCreateMode = displayMode === "create";
 
-    const [search, setSearch] = useState("");
-    const [statusFilter, setStatusFilter] = useState("All");
-    const [currentPage, setCurrentPage] = useState(1);
-    const [itemsPerPage, setItemsPerPage] = useState(5);
+    const [search, setSearch] = useState(() => isQueueMode ? searchParams.get("search") || "" : "");
+    const [statusFilter, setStatusFilter] = useState(() => isQueueMode ? searchParams.get("status") || "All" : "All");
+    const [currentPage, setCurrentPage] = useState(() => {
+        const page = Number(searchParams.get("page"));
+        return isQueueMode && Number.isSafeInteger(page) && page > 0 ? page : 1;
+    });
+    const [itemsPerPage, setItemsPerPage] = useState(() => {
+        const limit = Number(searchParams.get("limit"));
+        return isQueueMode && [5, 10, 20, 50].includes(limit) ? limit : 5;
+    });
     const [printLoading, setPrintLoading] = useState(false);
 
     const {
@@ -94,7 +115,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     });
 
     useEffect(() => {
-        if (!onServerQueryChange) return;
+        if (!isQueueMode || !onServerQueryChange) return;
         const timeout = window.setTimeout(() => {
             onServerQueryChange({
                 page: currentPage,
@@ -104,7 +125,20 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
             });
         }, 250);
         return () => window.clearTimeout(timeout);
-    }, [currentPage, itemsPerPage, onServerQueryChange, search, statusFilter]);
+    }, [currentPage, isQueueMode, itemsPerPage, onServerQueryChange, search, statusFilter]);
+
+    useEffect(() => {
+        if (!isQueueMode) return;
+        const params = new URLSearchParams(window.location.search);
+        if (search.trim()) params.set("search", search.trim());
+        else params.delete("search");
+        if (statusFilter !== "All") params.set("status", statusFilter);
+        else params.delete("status");
+        params.set("page", String(currentPage));
+        params.set("limit", String(itemsPerPage));
+        const nextUrl = `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+        window.history.replaceState(window.history.state, "", nextUrl);
+    }, [currentPage, isQueueMode, itemsPerPage, pathname, search, statusFilter]);
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -126,7 +160,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     }, [handleCloseModal, isModalOpen, setIsModalOpen, setIsOverridden]);
 
     const filteredShipments = useMemo(() => {
-        if (serverList) return shipments;
+        if (isQueueMode && serverList) return shipments;
         return shipments.filter(s => {
             const poNo = s.purchase_order_no || "";
             const matchesSearch = s.reference_number.toLowerCase().includes(search.toLowerCase()) ||
@@ -136,15 +170,30 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
             
             return matchesSearch && matchesStatus;
         });
-    }, [shipments, serverList, search, statusFilter]);
+    }, [isQueueMode, shipments, serverList, search, statusFilter]);
 
-    const totalItems = serverList?.total ?? filteredShipments.length;
-    const totalPages = serverList?.totalPages ?? (Math.ceil(totalItems / itemsPerPage) || 1);
-    const paginatedShipments = serverList
+    const totalItems = isQueueMode && serverList?.total !== undefined ? serverList.total : filteredShipments.length;
+    const totalPages = isQueueMode && serverList?.totalPages !== undefined
+        ? serverList.totalPages
+        : (Math.ceil(totalItems / itemsPerPage) || 1);
+    const paginatedShipments = isQueueMode && serverList
         ? filteredShipments
         : filteredShipments.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
     const hasListFilters = Boolean(search.trim() || statusFilter !== "All");
+
+    const queueReturnHref = useMemo(() => {
+        const params = new URLSearchParams();
+        if (search.trim()) params.set("search", search.trim());
+        if (statusFilter !== "All") params.set("status", statusFilter);
+        params.set("page", String(currentPage));
+        params.set("limit", String(itemsPerPage));
+        return `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    }, [currentPage, itemsPerPage, pathname, search, statusFilter]);
+
+    const shipmentDetailHref = (shipmentId: number) => (
+        `/mm/incoming-shipments/${shipmentId}?returnTo=${encodeURIComponent(queueReturnHref)}`
+    );
 
     const handlePrintPurchaseOrder = async () => {
         if (!activeShipment) return;
@@ -221,54 +270,68 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
     }, [suppliers, isSupplierForeign]);
 
     return (
-        <div className="flex flex-col lg:flex-row gap-6 h-full min-h-0">
-            <ShipmentListSidebar
-                totalItems={totalItems}
-                search={search}
-                setSearch={setSearch}
-                statusFilter={statusFilter}
-                setStatusFilter={setStatusFilter}
-                itemsPerPage={itemsPerPage}
-                setItemsPerPage={setItemsPerPage}
-                currentPage={currentPage}
-                setCurrentPage={setCurrentPage}
-                totalPages={totalPages}
-                listLoading={listLoading}
-                hasListFilters={hasListFilters}
-                canonicalDrafting={canonicalDrafting}
-                paginatedShipments={paginatedShipments}
-                suppliers={suppliers}
-                activeShipment={activeShipment}
-                setSelectedShipment={setSelectedShipment}
-                isSupplierForeign={isSupplierForeign}
-                onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
-            />
+        <div className={`flex w-full min-h-0 min-w-0 gap-6 ${isQueueMode || isDetailMode || isCreateMode ? "flex-col h-full" : "flex-col lg:flex-row h-full"}`}>
+            {(displayMode === "split" || isQueueMode) && (
+                <ShipmentListSidebar
+                    totalItems={totalItems}
+                    search={search}
+                    setSearch={setSearch}
+                    statusFilter={statusFilter}
+                    setStatusFilter={setStatusFilter}
+                    itemsPerPage={itemsPerPage}
+                    setItemsPerPage={setItemsPerPage}
+                    currentPage={currentPage}
+                    setCurrentPage={setCurrentPage}
+                    totalPages={totalPages}
+                    fullWidth={isQueueMode}
+                    listLoading={listLoading}
+                    listError={isQueueMode ? listError : null}
+                    onRetry={onRetryList}
+                    hasListFilters={hasListFilters}
+                    canonicalDrafting={canonicalDrafting}
+                    paginatedShipments={paginatedShipments}
+                    suppliers={suppliers}
+                    activeShipment={activeShipment}
+                    setSelectedShipment={setSelectedShipment}
+                    isSupplierForeign={isSupplierForeign}
+                    getShipmentHref={isQueueMode ? shipmentDetailHref : undefined}
+                    createHref={isQueueMode && canonicalDrafting ? "/mm/incoming-shipments/create" : undefined}
+                    onOpenCreateModal={() => { setIsOverridden(false); setIsModalOpen(true); }}
+                />
+            )}
 
-            <ShipmentDetailView
-                loading={loading}
-                activeShipment={activeShipment}
-                canonicalDrafting={canonicalDrafting}
-                paymentTerms={paymentTerms}
-                paymentModes={paymentModes}
-                suppliers={suppliers}
-                branches={dynamicBranches}
-                isSupplierForeign={isSupplierForeign}
-                onUpdateShipmentStatus={onUpdateShipmentStatus}
-                handleStartEdit={handleStartEdit}
-                onPrintPurchaseOrder={handlePrintPurchaseOrder}
-                printLoading={printLoading}
-                onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
-                lines={lines}
-                hasShipments={filteredShipments.length > 0}
-            />
+            {(displayMode === "split" || isDetailMode) && (
+                <ShipmentDetailView
+                    loading={loading || detailLoading}
+                    activeShipment={activeShipment}
+                    canonicalDrafting={canonicalDrafting}
+                    paymentTerms={paymentTerms}
+                    paymentModes={paymentModes}
+                    suppliers={suppliers}
+                    branches={dynamicBranches}
+                    isSupplierForeign={isSupplierForeign}
+                    onUpdateShipmentStatus={onUpdateShipmentStatus}
+                    handleStartEdit={handleStartEdit}
+                    onPrintPurchaseOrder={handlePrintPurchaseOrder}
+                    printLoading={printLoading}
+                    onCancelRejectedPurchaseOrder={onCancelRejectedPurchaseOrder}
+                    lines={lines}
+                    hasShipments={isDetailMode ? Boolean(activeShipment) : filteredShipments.length > 0}
+                    detailError={isDetailMode ? detailError : null}
+                    referenceError={isDetailMode ? referenceError : null}
+                    onRetryDetail={isDetailMode ? onRetryDetail : undefined}
+                    backHref={isDetailMode ? backHref : undefined}
+                />
+            )}
 
             <ShipmentFormModal
-                isModalOpen={isModalOpen}
+                isModalOpen={isCreateMode || isModalOpen}
                 modalRef={modalRef}
+                presentation={isCreateMode ? "page" : "modal"}
                 canonicalDrafting={canonicalDrafting}
                 editingShipmentId={editingShipmentId}
                 activeShipment={activeShipment}
-                handleCloseModal={handleCloseModal}
+                handleCloseModal={isCreateMode ? (onExitCreate || handleCloseModal) : handleCloseModal}
                 handleSubmit={handleSubmit}
                 shipmentForm={shipmentForm}
                 setShipmentForm={setShipmentForm}

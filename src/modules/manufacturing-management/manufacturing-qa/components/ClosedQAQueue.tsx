@@ -4,6 +4,7 @@ import { Loader2, Printer, Search } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface ClosedQAQueueProps {
     loadingJobOrders: boolean;
@@ -22,6 +23,28 @@ export function ClosedQAQueue({
     getBranchName,
     handleReprintReceipt
 }: ClosedQAQueueProps) {
+    const renderCard = (jo: any, idx: number) => {
+        const verName = jo.recipe_version_name || jo.recipeVersionName || jo.version_name || jo.versionName || ((jo.version_id || jo.versionId) ? `Version #${jo.version_id || jo.versionId}` : "Active");
+        return (
+            <div key={jo.order_id || jo.id || idx} className="rounded-xl border bg-card p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <p className="font-mono text-base font-bold">{jo.jo_id || `JO #${jo.order_id}`}</p>
+                        <p className="mt-1 truncate text-sm font-semibold">{jo.product_name}</p>
+                    </div>
+                    <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-600">Finished</span>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                    <div><dt className="text-muted-foreground">Target</dt><dd className="font-mono font-semibold">{Number(jo.quantity || 0).toLocaleString()} units</dd></div>
+                    <div><dt className="text-muted-foreground">Produced</dt><dd className="font-mono font-semibold text-emerald-600">{Number(jo.producedQty || jo.produced_quantity || 0).toLocaleString()} units</dd></div>
+                    <div><dt className="text-muted-foreground">Branch</dt><dd className="truncate font-semibold">{getBranchName(jo.branch_id)}</dd></div>
+                    <div className="col-span-2 sm:col-span-3"><dt className="text-muted-foreground">Recipe version</dt><dd className="font-semibold">{verName}</dd></div>
+                </dl>
+                <Button className="mt-4 min-h-11 w-full gap-2" onClick={() => handleReprintReceipt(jo)}><Printer className="h-4 w-4" />Reprint Slip</Button>
+            </div>
+        );
+    };
+
     return (
         <div className="space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -34,7 +57,7 @@ export function ClosedQAQueue({
                     <Input
                         type="text"
                         placeholder="Search JO # or product..."
-                        className="pl-9 h-9 text-xs bg-background border-border text-foreground"
+                        className="pl-9 min-h-11 text-sm bg-background border-border text-foreground"
                         value={joSearch}
                         onChange={(e) => setJoSearch(e.target.value)}
                     />
@@ -51,7 +74,9 @@ export function ClosedQAQueue({
                         No completed runs found matching your search.
                     </div>
                 ) : (
-                    <Table>
+                    <ResponsiveDataView
+                        table={(
+                        <Table>
                         <TableHeader>
                             <TableRow className="bg-muted/50 border-b border-border">
                                 <TableHead className="text-xs font-bold text-foreground">Job Order No</TableHead>
@@ -87,7 +112,7 @@ export function ClosedQAQueue({
                                             <Button 
                                                 size="xs" 
                                                 onClick={() => handleReprintReceipt(jo)}
-                                                className="bg-primary hover:bg-primary/90 text-white font-bold h-7 text-[11px] gap-1 px-2.5"
+                                                className="bg-primary hover:bg-primary/90 text-white font-bold min-h-11 text-sm gap-1 px-2.5"
                                             >
                                                 <Printer className="h-3 w-3" /> Reprint Slip
                                             </Button>
@@ -96,7 +121,14 @@ export function ClosedQAQueue({
                                 );
                             })}
                         </TableBody>
-                    </Table>
+                        </Table>
+                        )}
+                        cards={(
+                            <div className="space-y-3 p-3">
+                                {closedJobOrders.map(renderCard)}
+                            </div>
+                        )}
+                    />
                 )}
             </div>
         </div>

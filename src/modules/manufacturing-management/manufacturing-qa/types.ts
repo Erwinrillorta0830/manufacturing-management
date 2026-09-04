@@ -197,3 +197,23 @@ export interface Branch {
     name?: string;
     branch_name?: string;
 }
+
+export interface PageMeta {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+    data: T[];
+    meta: PageMeta;
+}
+
+export interface QASummary {
+    jobOrderCount: number;
+    activeJobOrderCount: number;
+    closedJobOrderCount: number;
+    inspectionLogCount: number;
+    pendingHoldCount: number;
+}

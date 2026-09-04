@@ -13,6 +13,7 @@ import {
     updateDisposition,
     resolveDispositionMetadata
 } from "./_dispositions";
+import { hasPagination, paginate } from "../_pagination";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -271,6 +272,7 @@ export async function GET(request: Request) {
         // Action 2: Fetch QA Inspection Logs (from qa_jo_inspection_logs)
         if (action === "inspection-logs") {
             const jobOrderId = searchParams.get("jobOrderId");
+            const paginated = hasPagination(searchParams);
             let url = `${DIRECTUS_URL}/items/qa_jo_inspection_logs?limit=-1&sort=-id`;
             if (jobOrderId) {
                 url += `&filter[job_order_id][_eq]=${Number(jobOrderId)}`;
@@ -318,9 +320,26 @@ export async function GET(request: Request) {
                     };
                 });
 
-                return NextResponse.json(enrichedLogs);
+                const search = (searchParams.get("search") || "").trim().toLowerCase();
+                const status = (searchParams.get("status") || "").trim().toLowerCase();
+                const reason = searchParams.get("reason") || "";
+                const filteredLogs = enrichedLogs.filter((log: any) => {
+                    const haystack = `${log.job_order_no} ${log.product_name} ${log.rework_job_order_no || ""} ${log.remarks || ""} ${log.rejection_reason_name || ""}`.toLowerCase();
+                    const matchesSearch = !search || haystack.includes(search);
+                    const matchesStatus = !status
+                        || (status === "passed" && Number(log.rejected_quantity) === 0)
+                        || (status === "rework" && Number(log.rejected_quantity) > 0)
+                        || String(log.status || "").toLowerCase() === status;
+                    const matchesReason = !reason || String(log.rejection_reason_id || "") === reason;
+                    return matchesSearch && matchesStatus && matchesReason;
+                });
+
+                return NextResponse.json(paginated ? paginate(filteredLogs, searchParams) : filteredLogs);
             } catch (err) {
                 console.error("Error loading inspection logs:", err);
+                if (paginated) {
+                    return NextResponse.json({ error: "Failed to load inspection logs." }, { status: 502 });
+                }
                 return NextResponse.json([]);
             }
         }
@@ -370,7 +389,40 @@ export async function GET(request: Request) {
         // Action: Fetch supervisor dispositions
         if (action === "dispositions") {
             const list = await readDispositions();
-            return NextResponse.json(await enrichDispositions(list));
+            const enriched = await enrichDispositions(list);
+            if (!hasPagination(searchParams)) return NextResponse.json(enriched);
+
+            const search = (searchParams.get("search") || "").trim().toLowerCase();
+            const branch = searchParams.get("branch") || searchParams.get("branchId") || "";
+            const status = (searchParams.get("status") || "").trim().toLowerCase();
+            const filtered = enriched.filter((hold: any) => {
+                const haystack = `${hold.jo_id} ${hold.product_name} ${hold.station_name || ""} ${hold.task_name} ${hold.inspection_remarks || ""}`.toLowerCase();
+                return (!search || haystack.includes(search))
+                    && (!branch || String(hold.branch_id || "") === branch)
+                    && (!status || String(hold.disposition_status || "").toLowerCase() === status);
+            });
+            return NextResponse.json(paginate(filtered, searchParams));
+        }
+
+        if (action === "summary") {
+            const [jobOrdersRes, logsRes, dispositions] = await Promise.all([
+                fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=job_order_id,status`, { headers, cache: "no-store" }),
+                fetch(`${DIRECTUS_URL}/items/qa_jo_inspection_logs?limit=-1&fields=id`, { headers, cache: "no-store" }),
+                readDispositions()
+            ]);
+            if (!jobOrdersRes.ok || !logsRes.ok) {
+                return NextResponse.json({ error: "Failed to load QA summary." }, { status: 502 });
+            }
+            const jobOrders = (await jobOrdersRes.json()).data || [];
+            const logs = (await logsRes.json()).data || [];
+            const isFinished = (value: unknown) => ["finished", "completed", "closed"].includes(String(value || "").toLowerCase());
+            return NextResponse.json({
+                jobOrderCount: jobOrders.length,
+                activeJobOrderCount: jobOrders.filter((jo: any) => !isFinished(jo.status) && String(jo.status || "").toLowerCase() !== "cancelled").length,
+                closedJobOrderCount: jobOrders.filter((jo: any) => isFinished(jo.status)).length,
+                inspectionLogCount: logs.length,
+                pendingHoldCount: dispositions.filter((hold: any) => hold.disposition_status === "Pending").length
+            });
         }
 
         // Action: Match dynamic checklist template for a specific task and product

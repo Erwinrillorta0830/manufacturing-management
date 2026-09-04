@@ -9,6 +9,7 @@ import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
 import type { ReceivingValidationIssue } from "../receiving-metadata";
 import ProductQaChecklist from "./ProductQaChecklist";
 import ForceReceivedDialog from "./ForceReceivedDialog";
+import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 
 interface ShipmentInspectionFormProps {
     selectedShipment: Shipment;
@@ -59,6 +60,7 @@ interface SearchableStorageLotSelectProps {
     value: string | number;
     disabled?: boolean;
     storageLots: StorageLot[];
+    id?: string;
     ariaLabel?: string;
     onChange: (value: string) => void;
 }
@@ -67,117 +69,48 @@ function SearchableStorageLotSelect({
     value,
     disabled,
     storageLots,
+    id,
     ariaLabel,
     onChange
 }: SearchableStorageLotSelectProps) {
-    const [isOpen, setIsOpen] = React.useState(false);
-    const [search, setSearch] = React.useState("");
-    const dropdownRef = React.useRef<HTMLDivElement>(null);
+    const options = React.useMemo(() => {
+        const seenLotIds = new Set<string>();
+        return storageLots
+            .filter(lot => lot.is_selectable !== false || String(lot.lot_id) === String(value))
+            .filter(lot => {
+                const lotId = String(lot.lot_id);
+                if (seenLotIds.has(lotId)) return false;
+                seenLotIds.add(lotId);
+                return true;
+            })
+            .map(lot => {
+                const lotId = String(lot.lot_id);
+                const lotName = String(lot.lot_name || lot.lot_code || `Lot ${lotId}`);
+                const available = lot.availableQuantity ?? lot.max_batch_capacity ?? "historical";
+                const isCurrent = lotId === String(value);
+                const isFull = typeof lot.availableQuantity === "number" && lot.availableQuantity <= 0;
 
-    const selectedLot = storageLots.find(lot => String(lot.lot_id) === String(value));
-
-    React.useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
-        };
-        if (isOpen) {
-            document.addEventListener("mousedown", handleClickOutside);
-        }
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [isOpen]);
-
-    const filteredLots = React.useMemo(() => {
-        const q = search.trim().toLowerCase();
-        const selectableLots = storageLots.filter(lot => lot.is_selectable !== false || String(lot.lot_id) === String(value));
-        if (!q) return selectableLots;
-        return selectableLots.filter(lot =>
-            String(lot.lot_name || "").toLowerCase().includes(q) ||
-            String(lot.lot_code || "").toLowerCase().includes(q) ||
-            String(lot.lot_id || "").toLowerCase().includes(q)
-        );
-    }, [search, storageLots, value]);
+                return {
+                    value: lotId,
+                    label: `${lotName} (${available} available)`,
+                    disabled: isFull && !isCurrent
+                };
+            });
+    }, [storageLots, value]);
 
     return (
-        <div ref={dropdownRef} className="relative min-w-0 flex-1">
-            <button
-                type="button"
+        <div data-testid="storage-lot-picker" aria-label={ariaLabel} className="relative min-w-0 flex-1 overflow-visible">
+            <CreatableSelect
+                id={id}
+                options={options}
+                value={String(value || "")}
+                onValueChange={onChange}
+                placeholder="Select storage lot..."
+                searchPlaceholder="Search storage lot..."
                 disabled={disabled}
-                aria-label={ariaLabel}
-                onClick={() => {
-                    if (!disabled) {
-                        setIsOpen(!isOpen);
-                        setSearch("");
-                    }
-                }}
-                className={`h-9 w-full bg-background border text-foreground rounded-lg px-2.5 text-[10px] font-semibold flex items-center justify-between gap-2 min-w-0 transition-all ${
-                    disabled ? "opacity-60 cursor-not-allowed" : "hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                }`}
-            >
-                <span className="truncate">
-                    {selectedLot ? (
-                        `${selectedLot.lot_name} (${selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "historical"} available)`
-                    ) : (
-                        <span className="text-muted-foreground font-normal">Select storage lot...</span>
-                    )}
-                </span>
-                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-            </button>
-
-            {isOpen && (
-                <div className="absolute top-full left-0 mt-1 w-full min-w-[240px] max-h-[220px] bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden flex flex-col p-1.5 animate-in fade-in-50 zoom-in-95">
-                    <div className="relative p-1">
-                        <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-muted-foreground" />
-                        <input
-                            type="text"
-                            autoFocus
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            placeholder="Type to search storage lot..."
-                            className="w-full h-8 pl-8 pr-2 text-[10px] font-medium bg-muted/40 border border-border/60 rounded-md outline-none focus:border-primary focus:bg-background"
-                        />
-                    </div>
-
-                    <div className="overflow-y-auto flex-1 max-h-[160px] space-y-0.5 mt-1">
-                        {filteredLots.length === 0 ? (
-                            <div className="p-3 text-[10px] text-center text-muted-foreground font-medium">
-                                No storage lots match &quot;{search}&quot;
-                            </div>
-                        ) : (
-                            filteredLots.map(lot => {
-                                const isCurrent = String(lot.lot_id) === String(value);
-                                const full = lot.availableQuantity !== null && lot.availableQuantity !== undefined && lot.availableQuantity <= 0;
-                                const isChoiceDisabled = full && !isCurrent;
-
-                                return (
-                                    <button
-                                        key={lot.lot_id}
-                                        type="button"
-                                        disabled={isChoiceDisabled}
-                                        onClick={() => {
-                                            onChange(String(lot.lot_id));
-                                            setIsOpen(false);
-                                        }}
-                                        className={`w-full text-left p-2 rounded-lg text-[10px] flex items-center justify-between gap-2 transition-all ${
-                                            isCurrent
-                                                ? "bg-primary text-primary-foreground font-bold"
-                                                : isChoiceDisabled
-                                                    ? "opacity-40 cursor-not-allowed bg-muted/20"
-                                                    : "hover:bg-muted/60 font-semibold text-foreground"
-                                        }`}
-                                    >
-                                        <span className="truncate">{lot.lot_name}</span>
-                                        <span className="font-mono text-[9px] shrink-0 opacity-80">
-                                            {lot.availableQuantity ?? lot.max_batch_capacity} avail
-                                        </span>
-                                    </button>
-                                );
-                            })
-                        )}
-                    </div>
-                </div>
-            )}
+                className="h-9 w-full rounded-lg text-[10px] font-semibold"
+                popoverClassName="z-[100] min-w-[240px] max-w-[calc(100vw-2rem)] p-0"
+            />
         </div>
     );
 }
@@ -433,6 +366,7 @@ function LotAllocationEditor({
                                                         value={group.storageLotId}
                                                         disabled={readOnly}
                                                         storageLots={getStorageLotsForGroup(group)}
+                                                        id={`receiving-${lineId}-${disposition}-${group.groupId.replace(/[^a-zA-Z0-9_-]/g, "-")}-storage-lot`}
                                                         ariaLabel={tone.label + " storage lot"}
                                                         onChange={value => changeLot(group, value)}
                                                     />
@@ -884,8 +818,11 @@ export default function ShipmentInspectionForm({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 border-b bg-background p-4 lg:grid-cols-5">
-                <div className="space-y-1">
+            <div
+                data-testid="receiving-metadata-grid"
+                className="grid grid-cols-1 gap-3 border-b bg-background p-4 sm:grid-cols-2 2xl:grid-cols-5"
+            >
+                <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-receipt-number" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Receipt Number {!readOnly && <span className="text-red-500">*</span>}
                     </label>
@@ -910,7 +847,7 @@ export default function ShipmentInspectionForm({
                     <p className="text-[9px] text-muted-foreground">Enter the physical receiving ticket or delivery receipt number.</p>
                 </div>
 
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-receipt-date" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Date of Receipt <span className="text-red-500">*</span>
                     </label>
@@ -933,7 +870,7 @@ export default function ShipmentInspectionForm({
                     <p className="text-[9px] text-muted-foreground">Enter the date shown on the physical delivery receipt.</p>
                 </div>
 
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-branch" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Receiving Branch <span className="text-muted-foreground">(from PO)</span>
                     </label>
@@ -959,7 +896,7 @@ export default function ShipmentInspectionForm({
                     {!issueFor(undefined, "branchId") && <p className="text-[9px] text-muted-foreground">Locked to the Purchase Order branch for inventory routing.</p>}
                 </div>
 
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                     <label htmlFor="receiving-document-type" className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
                         Supplier Document Type {!readOnly && !isReplacement && <span className="text-red-500">*</span>}
                     </label>
@@ -986,7 +923,7 @@ export default function ShipmentInspectionForm({
                     {!issueFor(undefined, "supplierDocumentTypeId") && !supplierDocumentTypeError && <p className="text-[9px] text-muted-foreground">Classifies the supplier document provided with this delivery.</p>}
                 </div>
 
-                <div className="space-y-1">
+                <div className="min-w-0 space-y-1">
                     <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Quantity Status</span>
                     <div
                         data-testid="receiving-quantity-status"
@@ -1277,7 +1214,11 @@ export default function ShipmentInspectionForm({
                                 })()}
 
                                 {receivedVal > 0 && (acceptedVal > 0 || rejectedVal > 0) && (
-                                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-3" aria-label="Inventory storage-lot allocations">
+                                    <div
+                                        data-testid={`inventory-allocation-sequence-${line.line_id}`}
+                                        className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-3 overflow-visible"
+                                        aria-label="Inventory storage-lot allocations"
+                                    >
                                         <div className="flex items-center justify-between gap-2">
                                             <div>
                                                 <p className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">Inventory allocation sequence</p>

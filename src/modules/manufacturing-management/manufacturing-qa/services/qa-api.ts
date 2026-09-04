@@ -9,8 +9,112 @@ import {
     JobOrderStatusHistory, 
     TwoPointQAInspectionPayload, 
     TwoPointQAInspectionResult,
-    YieldJobOrderMaterial
+    YieldJobOrderMaterial,
+    PaginatedResponse,
+    QASummary
 } from "../types";
+
+export const QA_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+export const DEFAULT_QA_PAGE_SIZE = 25;
+
+async function readApiResponse<T>(res: Response, fallback: string): Promise<T> {
+    const payload = await res.json().catch(() => null) as T & { error?: string } | null;
+    if (!res.ok) {
+        throw new Error(payload && typeof payload === "object" && payload.error ? payload.error : fallback);
+    }
+    return payload as T;
+}
+
+function pageParams(values: Record<string, string | number | undefined>): string {
+    const params = new URLSearchParams();
+    Object.entries(values).forEach(([key, value]) => {
+        if (value !== undefined && value !== "") params.set(key, String(value));
+    });
+    return params.toString();
+}
+
+function asPage<T>(payload: unknown, page: number, pageSize: number): PaginatedResponse<T> {
+    if (payload && typeof payload === "object" && "data" in payload && "meta" in payload) {
+        return payload as PaginatedResponse<T>;
+    }
+    const rows = Array.isArray(payload) ? payload as T[] : [];
+    return {
+        data: rows,
+        meta: {
+            page,
+            pageSize,
+            total: rows.length,
+            totalPages: rows.length === 0 ? 0 : Math.ceil(rows.length / pageSize)
+        }
+    };
+}
+
+export interface QAJobOrderPageQuery {
+    queue: "inspection" | "closing" | "closed";
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: string;
+    type?: "standard" | "rework";
+    branch?: string | number;
+    signal?: AbortSignal;
+}
+
+export async function fetchQAJobOrdersPage(query: QAJobOrderPageQuery): Promise<PaginatedResponse<JobOrder>> {
+    const { signal, ...params } = query;
+    const queryString = pageParams(params);
+    const res = await fetch(`/api/manufacturing/planning-engineering?action=qa-job-orders&${queryString}`, { signal });
+    return asPage(await readApiResponse<unknown>(res, "Failed to load QA Job Orders"), query.page, query.pageSize);
+}
+
+export async function fetchQASummary(signal?: AbortSignal): Promise<QASummary> {
+    const res = await fetch("/api/manufacturing/qa?action=summary", { signal, cache: "no-store" });
+    return readApiResponse<QASummary>(res, "Failed to load QA summary");
+}
+
+export interface QAInspectionLogsPageQuery {
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: string;
+    reason?: string;
+    signal?: AbortSignal;
+}
+
+export async function fetchQAInspectionLogsPage(query: QAInspectionLogsPageQuery): Promise<PaginatedResponse<QAJOInspectionLog>> {
+    const { signal, ...params } = query;
+    const queryString = pageParams(params);
+    const res = await fetch(`/api/manufacturing/qa?action=inspection-logs&${queryString}`, { signal });
+    return asPage(await readApiResponse<unknown>(res, "Failed to load inspection logs"), query.page, query.pageSize);
+}
+
+export interface QADispositionsPageQuery {
+    page: number;
+    pageSize: number;
+    search?: string;
+    branch?: string | number;
+    status?: string;
+    signal?: AbortSignal;
+}
+
+export async function fetchDispositionsPage(query: QADispositionsPageQuery): Promise<PaginatedResponse<DispositionRecord>> {
+    const { signal, ...params } = query;
+    const queryString = pageParams(params);
+    const res = await fetch(`/api/manufacturing/qa?action=dispositions&${queryString}`, { signal });
+    return asPage(await readApiResponse<unknown>(res, "Failed to load dispositions"), query.page, query.pageSize);
+}
+
+export async function fetchDailyQAQueuePage(page: number, pageSize: number, search = "", status = "", signal?: AbortSignal): Promise<PaginatedResponse<any>> {
+    const queryString = pageParams({ view: "queue", page, pageSize, search, status });
+    const res = await fetch(`/api/manufacturing/production/daily-qa?${queryString}`, { signal });
+    return asPage(await readApiResponse<unknown>(res, "Failed to load daily QA queue"), page, pageSize);
+}
+
+export async function fetchFinalQAQueuePage(page: number, pageSize: number, search = "", status = "", signal?: AbortSignal): Promise<PaginatedResponse<any>> {
+    const queryString = pageParams({ view: "queue", page, pageSize, search, status });
+    const res = await fetch(`/api/manufacturing/production/final-qa?${queryString}`, { signal });
+    return asPage(await readApiResponse<unknown>(res, "Failed to load final QA queue"), page, pageSize);
+}
 
 export async function fetchQALogs(): Promise<QALog[]> {
     const res = await fetch("/api/manufacturing/planning-engineering?action=qa-logs");

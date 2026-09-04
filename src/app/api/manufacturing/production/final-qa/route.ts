@@ -12,6 +12,7 @@ import {
     resolveCanonicalLotId,
     type FinalQAReleaseRecord
 } from "./_domain";
+import { hasPagination, paginate } from "../../_pagination";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -227,6 +228,50 @@ async function ensureNoExistingRelease(lotId: number) {
     }
 }
 
+async function fetchFinalQAQueueRows(request: Request, releases: Array<Record<string, unknown>>) {
+    const inventoryUrl = new URL("/api/manufacturing/inventory", request.url);
+    const cookie = request.headers.get("cookie");
+    const inventoryResponse = await fetch(inventoryUrl, {
+        cache: "no-store",
+        headers: cookie ? { cookie } : undefined
+    });
+    if (!inventoryResponse.ok) {
+        throw new Error(`Final QA inventory lookup failed with HTTP ${inventoryResponse.status}`);
+    }
+
+    const inventoryPayload = await inventoryResponse.json();
+    const batches = Array.isArray(inventoryPayload?.batches) ? inventoryPayload.batches : [];
+    const products = Array.isArray(inventoryPayload?.products) ? inventoryPayload.products : [];
+    const productNames = new Map<number, string>(products.map((product: Record<string, unknown>) => [
+        relationId(product.product_id, ["product_id", "id"]),
+        String(product.product_name || "")
+    ]));
+    const releaseByLotId = new Map<number, Record<string, unknown>>();
+    releases.forEach((release) => {
+        const lotId = relationId(release.canonical_lot_id, ["canonical_lot_id"])
+            || relationId(release.lot_id, ["lot_id", "id"]);
+        if (lotId > 0 && !releaseByLotId.has(lotId)) releaseByLotId.set(lotId, release);
+    });
+
+    const rows = batches.map((batch: Record<string, unknown>) => {
+        const lotId = relationId(batch.lot_id, ["lot_id", "id"]);
+        const release = releaseByLotId.get(lotId) || null;
+        return {
+            ...batch,
+            product_name: batch.product_name || productNames.get(Number(batch.product_id)) || `Product #${batch.product_id}`,
+            final_release: release
+        };
+    });
+    const search = (new URL(request.url).searchParams.get("search") || "").trim().toLowerCase();
+    const status = (new URL(request.url).searchParams.get("status") || "").trim().toLowerCase();
+
+    return rows.filter((row: Record<string, unknown> & { final_release?: Record<string, unknown> | null }) => {
+        const releaseStatus = String(row.final_release?.overall_disposition || "pending").toLowerCase();
+        const haystack = `${row.product_name} ${row.product_code || ""} ${row.lot_number || ""} ${row.batch_no || ""} ${row.job_order_no || ""}`.toLowerCase();
+        return (!search || haystack.includes(search)) && (!status || releaseStatus === status);
+    });
+}
+
 // GET: Retrieves all final batch QA releases
 export async function GET(request: Request) {
     try {
@@ -240,7 +285,21 @@ export async function GET(request: Request) {
 
         const releases = await directusCollection<DirectusRelease>(url, "Final QA release lookup");
         const normalizedReleases = await Promise.all(releases.map((release) => normalizeFinalQARelease(release)));
-        return NextResponse.json(normalizedReleases);
+        if (searchParams.get("view") === "queue") {
+            const queueRows = await fetchFinalQAQueueRows(request, normalizedReleases);
+            return NextResponse.json(paginate(queueRows, searchParams));
+        }
+        if (searchParams.get("view") !== "queue" && !hasPagination(searchParams)) {
+            return NextResponse.json(normalizedReleases);
+        }
+
+        const search = (searchParams.get("search") || "").trim().toLowerCase();
+        const disposition = (searchParams.get("status") || "").trim().toLowerCase();
+        const filtered = normalizedReleases.filter((release: Record<string, unknown>) => {
+            const haystack = `${release.job_order_no || ""} ${release.product_name || ""} ${release.lot_number || ""} ${release.coa_reference_no || ""}`.toLowerCase();
+            return (!search || haystack.includes(search)) && (!disposition || String(release.overall_disposition || "").toLowerCase() === disposition);
+        });
+        return NextResponse.json(paginate(filtered, searchParams));
     } catch (error) {
         return errorResponse(error);
     }
