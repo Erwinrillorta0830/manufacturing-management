@@ -534,7 +534,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!isOpen || customers.length === 0) return;
 
-    const hasUrlParams = fromClearance === "true" || !!invoiceNoParam || !!orderNoParam || !!customerCodeParam;
+    
     const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
 
     let data: {
