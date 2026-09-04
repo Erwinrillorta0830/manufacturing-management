@@ -25,6 +25,7 @@ import {
     SelectValue
 } from "@/components/ui/select";
 import { JobOrder } from "../types";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface JobOrderQAInspectionQueueProps {
     jobOrders: JobOrder[];
@@ -33,6 +34,7 @@ interface JobOrderQAInspectionQueueProps {
     onOpenQAInspectionModal: (jo: JobOrder) => void;
     onOpenStatusHistoryModal?: (jo: JobOrder) => void;
     onRefresh: () => void;
+    onFiltersChange?: (filters: { search: string; status: string; type: "all" | "standard" | "rework"; branch: string }) => void;
 }
 
 export function JobOrderQAInspectionQueue({
@@ -41,7 +43,8 @@ export function JobOrderQAInspectionQueue({
     getBranchName,
     onOpenQAInspectionModal,
     onOpenStatusHistoryModal,
-    onRefresh
+    onRefresh,
+    onFiltersChange
 }: JobOrderQAInspectionQueueProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
@@ -120,6 +123,50 @@ export function JobOrderQAInspectionQueue({
             return matchesSearch && matchesType && matchesStatus && matchesBranch;
         });
     }, [jobOrders, searchQuery, typeFilter, statusFilter, branchFilter]);
+
+    const filtersActive = searchQuery.length > 0 || statusFilter !== "all" || typeFilter !== "all" || branchFilter !== "all";
+    const clearFilters = () => {
+        setSearchQuery("");
+        setStatusFilter("all");
+        setBranchFilter("all");
+        setTypeFilter("all");
+        onFiltersChange?.({ search: "", status: "all", type: "all", branch: "all" });
+    };
+
+    const renderCard = (jo: JobOrder) => {
+        const joNo = jo.job_order_no || jo.jo_id || "";
+        const isRework = joNo.includes("-RWK-") || Number(jo.parent_job_order_id) > 0;
+        const targetQty = Number(jo.target_quantity || jo.quantity || 0);
+        const passedQty = Number(jo.completed_quantity || jo.actual_quantity_produced || 0);
+        const rejectedQty = Number(jo.rejected_quantity || 0);
+        const isCompleted = (jo.status || "").toUpperCase() === "COMPLETED";
+
+        return (
+            <Card key={jo.job_order_id || jo.jo_id} className="border p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-base font-bold text-foreground">{joNo}</span>
+                            {isRework && <Badge variant="outline" className="min-h-7 gap-1 text-sm"><RotateCcw className="h-3.5 w-3.5" />Rework</Badge>}
+                        </div>
+                        <p className="mt-1 truncate text-sm font-semibold text-foreground">{jo.product_name}</p>
+                        {jo.product_code && <p className="font-mono text-sm text-muted-foreground">{jo.product_code}</p>}
+                    </div>
+                    <Badge variant={isCompleted ? "default" : jo.status === "On Hold" ? "destructive" : "outline"} className="min-h-7 text-sm">{jo.status}</Badge>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div><dt className="text-muted-foreground">Target</dt><dd className="font-mono font-semibold">{targetQty.toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Passed</dt><dd className="font-mono font-semibold text-emerald-600">{passedQty.toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Rejected</dt><dd className="font-mono font-semibold text-destructive">{rejectedQty.toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Branch</dt><dd className="truncate font-semibold">{getBranchName(jo.branch_id)}</dd></div>
+                </dl>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    {onOpenStatusHistoryModal && <Button variant="outline" className="min-h-11 gap-2" onClick={() => onOpenStatusHistoryModal(jo)}><History className="h-4 w-4" />History</Button>}
+                    <Button variant={isCompleted ? "outline" : "default"} className="min-h-11 gap-2" onClick={() => onOpenQAInspectionModal(jo)}><ClipboardCheck className="h-4 w-4" />{isCompleted ? "Re-Inspect" : "2-Point QA"}</Button>
+                </div>
+            </Card>
+        );
+    };
 
     return (
         <div className="space-y-5">
@@ -206,14 +253,14 @@ export function JobOrderQAInspectionQueue({
                             <Input
                                 placeholder="Search JO # or product..."
                                 value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
-                                className="pl-8 h-9 text-xs"
+                                onChange={e => { const search = e.target.value; setSearchQuery(search); onFiltersChange?.({ search, status: statusFilter, type: typeFilter, branch: branchFilter }); }}
+                                className="pl-8 h-11 text-sm"
                             />
                         </div>
 
                         {/* Status Filter */}
-                        <Select value={statusFilter} onValueChange={setStatusFilter}>
-                            <SelectTrigger className="h-9 text-xs w-36">
+                        <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); onFiltersChange?.({ search: searchQuery, status: value, type: typeFilter, branch: branchFilter }); }}>
+                            <SelectTrigger className="h-11 text-sm w-36">
                                 <SelectValue placeholder="Status" />
                             </SelectTrigger>
                             <SelectContent>
@@ -225,8 +272,8 @@ export function JobOrderQAInspectionQueue({
                         </Select>
 
                         {/* Type Filter */}
-                        <Select value={typeFilter} onValueChange={(val: string) => setTypeFilter(val as "all" | "standard" | "rework")}>
-                            <SelectTrigger className="h-9 text-xs w-36">
+                        <Select value={typeFilter} onValueChange={(val: string) => { const type = val as "all" | "standard" | "rework"; setTypeFilter(type); onFiltersChange?.({ search: searchQuery, status: statusFilter, type, branch: branchFilter }); }}>
+                            <SelectTrigger className="h-11 text-sm w-36">
                                 <SelectValue placeholder="Run Type" />
                             </SelectTrigger>
                             <SelectContent>
@@ -238,8 +285,8 @@ export function JobOrderQAInspectionQueue({
 
                         {/* Branch Filter */}
                         {branches.length > 1 && (
-                            <Select value={branchFilter} onValueChange={setBranchFilter}>
-                                <SelectTrigger className="h-9 text-xs w-36">
+                            <Select value={branchFilter} onValueChange={(value) => { setBranchFilter(value); onFiltersChange?.({ search: searchQuery, status: statusFilter, type: typeFilter, branch: value }); }}>
+                                <SelectTrigger className="h-11 text-sm w-36">
                                     <SelectValue placeholder="Branch" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -253,7 +300,10 @@ export function JobOrderQAInspectionQueue({
                             </Select>
                         )}
 
-                        <Button variant="outline" size="sm" onClick={onRefresh} className="h-9 gap-1 text-xs">
+                        {filtersActive && <Button variant="outline" size="sm" onClick={clearFilters} className="min-h-11 gap-1 text-sm">
+                            Clear
+                        </Button>}
+                        <Button variant="outline" size="sm" onClick={onRefresh} className="min-h-11 gap-1 text-sm">
                             <RefreshCw className="h-3.5 w-3.5" />
                             Refresh
                         </Button>
@@ -275,7 +325,8 @@ export function JobOrderQAInspectionQueue({
                             </p>
                         </div>
                     ) : (
-                        <div className="overflow-x-auto">
+                        <ResponsiveDataView
+                            table={(
                             <Table>
                                 <TableHeader>
                                     <TableRow className="bg-muted/30">
@@ -308,7 +359,7 @@ export function JobOrderQAInspectionQueue({
                                                                 {joNo}
                                                             </span>
                                                             {isRework && (
-                                                                <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[9px] px-1 py-0 font-bold gap-0.5">
+                                                                <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[10px] px-1 py-0 font-bold gap-0.5">
                                                                     <RotateCcw className="h-2.5 w-2.5" />
                                                                     Rework
                                                                 </Badge>
@@ -389,8 +440,9 @@ export function JobOrderQAInspectionQueue({
                                                                 variant="ghost"
                                                                 size="sm"
                                                                 onClick={() => onOpenStatusHistoryModal(jo)}
-                                                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                                                className="min-h-11 min-w-11 p-0 text-muted-foreground hover:text-foreground"
                                                                 title="View Status Transition History"
+                                                                aria-label={`View status transition history for ${joNo}`}
                                                             >
                                                                 <History className="h-3.5 w-3.5" />
                                                             </Button>
@@ -400,7 +452,7 @@ export function JobOrderQAInspectionQueue({
                                                             variant={isCompleted ? "outline" : "default"}
                                                             size="sm"
                                                             onClick={() => onOpenQAInspectionModal(jo)}
-                                                            className={`h-8 text-xs font-bold gap-1 shadow-xs transition-all ${
+                                                            className={`min-h-11 text-sm font-bold gap-1 shadow-xs transition-all ${
                                                                 !isCompleted ? "bg-primary hover:bg-primary/90 text-primary-foreground" : ""
                                                             }`}
                                                         >
@@ -414,7 +466,13 @@ export function JobOrderQAInspectionQueue({
                                     })}
                                 </TableBody>
                             </Table>
-                        </div>
+                            )}
+                            cards={(
+                                <div className="space-y-3 p-3">
+                                    {filteredJOs.map(renderCard)}
+                                </div>
+                            )}
+                        />
                     )}
                 </CardContent>
             </Card>

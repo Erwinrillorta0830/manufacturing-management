@@ -9,7 +9,8 @@ import {
     CheckCircle2, 
     RotateCcw, 
     Clock, 
-    Loader2
+    Loader2,
+    RefreshCw
 } from "lucide-react";
 import {
     Dialog,
@@ -41,7 +42,7 @@ export function JobOrderStatusHistoryModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
-            <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto p-0 gap-0">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-lg max-h-[calc(100dvh-1rem)] overflow-hidden p-0 gap-0 flex flex-col">
                 <JobOrderStatusHistoryContent
                     key={joIdInt}
                     joIdInt={joIdInt}
@@ -64,6 +65,7 @@ function JobOrderStatusHistoryContent({
 }) {
     const [history, setHistory] = useState<JobOrderStatusHistory[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -72,7 +74,10 @@ function JobOrderStatusHistoryContent({
                 .then(data => {
                     if (isMounted) setHistory(data);
                 })
-                .catch(err => console.error("Error loading status history:", err))
+                .catch(err => {
+                    console.error("Error loading status history:", err);
+                    if (isMounted) setError(err instanceof Error ? err.message : "Failed to load status history.");
+                })
                 .finally(() => {
                     if (isMounted) setLoading(false);
                 });
@@ -105,11 +110,25 @@ function JobOrderStatusHistoryContent({
                 </div>
             </DialogHeader>
 
-                <div className="p-5 space-y-4">
+                <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4 scrollbar-thin">
                     {loading ? (
                         <div className="flex flex-col items-center justify-center p-12 text-muted-foreground">
                             <Loader2 className="h-6 w-6 animate-spin text-primary mb-2" />
                             <span className="text-xs font-semibold">Loading status transition logs...</span>
+                        </div>
+                    ) : error ? (
+                        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center">
+                            <p className="text-sm font-semibold text-destructive">{error}</p>
+                            <Button type="button" variant="outline" className="min-h-11 gap-2" onClick={() => {
+                                setError(null);
+                                setLoading(true);
+                                fetchJobOrderStatusHistory(joIdInt)
+                                    .then(setHistory)
+                                    .catch(err => setError(err instanceof Error ? err.message : "Failed to load status history."))
+                                    .finally(() => setLoading(false));
+                            }}>
+                                <RefreshCw className="h-4 w-4" /> Retry
+                            </Button>
                         </div>
                     ) : history.length === 0 ? (
                         <div className="flex flex-col items-center justify-center p-10 text-center border rounded-xl border-dashed">
@@ -186,7 +205,7 @@ function JobOrderStatusHistoryContent({
                                                     <User className="h-3 w-3" />
                                                     {h.changed_by_name || (h.changed_by ? `User #${h.changed_by}` : "System Admin")}
                                                 </span>
-                                                <span className="font-mono text-[9px]">
+                                                <span className="font-mono text-[10px]">
                                                     Log #{h.history_id || idx + 1}
                                                 </span>
                                             </div>
@@ -198,8 +217,8 @@ function JobOrderStatusHistoryContent({
                     )}
                 </div>
 
-                <DialogFooter className="p-4 border-t bg-muted/10">
-                    <Button variant="outline" size="sm" onClick={onClose} className="text-xs">
+                <DialogFooter className="sticky bottom-0 z-10 p-4 border-t bg-background/95 backdrop-blur">
+                    <Button variant="outline" size="sm" onClick={onClose} className="min-h-11 text-sm">
                         Close
                     </Button>
                 </DialogFooter>
