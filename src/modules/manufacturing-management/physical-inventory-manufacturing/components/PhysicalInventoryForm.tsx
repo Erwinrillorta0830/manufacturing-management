@@ -242,53 +242,6 @@ export default function PhysicalInventoryForm({
         }
     };
 
-    const handleSaveDraft = async () => {
-        setError(null);
-        setSavingDraft(true);
-        try {
-            if (sheet?.physical_inventory_id) {
-                await onSaveHeader({
-                    branch_id: branchId,
-                    product_type_id: productTypeId > 0 ? productTypeId : null,
-                    price_type_id: priceTypeId > 0 ? priceTypeId : null,
-                    stock_type: stockType,
-                    starting_date: startingDate,
-                    cutoff_date: cutoffDate,
-                    remarks: remarks,
-                });
-            }
-
-            const detailEntries = Object.entries(countsMap);
-            for (const [dIdStr, valStr] of detailEntries) {
-                const dId = Number(dIdStr);
-                const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
-                if (detailObj && onSaveInlineCount && valStr !== undefined && valStr !== "") {
-                    const valNum = Number(valStr);
-                    if (!isNaN(valNum) && valNum >= 0) {
-                        await onSaveInlineCount(detailObj, valNum);
-                    }
-                }
-            }
-
-            const remarkEntries = Object.entries(remarksMap);
-            for (const [dIdStr, remarkStr] of remarkEntries) {
-                const dId = Number(dIdStr);
-                const detailObj = details.find((d) => (d.physical_inventory_detail_id || d.id) === dId);
-                if (detailObj && onSaveInlineRemark && remarkStr !== undefined) {
-                    await onSaveInlineRemark(detailObj, remarkStr.trim());
-                }
-            }
-
-            setDraftSavedToast(true);
-            setTimeout(() => setDraftSavedToast(false), 4500);
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "Failed to save draft progress.";
-            setError(msg);
-        } finally {
-            setSavingDraft(false);
-        }
-    };
-
     const details = useMemo(() => sheet?.details || [], [sheet?.details]);
 
     // Unsaved Changes / Dirty State Tracking
@@ -1029,40 +982,6 @@ export default function PhysicalInventoryForm({
                                     };
 
                                     const lotUomName = getGroupLotUom(group) || "UOM";
-
-                                    const getGroupLotUom = (g: { lotObj: unknown; items: MmPhysicalInventoryDetail[] }) => {
-                                         if (typeof g.lotObj === "object" && g.lotObj !== null) {
-                                             const l = g.lotObj as Record<string, unknown>;
-                                             const u = l.unit_id;
-                                             if (typeof u === "object" && u !== null) {
-                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
-                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             } else if (typeof u === "string" || typeof u === "number") {
-                                                 if (u) return String(u);
-                                             }
-                                             if (typeof l.unit_shortcut === "string" && l.unit_shortcut) return l.unit_shortcut;
-                                             if (typeof l.unit_name === "string" && l.unit_name) return l.unit_name;
-                                         }
-                                         if (g.items.length > 0) {
-                                             const first = g.items[0];
-                                             const u = first.unit_id;
-                                             if (typeof u === "object" && u !== null) {
-                                                 const uObj = u as { unit_shortcut?: string; unit_name?: string };
-                                                 const shortcut = uObj.unit_shortcut || uObj.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             }
-                                             const p = first.product_id;
-                                             if (typeof p === "object" && p !== null) {
-                                                 const pObj = p as { unit_of_measurement?: { unit_shortcut?: string; unit_name?: string } };
-                                                 const shortcut = pObj.unit_of_measurement?.unit_shortcut || pObj.unit_of_measurement?.unit_name || "";
-                                                 if (shortcut) return shortcut;
-                                             }
-                                         }
-                                         return "";
-                                     };
-
-                                     const lotUomName = getGroupLotUom(group) || "UOM";
 
                                      return (
                                         <div key={group.lotName} className="bg-card border rounded-xl shadow-xs overflow-hidden transition-all hover:shadow-md">
