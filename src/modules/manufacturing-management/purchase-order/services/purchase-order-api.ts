@@ -4,6 +4,7 @@ import type {
     PurchaseOrderApprovalDetail,
     PurchaseOrderCatalog,
     PurchaseOrderDecisionStage,
+    PurchaseOrderDetailResponse,
     PurchaseOrderDraftPayload,
     PurchaseOrderDraftResponse,
     FinanceApprovalDetailResponse,
@@ -43,6 +44,11 @@ export async function fetchPurchaseOrderLines(id: number, signal?: AbortSignal) 
     const response = await fetch(`/api/manufacturing/purchase-orders/${id}`, { signal });
     const body = await responseJson<{ data: ShipmentLineItem[] }>(response, "Failed to load purchase-order lines.");
     return body.data;
+}
+
+export async function fetchPurchaseOrderDetail(id: number, signal?: AbortSignal) {
+    const response = await fetch(`/api/manufacturing/purchase-orders/${id}/detail`, { signal });
+    return responseJson<PurchaseOrderDetailResponse>(response, "Failed to load purchase-order details.");
 }
 
 export async function fetchPurchaseOrderCatalog(signal?: AbortSignal) {

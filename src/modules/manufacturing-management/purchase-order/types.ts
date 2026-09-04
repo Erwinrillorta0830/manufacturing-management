@@ -24,6 +24,13 @@ export interface PurchaseOrderListResponse<T> {
     meta: PurchaseOrderListMeta;
 }
 
+export interface PurchaseOrderDetailResponse {
+    data: {
+        shipment: import("../procurement/types").IncomingShipment;
+        lines: import("../procurement/types").ShipmentLineItem[];
+    };
+}
+
 export interface PurchaseOrderListQuery {
     page?: number;
     limit?: number;
