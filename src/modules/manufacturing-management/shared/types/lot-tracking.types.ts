@@ -43,6 +43,13 @@ export interface MMInventoryLot {
   updated_by?: number | null;
   // UI helpers
   lot_name?: string;
+  lot_code?: string;
+  branch_name?: string;
+  branch_code?: string;
+  zone_id?: number | null;
+  slot_id?: number | null;
+  warehouse_zone?: string;
+  warehouse_slot?: string;
   product_name?: string;
   product_code?: string;
   product_type?: unknown;
@@ -106,6 +113,9 @@ export interface BatchAllocationResult {
   inventory_lot_id: number;
   lot_id: number;
   lot_name?: string;
+  lot_code?: string;
+  branch_name?: string;
+  branch_code?: string;
   batch_no: string;
   expiry_date?: string | null;
   manufacturing_date?: string | null;

@@ -5,6 +5,8 @@ import { useStockTransferBase } from '../../shared/hooks/use-stock-transfer-base
 import { stockTransferLifecycleService } from '../../services/stock-transfer.lifecycle';
 import { toast } from 'sonner';
 import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser } from '../../types/stock-transfer.types';
+import type { LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
+import type { LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 const LOCAL_STORAGE_KEY = 'scm_dispatching_scans_v1';
 
@@ -27,6 +29,30 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
   const [fetchingAvailable, setFetchingAvailable] = useState(false);
   const [scannedInventory, setScannedInventory] = useState<Record<number, number>>({});
   const [isThrottled, setIsThrottled] = useState(false);
+  const [itemLots, setItemLots] = useState<Record<number, {
+    lot_id?: number;
+    lot_name?: string;
+    inventory_lot_id?: number;
+    batch_no?: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    lot_allocations?: LotAllocationGroup[];
+  }>>({});
+
+  const updateItemLot = (itemId: number, lotData: LotBatchSelectionResult) => {
+    setItemLots(prev => ({
+      ...prev,
+      [itemId]: {
+        lot_id: lotData.lot_id,
+        lot_name: lotData.lot_name,
+        inventory_lot_id: lotData.inventory_lot_id,
+        batch_no: lotData.batch_no,
+        manufacturing_date: lotData.manufacturing_date,
+        expiry_date: lotData.expiry_date,
+        lot_allocations: lotData.lot_allocations,
+      }
+    }));
+  };
   
   // Track recently processed tags to prevent spam (temporal lockout)
   const recentLocks = useRef<Map<string, number>>(new Map());
@@ -145,8 +171,14 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
         const itemRfids = productScans.slice(alreadyDistributed, alreadyDistributed + canAssign).map(s => s.rfid);
         distributedPerProduct.set(pid, alreadyDistributed + itemRfids.length);
 
+        const pickedLot = itemLots[st.id];
+
         return {
           ...st,
+          batch_no: pickedLot?.batch_no ?? st.batch_no,
+          source_lot_id: pickedLot?.lot_id ?? st.source_lot_id,
+          source_inventory_lot_id: pickedLot?.inventory_lot_id ?? st.source_inventory_lot_id,
+          lot_allocations: pickedLot?.lot_allocations ?? st.lot_allocations,
           scannedQty: loosePack ? manualQty : itemRfids.length,
           scannedRfids: itemRfids,
           qtyAvailable: Math.max(0, rawAvailable),
@@ -159,7 +191,7 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
         items: enrichedItems
       };
     });
-  }, [base.baseOrderGroups, scannedItemsState, scannedInventory, manualQtysState]);
+  }, [base.baseOrderGroups, scannedItemsState, scannedInventory, manualQtysState, itemLots]);
 
   const selectedGroup = useMemo(() => {
     if (!base.selectedOrderNo) return null;
@@ -283,11 +315,18 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
         };
       }).filter((p): p is NonNullable<typeof p> => p !== null);
 
-      const itemsPayload = group.items.map(i => ({
-        id: i.id,
-        status: 'For Loading',
-        picked_quantity: i.scannedQty
-      }));
+      const itemsPayload = group.items.map(i => {
+        const pickedLot = itemLots[i.id];
+        return {
+          id: i.id,
+          status: 'For Loading',
+          picked_quantity: i.scannedQty,
+          batch_no: pickedLot?.batch_no ?? i.batch_no,
+          source_lot_id: pickedLot?.lot_id ?? i.source_lot_id,
+          source_inventory_lot_id: pickedLot?.inventory_lot_id ?? i.source_inventory_lot_id,
+          lot_allocations: pickedLot?.lot_allocations ?? i.lot_allocations,
+        };
+      });
 
       await stockTransferLifecycleService.submitStatusUpdate({ 
         items: itemsPayload, 
@@ -470,6 +509,7 @@ export function useStockTransferDispatch({ currentUser }: { currentUser?: Curren
     handleScanRFID,
     fetchingAvailable,
     markAsPicked,
+    updateItemLot,
     recentScans: (base.selectedOrderNo ? scannedItemsState[base.selectedOrderNo] : []) || [],
     isThrottled,
     clearHistory: () => {

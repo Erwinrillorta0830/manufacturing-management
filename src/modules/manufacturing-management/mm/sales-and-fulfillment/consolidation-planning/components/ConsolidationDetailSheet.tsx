@@ -117,12 +117,48 @@ export default function ConsolidationDetailSheet({
         if (!consolidation) return;
         const batchId = consolidation.id;
         let active = true;
+
+        console.log("[ConsolidationDetail] OPENED batch:", {
+            id: consolidation.id,
+            consolidatorNo: consolidation.consolidatorNo,
+            status: consolidation.status,
+            branchId: consolidation.branchId,
+            branchName: consolidation.branchName,
+            invoices: consolidation.invoices?.map((inv) => ({
+                invoiceId: inv.invoiceId,
+                invoiceNo: inv.invoiceNo,
+            })),
+            details: consolidation.details?.map((d) => ({
+                productId: d.productId,
+                productName: d.productName,
+                orderedQuantity: d.orderedQuantity,
+                pickedQuantity: d.pickedQuantity,
+            })),
+        });
+
         fetchAllocations(batchId)
             .then((allocations) => {
-                if (active) setAllocationState({ batchId, allocations, error: null });
+                if (active) {
+                    console.log(`[ConsolidationDetail] fetchAllocations result for batchId=${batchId} (${allocations.length} rows):`);
+                    console.log(JSON.stringify(allocations.map((a) => ({
+                        productId: a.productId,
+                        productName: a.productName,
+                        inventoryLotId: a.inventoryLotId,
+                        lotId: a.lotId,
+                        lotName: a.lotName,
+                        batchNo: a.batchNo,
+                        quantity: a.quantity,
+                        pickedQuantity: a.pickedQuantity,
+                        status: a.status,
+                    })), null, 2));
+                    setAllocationState({ batchId, allocations, error: null });
+                }
             })
             .catch((error: Error) => {
-                if (active) setAllocationState({ batchId, allocations: [], error: error.message });
+                if (active) {
+                    console.error(`[ConsolidationDetail] fetchAllocations ERROR for batchId=${batchId}:`, error.message);
+                    setAllocationState({ batchId, allocations: [], error: error.message });
+                }
             });
         return () => {
             active = false;

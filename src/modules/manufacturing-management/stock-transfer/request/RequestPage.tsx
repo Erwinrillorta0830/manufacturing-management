@@ -16,9 +16,8 @@ import {
 import { Loader2, RefreshCcw, CheckCircle2, Printer, ShoppingBag } from 'lucide-react';
 import { toast } from 'sonner';
 
-// New centralized hooks
 import { useStockTransferRequest } from './hooks/use-stock-transfer-request';
-import { getBranchLabel } from '../services/stock-transfer.helpers';
+import { getBranchLabel, resolveBranchSalesman } from '../services/stock-transfer.helpers';
 
 // Shared components
 import StockTransferTable from '../shared/components/StockTransferTable';
@@ -27,7 +26,8 @@ import { ProductSelectionModal } from '../shared/components/ProductSelectionModa
 import { EnrichedProduct } from '../types/stock-transfer.types';
 import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 
-export default function StockTransferRequestView({ salesmanName }: { salesmanName?: string }) {
+export default function StockTransferRequestView(props: { salesmanName?: string }) {
+  void props;
   const {
     branches,
     loading,
@@ -94,7 +94,45 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
     }
   };
 
-  const handlePrint = () => setShowPreview(true);
+  const handlePrint = () => {
+    const resolvedSalesman = resolveBranchSalesman(targetBranch, branches);
+    console.log('[RequestPage:handlePrint] targetBranch ID:', targetBranch);
+    console.log('[RequestPage:handlePrint] Available branches:', branches);
+    console.log('[RequestPage:handlePrint] Resolved Salesman Name:', resolvedSalesman);
+    setShowPreview(true);
+  };
+
+  const memoizedSelectedProducts = React.useMemo(() => {
+    return scannedItems.map(
+      (item) =>
+        ({
+          product_id: item.productId,
+          product_name: item.productName,
+          barcode: item.description,
+          cost_per_unit: item.unitPrice,
+          quantity: item.unitQty,
+          totalAmount: item.totalAmount,
+          unit_of_measurement: { unit_name: item.unit },
+          qtyAvailable: item.qtyAvailable,
+        } as unknown as EnrichedProduct)
+    );
+  }, [scannedItems]);
+
+  const handleModalUpdateQty = React.useCallback(
+    (pid: number, qty: number) => {
+      const item = scannedItems.find((i) => i.productId === pid);
+      if (item) updateQty(item.rfid, qty);
+    },
+    [scannedItems, updateQty]
+  );
+
+  const handleModalRemoveItem = React.useCallback(
+    (pid: number) => {
+      const item = scannedItems.find((i) => i.productId === pid);
+      if (item) removeItem(item.rfid);
+    },
+    [scannedItems, removeItem]
+  );
 
   return (
     <>
@@ -230,34 +268,19 @@ export default function StockTransferRequestView({ salesmanName }: { salesmanNam
         targetBranchLabel={targetBranchLabel}
         leadDate={leadDate}
         scannedItems={scannedItems}
-        salesmanName={salesmanName}
+        salesmanName={resolveBranchSalesman(targetBranch, branches)}
       />
       <ProductSelectionModal 
         open={showProductModal} 
         onOpenChange={setShowProductModal} 
         sourceBranch={sourceBranch}
-        selectedProducts={scannedItems.map(item => ({
-          product_id: item.productId,
-          product_name: item.productName,
-          barcode: item.description,
-          cost_per_unit: item.unitPrice,
-          quantity: item.unitQty,
-          totalAmount: item.totalAmount,
-          unit_of_measurement: { unit_name: item.unit },
-          qtyAvailable: item.qtyAvailable
-        } as unknown as EnrichedProduct))}
+        selectedProducts={memoizedSelectedProducts}
         onSelect={(p) => {
           handleAddProduct(p);
           toast.success(`Added ${p.product_name} to transfer list.`);
         }} 
-        onUpdateQty={(pid, qty) => {
-          const item = scannedItems.find(i => i.productId === pid);
-          if (item) updateQty(item.rfid, qty);
-        }}
-        onRemoveItem={(pid) => {
-          const item = scannedItems.find(i => i.productId === pid);
-          if (item) removeItem(item.rfid);
-        }}
+        onUpdateQty={handleModalUpdateQty}
+        onRemoveItem={handleModalRemoveItem}
       />
     </>
   );

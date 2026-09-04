@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +24,13 @@ export function QuantityStepper({
   size = 'md'
 }: QuantityStepperProps) {
   const isSm = size === 'sm';
+  const [prevValue, setPrevValue] = useState(value);
+  const [localVal, setLocalVal] = useState<string>(String(value ?? 0));
+
+  if (value !== prevValue) {
+    setPrevValue(value);
+    setLocalVal(String(value ?? 0));
+  }
 
   const handleDecrement = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -40,8 +47,37 @@ export function QuantityStepper({
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value) || 0;
-    onChange(Math.min(max, Math.max(min, val)));
+    const raw = e.target.value;
+    setLocalVal(raw);
+    if (raw === '') return; // Allow empty while typing
+    const parsed = parseInt(raw, 10);
+    if (!isNaN(parsed)) {
+      const clamped = Math.min(max, Math.max(min, parsed));
+      onChange(clamped);
+    }
+  };
+
+  const handleBlur = () => {
+    const parsed = parseInt(localVal, 10);
+    if (isNaN(parsed) || parsed < min) {
+      const fallback = min;
+      setLocalVal(String(fallback));
+      onChange(fallback);
+    } else if (parsed > max) {
+      setLocalVal(String(max));
+      onChange(max);
+    } else {
+      setLocalVal(String(parsed));
+      onChange(parsed);
+    }
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.target.select();
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
+    e.stopPropagation();
   };
 
   return (
@@ -66,8 +102,11 @@ export function QuantityStepper({
         type="number"
         min={min}
         max={max}
-        value={value}
+        value={localVal}
         onChange={handleInputChange}
+        onBlur={handleBlur}
+        onFocus={handleFocus}
+        onClick={handleClick}
         disabled={disabled}
         className={cn(
           "text-center font-bold text-foreground bg-transparent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",

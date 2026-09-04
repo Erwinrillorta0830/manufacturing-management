@@ -13,6 +13,7 @@ interface PrintTemplateProps {
   getUserName: (id: number | null | undefined) => string;
   getUnitName: (id: unknown) => string;
   salesmanName?: string;
+  documentTitle?: string;
 }
 
 export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps>(({
@@ -22,6 +23,7 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
   getUserName,
   getUnitName,
   salesmanName,
+  documentTitle,
 }, ref) => {
   return (
     <div 
@@ -64,7 +66,7 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
 
       {/* Document Title */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '5mm' }}>
-        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>STOCK TRANSFER SLIP</h2>
+        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>{documentTitle || 'STOCK TRANSFER SLIP'}</h2>
         <div style={{ textAlign: 'right' }}>
           <p style={{ margin: 0, fontSize: '12px', fontWeight: 'bold' }}>NO: {group.orderNo}</p>
           {salesmanName && (
@@ -123,19 +125,50 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
              const qty = item.received_quantity || item.allocated_quantity || item.ordered_quantity || 0;
              const rowTotal = qty * unitPrice;
              
-             return (
-               <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                 <td style={{ padding: '8px', fontSize: '11px' }}>{brand}</td>
-                 <td style={{ padding: '8px', fontSize: '11px' }}>{product?.product_name || `ID: ${item.product_id}`}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center' }}>{unit}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center' }}>{formatQuantity(item.ordered_quantity)}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#d97706', fontWeight: 'bold' }}>{formatQuantity(item.allocated_quantity)}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#059669', fontWeight: 'bold' }}>{formatQuantity(item.received_quantity)}</td>
-                 <td style={{ padding: '8px', fontSize: '11px', textAlign: 'right', fontWeight: 'bold' }}>
-                   PHP {rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                 </td>
-               </tr>
-             );
+              return (
+                <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '8px', fontSize: '11px', verticalAlign: 'top' }}>{brand}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', verticalAlign: 'top' }}>
+                    <div style={{ fontWeight: 'bold' }}>{product?.product_name || `ID: ${item.product_id}`}</div>
+                    {item.lot_allocations && item.lot_allocations.length > 0 ? (
+                      <div style={{ marginTop: '4px', fontSize: '9px', color: '#444' }}>
+                        {item.lot_allocations.map((lotGroup, lIdx) => {
+                          const lotClean = lotGroup.lot_name 
+                            ? lotGroup.lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim()
+                            : (lotGroup.lot_id ? `${lotGroup.lot_id}` : '—');
+                          return (
+                            <div key={lIdx} style={{ marginLeft: '2px', marginBottom: '2px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#111' }}>Lot {lotClean}</span>
+                              {lotGroup.batches && lotGroup.batches.map((b, bIdx) => {
+                                const bNo = String(b.batch_no || 'N/A').replace(/^batch\s*[:#-]?\s*/i, '').trim();
+                                return (
+                                  <div key={bIdx} style={{ marginLeft: '6px', color: '#555' }}>
+                                    - Batch: <span style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{bNo}</span> | Qty: {formatQuantity(b.quantity)} {b.manufacturing_date ? `| Mfg: ${formatPhDateTime(b.manufacturing_date, { formatType: 'dateOnly' })}` : ''} {b.expiry_date ? `| Exp: ${formatPhDateTime(b.expiry_date, { formatType: 'dateOnly' })}` : ''}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (item.batch_no || item.source_lot_id || item.destination_lot_id) ? (
+                      <div style={{ marginTop: '2px', fontSize: '9px', color: '#555' }}>
+                        {(item.source_lot_id || item.destination_lot_id) ? <span>Lot {item.source_lot_id || item.destination_lot_id} </span> : ''}
+                        {item.batch_no ? <span>- Batch: <b style={{ fontFamily: 'monospace' }}>{String(item.batch_no).replace(/^batch\s*[:#-]?\s*/i, '').trim()}</b> </span> : ''}
+                        {item.manufacturing_date ? <span>| Mfg: <b>{formatPhDateTime(item.manufacturing_date, { formatType: 'dateOnly' })}</b> </span> : ''}
+                        {item.expiry_date ? <span>| Exp: <b>{formatPhDateTime(item.expiry_date, { formatType: 'dateOnly' })}</b></span> : ''}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', verticalAlign: 'top' }}>{unit}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', verticalAlign: 'top' }}>{formatQuantity(item.ordered_quantity)}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#d97706', fontWeight: 'bold', verticalAlign: 'top' }}>{formatQuantity(item.allocated_quantity)}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#059669', fontWeight: 'bold', verticalAlign: 'top' }}>{formatQuantity(item.received_quantity)}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'right', fontWeight: 'bold', verticalAlign: 'top' }}>
+                    PHP {rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              );
           })}
         </tbody>
       </table>

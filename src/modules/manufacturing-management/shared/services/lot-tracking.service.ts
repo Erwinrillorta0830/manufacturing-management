@@ -252,13 +252,15 @@ export async function fetchInventoryLots(params: {
         const lotObj = typeof r.lot_id === "object" && r.lot_id !== null ? (r.lot_id as Record<string, unknown>) : null;
         const prodObj = typeof r.product_id === "object" && r.product_id !== null ? (r.product_id as Record<string, unknown>) : null;
         const uomObj = prodObj && typeof prodObj.unit_of_measurement === "object" && prodObj.unit_of_measurement !== null ? (prodObj.unit_of_measurement as Record<string, unknown>) : null;
-
+        const branchObj = typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as Record<string, unknown>) : null;
         const catObj = prodObj && typeof prodObj.product_category === "object" && prodObj.product_category !== null ? (prodObj.product_category as Record<string, unknown>) : null;
 
         return {
           inventory_lot_id: Number(r.inventory_lot_id || r.id),
           lot_id: Number(lotObj ? lotObj.lot_id || lotObj.id : r.lot_id || 0),
-          branch_id: Number(typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as { id?: number }).id : r.branch_id || params.branchId || 0),
+          branch_id: Number(branchObj ? branchObj.id || branchObj.branch_id : r.branch_id || params.branchId || 0),
+          branch_name: branchObj ? String(branchObj.branch_name || "") : undefined,
+          branch_code: branchObj ? String(branchObj.branch_code || "") : undefined,
           product_id: Number(prodObj ? prodObj.product_id || prodObj.id : r.product_id || params.productId || 0),
           batch_no: String(r.batch_no || ""),
           manufacturing_date: (r.manufacturing_date as string) || null,
@@ -271,7 +273,8 @@ export async function fetchInventoryLots(params: {
           remarks: (r.remarks as string) || null,
           created_at: (r.created_at as string) || undefined,
           updated_at: (r.updated_at as string) || undefined,
-          lot_name: lotObj ? String(lotObj.lot_name || "") : undefined,
+          lot_name: lotObj ? String(lotObj.lot_name || "") : (r.lot_name as string | undefined),
+          lot_code: lotObj ? String(lotObj.lot_code || lotObj.lot_name || "") : (r.lot_code as string | undefined),
           product_name: prodObj ? String(prodObj.product_name || "") : undefined,
           product_code: prodObj ? String(prodObj.product_code || "") : undefined,
           product_type: prodObj?.product_type || r.product_type,
@@ -295,7 +298,7 @@ export async function fetchInventoryLots(params: {
       ? `&filter=${encodeURIComponent(JSON.stringify(filters))}`
       : "";
 
-    const fields = "*,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.product_category.category_name,product_id.unit_of_measurement.unit_name";
+    const fields = "*,lot_id.lot_id,lot_id.lot_name,lot_id.branch_id,branch_id.id,branch_id.branch_name,branch_id.branch_code,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.product_category.category_name,product_id.unit_of_measurement.unit_name";
     
     let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
       headers: getHeaders(params.token),
@@ -320,12 +323,15 @@ export async function fetchInventoryLots(params: {
       const lotObj = typeof r.lot_id === "object" && r.lot_id !== null ? (r.lot_id as Record<string, unknown>) : null;
       const prodObj = typeof r.product_id === "object" && r.product_id !== null ? (r.product_id as Record<string, unknown>) : null;
       const uomObj = prodObj && typeof prodObj.unit_of_measurement === "object" && prodObj.unit_of_measurement !== null ? (prodObj.unit_of_measurement as Record<string, unknown>) : null;
+      const branchObj = typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as Record<string, unknown>) : null;
       const catObj = prodObj && typeof prodObj.product_category === "object" && prodObj.product_category !== null ? (prodObj.product_category as Record<string, unknown>) : null;
 
       return {
         inventory_lot_id: Number(r.inventory_lot_id || r.id),
         lot_id: Number(lotObj ? lotObj.lot_id || lotObj.id : r.lot_id || 0),
-        branch_id: Number(typeof r.branch_id === "object" && r.branch_id !== null ? (r.branch_id as { id?: number }).id : r.branch_id || params.branchId || 0),
+        branch_id: Number(branchObj ? branchObj.id || branchObj.branch_id : r.branch_id || params.branchId || 0),
+        branch_name: branchObj ? String(branchObj.branch_name || "") : undefined,
+        branch_code: branchObj ? String(branchObj.branch_code || "") : undefined,
         product_id: Number(prodObj ? prodObj.product_id || prodObj.id : r.product_id || params.productId || 0),
         batch_no: String(r.batch_no || ""),
         manufacturing_date: (r.manufacturing_date as string) || null,
@@ -338,7 +344,8 @@ export async function fetchInventoryLots(params: {
         remarks: (r.remarks as string) || null,
         created_at: (r.created_at as string) || undefined,
         updated_at: (r.updated_at as string) || undefined,
-        lot_name: lotObj ? String(lotObj.lot_name || "") : undefined,
+        lot_name: lotObj ? String(lotObj.lot_name || "") : (r.lot_name as string | undefined),
+        lot_code: lotObj ? String(lotObj.lot_code || lotObj.lot_name || "") : (r.lot_code as string | undefined),
         product_name: prodObj ? String(prodObj.product_name || "") : undefined,
         product_code: prodObj ? String(prodObj.product_code || "") : undefined,
         product_type: prodObj?.product_type || r.product_type,
