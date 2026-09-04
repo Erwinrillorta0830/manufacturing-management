@@ -1,12 +1,36 @@
 "use client";
 
+import { useCallback } from "react";
+import { useRouter } from "next/navigation";
 import IncomingShipments from "../procurement/components/IncomingShipments";
-import { usePurchaseOrder } from "./hooks/usePurchaseOrder";
+import { usePurchaseOrder, type PurchaseOrderViewMode } from "./hooks/usePurchaseOrder";
+import type { PurchaseOrderDraftResponse } from "./types";
 
-export default function PurchaseOrderModule() {
-    const purchaseOrder = usePurchaseOrder();
+export default function PurchaseOrderModule({
+    mode = "queue",
+    shipmentId,
+    backHref
+}: {
+    mode?: PurchaseOrderViewMode;
+    shipmentId?: number;
+    backHref?: string;
+}) {
+    const router = useRouter();
+    const handleCreated = useCallback((result: PurchaseOrderDraftResponse) => {
+        if (mode === "create") {
+            router.replace(`/mm/incoming-shipments/${encodeURIComponent(String(result.purchaseOrderId))}`);
+        }
+    }, [mode, router]);
+    const handleExitCreate = useCallback(() => {
+        router.push("/mm/incoming-shipments");
+    }, [router]);
+    const purchaseOrder = usePurchaseOrder({
+        mode,
+        shipmentId,
+        onCreated: mode === "create" ? handleCreated : undefined
+    });
     return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
+        <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden space-y-4">
             <IncomingShipments
                 shipments={purchaseOrder.shipments}
                 suppliers={purchaseOrder.suppliers}
@@ -28,6 +52,12 @@ export default function PurchaseOrderModule() {
                 onTriggerAllocation={() => undefined}
                 loading={purchaseOrder.loading}
                 listLoading={purchaseOrder.listLoading}
+                detailLoading={purchaseOrder.detailLoading}
+                listError={purchaseOrder.listError}
+                detailError={purchaseOrder.detailError}
+                referenceError={purchaseOrder.referenceError}
+                onRetryList={purchaseOrder.retryList}
+                onRetryDetail={purchaseOrder.retryDetail}
                 serverList={{
                     total: purchaseOrder.listMeta.total,
                     totalPages: purchaseOrder.listMeta.totalPages,
@@ -38,6 +68,9 @@ export default function PurchaseOrderModule() {
                 priceTypeRules={purchaseOrder.priceTypeRules}
                 paymentTerms={purchaseOrder.paymentTerms}
                 jobOrders={purchaseOrder.jobOrders}
+                displayMode={mode}
+                backHref={backHref}
+                onExitCreate={mode === "create" ? handleExitCreate : undefined}
             />
         </div>
     );

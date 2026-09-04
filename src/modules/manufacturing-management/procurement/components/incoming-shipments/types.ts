@@ -97,6 +97,9 @@ export interface ShipmentFormState {
 }
 
 export interface IncomingShipmentsProps {
+    displayMode?: "split" | "queue" | "detail" | "create";
+    backHref?: string;
+    onExitCreate?: () => void;
     shipments: IncomingShipment[];
     suppliers: Supplier[];
     rawMaterials: RawMaterial[];
@@ -117,6 +120,12 @@ export interface IncomingShipmentsProps {
     onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     loading?: boolean;
     listLoading?: boolean;
+    detailLoading?: boolean;
+    listError?: string | null;
+    detailError?: string | null;
+    referenceError?: string | null;
+    onRetryList?: () => void;
+    onRetryDetail?: () => void;
     serverList?: {
         total: number;
         totalPages: number;

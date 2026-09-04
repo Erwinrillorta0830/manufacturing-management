@@ -1,50 +1,25 @@
-name: CI/CD Pipeline
+name: CD Pipeline
 
 on:
-  pull_request:
-    branches: [master]
   push:
     branches: [master]
 
 concurrency:
-  group: ci-cd-${{ github.ref }}
+  group: cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Lint, Build, and Deploy
-    runs-on: self-hosted # Runs directly on your Ubuntu server
+    name: Deploy to Production
+    runs-on: self-hosted 
     timeout-minutes: 20
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install deps
-        run: npm ci
-
-      - name: Lint
-        run: npx eslint . --max-warnings=0
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://localhost:8055
-          NEXT_PUBLIC_DIRECTUS_URL: http://localhost:8055
-          DIRECTUS_STATIC_TOKEN: placeholder
-          DIRECTUS_TOKEN: placeholder
-          NEXT_PUBLIC_DIRECTUS_STATIC_TOKEN: placeholder
-
-      - name: Restart PM2
-        # Only run this step if we are pushing to master, not on pull requests
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        run: pm2 restart "my-next-app" || pm2 start npm --name "my-next-app" -- start
+      - name: Pull Code, Build, and Restart
+        run: |
+          cd /home/vertex/manufacturing-management
+          git fetch --all
+          git reset --hard origin/master
+          npm ci
+          npm run build
+          pm2 restart "manufacturing-management" || pm2 start npm --name "manufacturing-management" -- start

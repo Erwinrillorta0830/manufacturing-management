@@ -176,18 +176,21 @@ export default function PhysicalInventoryManufacturingModule() {
 
     const handleSaveHeader = async (payload: {
         branch_id: number;
-        stock_type: StockType;
+        stock_type?: StockType;
         product_type_id?: number | null;
         price_type_id?: number | null;
-        starting_date: string;
-        cutoff_date: string;
-        remarks: string;
+        starting_date?: string;
+        cutoff_date?: string;
+        remarks?: string;
     }) => {
         try {
             setLoading(true);
             if (!activeSheet || !activeSheet.physical_inventory_id) {
                 // Create Header
-                const created = await createPhysicalInventoryHeader(payload);
+                const created = await createPhysicalInventoryHeader({
+                    ...payload,
+                    stock_type: payload.stock_type || "REGULAR",
+                });
                 setActiveSheet(created);
                 showToast(`Physical Inventory sheet ${created.pi_no} created.`);
                 const lList = await fetchLotsByBranch(payload.branch_id);
@@ -323,6 +326,41 @@ export default function PhysicalInventoryManufacturingModule() {
             showToast(msg, "error");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleSaveDraftBatch = async (
+        headerPayload?: { remarks?: string },
+        modifiedCounts?: Array<{ detailId: number; physical_count: number | null }>,
+        modifiedRemarks?: Array<{ detailId: number; remarks: string }>
+    ) => {
+        if (!activeSheet) return;
+        const sheetId = activeSheet.physical_inventory_id;
+        try {
+            if (headerPayload?.remarks !== undefined) {
+                await updatePhysicalInventoryHeader(sheetId, { remarks: headerPayload.remarks });
+            }
+            if (modifiedCounts && modifiedCounts.length > 0) {
+                for (const item of modifiedCounts) {
+                    await updatePhysicalInventoryDetail(sheetId, item.detailId, {
+                        physical_count: item.physical_count,
+                    });
+                }
+            }
+            if (modifiedRemarks && modifiedRemarks.length > 0) {
+                for (const item of modifiedRemarks) {
+                    await updatePhysicalInventoryDetail(sheetId, item.detailId, {
+                        remarks: item.remarks,
+                    });
+                }
+            }
+            const refreshed = await fetchPhysicalInventorySheet(sheetId);
+            setActiveSheet(refreshed);
+            showToast("Draft progress saved successfully.");
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to save draft progress";
+            showToast(msg, "error");
+            throw err;
         }
     };
 
@@ -548,6 +586,7 @@ export default function PhysicalInventoryManufacturingModule() {
                     onRemoveDetail={handleRemoveDetail}
                     onSaveInlineCount={handleSaveInlineCount}
                     onSaveInlineRemark={handleSaveInlineRemark}
+                    onSaveDraftBatch={handleSaveDraftBatch}
                     onOpenOffsettingModal={() => setIsOffsettingModalOpen(true)}
                     onSubmit={() => handleSubmitSheet()}
                     onReturnToDraft={() => handleReturnToDraft()}

@@ -22,19 +22,22 @@ import {
     SelectValue
 } from "@/components/ui/select";
 import { QAJOInspectionLog, QARejectionReason } from "../types";
+import { ResponsiveDataView } from "./ResponsiveDataView";
 
 interface QAInspectionLogsTableProps {
     logs: QAJOInspectionLog[];
     rejectionReasons: QARejectionReason[];
     loadingLogs: boolean;
     onRefresh: () => void;
+    onFiltersChange?: (filters: { search: string; status: string; reason: string }) => void;
 }
 
 export function QAInspectionLogsTable({
     logs,
     rejectionReasons,
     loadingLogs,
-    onRefresh
+    onRefresh,
+    onFiltersChange
 }: QAInspectionLogsTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
@@ -66,6 +69,42 @@ export function QAInspectionLogsTable({
         });
     }, [logs, searchQuery, statusFilter, reasonFilter]);
 
+    const filtersActive = searchQuery.length > 0 || statusFilter !== "all" || reasonFilter !== "all";
+    const clearFilters = () => {
+        setSearchQuery("");
+        setStatusFilter("all");
+        setReasonFilter("all");
+        onFiltersChange?.({ search: "", status: "all", reason: "all" });
+    };
+
+    const renderLogCard = (log: QAJOInspectionLog) => {
+        const isPassed = Number(log.rejected_quantity) === 0;
+        return (
+            <Card key={log.id} className="border p-4 shadow-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p className="font-mono text-sm font-bold text-foreground">{log.job_order_no || `JO-${log.job_order_id}`}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">Log #{log.id} · {log.inspected_at ? new Date(log.inspected_at).toLocaleDateString() : "N/A"}</p>
+                    </div>
+                    <Badge variant={isPassed ? "default" : "destructive"} className={isPassed ? "min-h-7 bg-emerald-600 text-sm" : "min-h-7 text-sm"}>
+                        {log.status || (isPassed ? "PASSED" : "REWORK_TRIGGERED")}
+                    </Badge>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div><dt className="text-muted-foreground">Product</dt><dd className="truncate font-semibold">{log.product_name || "Finished Good"}</dd></div>
+                    <div><dt className="text-muted-foreground">Inspected</dt><dd className="font-mono font-semibold">{Number(log.inspected_quantity).toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Passed</dt><dd className="font-mono font-semibold text-emerald-600">{Number(log.passed_quantity).toLocaleString()}</dd></div>
+                    <div><dt className="text-muted-foreground">Rejected</dt><dd className="font-mono font-semibold text-destructive">{Number(log.rejected_quantity).toLocaleString()}</dd></div>
+                </dl>
+                <div className="mt-3 space-y-1 text-sm">
+                    <p><span className="font-semibold text-muted-foreground">Defect:</span> {log.rejection_reason_name || log.rejection_reason_code || "None (Passed)"}</p>
+                    <p><span className="font-semibold text-muted-foreground">Rework:</span> {log.rework_job_order_no || (log.rework_job_order_id ? `JO-RWK #${log.rework_job_order_id}` : "N/A")}</p>
+                    {log.remarks && <p className="break-words"><span className="font-semibold text-muted-foreground">Remarks:</span> {log.remarks}</p>}
+                </div>
+            </Card>
+        );
+    };
+
     return (
         <Card className="border shadow-xs">
             <CardHeader className="p-5 border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -85,13 +124,13 @@ export function QAInspectionLogsTable({
                         <Input
                             placeholder="Search JO #, defect, or notes..."
                             value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                            className="pl-8 h-9 text-xs"
+                            onChange={e => { const search = e.target.value; setSearchQuery(search); onFiltersChange?.({ search, status: statusFilter, reason: reasonFilter }); }}
+                            className="pl-8 h-11 text-sm"
                         />
                     </div>
 
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="h-9 text-xs w-36">
+                    <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); onFiltersChange?.({ search: searchQuery, status: value, reason: reasonFilter }); }}>
+                        <SelectTrigger className="h-11 text-sm w-36">
                             <SelectValue placeholder="Result" />
                         </SelectTrigger>
                         <SelectContent>
@@ -102,8 +141,8 @@ export function QAInspectionLogsTable({
                     </Select>
 
                     {rejectionReasons.length > 0 && (
-                        <Select value={reasonFilter} onValueChange={setReasonFilter}>
-                            <SelectTrigger className="h-9 text-xs w-40">
+                        <Select value={reasonFilter} onValueChange={(value) => { setReasonFilter(value); onFiltersChange?.({ search: searchQuery, status: statusFilter, reason: value }); }}>
+                            <SelectTrigger className="h-11 text-sm w-40">
                                 <SelectValue placeholder="Defect Reason" />
                             </SelectTrigger>
                             <SelectContent className="max-h-56">
@@ -117,7 +156,10 @@ export function QAInspectionLogsTable({
                         </Select>
                     )}
 
-                    <Button variant="outline" size="sm" onClick={onRefresh} className="h-9 gap-1 text-xs">
+                    {filtersActive && <Button variant="outline" size="sm" onClick={clearFilters} className="min-h-11 gap-1 text-sm">
+                        Clear
+                    </Button>}
+                    <Button variant="outline" size="sm" onClick={onRefresh} className="min-h-11 gap-1 text-sm">
                         <RefreshCw className="h-3.5 w-3.5" />
                         Refresh
                     </Button>
@@ -139,7 +181,8 @@ export function QAInspectionLogsTable({
                         </p>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
+                    <ResponsiveDataView
+                        table={(
                         <Table>
                             <TableHeader>
                                 <TableRow className="bg-muted/30">
@@ -207,10 +250,10 @@ export function QAInspectionLogsTable({
                                             <TableCell className="text-xs">
                                                 {hasRejection && (log.rejection_reason_name || log.rejection_reason_code) ? (
                                                     <div className="flex items-center gap-1.5">
-                                                        <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 text-[9px] px-1 py-0 font-mono">
+                                                        <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20 text-[10px] px-1 py-0 font-mono">
                                                             {log.rejection_reason_code || "DEFECT"}
                                                         </Badge>
-                                                        <span className="text-foreground font-medium text-[11px] truncate max-w-[140px]" title={log.rejection_reason_name || ""}>
+                                                            <span className="text-foreground font-medium text-sm truncate max-w-[140px]" title={log.rejection_reason_name || ""}>
                                                             {log.rejection_reason_name}
                                                         </span>
                                                     </div>
@@ -239,7 +282,7 @@ export function QAInspectionLogsTable({
                                             <TableCell>
                                                 <Badge
                                                     variant={is100Pass ? "default" : "destructive"}
-                                                    className={`text-[9px] font-bold uppercase ${
+                                                    className={`text-[10px] font-bold uppercase ${
                                                         is100Pass ? "bg-emerald-600 text-white" : ""
                                                     }`}
                                                 >
@@ -256,7 +299,14 @@ export function QAInspectionLogsTable({
                                 })}
                             </TableBody>
                         </Table>
-                    </div>
+                        )}
+                        cards={(
+                            <div className="space-y-3 p-3">
+                                {filteredLogs.map(renderLogCard)}
+                            </div>
+                        )}
+                        minTableWidth="extraWide"
+                    />
                 )}
             </CardContent>
         </Card>

@@ -1,5 +1,5 @@
 import React from "react";
-import { Anchor, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles, Pencil, Check } from "lucide-react";
+import { Anchor, ArrowLeft, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkles, Pencil, Check } from "lucide-react";
 import {
     ManifestLineFormItem,
     ShipmentFormState,
@@ -25,6 +25,7 @@ export interface UOMOption {
 export interface ShipmentFormModalProps {
     isModalOpen: boolean;
     modalRef: React.RefObject<HTMLDivElement | null>;
+    presentation?: "modal" | "page";
     canonicalDrafting: boolean;
     editingShipmentId: number | null;
     activeShipment: IncomingShipment | null;
@@ -90,6 +91,7 @@ function cloneLine(line: ManifestLineFormItem): ManifestLineFormItem {
 export function ShipmentFormModal({
     isModalOpen,
     modalRef,
+    presentation = "modal",
     canonicalDrafting,
     editingShipmentId,
     activeShipment,
@@ -125,6 +127,7 @@ export function ShipmentFormModal({
 }: ShipmentFormModalProps) {
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
+    const isPage = presentation === "page";
 
     const deliveryTermsOptions = React.useMemo(() => {
         const options: Array<{ value: string; label: string }> = [...PURCHASE_ORDER_DELIVERY_TERMS];
@@ -243,21 +246,24 @@ export function ShipmentFormModal({
         handleSubmit(event);
     };
 
-    if (!isModalOpen) return null;
+    if (!isModalOpen && !isPage) return null;
 
     const currencyCode = shipmentForm.currency_code || "PHP";
     const exchangeRate = Number(shipmentForm.exchange_rate || 1);
     const exchangeRateLabel = shipmentForm.exchange_rate === "" ? "Pending" : `₱${exchangeRate}`;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-2 sm:p-4 overflow-y-auto">
+        <div className={isPage ? "w-full min-h-full" : "fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-md sm:p-4"}>
             <div
                 ref={modalRef}
-                role="dialog"
-                aria-modal="true"
+                role={isPage ? undefined : "dialog"}
+                aria-modal={isPage ? undefined : true}
                 aria-labelledby="purchase-order-dialog-title"
-                tabIndex={-1}
-                className="bg-card text-foreground w-full max-w-[98vw] xl:max-w-[1550px] border rounded-2xl shadow-2xl p-5 space-y-4 max-h-[94vh] flex flex-col transition-all duration-200"
+                tabIndex={isPage ? undefined : -1}
+                className={`w-full border bg-card p-5 text-foreground transition-all duration-200 ${isPage
+                    ? "min-h-full max-w-none rounded-2xl shadow-sm"
+                    : "max-h-[94vh] max-w-[98vw] rounded-2xl shadow-2xl xl:max-w-[1550px]"
+                    } flex flex-col space-y-4`}
             >
                 {/* Dialog Header */}
                 <div className="flex items-center justify-between border-b pb-3 shrink-0">
@@ -281,19 +287,30 @@ export function ShipmentFormModal({
                             </p>
                         </div>
                     </div>
-                    <button
-                        onClick={handleCloseModal}
-                        type="button"
-                        aria-label="Close dialog"
-                        title="Close dialog"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    >
-                        <X className="h-4 w-4" />
-                    </button>
+                    {isPage ? (
+                        <button
+                            onClick={handleCloseModal}
+                            type="button"
+                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-blue-600 bg-blue-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                        >
+                            <ArrowLeft className="h-3.5 w-3.5" />
+                            Back to Incoming Shipments
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleCloseModal}
+                            type="button"
+                            aria-label="Close dialog"
+                            title="Close dialog"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                            <X className="h-4 w-4" />
+                        </button>
+                    )}
                 </div>
 
                 <form onSubmit={handleFormSubmit} className="flex flex-col flex-1 min-h-0">
-                    <div className="space-y-4 overflow-y-auto pr-1 flex-1 pb-4">
+                    <div className={`flex-1 space-y-4 pr-1 pb-4 ${isPage ? "overflow-visible" : "overflow-y-auto"}`}>
                         {/* Header Ribbon / PO Metadata */}
                         <div className="p-4 bg-muted/20 border rounded-xl space-y-3">
                             <div className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
@@ -1008,7 +1025,7 @@ export function ShipmentFormModal({
                     </div>
 
                     {/* Dialog Action Buttons */}
-                    <div className="sticky bottom-0 border-t pt-3 flex items-center justify-between gap-2 shrink-0 bg-card mt-auto">
+                    <div className={`${isPage ? "" : "sticky bottom-0"} border-t pt-3 flex items-center justify-between gap-2 shrink-0 bg-card mt-auto`}>
                         <div className="ml-auto flex items-center gap-2">
                             <button
                                 onClick={handleCloseModal}

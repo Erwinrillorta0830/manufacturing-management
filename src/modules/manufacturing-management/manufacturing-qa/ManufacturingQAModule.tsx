@@ -37,6 +37,8 @@ import { OverrideDialog } from "./components/OverrideDialog";
 import { DailyQAQueue } from "./components/DailyQAQueue";
 import { FinalQAReleases } from "./components/FinalQAReleases";
 import { ClosedQAQueue } from "./components/ClosedQAQueue";
+import { PaginationControls } from "./components/PaginationControls";
+import { TabErrorState } from "./components/TabErrorState";
 
 export default function ManufacturingQAModule() {
     const {
@@ -67,6 +69,11 @@ export default function ManufacturingQAModule() {
         pendingHolds,
         activeJobOrders,
         closedJobOrders,
+        handleInspectionFiltersChange,
+        handleInspectionLogFiltersChange,
+        handleHoldsFiltersChange,
+        handleDailyFiltersChange,
+        handleFinalFiltersChange,
 
         // 2-Point QA Inspection Modal
         selectedQAJobOrder,
@@ -181,15 +188,63 @@ export default function ManufacturingQAModule() {
         // General
         refreshAll,
         isRefreshing,
-        getBranchName
+        getBranchName,
+        qaSummary,
+        tabErrors,
+        inspectionMeta,
+        inspectionPage,
+        inspectionPageSize,
+        setInspectionPage,
+        setInspectionPageSize,
+        logsMeta,
+        logsPage,
+        logsPageSize,
+        setLogsPage,
+        setLogsPageSize,
+        closingMeta,
+        closingPage,
+        closingPageSize,
+        setClosingPage,
+        setClosingPageSize,
+        holdsMeta,
+        holdsPage,
+        holdsPageSize,
+        setHoldsPage,
+        setHoldsPageSize,
+        dailyMeta,
+        dailyPage,
+        dailyPageSize,
+        setDailyPage,
+        setDailyPageSize,
+        finalMeta,
+        finalPage,
+        finalPageSize,
+        setFinalPage,
+        setFinalPageSize,
+        closedMeta,
+        closedPage,
+        closedPageSize,
+        setClosedPage,
+        setClosedPageSize
     } = useManufacturingQA();
 
+    const [lastSyncedAt, setLastSyncedAt] = React.useState<Date | null>(null);
+    const tabListRef = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+        const activeTrigger = tabListRef.current?.querySelector<HTMLElement>('[data-state="active"]');
+        activeTrigger?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }, [activeTab]);
+    const handleSync = async () => {
+        await refreshAll(false);
+        setLastSyncedAt(new Date());
+    };
+
     return (
-        <div className="space-y-6">
+        <div className="min-w-0 max-w-full space-y-6">
             {/* Header section */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5">
                 <div>
-                    <h1 className="text-3xl font-extrabold tracking-tight flex items-center gap-2.5">
+                    <h1 className="flex items-center gap-2.5 text-2xl font-extrabold tracking-tight sm:text-3xl">
                         <ShieldCheck className="h-8 w-8 text-primary" />
                         Quality Assurance & Rework Console
                     </h1>
@@ -201,18 +256,28 @@ export default function ManufacturingQAModule() {
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={async () => { await refreshAll(false); }}
+                        onClick={handleSync}
                         disabled={isRefreshing}
                         className="gap-1.5 text-xs font-semibold"
                     >
                         <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                         {isRefreshing ? "Syncing..." : "Sync Console"}
                     </Button>
+                    <span className="text-xs text-muted-foreground" aria-live="polite">
+                        {lastSyncedAt ? `Last synced ${lastSyncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Live console"}
+                    </span>
                 </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">QA Job Orders</p><p className="mt-1 text-xl font-bold">{qaSummary?.jobOrderCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Active Runs</p><p className="mt-1 text-xl font-bold">{qaSummary?.activeJobOrderCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Inspection Logs</p><p className="mt-1 text-xl font-bold">{qaSummary?.inspectionLogCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Pending Holds</p><p className="mt-1 text-xl font-bold text-destructive">{qaSummary?.pendingHoldCount ?? "—"}</p></div>
+            </div>
+
             {/* Quarantine/Active Holds Banner if any holds exist */}
-            {pendingHolds.length > 0 && (
+            {(holdsMeta.total > 0 || pendingHolds.length > 0) && (
                 <div className="relative overflow-hidden rounded-xl border border-destructive/30 bg-destructive/5 p-4 md:p-6 text-destructive-foreground flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300">
                     <div className="flex items-start gap-4">
                         <div className="p-3 bg-destructive/15 rounded-lg text-destructive shrink-0 mt-0.5 md:mt-0">
@@ -221,7 +286,7 @@ export default function ManufacturingQAModule() {
                         <div>
                             <h2 className="text-lg font-bold text-destructive flex items-center gap-2">
                                 Active Quarantine Hold Detected
-                                <Badge variant="destructive" className="animate-pulse">{pendingHolds.length} Pending</Badge>
+                                <Badge variant="destructive" className="animate-pulse">{holdsMeta.total || pendingHolds.length} Pending</Badge>
                             </h2>
                             <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
                                 Job Order routing steps have recorded critical limits failures. All subsequent execution holds are locked pending Supervisor overrides.
@@ -241,49 +306,49 @@ export default function ManufacturingQAModule() {
             )}
 
             {/* Main Tabs Dashboard */}
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-                <TabsList className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1 h-auto p-1.5 bg-muted/60 rounded-xl border">
-                    <TabsTrigger value="jo-inspection" className="text-xs font-bold gap-1.5 py-2">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 space-y-4">
+                <TabsList ref={tabListRef} className="w-full max-w-full justify-start gap-1 overflow-x-auto overscroll-x-contain rounded-xl border bg-muted/60 p-1.5 scrollbar-thin">
+                    <TabsTrigger value="jo-inspection" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <ClipboardCheck className="h-3.5 w-3.5" />
                         QA & Rework Entry
                     </TabsTrigger>
 
-                    <TabsTrigger value="qa-inspection-logs" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="qa-inspection-logs" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <FileText className="h-3.5 w-3.5" />
                         Inspection Logs
                         {inspectionLogs.length > 0 && (
                             <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
-                                {inspectionLogs.length}
+                                {logsMeta.total || inspectionLogs.length}
                             </Badge>
                         )}
                     </TabsTrigger>
 
-                    <TabsTrigger value="closing" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="closing" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <Forklift className="h-3.5 w-3.5" />
                         Yield Closing
                     </TabsTrigger>
 
-                    <TabsTrigger value="holds" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="holds" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <BadgeAlert className="h-3.5 w-3.5" />
                         Quarantine Holds
                         {pendingHolds.length > 0 && (
                             <Badge variant="destructive" className="text-[10px] px-1 py-0 ml-1">
-                                {pendingHolds.length}
+                                {holdsMeta.total || pendingHolds.length}
                             </Badge>
                         )}
                     </TabsTrigger>
 
-                    <TabsTrigger value="daily-qa" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="daily-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <Sparkles className="h-3.5 w-3.5" />
                         Daily Yield QA
                     </TabsTrigger>
 
-                    <TabsTrigger value="final-qa" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="final-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <CheckCircle2 className="h-3.5 w-3.5" />
                         Final QA Release
                     </TabsTrigger>
 
-                    <TabsTrigger value="closed-qa" className="text-xs font-bold gap-1.5 py-2">
+                    <TabsTrigger value="closed-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <Printer className="h-3.5 w-3.5" />
                         Closed Runs
                     </TabsTrigger>
@@ -291,50 +356,66 @@ export default function ManufacturingQAModule() {
 
                 {/* TAB 1: Primary Module 4 Job Order QA & Rework Inspection Workcenter */}
                 <TabsContent value="jo-inspection" className="space-y-4 outline-none">
-                    <JobOrderQAInspectionQueue
-                        jobOrders={jobOrders}
-                        loadingJobOrders={loadingJobOrders}
-                        getBranchName={getBranchName}
-                        onOpenQAInspectionModal={handleOpenQAInspectionModal}
-                        onOpenStatusHistoryModal={handleOpenStatusHistoryModal}
-                        onRefresh={() => refreshAll(false)}
-                    />
+                    {tabErrors["jo-inspection"] ? <TabErrorState message={tabErrors["jo-inspection"]} onRetry={() => { void refreshAll(false); }} /> : <>
+                        <JobOrderQAInspectionQueue
+                            jobOrders={jobOrders}
+                            loadingJobOrders={loadingJobOrders}
+                            getBranchName={getBranchName}
+                            onOpenQAInspectionModal={handleOpenQAInspectionModal}
+                            onOpenStatusHistoryModal={handleOpenStatusHistoryModal}
+                            onRefresh={() => refreshAll(false)}
+                            onFiltersChange={handleInspectionFiltersChange}
+                        />
+                        <PaginationControls meta={inspectionMeta} onPageChange={setInspectionPage} onPageSizeChange={(size) => { setInspectionPageSize(size); setInspectionPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 2: Immutable QA Inspection Logs (qa_jo_inspection_logs) */}
                 <TabsContent value="qa-inspection-logs" className="space-y-4 outline-none">
-                    <QAInspectionLogsTable
-                        logs={inspectionLogs}
-                        rejectionReasons={rejectionReasons}
-                        loadingLogs={loadingInspectionLogs}
-                        onRefresh={() => refreshAll(false)}
-                    />
+                    {tabErrors["qa-inspection-logs"] ? <TabErrorState message={tabErrors["qa-inspection-logs"]} onRetry={() => { void refreshAll(false); }} /> : <>
+                        <QAInspectionLogsTable
+                            logs={inspectionLogs}
+                            rejectionReasons={rejectionReasons}
+                            loadingLogs={loadingInspectionLogs}
+                            onRefresh={() => refreshAll(false)}
+                            onFiltersChange={handleInspectionLogFiltersChange}
+                        />
+                        <PaginationControls meta={logsMeta} onPageChange={setLogsPage} onPageSizeChange={(size) => { setLogsPageSize(size); setLogsPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 3: Yield Closing (Packaging & Ledger Receipting) */}
                 <TabsContent value="closing" className="space-y-4 outline-none">
-                    <YieldClosingQueue
-                        loadingJobOrders={loadingJobOrders}
-                        activeJobOrders={activeJobOrders}
-                        joSearch={joSearch}
-                        setJoSearch={setJoSearch}
-                        getBranchName={getBranchName}
-                        handleOpenYieldDialog={handleOpenYieldDialog}
-                        pendingHolds={pendingHolds}
-                    />
+                    {tabErrors.closing ? <TabErrorState message={tabErrors.closing} onRetry={() => { void refreshAll(false); }} /> : <>
+                        <YieldClosingQueue
+                            loadingJobOrders={loadingJobOrders}
+                            activeJobOrders={activeJobOrders}
+                            joSearch={joSearch}
+                            setJoSearch={setJoSearch}
+                            getBranchName={getBranchName}
+                            handleOpenYieldDialog={handleOpenYieldDialog}
+                            pendingHolds={pendingHolds}
+                        />
+                        <PaginationControls meta={closingMeta} onPageChange={setClosingPage} onPageSizeChange={(size) => { setClosingPageSize(size); setClosingPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 4: Active Quarantine Holds */}
                 <TabsContent value="holds" className="space-y-4 outline-none">
-                    <QuarantineHolds
-                        loadingDispositions={loadingDispositions}
-                        pendingHolds={pendingHolds}
-                        handleOpenOverrideDialog={handleOpenOverrideDialog}
-                    />
+                    {tabErrors.holds ? <TabErrorState message={tabErrors.holds} onRetry={() => { void refreshAll(false); }} /> : <>
+                        <QuarantineHolds
+                            loadingDispositions={loadingDispositions}
+                            pendingHolds={pendingHolds}
+                            handleOpenOverrideDialog={handleOpenOverrideDialog}
+                            onFiltersChange={handleHoldsFiltersChange}
+                        />
+                        <PaginationControls meta={holdsMeta} onPageChange={setHoldsPage} onPageSizeChange={(size) => { setHoldsPageSize(size); setHoldsPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 5: Daily Yield QA */}
                 <TabsContent value="daily-qa" className="space-y-4 outline-none">
+                    {tabErrors["daily-qa"] ? <TabErrorState message={tabErrors["daily-qa"]} onRetry={() => { void refreshAll(false); }} /> : <>
                     <DailyQAQueue
                         yieldLedger={yieldLedger}
                         dailyInspections={dailyInspections}
@@ -367,11 +448,15 @@ export default function ManufacturingQAModule() {
                         qaTemplates={qaTemplates}
                         qaParamValues={qaParamValues}
                         setQaParamValues={setQaParamValues}
+                        onFiltersChange={handleDailyFiltersChange}
                     />
+                    <PaginationControls meta={dailyMeta} onPageChange={setDailyPage} onPageSizeChange={(size) => { setDailyPageSize(size); setDailyPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 6: Final QA Release */}
                 <TabsContent value="final-qa" className="space-y-4 outline-none">
+                    {tabErrors["final-qa"] ? <TabErrorState message={tabErrors["final-qa"]} onRetry={() => { void refreshAll(false); }} /> : <>
                     <FinalQAReleases
                         lots={lots}
                         lotsProducts={lotsProducts}
@@ -407,11 +492,15 @@ export default function ManufacturingQAModule() {
                         handleOpenFinalQAAudit={handleOpenFinalQAAudit}
                         handlePrintFinalQACoa={handlePrintFinalQACoa}
                         coaPrintLoading={coaPrintLoading}
+                        onFiltersChange={handleFinalFiltersChange}
                     />
+                    <PaginationControls meta={finalMeta} onPageChange={setFinalPage} onPageSizeChange={(size) => { setFinalPageSize(size); setFinalPage(1); }} />
+                    </>}
                 </TabsContent>
 
                 {/* TAB 7: Closed QA (Reprintable Completed Runs) */}
                 <TabsContent value="closed-qa" className="space-y-4 outline-none">
+                    {tabErrors["closed-qa"] ? <TabErrorState message={tabErrors["closed-qa"]} onRetry={() => { void refreshAll(false); }} /> : <>
                     <ClosedQAQueue
                         loadingJobOrders={loadingJobOrders}
                         closedJobOrders={closedJobOrders}
@@ -420,6 +509,8 @@ export default function ManufacturingQAModule() {
                         getBranchName={getBranchName}
                         handleReprintReceipt={handleReprintReceipt}
                     />
+                    <PaginationControls meta={closedMeta} onPageChange={setClosedPage} onPageSizeChange={(size) => { setClosedPageSize(size); setClosedPage(1); }} />
+                    </>}
                 </TabsContent>
             </Tabs>
 

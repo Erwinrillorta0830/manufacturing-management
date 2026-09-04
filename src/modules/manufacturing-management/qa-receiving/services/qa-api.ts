@@ -68,6 +68,32 @@ export async function fetchShipmentDetails(shipmentId: number, signal?: AbortSig
     return body.data || [];
 }
 
+export async function fetchQaReceivingDetail(
+    shipmentId: number,
+    replacementDispositionId?: number,
+    signal?: AbortSignal
+): Promise<{
+    shipment: Shipment;
+    lineItems: ShipmentLineItem[];
+    replacementDisposition: QuarantineDisposition | null;
+}> {
+    const params = new URLSearchParams();
+    if (replacementDispositionId) params.set("replacementDispositionId", String(replacementDispositionId));
+    const query = params.toString();
+    const res = await fetch(`/api/manufacturing/qa-receiving/${encodeURIComponent(String(shipmentId))}${query ? `?${query}` : ""}`, { signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Failed to load QA receiving details.");
+    const data = body.data;
+    if (!data?.shipment || !Array.isArray(data.lineItems)) {
+        throw new Error("QA receiving details returned an invalid response.");
+    }
+    return {
+        shipment: data.shipment as Shipment,
+        lineItems: data.lineItems as ShipmentLineItem[],
+        replacementDisposition: data.replacementDisposition || null
+    };
+}
+
 export async function fetchProductQaSpecifications(productId: number, signal?: AbortSignal): Promise<QaSpecification[]> {
     const params = new URLSearchParams({ productId: String(productId) });
     const res = await fetch(`/api/manufacturing/qa/specifications?${params.toString()}`, { signal });

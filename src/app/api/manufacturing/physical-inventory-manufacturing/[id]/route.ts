@@ -29,6 +29,19 @@ export async function GET(_request: NextRequest, context: RouteParams) {
 
         const headerData = (await headerRes.json()).data;
 
+        // Extract offset_pairings if stored in remarks
+        let offsetPairings = [];
+        if (headerData?.remarks && typeof headerData.remarks === "string" && headerData.remarks.includes("__OFFSET_DATA__:")) {
+            try {
+                const parts = headerData.remarks.split("__OFFSET_DATA__:");
+                if (parts.length > 1) {
+                    offsetPairings = JSON.parse(parts[1].trim());
+                }
+            } catch {
+                offsetPairings = [];
+            }
+        }
+
         // Fetch details
         const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1&fields=*,inventory_lot_id.*,lot_id.*,lot_id.unit_id.*,product_id.*,product_id.product_type.*,product_id.unit_of_measurement.*,unit_id.*`;
         const detailsRes = await fetch(detailsUrl, { headers, cache: "no-store" });
@@ -42,6 +55,7 @@ export async function GET(_request: NextRequest, context: RouteParams) {
             data: {
                 ...headerData,
                 details: detailsData,
+                offset_pairings: offsetPairings,
             },
         });
     } catch (error: unknown) {
@@ -56,15 +70,41 @@ function areDatesEqual(d1: unknown, d2: unknown): boolean {
     const str1 = String(d1).trim();
     const str2 = String(d2).trim();
     if (str1 === str2) return true;
+
+    const toMinuteStr = (val: string): string => {
+        if (!val) return "";
+        const s = val.trim();
+        let datePart = "";
+        let timePart = "00:00";
+        if (s.includes("T")) {
+            const parts = s.split("T");
+            datePart = parts[0];
+            timePart = (parts[1] || "").slice(0, 5);
+        } else if (s.includes(" ")) {
+            const parts = s.split(" ");
+            datePart = parts[0];
+            timePart = (parts[1] || "").slice(0, 5);
+        } else {
+            datePart = s;
+        }
+        return `${datePart}T${timePart}`;
+    };
+
+    const m1 = toMinuteStr(str1);
+    const m2 = toMinuteStr(str2);
+    if (m1 && m2 && m1 === m2) return true;
+
     const t1 = new Date(str1).getTime();
     const t2 = new Date(str2).getTime();
-    if (!isNaN(t1) && !isNaN(t2)) return t1 === t2;
+    if (!isNaN(t1) && !isNaN(t2)) {
+        return Math.abs(t1 - t2) < 60000;
+    }
     return false;
 }
 
 /**
  * PATCH /api/manufacturing/physical-inventory-manufacturing/[id]
- * Update draft Physical Inventory header metadata (remarks, dates, product_type_id, price_type_id)
+ * Update draft Physical Inventory header metadata (remarks, dates, product_type_id, price_type_id, offset_pairings)
  */
 export async function PATCH(request: NextRequest, context: RouteParams) {
     try {
@@ -84,8 +124,18 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
         const isCommitted = parseBooleanFlag(sheet.isCommitted);
         const isCancelled = parseBooleanFlag(sheet.isCancelled);
 
-        if (statusUpper !== "DRAFT" || isCommitted || isCancelled) {
-            return NextResponse.json({ success: false, error: "Committed or cancelled physical inventory records cannot be edited." }, { status: 400 });
+        const body = await request.json();
+        const { starting_date, cutoff_date, remarks, stock_type, product_type_id, price_type_id, offset_pairings } = body;
+
+        const hasStructuralChange =
+            (starting_date !== undefined && !areDatesEqual(starting_date, sheet.starting_date)) ||
+            (cutoff_date !== undefined && !areDatesEqual(cutoff_date, sheet.cutoff_date)) ||
+            (price_type_id !== undefined && extractId(price_type_id, "price_type_id") !== extractId(sheet.price_type_id, "price_type_id")) ||
+            (product_type_id !== undefined && extractId(product_type_id, "product_type_id") !== extractId(sheet.product_type_id, "product_type_id")) ||
+            (stock_type !== undefined && stock_type !== sheet.stock_type);
+
+        if (isCancelled || (hasStructuralChange && (statusUpper !== "DRAFT" || isCommitted))) {
+            return NextResponse.json({ success: false, error: "Cancelled physical inventory records or committed structural headers cannot be edited." }, { status: 400 });
         }
 
         // Check if count details already exist for this sheet
@@ -94,28 +144,16 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
         const existingDetails = detailsRes.ok ? ((await detailsRes.json()).data || []) : [];
         const hasDetails = existingDetails.length > 0;
 
-        const body = await request.json();
-        const { starting_date, cutoff_date, remarks, stock_type, product_type_id, price_type_id } = body;
-
-        if (hasDetails) {
-            const hasStartingDateChange = starting_date !== undefined && !areDatesEqual(starting_date, sheet.starting_date);
-            const hasCutoffDateChange = cutoff_date !== undefined && !areDatesEqual(cutoff_date, sheet.cutoff_date);
-            const hasPriceTypeChange = price_type_id !== undefined && extractId(price_type_id) !== extractId(sheet.price_type_id);
-            const hasProductTypeChange = product_type_id !== undefined && extractId(product_type_id) !== extractId(sheet.product_type_id);
-            const hasStockTypeChange = stock_type !== undefined && stock_type !== sheet.stock_type;
-
-            if (hasStartingDateChange || hasCutoffDateChange || hasPriceTypeChange || hasProductTypeChange || hasStockTypeChange) {
-                return NextResponse.json({
-                    success: false,
-                    error: "Critical header controls (Starting Date, Cutoff Date, Price Type Basis, Product Type Filter, Stock Count Type) cannot be modified once line items have been logged in an active audit sheet."
-                }, { status: 400 });
-            }
+        if (hasDetails && hasStructuralChange) {
+            return NextResponse.json({
+                success: false,
+                error: "Critical header controls (Starting Date, Cutoff Date, Price Type Basis, Product Type Filter, Stock Count Type) cannot be modified once line items have been logged in an active audit sheet."
+            }, { status: 400 });
         }
 
         const updatePayload: Record<string, unknown> = {};
         if (starting_date) updatePayload.starting_date = starting_date;
         if (cutoff_date) updatePayload.cutoff_date = cutoff_date;
-        if (remarks !== undefined) updatePayload.remarks = remarks ? String(remarks).trim() : null;
         if (stock_type && (stock_type === "OPENING" || stock_type === "REGULAR")) {
             updatePayload.stock_type = stock_type;
         }
@@ -126,6 +164,25 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
         if (price_type_id !== undefined) {
             newPriceTypeId = price_type_id ? extractId(price_type_id) : null;
             updatePayload.price_type_id = newPriceTypeId;
+        }
+
+        // Process remarks and embedded offset_pairings
+        let baseRemarks = remarks !== undefined ? (remarks ? String(remarks).trim() : "") : (sheet.remarks ? String(sheet.remarks) : "");
+        if (baseRemarks.includes("__OFFSET_DATA__:")) {
+            baseRemarks = baseRemarks.split("__OFFSET_DATA__:")[0].trim();
+        }
+
+        if (Array.isArray(offset_pairings)) {
+            updatePayload.remarks = offset_pairings.length > 0
+                ? (baseRemarks ? `${baseRemarks}\n__OFFSET_DATA__:${JSON.stringify(offset_pairings)}` : `__OFFSET_DATA__:${JSON.stringify(offset_pairings)}`)
+                : (baseRemarks || null);
+        } else if (remarks !== undefined) {
+            if (sheet.remarks && typeof sheet.remarks === "string" && sheet.remarks.includes("__OFFSET_DATA__:")) {
+                const offsetPart = sheet.remarks.substring(sheet.remarks.indexOf("__OFFSET_DATA__:"));
+                updatePayload.remarks = baseRemarks ? `${baseRemarks}\n${offsetPart}` : offsetPart;
+            } else {
+                updatePayload.remarks = baseRemarks || null;
+            }
         }
 
         const updateUrl = `${DIRECTUS_URL}/items/mm_physical_inventory/${sheetId}`;
@@ -140,9 +197,9 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
             throw new Error(`Failed to update PI header: ${errText}`);
         }
 
-        // Recalculate prices for all detail rows using the active price_type_id
+        // Recalculate prices for all detail rows using the active price_type_id if updated
         const activePriceTypeId = newPriceTypeId !== null ? newPriceTypeId : extractId(sheet.price_type_id);
-        if (activePriceTypeId > 0) {
+        if (newPriceTypeId !== null && activePriceTypeId > 0) {
             try {
                 const detailsUrl = `${DIRECTUS_URL}/items/mm_physical_inventory_details?filter[physical_inventory_id][_eq]=${sheetId}&limit=-1`;
                 const detailsRes = await fetch(detailsUrl, { headers, cache: "no-store" });
@@ -178,7 +235,25 @@ export async function PATCH(request: NextRequest, context: RouteParams) {
         }
 
         const updatedData = (await res.json()).data;
-        return NextResponse.json({ success: true, data: updatedData });
+        let parsedOffsetPairings = Array.isArray(offset_pairings) ? offset_pairings : [];
+        if (!Array.isArray(offset_pairings) && updatedData?.remarks && typeof updatedData.remarks === "string" && updatedData.remarks.includes("__OFFSET_DATA__:")) {
+            try {
+                const parts = updatedData.remarks.split("__OFFSET_DATA__:");
+                if (parts.length > 1) {
+                    parsedOffsetPairings = JSON.parse(parts[1].trim());
+                }
+            } catch {
+                parsedOffsetPairings = [];
+            }
+        }
+
+        return NextResponse.json({
+            success: true,
+            data: {
+                ...updatedData,
+                offset_pairings: parsedOffsetPairings,
+            },
+        });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";
         return NextResponse.json({ success: false, error: msg }, { status: 500 });

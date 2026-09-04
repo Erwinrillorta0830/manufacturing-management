@@ -89,6 +89,8 @@ export function extractId(value: unknown, defaultKey = "id"): number {
         const record = value as Record<string, unknown>;
         const raw =
             (defaultKey && defaultKey !== "id" ? record[defaultKey] : undefined) ??
+            (defaultKey === "price_type_id" ? record.price_type_id : undefined) ??
+            (defaultKey === "product_type_id" ? record.product_type_id : undefined) ??
             record.lot_id ??
             record.inventory_lot_id ??
             record.draft_batch_id ??

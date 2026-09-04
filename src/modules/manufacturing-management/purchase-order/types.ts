@@ -24,6 +24,13 @@ export interface PurchaseOrderListResponse<T> {
     meta: PurchaseOrderListMeta;
 }
 
+export interface PurchaseOrderDetailResponse {
+    data: {
+        shipment: import("../procurement/types").IncomingShipment;
+        lines: import("../procurement/types").ShipmentLineItem[];
+    };
+}
+
 export interface PurchaseOrderListQuery {
     page?: number;
     limit?: number;
@@ -198,4 +205,12 @@ export interface PurchaseOrderApprovalCommand {
     workflowRevision: number;
     expectedRuleId?: number;
     remarks?: string;
+}
+
+export interface FinanceApprovalDetailResponse {
+    data: {
+        shipment: import("../procurement/types").IncomingShipment;
+        lineItems: import("../procurement/types").ShipmentLineItem[];
+        approvalDetail: PurchaseOrderApprovalDetail;
+    };
 }

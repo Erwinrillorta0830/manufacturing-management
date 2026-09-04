@@ -13,6 +13,7 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
+import { paginate } from "../../_pagination";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -30,6 +31,108 @@ async function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
     }
+}
+
+function mapQAQueueStatus(value: unknown): string {
+    const status = String(value || "").trim().toLowerCase();
+    if (status === "released" || status === "proceed") return "Proceed";
+    if (status === "in progress" || status === "ongoing") return "Ongoing";
+    if (status === "completed" || status === "finished" || status === "closed") return "Finished";
+    if (status === "on hold" || status === "qa hold") return "On Hold";
+    if (status === "draft") return "Draft";
+    if (status === "planned") return "Planned";
+    if (status === "planning") return "Planning";
+    return String(value || "Unknown");
+}
+
+async function fetchQAJobOrderQueue(searchParams: URLSearchParams) {
+    const queue = searchParams.get("queue") || "inspection";
+    const search = (searchParams.get("search") || "").trim().toLowerCase();
+    const requestedStatus = (searchParams.get("status") || "").trim().toLowerCase();
+    const requestedType = (searchParams.get("type") || "").trim().toLowerCase();
+    const requestedBranch = searchParams.get("branch") || searchParams.get("branchId") || "";
+
+    const [jobOrdersRes, productsRes, yieldsRes] = await Promise.all([
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=job_order_id,yield_quantity,qa_status,lot_number,logged_at`, { headers, cache: "no-store" })
+    ]);
+
+    if (!jobOrdersRes.ok) {
+        throw new Error(`Failed to fetch QA Job Orders (${jobOrdersRes.status})`);
+    }
+
+    const jobOrders = (await jobOrdersRes.json()).data || [];
+    const products = productsRes.ok ? (await productsRes.json()).data || [] : [];
+    const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
+    const productMap = new Map<number, any>(products.map((product: any) => [Number(product.product_id), product]));
+    const yieldsByJobOrder = new Map<number, any[]>();
+
+    yields.forEach((yieldRow: any) => {
+        const jobOrderId = Number(yieldRow.job_order_id || 0);
+        if (!jobOrderId) return;
+        const existing = yieldsByJobOrder.get(jobOrderId) || [];
+        existing.push(yieldRow);
+        yieldsByJobOrder.set(jobOrderId, existing);
+    });
+
+    const rows = jobOrders
+        .map((jobOrder: any) => {
+            const id = Number(jobOrder.job_order_id || jobOrder.id || 0);
+            const product = productMap.get(Number(jobOrder.product_id));
+            const yieldLogs = yieldsByJobOrder.get(id) || [];
+            const producedQuantity = yieldLogs.reduce((sum, row) => sum + Number(row.yield_quantity || 0), 0);
+            const status = mapQAQueueStatus(jobOrder.status);
+            const jobOrderNo = String(jobOrder.job_order_no || `JO-${id}`);
+            const isRework = jobOrderNo.toLowerCase().includes("-rwk-") || Number(jobOrder.parent_job_order_id || 0) > 0;
+
+            return {
+                id,
+                job_order_id: id,
+                jo_id: jobOrderNo,
+                job_order_no: jobOrderNo,
+                order_id: id,
+                parent_job_order_id: jobOrder.parent_job_order_id || null,
+                parent_job_order_no: jobOrder.parent_job_order_no || null,
+                product_id: Number(jobOrder.product_id || 0),
+                product_name: product?.product_name || `Product #${jobOrder.product_id || 0}`,
+                product_code: product?.product_code || "",
+                version_id: jobOrder.version_id || null,
+                target_quantity: Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0),
+                quantity: Number(jobOrder.target_quantity ?? jobOrder.quantity ?? 0),
+                completed_quantity: producedQuantity,
+                actual_quantity_produced: producedQuantity,
+                rejected_quantity: Number(jobOrder.rejected_quantity || 0),
+                due_date: jobOrder.end_date || jobOrder.due_date || null,
+                start_date: jobOrder.start_date || null,
+                status,
+                branch_id: jobOrder.branch_id || null,
+                recipe_version_name: jobOrder.version_id ? `Version #${jobOrder.version_id}` : null,
+                yield_logs: yieldLogs,
+                is_rework: isRework
+            };
+        })
+        .filter((jobOrder: any) => {
+            const normalizedStatus = String(jobOrder.status).toLowerCase();
+            const isFinished = ["finished", "completed", "closed"].includes(normalizedStatus);
+            const isCancelled = normalizedStatus === "cancelled";
+            if (queue === "closing" && (isFinished || isCancelled)) return false;
+            if (queue === "closed" && !isFinished) return false;
+            if (requestedStatus === "awaiting" && (isFinished || isCancelled)) return false;
+            if (requestedStatus === "completed" && !isFinished) return false;
+            if (requestedStatus === "on_hold" && !["on hold", "qa hold"].includes(normalizedStatus)) return false;
+            if (requestedStatus && !["awaiting", "completed", "on_hold"].includes(requestedStatus) && normalizedStatus !== requestedStatus) return false;
+            if (requestedType === "rework" && !jobOrder.is_rework) return false;
+            if (requestedType === "standard" && jobOrder.is_rework) return false;
+            if (requestedBranch && String(jobOrder.branch_id || "") !== requestedBranch) return false;
+            if (search) {
+                const haystack = `${jobOrder.jo_id} ${jobOrder.product_name} ${jobOrder.product_code}`.toLowerCase();
+                if (!haystack.includes(search)) return false;
+            }
+            return true;
+        });
+
+    return paginate(rows, searchParams);
 }
 
 export async function handleGET(request: Request) {
@@ -151,6 +254,10 @@ export async function handleGET(request: Request) {
             });
 
             return NextResponse.json(versionStockMap);
+        }
+
+        if (action === "qa-job-orders") {
+            return NextResponse.json(await fetchQAJobOrderQueue(searchParams));
         }
 
         if (action === "job-materials") {
