@@ -1,19 +1,17 @@
-name: CI/CD Pipeline
+name: CD Pipeline
 
 on:
-  pull_request:
-    branches: [master]
   push:
     branches: [master]
 
 concurrency:
-  group: ci-cd-${{ github.ref }}
+  group: cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Lint, Build, and Deploy
-    runs-on: self-hosted # Runs directly on your Ubuntu server
+    name: Deploy to Production
+    runs-on: self-hosted 
     timeout-minutes: 20
 
     steps:
@@ -29,12 +27,6 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Lint
-        run: npx eslint . --max-warnings=0
-
-      - name: Typecheck
-        run: npm run typecheck
-
       - name: Build
         run: npm run build
         env:
@@ -45,6 +37,4 @@ jobs:
           NEXT_PUBLIC_DIRECTUS_STATIC_TOKEN: placeholder
 
       - name: Restart PM2
-        # Only run this step if we are pushing to master, not on pull requests
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        run: pm2 restart "my-next-app" || pm2 start npm --name "my-next-app" -- start
+        run: pm2 restart "manufacturing-management" || pm2 start npm --name "manufacturing-management" -- start
