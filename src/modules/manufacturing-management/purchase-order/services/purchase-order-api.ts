@@ -6,6 +6,7 @@ import type {
     PurchaseOrderDecisionStage,
     PurchaseOrderDraftPayload,
     PurchaseOrderDraftResponse,
+    FinanceApprovalDetailResponse,
     PurchaseOrderListQuery,
     PurchaseOrderListResponse,
     PurchaseOrderRevisionResponse
@@ -105,6 +106,11 @@ export async function fetchPurchaseOrderApproval(id: number, approvalStage: Purc
     const response = await fetch(`/api/manufacturing/purchase-orders/${id}/approvals?${params.toString()}`, { signal });
     const body = await responseJson<{ data: PurchaseOrderApprovalDetail }>(response, "Failed to load purchase-order approval details.");
     return body.data;
+}
+
+export async function fetchFinanceApprovalDetail(id: number, signal?: AbortSignal) {
+    const response = await fetch(`/api/manufacturing/purchase-orders/${id}/finance-approval`, { signal });
+    return responseJson<FinanceApprovalDetailResponse>(response, "Failed to load Finance approval details.");
 }
 
 export async function submitPurchaseOrderWorkflowAction(id: number, payload: PurchaseOrderApprovalCommand, approvalStage: PurchaseOrderDecisionStage) {
