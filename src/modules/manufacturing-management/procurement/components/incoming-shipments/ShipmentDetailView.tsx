@@ -22,7 +22,7 @@ export interface ShipmentDetailViewProps {
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
-    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
+    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     handleStartEdit: () => void;
     onPrintPurchaseOrder?: () => void;
     printLoading?: boolean;
@@ -269,10 +269,10 @@ export function ShipmentDetailView({
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
                                 <div className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">{canonicalDrafting ? "Purchase Order Workflow Progress" : "Shipment Life Cycle Progress"}</div>
                                 <div className="w-full overflow-x-auto">
-                                    <div className="relative flex min-w-[520px] items-center py-2">
+                                    <div className="relative flex min-w-[760px] items-center overflow-visible py-3">
                                     {(effectiveStatus === "Rejected"
                                         ? [initialWorkflowStatus, "Approved", "Rejected"]
-                                        : [initialWorkflowStatus, "Approved", "Receiving (QA)", "Received"]
+                                        : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
                                         const isInitialWorkflowStatus = effectiveStatus === initialWorkflowStatus
@@ -284,12 +284,15 @@ export function ShipmentDetailView({
                                             ? "Receiving (QA)"
                                             : effectiveStatus === "Awaiting Payment"
                                             ? (Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED ? "Approved" : initialWorkflowStatus)
+                                            : effectiveStatus === "Approved" && statuses.includes("Warehouse Receiving")
+                                            ? "Warehouse Receiving"
                                             : effectiveStatus;
                                         const currentIdx = statuses.indexOf(currentStatus);
                                         const stepIdx = statuses.indexOf(st);
                                         
                                         const isCompleted = stepIdx < currentIdx;
                                         const isActive = stepIdx === currentIdx;
+                                        const showCheck = isCompleted || (isActive && currentStatus === "Received");
                                         
                                         return (
                                             <React.Fragment key={st}>
@@ -301,9 +304,9 @@ export function ShipmentDetailView({
                                                                 ? "bg-primary border-primary text-primary-foreground shadow-md scale-110" 
                                                                 : "bg-background border-muted text-muted-foreground"
                                                     }`}>
-                                                        {isCompleted ? "✓" : idx + 1}
+                                                        {showCheck ? "✓" : idx + 1}
                                                     </div>
-                                                    <span className={`text-[9px] font-bold mt-1.5 truncate max-w-[70px] ${
+                                                    <span className={`min-w-[125px] text-center whitespace-nowrap text-[9px] font-bold mt-1.5 ${
                                                         isActive ? "text-primary animate-pulse" : "text-muted-foreground"
                                                     }`}>{st}</span>
                                                 </div>
