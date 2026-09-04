@@ -62,14 +62,17 @@ export default function ManufacturingOffsettingModal({
     const [linkNotes, setLinkNotes] = useState<string>("");
 
     // Calculate allocated offset quantity per detail line item from active pairings
-    const allocatedOffsetMap = useMemo(() => {
+    // Calculate allocated offset quantity per detail line item from active pairings in BASE PIECES
+    const allocatedOffsetPiecesMap = useMemo(() => {
         const map = new Map<number, number>();
         for (const pair of activePairings) {
+            const pcs = pair.offset_pieces !== undefined ? pair.offset_pieces : (pair.offset_qty || 0);
+
             const shortAcc = map.get(pair.shortage_detail_id) || 0;
-            map.set(pair.shortage_detail_id, shortAcc + pair.offset_qty);
+            map.set(pair.shortage_detail_id, shortAcc + pcs);
 
             const surpAcc = map.get(pair.surplus_detail_id) || 0;
-            map.set(pair.surplus_detail_id, surpAcc + pair.offset_qty);
+            map.set(pair.surplus_detail_id, surpAcc + pcs);
         }
         return map;
     }, [activePairings]);
@@ -84,14 +87,20 @@ export default function ManufacturingOffsettingModal({
 
                 if (rawVar >= -0.0001) return null;
 
-                const totalShortage = Math.abs(rawVar);
-                const detailId = item.physical_inventory_detail_id || item.id || 0;
-                const allocated = allocatedOffsetMap.get(detailId) || 0;
-                const remaining = Math.max(0, totalShortage - allocated);
-
                 const prodObj = typeof item.product_id === "object" ? (item.product_id as Product) : null;
                 const prodName = prodObj?.product_name || `Product #${item.product_id}`;
                 const prodCode = prodObj?.product_code || "";
+
+                const uomCount = Number(prodObj?.unit_of_measurement_count || 0);
+                const multiplier = uomCount > 0 ? uomCount : 1;
+
+                const detailId = item.physical_inventory_detail_id || item.id || 0;
+                const totalShortageContainers = Math.abs(rawVar);
+                const totalShortagePieces = totalShortageContainers * multiplier;
+
+                const allocatedPieces = allocatedOffsetPiecesMap.get(detailId) || 0;
+                const remainingPieces = Math.max(0, totalShortagePieces - allocatedPieces);
+                const remainingContainers = remainingPieces / multiplier;
 
                 const lotObj = typeof item.lot_id === "object" ? (item.lot_id as MmLot) : null;
                 const lotName = lotObj?.lot_name || `Lot #${item.lot_id}`;
@@ -107,14 +116,14 @@ export default function ManufacturingOffsettingModal({
                     resolvedCode: prodCode,
                     resolvedLotName: lotName,
                     resolvedBatchNo: batchNo,
-                    totalShortage,
-                    remainingShortage: remaining,
+                    totalShortage: totalShortageContainers,
+                    remainingShortage: remainingContainers,
                     unitCost,
-                    shortageAmount: remaining * unitCost
+                    shortageAmount: remainingContainers * unitCost
                 };
             })
             .filter((i): i is NonNullable<typeof i> => i !== null && i.remainingShortage > 0.0001);
-    }, [lineItems, allocatedOffsetMap]);
+    }, [lineItems, allocatedOffsetPiecesMap]);
 
     // Separate Surplus line items (physical > system or variance > 0)
     const surplusItems = useMemo(() => {
@@ -126,14 +135,20 @@ export default function ManufacturingOffsettingModal({
 
                 if (rawVar <= 0.0001) return null;
 
-                const totalSurplus = rawVar;
-                const detailId = item.physical_inventory_detail_id || item.id || 0;
-                const allocated = allocatedOffsetMap.get(detailId) || 0;
-                const remaining = Math.max(0, totalSurplus - allocated);
-
                 const prodObj = typeof item.product_id === "object" ? (item.product_id as Product) : null;
                 const prodName = prodObj?.product_name || `Product #${item.product_id}`;
                 const prodCode = prodObj?.product_code || "";
+
+                const uomCount = Number(prodObj?.unit_of_measurement_count || 0);
+                const multiplier = uomCount > 0 ? uomCount : 1;
+
+                const detailId = item.physical_inventory_detail_id || item.id || 0;
+                const totalSurplusContainers = rawVar;
+                const totalSurplusPieces = totalSurplusContainers * multiplier;
+
+                const allocatedPieces = allocatedOffsetPiecesMap.get(detailId) || 0;
+                const remainingPieces = Math.max(0, totalSurplusPieces - allocatedPieces);
+                const remainingContainers = remainingPieces / multiplier;
 
                 const lotObj = typeof item.lot_id === "object" ? (item.lot_id as MmLot) : null;
                 const lotName = lotObj?.lot_name || `Lot #${item.lot_id}`;
@@ -149,14 +164,14 @@ export default function ManufacturingOffsettingModal({
                     resolvedCode: prodCode,
                     resolvedLotName: lotName,
                     resolvedBatchNo: batchNo,
-                    totalSurplus,
-                    remainingSurplus: remaining,
+                    totalSurplus: totalSurplusContainers,
+                    remainingSurplus: remainingContainers,
                     unitCost,
-                    surplusAmount: remaining * unitCost
+                    surplusAmount: remainingContainers * unitCost
                 };
             })
             .filter((i): i is NonNullable<typeof i> => i !== null && i.remainingSurplus > 0.0001);
-    }, [lineItems, allocatedOffsetMap]);
+    }, [lineItems, allocatedOffsetPiecesMap]);
 
     // Selected shortage & surplus detail references
     const activeShortage = useMemo(() => {
@@ -225,6 +240,14 @@ export default function ManufacturingOffsettingModal({
             return;
         }
 
+        const shortageProdId = typeof activeShortage.product_id === "object" ? Number((activeShortage.product_id as Product).product_id) : Number(activeShortage.product_id);
+        const surplusProdId = typeof activeSurplus.product_id === "object" ? Number((activeSurplus.product_id as Product).product_id) : Number(activeSurplus.product_id);
+
+        if (shortageProdId !== surplusProdId) {
+            toast.error(`Cross-product offsetting is disabled. Shortage product "${activeShortage.resolvedName}" does not match surplus product "${activeSurplus.resolvedName}". Offsetting is strictly allowed between lots/batches of the SAME product.`);
+            return;
+        }
+
         const qty = parseFloat(linkQty);
         if (isNaN(qty) || qty <= 0) {
             toast.error("Please enter a valid positive quantity to offset.");
@@ -236,9 +259,6 @@ export default function ManufacturingOffsettingModal({
             toast.error(`Offset quantity cannot exceed ${maxPossible} units.`);
             return;
         }
-
-        const shortageProdId = typeof activeShortage.product_id === "object" ? Number((activeShortage.product_id as Product).product_id) : Number(activeShortage.product_id);
-        const surplusProdId = typeof activeSurplus.product_id === "object" ? Number((activeSurplus.product_id as Product).product_id) : Number(activeSurplus.product_id);
 
         const shortageLotId = typeof activeShortage.lot_id === "object" ? Number((activeShortage.lot_id as MmLot).lot_id) : Number(activeShortage.lot_id);
         const surplusLotId = typeof activeSurplus.lot_id === "object" ? Number((activeSurplus.lot_id as MmLot).lot_id) : Number(activeSurplus.lot_id);

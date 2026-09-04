@@ -158,17 +158,32 @@ export async function POST(request: NextRequest, context: RouteParams) {
         // 6. Recalculate totals
         await recalculateHeaderTotals(sheetId);
 
-        // 7. Extract committing user
+        // 7. Extract committing user & remarks
         const authUserId = getJwtSubFromReq(request);
         const committedBy = authUserId || null;
 
+        const reqBody = await request.json().catch(() => ({}));
+        const reqRemarks = reqBody?.remarks ? String(reqBody.remarks).trim() : null;
+
+        let finalRemarks = sheet.remarks ? String(sheet.remarks) : "";
+        if (reqRemarks) {
+            let offsetPart = "";
+            if (finalRemarks.includes("__OFFSET_DATA__:")) {
+                offsetPart = finalRemarks.substring(finalRemarks.indexOf("__OFFSET_DATA__:"));
+            }
+            finalRemarks = offsetPart ? `${reqRemarks}\n${offsetPart}` : reqRemarks;
+        }
+
         // 8. Execute Commit Update
-        const commitPayload = {
+        const commitPayload: Record<string, unknown> = {
             status: "COMMITTED",
             isCommitted: 1,
             committed_at: new Date().toISOString(),
             committed_by: committedBy,
         };
+        if (finalRemarks) {
+            commitPayload.remarks = finalRemarks;
+        }
 
         const updateUrl = `${DIRECTUS_URL}/items/mm_physical_inventory/${sheetId}`;
         const commitRes = await fetch(updateUrl, {

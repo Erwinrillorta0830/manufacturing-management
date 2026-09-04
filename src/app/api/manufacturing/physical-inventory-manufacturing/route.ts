@@ -55,7 +55,27 @@ export async function GET(request: NextRequest) {
         }
 
         const json = await res.json();
-        return NextResponse.json({ success: true, data: json.data || [] });
+        const rawList: Array<Record<string, unknown>> = json.data || [];
+
+        const enrichedList = rawList.map((item) => {
+            let offsetPairings = [];
+            if (item.remarks && typeof item.remarks === "string" && item.remarks.includes("__OFFSET_DATA__:")) {
+                try {
+                    const parts = item.remarks.split("__OFFSET_DATA__:");
+                    if (parts.length > 1) {
+                        offsetPairings = JSON.parse(parts[1].trim());
+                    }
+                } catch {
+                    offsetPairings = [];
+                }
+            }
+            return {
+                ...item,
+                offset_pairings: offsetPairings,
+            };
+        });
+
+        return NextResponse.json({ success: true, data: enrichedList });
     } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : "Internal Server Error";
         console.error("GET /api/manufacturing/physical-inventory-manufacturing error:", error);

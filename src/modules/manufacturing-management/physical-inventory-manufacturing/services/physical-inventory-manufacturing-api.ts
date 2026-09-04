@@ -41,7 +41,7 @@ export async function fetchPhysicalInventorySheet(id: number): Promise<MmPhysica
 
 export async function createPhysicalInventoryHeader(payload: {
     branch_id: number;
-    stock_type: "OPENING" | "REGULAR";
+    stock_type?: "OPENING" | "REGULAR";
     product_type_id?: number | null;
     price_type_id?: number | null;
     starting_date?: string;
@@ -395,8 +395,8 @@ export async function savePhysicalInventoryOffsetPairings(
     pairings: MmOffsetPairing[]
 ): Promise<MmOffsetPairing[]> {
     try {
-        const res = await fetch(`${API_BASE}/${piId}/details`, {
-            method: "PUT",
+        const res = await fetch(`${API_BASE}/${piId}`, {
+            method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ offset_pairings: pairings }),
         });
