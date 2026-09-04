@@ -6,7 +6,8 @@ export const INVENTORY_STATUS = {
     PARTIALLY_RECEIVED: 9,
     AWAITING_PAYMENT: 10,
     FOR_PICKUP: 11,
-    REJECTED: 13
+    REJECTED: 13,
+    WAREHOUSE_RECEIVING: 14
 } as const;
 
 // Status 12 was used by the retired dispatch stage. It remains recognizable
@@ -15,6 +16,7 @@ export const LEGACY_DISPATCH_STATUS_ID = 12;
 
 export const FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS = [
     INVENTORY_STATUS.APPROVED,
+    INVENTORY_STATUS.WAREHOUSE_RECEIVING,
     INVENTORY_STATUS.FOR_PICKUP,
     LEGACY_DISPATCH_STATUS_ID,
     INVENTORY_STATUS.PARTIALLY_RECEIVED,
@@ -22,7 +24,6 @@ export const FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS = [
 ] as const;
 
 export const RECEIVING_QUEUE_INVENTORY_STATUS_IDS = [
-    INVENTORY_STATUS.APPROVED,
     INVENTORY_STATUS.FOR_PICKUP,
     INVENTORY_STATUS.PARTIALLY_RECEIVED
 ] as const;
@@ -78,12 +79,14 @@ export const INVENTORY_STATUS_LABELS: Record<InventoryStatusId, string> = {
     [INVENTORY_STATUS.PARTIALLY_RECEIVED]: "Partially Received",
     [INVENTORY_STATUS.AWAITING_PAYMENT]: "Awaiting Payment",
     [INVENTORY_STATUS.FOR_PICKUP]: "Receiving (QA)",
-    [INVENTORY_STATUS.REJECTED]: "Rejected"
+    [INVENTORY_STATUS.REJECTED]: "Rejected",
+    [INVENTORY_STATUS.WAREHOUSE_RECEIVING]: "Warehouse Receiving"
 };
 
 const ALLOWED_TRANSITIONS: Record<InventoryStatusId, readonly InventoryStatusId[]> = {
     [INVENTORY_STATUS.REQUESTED]: [INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.CANCELLED],
-    [INVENTORY_STATUS.APPROVED]: [INVENTORY_STATUS.FOR_PICKUP],
+    [INVENTORY_STATUS.APPROVED]: [INVENTORY_STATUS.WAREHOUSE_RECEIVING],
+    [INVENTORY_STATUS.WAREHOUSE_RECEIVING]: [INVENTORY_STATUS.FOR_PICKUP],
     [INVENTORY_STATUS.AWAITING_PAYMENT]: [],
     [INVENTORY_STATUS.FOR_PICKUP]: [INVENTORY_STATUS.PARTIALLY_RECEIVED, INVENTORY_STATUS.RECEIVED],
     [INVENTORY_STATUS.PARTIALLY_RECEIVED]: [INVENTORY_STATUS.RECEIVED],
@@ -102,21 +105,19 @@ export function canTransitionInventoryStatus(current: number, target: number): b
         && ALLOWED_TRANSITIONS[current].includes(target);
 }
 
-export type ShipmentStatusLabel = "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+export type ShipmentStatusLabel = "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
 
-export type PurchaseOrderStatusLabel = "For Approval" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+export type PurchaseOrderStatusLabel = "For Approval" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
 
 export function isPurchaseOrderApprovalStatus(status: string | null | undefined): boolean {
     return status === "For Approval" || status === "Requested";
 }
 
 export function isReceivingQueueShipmentStatus(status: string | number | null | undefined): boolean {
-    if (Number(status) === INVENTORY_STATUS.APPROVED
-        || Number(status) === INVENTORY_STATUS.FOR_PICKUP
+    if (Number(status) === INVENTORY_STATUS.FOR_PICKUP
         || Number(status) === INVENTORY_STATUS.PARTIALLY_RECEIVED
         || Number(status) === LEGACY_DISPATCH_STATUS_ID) return true;
     return status === "For Pickup"
-        || status === "Approved"
         || status === "Receiving (QA)"
         || status === "Partially Received";
 }
@@ -136,6 +137,7 @@ export function inventoryStatusToShipmentStatus(statusId?: number | null, paymen
     }
     switch (statusId) {
         case INVENTORY_STATUS.APPROVED: return "Approved";
+        case INVENTORY_STATUS.WAREHOUSE_RECEIVING: return "Warehouse Receiving";
         case INVENTORY_STATUS.AWAITING_PAYMENT: return "Awaiting Payment";
         case INVENTORY_STATUS.CANCELLED: return "Cancelled";
         case INVENTORY_STATUS.FOR_PICKUP: return "Receiving (QA)";
@@ -161,6 +163,7 @@ export function shipmentStatusToInventoryStatus(status: string): InventoryStatus
         case "For Approval":
         case "Requested": return INVENTORY_STATUS.REQUESTED;
         case "Approved": return INVENTORY_STATUS.APPROVED;
+        case "Warehouse Receiving": return INVENTORY_STATUS.WAREHOUSE_RECEIVING;
         case "Awaiting Payment": return INVENTORY_STATUS.AWAITING_PAYMENT;
         case "Cancelled": return INVENTORY_STATUS.CANCELLED;
         case "For Pickup": return INVENTORY_STATUS.FOR_PICKUP;

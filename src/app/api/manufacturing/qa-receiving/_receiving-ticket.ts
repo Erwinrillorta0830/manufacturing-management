@@ -20,6 +20,7 @@ export interface ReceivingTicketRow {
     workflow_revision: number;
     idempotency_key: string;
     posting_status: ReceivingTicketStatus | string;
+    receipt_type?: string | null;
 }
 
 function rows(body: unknown): Record<string, unknown>[] {
@@ -53,12 +54,13 @@ function mapTicket(row: Record<string, unknown> | undefined): ReceivingTicketRow
         quantity_status: String(row.quantity_status || "PARTIAL"),
         workflow_revision: Number(row.workflow_revision || 0),
         idempotency_key: String(row.idempotency_key || ""),
-        posting_status: String(row.posting_status || "")
+        posting_status: String(row.posting_status || ""),
+        receipt_type: row.receipt_type == null ? null : String(row.receipt_type)
     };
 }
 
 function ticketFields() {
-    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,quantity_status,workflow_revision,idempotency_key,posting_status";
+    return "id,receiving_ticket_no,receipt_date,purchase_order_id,branch_id,quantity_status,workflow_revision,idempotency_key,posting_status,receipt_type";
 }
 
 async function directusJson(path: string, init?: RequestInit) {
@@ -132,6 +134,41 @@ export async function fetchOpenReceivingTickets(purchaseOrderId: number, workflo
     const result = await directusJson(`/items/purchase_order_receiving_headers?${params.toString()}`);
     if (!result.ok) throw new ReceivingTicketError("Unable to verify concurrent receiving submissions.");
     return rows(result.body).map(mapTicket).filter((row): row is ReceivingTicketRow => Boolean(row));
+}
+
+/**
+ * Finds the unposted warehouse draft that QA must adopt. Warehouse drafts are
+ * deliberately identified by both their header revision and detail method so
+ * historical RFID and older receiving rows cannot be mistaken for the QA handoff.
+ */
+export async function fetchWarehouseReceivingTicket(
+    purchaseOrderId: number,
+    workflowRevision: number
+): Promise<ReceivingTicketRow | null> {
+    const params = new URLSearchParams({
+        "filter[purchase_order_id][_eq]": String(purchaseOrderId),
+        "filter[workflow_revision][_eq]": String(workflowRevision),
+        "filter[posting_status][_in]": "Reserved,Failed",
+        fields: ticketFields(),
+        limit: "-1",
+        sort: "-id"
+    });
+    const headerResult = await directusJson(`/items/purchase_order_receiving_headers?${params.toString()}`);
+    if (!headerResult.ok) throw new ReceivingTicketError("Unable to load the warehouse receiving draft.");
+    for (const candidate of rows(headerResult.body).map(mapTicket).filter((row): row is ReceivingTicketRow => Boolean(row))) {
+        const detailParams = new URLSearchParams({
+            "filter[receiving_header_id][_eq]": String(candidate.id),
+            "filter[receiving_method][_eq]": "WAREHOUSE",
+            "filter[isPosted][_eq]": "0",
+            "filter[is_reverted][_eq]": "0",
+            fields: "purchase_order_product_id",
+            limit: "1"
+        });
+        const detailResult = await directusJson(`/items/purchase_order_receiving?${detailParams.toString()}`);
+        if (!detailResult.ok) throw new ReceivingTicketError("Unable to verify the warehouse receiving draft.");
+        if (rows(detailResult.body).length > 0) return candidate;
+    }
+    return null;
 }
 
 export async function allocateReceivingTicket(input: {

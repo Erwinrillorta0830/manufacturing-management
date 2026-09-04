@@ -141,13 +141,27 @@ function isPreQaRfidAnchor(row: Record<string, unknown>, productId: number, bran
         && !String(row.received_date || "").trim();
 }
 
+function isPreQaWarehouseAnchor(
+    row: Record<string, unknown>,
+    productId: number,
+    branchId: number,
+    receivingHeaderId: number
+) {
+    return relationValueId(row.product_id, ["product_id", "id"]) === productId
+        && relationValueId(row.branch_id, ["branch_id", "id"]) === branchId
+        && relationValueId(row.receiving_header_id, ["id", "receiving_header_id"]) === receivingHeaderId
+        && String(row.receiving_method || "").trim().toUpperCase() === "WAREHOUSE"
+        && Number(row.isPosted) !== 1
+        && Number(row.is_reverted) !== 1;
+}
+
 function preQaRfidAnchorSnapshot(row: Record<string, unknown>) {
     const fields = [
         "purchase_order_line_id", "receiving_header_id", "product_id", "batch_no", "mm_lot_id", "lot_id",
         "expiry_date", "received_quantity", "unit_price", "discounted_amount", "discount_type", "total_amount",
         "allocated_expense_php", "final_landed_unit_cost", "branch_id", "receipt_no", "received_date", "receipt_date",
         "isPosted", "qa_status", "quantity_rejected", "rejection_reason", "receipt_type", "quarantine_disposition_id",
-        "is_replacement", "is_over_received", "over_delivery_quantity"
+        "is_replacement", "is_over_received", "over_delivery_quantity", "receiving_method"
     ];
     return Object.fromEntries(fields.map(field => [field, row[field] ?? null]));
 }
@@ -532,13 +546,20 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!branches.some(branch => Number(branch.id) === branchId)) throw new ReceivingError("The selected receiving branch does not exist.", 400);
 
         const receiptNumbers = lineItemUpdates.map(item => receiptNumberForLine(referenceNumber, item.line_id));
-        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity&limit=-1`, { headers, cache: "no-store" });
+        let receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
         if (!receiptsRes.ok) {
-            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity&limit=-1`, { headers, cache: "no-store" });
+            receiptsRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,receiving_header_id,product_id,branch_id,receipt_no,receipt_date,received_date,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,batch_no,mm_lot_id,lot_id,expiry_date,unit_price,discounted_amount,discount_type,total_amount,allocated_expense_php,final_landed_unit_cost,qa_status,rejection_reason,receipt_type,quarantine_disposition_id,is_over_received,over_delivery_quantity,receiving_method&limit=-1`, { headers, cache: "no-store" });
         }
         if (!receiptsRes.ok) throw new Error("Failed to validate previous receiving attempts.");
         const allExistingReceipts = ((await receiptsRes.json()).data || []) as Record<string, unknown>[];
-        const existingReceipts = allExistingReceipts.filter((row: Record<string, unknown>) => receiptNumbers.includes(String(row.receipt_no)));
+        const existingReceipts = allExistingReceipts.filter((row: Record<string, unknown>) =>
+            receiptNumbers.includes(String(row.receipt_no))
+            && !(
+                String(row.receiving_method || "").trim().toUpperCase() === "WAREHOUSE"
+                && Number(row.isPosted) !== 1
+                && Number(row.is_reverted) !== 1
+            )
+        );
         const existingReceiptIds = allExistingReceipts
             .map(row => Number(row.purchase_order_product_id))
             .filter(id => Number.isSafeInteger(id) && id > 0);
@@ -558,7 +579,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         if (!replacementDispositionId && Number(shipment.inventory_status) === INVENTORY_STATUS.REJECTED) {
             throw new ReceivingError("Rejected purchase orders cannot continue to receiving.", 409);
         }
-        if (existingReceipts.length === receiptNumbers.length) {
+        const hasUnpostedWarehouseRows = allExistingReceipts.some(row =>
+            String(row.receiving_method || "").trim().toUpperCase() === "WAREHOUSE"
+            && Number(row.isPosted) !== 1
+            && Number(row.is_reverted) !== 1
+        );
+        if (existingReceipts.length === receiptNumbers.length && !hasUnpostedWarehouseRows) {
             for (const item of lineItemUpdates) {
                 const existingReceipt = existingReceipts.find((row: Record<string, unknown>) => String(row.receipt_no) === receiptNumberForLine(referenceNumber, item.line_id));
                 const receivingLineId = Number(existingReceipt?.purchase_order_product_id);
@@ -801,7 +827,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         const receiptIds: number[] = [];
         const createdReceiptIds: number[] = [];
-        const updatedPreQaRfidRows: Array<{ id: number; snapshot: Record<string, unknown> }> = [];
+        const updatedPreQaAnchorRows: Array<{ id: number; snapshot: Record<string, unknown> }> = [];
         const pendingMovements: PendingMovement[] = [];
         const allocationChanges: AllocationChange[] = [];
         let finalMovements: FinalReceivingMovement[] = [];
@@ -828,7 +854,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (!headerRestore.ok) return false;
             for (const change of [...lineChanges].reverse()) await mutate("purchase_order_products", change.id, "PATCH", { received: change.received });
             for (const id of [...createdReceiptIds].reverse()) await mutate("purchase_order_receiving", id, "DELETE");
-            for (const updated of [...updatedPreQaRfidRows].reverse()) {
+            for (const updated of [...updatedPreQaAnchorRows].reverse()) {
                 const response = await mutate("purchase_order_receiving", updated.id, "PATCH", updated.snapshot);
                 if (!response.ok) return false;
             }
@@ -921,17 +947,21 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     is_over_received: line.isOverReceived,
                     over_delivery_quantity: line.overDeliveryQuantity
                 };
+                const preQaWarehouseAnchor = options.receivingHeaderId
+                    ? allExistingReceipts.find(row => isPreQaWarehouseAnchor(row, line.productId, branchId, options.receivingHeaderId!))
+                    : undefined;
                 const preQaRfidAnchor = allExistingReceipts.find(row =>
                     isPreQaRfidAnchor(row, line.productId, branchId)
                     && preQaRfidAnchorIds.has(Number(row.purchase_order_product_id))
                 );
+                const preQaAnchor = preQaWarehouseAnchor || preQaRfidAnchor;
                 let receiptId: number;
                 let receiptRes: Response;
-                if (preQaRfidAnchor) {
-                    receiptId = Number(preQaRfidAnchor.purchase_order_product_id);
-                    updatedPreQaRfidRows.push({
+                if (preQaAnchor) {
+                    receiptId = Number(preQaAnchor.purchase_order_product_id);
+                    updatedPreQaAnchorRows.push({
                         id: receiptId,
-                        snapshot: preQaRfidAnchorSnapshot(preQaRfidAnchor)
+                        snapshot: preQaRfidAnchorSnapshot(preQaAnchor)
                     });
                     receiptRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving/${receiptId}`, {
                         method: "PATCH",
