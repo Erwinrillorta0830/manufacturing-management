@@ -34,9 +34,20 @@ export function parseOffsettingSheetData(item: Record<string, unknown>): Offsett
         }
     }
 
-    const pairings: OffsettingPairing[] = Array.isArray(item.offset_pairings)
+    let pairings: OffsettingPairing[] = Array.isArray(item.offset_pairings)
         ? (item.offset_pairings as OffsettingPairing[])
         : [];
+
+    if (pairings.length === 0 && item.remarks && typeof item.remarks === "string" && item.remarks.includes("__OFFSET_DATA__:")) {
+        try {
+            const parts = item.remarks.split("__OFFSET_DATA__:");
+            if (parts.length > 1) {
+                pairings = JSON.parse(parts[1].trim());
+            }
+        } catch {
+            pairings = [];
+        }
+    }
 
     let totalOffsetQty = 0;
     let netFinancialImpact = 0;
@@ -161,8 +172,8 @@ export async function saveOffsettingPairings(
     pairings: OffsettingPairing[]
 ): Promise<OffsettingPairing[]> {
     try {
-        const res = await fetch(`${API_BASE}/${sheetId}/details`, {
-            method: "PUT",
+        const res = await fetch(`${API_BASE}/${sheetId}`, {
+            method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ offset_pairings: pairings }),
         });

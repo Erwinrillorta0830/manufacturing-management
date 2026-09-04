@@ -20,7 +20,8 @@ import {
     Printer,
     Scale,
     Layers,
-    AlertCircle
+    AlertCircle,
+    ClipboardList
 } from "lucide-react";
 import { toast } from "sonner";
 import OffsettingPrintModal from "./OffsettingPrintModal";
@@ -61,6 +62,13 @@ function formatQty(val: number): string {
     return Number(val || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
+function normalizeProductName(name?: string): string {
+    if (!name) return "";
+    return name
+        .replace(/\s*\((PCS|IB|TIE|BAG|KG|CASE|BOX|CTN|PACK|UNITS?|\d+\s*PCS\/[A-Z0-9]+)\)/gi, "")
+        .trim();
+}
+
 export default function OffsettingWorkspace({
     sheet,
     onBack,
@@ -72,9 +80,9 @@ export default function OffsettingWorkspace({
 
     const [activePairings, setActivePairings] = useState<OffsettingPairing[]>(sheet.offset_pairings || []);
 
-    // Checkbox multi-select state arrays
-    const [selectedShortageProductIds, setSelectedShortageProductIds] = useState<number[]>([]);
-    const [selectedSurplusProductIds, setSelectedSurplusProductIds] = useState<number[]>([]);
+    // Checkbox multi-select state arrays (supports number IDs and normalized string keys)
+    const [selectedShortageProductIds, setSelectedShortageProductIds] = useState<(number | string)[]>([]);
+    const [selectedSurplusProductIds, setSelectedSurplusProductIds] = useState<(number | string)[]>([]);
     const [selectedShortageDetailIds, setSelectedShortageDetailIds] = useState<number[]>([]);
     const [selectedSurplusDetailIds, setSelectedSurplusDetailIds] = useState<number[]>([]);
 
@@ -84,24 +92,25 @@ export default function OffsettingWorkspace({
     const [auditSignoffNotes, setAuditSignoffNotes] = useState<string>("");
     const [saving, setSaving] = useState(false);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+    const [showLineItems, setShowLineItems] = useState(true);
 
     // View Mode & Accordion Expansion states
     const [groupingViewMode, setGroupingViewMode] = useState<"PRODUCT_GROUPED" | "LOT_GRANULAR">("PRODUCT_GROUPED");
-    const [expandedShortageProducts, setExpandedShortageProducts] = useState<Record<number, boolean>>({});
-    const [expandedSurplusProducts, setExpandedSurplusProducts] = useState<Record<number, boolean>>({});
+    const [expandedShortageProducts, setExpandedShortageProducts] = useState<Record<string | number, boolean>>({});
+    const [expandedSurplusProducts, setExpandedSurplusProducts] = useState<Record<string | number, boolean>>({});
 
-    const toggleShortageExpand = (pId: number, e?: React.MouseEvent) => {
+    const toggleShortageExpand = (pId: string | number, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
         setExpandedShortageProducts(prev => ({ ...prev, [pId]: !prev[pId] }));
     };
 
-    const toggleSurplusExpand = (pId: number, e?: React.MouseEvent) => {
+    const toggleSurplusExpand = (pId: string | number, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
         setExpandedSurplusProducts(prev => ({ ...prev, [pId]: !prev[pId] }));
     };
 
     // Multi-select toggle helper functions
-    const toggleShortageProduct = (pId: number, childDetailIds: number[]) => {
+    const toggleShortageProduct = (pId: number | string, childDetailIds: number[]) => {
         const isProductSelected = selectedShortageProductIds.includes(pId);
         if (isProductSelected) {
             setSelectedShortageProductIds(prev => prev.filter(id => id !== pId));
@@ -112,7 +121,7 @@ export default function OffsettingWorkspace({
         }
     };
 
-    const toggleSurplusProduct = (pId: number, childDetailIds: number[]) => {
+    const toggleSurplusProduct = (pId: number | string, childDetailIds: number[]) => {
         const isProductSelected = selectedSurplusProductIds.includes(pId);
         if (isProductSelected) {
             setSelectedSurplusProductIds(prev => prev.filter(id => id !== pId));
@@ -135,21 +144,17 @@ export default function OffsettingWorkspace({
         );
     };
 
-    // Calculate allocated offset quantity per detail line item from active pairings
-    const allocatedOffsetMap = useMemo(() => {
+    // Calculate allocated offset quantity per detail line item from active pairings in BASE PIECES
+    const allocatedOffsetPiecesMap = useMemo(() => {
         const map = new Map<number, number>();
         for (const pair of activePairings) {
-            const shortDeduction = pair.shortage_containers_deducted !== undefined
-                ? pair.shortage_containers_deducted
-                : (pair.shortage_uom_count && pair.shortage_uom_count > 0 ? (pair.offset_pieces || pair.offset_qty) / pair.shortage_uom_count : pair.offset_qty);
-            const shortAcc = map.get(pair.shortage_detail_id) || 0;
-            map.set(pair.shortage_detail_id, shortAcc + shortDeduction);
+            const pcs = pair.offset_pieces !== undefined ? pair.offset_pieces : (pair.offset_qty || 0);
 
-            const surpDeduction = pair.surplus_containers_deducted !== undefined
-                ? pair.surplus_containers_deducted
-                : (pair.surplus_uom_count && pair.surplus_uom_count > 0 ? (pair.offset_pieces || pair.offset_qty) / pair.surplus_uom_count : pair.offset_qty);
+            const shortAcc = map.get(pair.shortage_detail_id) || 0;
+            map.set(pair.shortage_detail_id, shortAcc + pcs);
+
             const surpAcc = map.get(pair.surplus_detail_id) || 0;
-            map.set(pair.surplus_detail_id, surpAcc + surpDeduction);
+            map.set(pair.surplus_detail_id, surpAcc + pcs);
         }
         return map;
     }, [activePairings]);
@@ -164,11 +169,6 @@ export default function OffsettingWorkspace({
 
                 if (rawVar >= -0.0001) return null;
 
-                const totalShortage = Math.abs(rawVar);
-                const detailId = item.physical_inventory_detail_id || item.id || 0;
-                const allocated = allocatedOffsetMap.get(detailId) || 0;
-                const remaining = Math.max(0, totalShortage - allocated);
-
                 const prodObj = typeof item.product_id === "object" ? (item.product_id as Product) : null;
                 const prodName = prodObj?.product_name || `Product #${item.product_id}`;
                 const prodCode = prodObj?.product_code || "";
@@ -180,11 +180,19 @@ export default function OffsettingWorkspace({
                         : null);
                 const uomShortcut = uomObj?.unit_shortcut || uomObj?.unit_name || "";
                 const uomCount = Number(prodObj?.unit_of_measurement_count || 0);
+                const multiplier = uomCount > 0 ? uomCount : 1;
                 const baseUom = uomShortcut || "units";
                 const resolvedUom = uomCount > 1 && uomShortcut
                     ? `${uomShortcut} (${uomCount} pcs/${uomShortcut.toLowerCase()})`
                     : uomShortcut;
-                const shortagePieces = remaining * (uomCount > 0 ? uomCount : 1);
+
+                const detailId = item.physical_inventory_detail_id || item.id || 0;
+                const totalShortageContainers = Math.abs(rawVar);
+                const totalShortagePieces = totalShortageContainers * multiplier;
+
+                const allocatedPieces = allocatedOffsetPiecesMap.get(detailId) || 0;
+                const remainingPieces = Math.max(0, totalShortagePieces - allocatedPieces);
+                const remainingContainers = remainingPieces / multiplier;
 
                 const lotObj = typeof item.lot_id === "object" ? (item.lot_id as MmLot) : null;
                 const lotName = lotObj?.lot_name || `Lot #${item.lot_id}`;
@@ -200,18 +208,18 @@ export default function OffsettingWorkspace({
                     resolvedCode: prodCode,
                     resolvedUom,
                     baseUom,
-                    uomCount,
-                    shortagePieces,
+                    uomCount: multiplier,
+                    shortagePieces: remainingPieces,
                     resolvedLotName: lotName,
                     resolvedBatchNo: batchNo,
-                    totalShortage,
-                    remainingShortage: remaining,
+                    totalShortage: totalShortageContainers,
+                    remainingShortage: remainingContainers,
                     unitCost,
-                    shortageAmount: remaining * unitCost
+                    shortageAmount: remainingContainers * unitCost
                 };
             })
-            .filter((i): i is NonNullable<typeof i> => i !== null && i.remainingShortage > 0.0001);
-    }, [lineItems, allocatedOffsetMap]);
+            .filter((i): i is NonNullable<typeof i> => i !== null && i.shortagePieces > 0.0001);
+    }, [lineItems, allocatedOffsetPiecesMap]);
 
     // Separate Surplus line items (physical > system or variance > 0)
     const surplusItems = useMemo(() => {
@@ -223,11 +231,6 @@ export default function OffsettingWorkspace({
 
                 if (rawVar <= 0.0001) return null;
 
-                const totalSurplus = rawVar;
-                const detailId = item.physical_inventory_detail_id || item.id || 0;
-                const allocated = allocatedOffsetMap.get(detailId) || 0;
-                const remaining = Math.max(0, totalSurplus - allocated);
-
                 const prodObj = typeof item.product_id === "object" ? (item.product_id as Product) : null;
                 const prodName = prodObj?.product_name || `Product #${item.product_id}`;
                 const prodCode = prodObj?.product_code || "";
@@ -239,11 +242,19 @@ export default function OffsettingWorkspace({
                         : null);
                 const uomShortcut = uomObj?.unit_shortcut || uomObj?.unit_name || "";
                 const uomCount = Number(prodObj?.unit_of_measurement_count || 0);
+                const multiplier = uomCount > 0 ? uomCount : 1;
                 const baseUom = uomShortcut || "units";
                 const resolvedUom = uomCount > 1 && uomShortcut
                     ? `${uomShortcut} (${uomCount} pcs/${uomShortcut.toLowerCase()})`
                     : uomShortcut;
-                const surplusPieces = remaining * (uomCount > 0 ? uomCount : 1);
+
+                const detailId = item.physical_inventory_detail_id || item.id || 0;
+                const totalSurplusContainers = rawVar;
+                const totalSurplusPieces = totalSurplusContainers * multiplier;
+
+                const allocatedPieces = allocatedOffsetPiecesMap.get(detailId) || 0;
+                const remainingPieces = Math.max(0, totalSurplusPieces - allocatedPieces);
+                const remainingContainers = remainingPieces / multiplier;
 
                 const lotObj = typeof item.lot_id === "object" ? (item.lot_id as MmLot) : null;
                 const lotName = lotObj?.lot_name || `Lot #${item.lot_id}`;
@@ -259,22 +270,23 @@ export default function OffsettingWorkspace({
                     resolvedCode: prodCode,
                     resolvedUom,
                     baseUom,
-                    uomCount,
-                    surplusPieces,
+                    uomCount: multiplier,
+                    surplusPieces: remainingPieces,
                     resolvedLotName: lotName,
                     resolvedBatchNo: batchNo,
-                    totalSurplus,
-                    remainingSurplus: remaining,
+                    totalSurplus: totalSurplusContainers,
+                    remainingSurplus: remainingContainers,
                     unitCost,
-                    surplusAmount: remaining * unitCost
+                    surplusAmount: remainingContainers * unitCost
                 };
             })
-            .filter((i): i is NonNullable<typeof i> => i !== null && i.remainingSurplus > 0.0001);
-    }, [lineItems, allocatedOffsetMap]);
+            .filter((i): i is NonNullable<typeof i> => i !== null && i.surplusPieces > 0.0001);
+    }, [lineItems, allocatedOffsetPiecesMap]);
 
-    // Group shortage items by Product
+    // Group shortage items by Product (consolidating packaging variants by base product name)
     const groupedShortageProducts = useMemo(() => {
-        const map = new Map<number, {
+        const map = new Map<string | number, {
+            groupId: string | number;
             productId: number;
             productName: string;
             productCode?: string;
@@ -289,16 +301,20 @@ export default function OffsettingWorkspace({
 
         for (const item of shortageItems) {
             const pId = typeof item.product_id === "object" ? Number((item.product_id as Product).product_id) : Number(item.product_id);
-            const existing = map.get(pId);
+            const normName = normalizeProductName(item.resolvedName);
+            const groupKey = normName ? normName.toLowerCase() : pId;
+
+            const existing = map.get(groupKey);
             if (existing) {
                 existing.totalShortageQty += item.remainingShortage;
                 existing.totalShortagePieces += item.shortagePieces;
                 existing.totalShortageCost += item.shortageAmount;
                 existing.items.push(item);
             } else {
-                map.set(pId, {
+                map.set(groupKey, {
+                    groupId: groupKey,
                     productId: pId,
-                    productName: item.resolvedName,
+                    productName: normName || item.resolvedName,
                     productCode: item.resolvedCode,
                     uomName: item.resolvedUom,
                     baseUom: item.baseUom,
@@ -313,9 +329,10 @@ export default function OffsettingWorkspace({
         return Array.from(map.values());
     }, [shortageItems]);
 
-    // Group surplus items by Product
+    // Group surplus items by Product (consolidating packaging variants by base product name)
     const groupedSurplusProducts = useMemo(() => {
-        const map = new Map<number, {
+        const map = new Map<string | number, {
+            groupId: string | number;
             productId: number;
             productName: string;
             productCode?: string;
@@ -330,16 +347,20 @@ export default function OffsettingWorkspace({
 
         for (const item of surplusItems) {
             const pId = typeof item.product_id === "object" ? Number((item.product_id as Product).product_id) : Number(item.product_id);
-            const existing = map.get(pId);
+            const normName = normalizeProductName(item.resolvedName);
+            const groupKey = normName ? normName.toLowerCase() : pId;
+
+            const existing = map.get(groupKey);
             if (existing) {
                 existing.totalSurplusQty += item.remainingSurplus;
                 existing.totalSurplusPieces += item.surplusPieces;
                 existing.totalSurplusCost += item.surplusAmount;
                 existing.items.push(item);
             } else {
-                map.set(pId, {
+                map.set(groupKey, {
+                    groupId: groupKey,
                     productId: pId,
-                    productName: item.resolvedName,
+                    productName: normName || item.resolvedName,
                     productCode: item.resolvedCode,
                     uomName: item.resolvedUom,
                     baseUom: item.baseUom,
@@ -354,12 +375,56 @@ export default function OffsettingWorkspace({
         return Array.from(map.values());
     }, [surplusItems]);
 
+    const formattedLineItems = useMemo(() => {
+        return lineItems.map((item, idx) => {
+            const sys = Number(item.system_count || 0);
+            const phys = Number(item.physical_count !== null && item.physical_count !== undefined ? item.physical_count : sys);
+            const rawVar = item.variance !== undefined ? Number(item.variance) : phys - sys;
+
+            const prodObj = typeof item.product_id === "object" ? (item.product_id as Product) : null;
+            const prodName = prodObj?.product_name || `Product #${item.product_id}`;
+            const prodCode = prodObj?.product_code || "";
+
+            const lotObj = typeof item.lot_id === "object" ? (item.lot_id as MmLot) : null;
+            const lotName = lotObj?.lot_name || `Lot #${item.lot_id}`;
+
+            const invLotObj = typeof item.inventory_lot_id === "object" ? (item.inventory_lot_id as MmInventoryLot) : null;
+            const batchNo = item.batch_no || invLotObj?.batch_no || "N/A";
+
+            const uomObj = typeof item.unit_id === "object"
+                ? (item.unit_id as Unit)
+                : (prodObj && typeof prodObj.unit_of_measurement === "object"
+                    ? (prodObj.unit_of_measurement as Unit)
+                    : null);
+            const uomShortcut = uomObj?.unit_shortcut || uomObj?.unit_name || "";
+
+            const unitCost = Number(item.unit_cost || prodObj?.cost_per_unit || 0);
+            const diffCost = item.difference_cost !== undefined ? Number(item.difference_cost) : rawVar * unitCost;
+
+            return {
+                id: item.physical_inventory_detail_id || item.id || idx,
+                prodName,
+                prodCode,
+                lotName,
+                batchNo,
+                condition: item.inventory_condition || "GOOD",
+                uomShortcut,
+                systemCount: sys,
+                physicalCount: phys,
+                variance: rawVar,
+                unitCost,
+                differenceCost: diffCost,
+                remarks: item.remarks || "",
+            };
+        });
+    }, [lineItems]);
+
     // Total quantity calculations from selected checkboxes
     const selectedShortageTotalQty = useMemo(() => {
         let total = 0;
         if (groupingViewMode === "PRODUCT_GROUPED") {
             for (const group of groupedShortageProducts) {
-                if (selectedShortageProductIds.includes(group.productId)) {
+                if (selectedShortageProductIds.includes(group.groupId) || selectedShortageProductIds.includes(group.productId)) {
                     total += group.totalShortageQty;
                 } else {
                     for (const item of group.items) {
@@ -383,7 +448,7 @@ export default function OffsettingWorkspace({
         let total = 0;
         if (groupingViewMode === "PRODUCT_GROUPED") {
             for (const group of groupedSurplusProducts) {
-                if (selectedSurplusProductIds.includes(group.productId)) {
+                if (selectedSurplusProductIds.includes(group.groupId) || selectedSurplusProductIds.includes(group.productId)) {
                     total += group.totalSurplusQty;
                 } else {
                     for (const item of group.items) {
@@ -407,7 +472,7 @@ export default function OffsettingWorkspace({
         let pieces = 0;
         if (groupingViewMode === "PRODUCT_GROUPED") {
             for (const group of groupedShortageProducts) {
-                if (selectedShortageProductIds.includes(group.productId)) {
+                if (selectedShortageProductIds.includes(group.groupId) || selectedShortageProductIds.includes(group.productId)) {
                     pieces += group.totalShortagePieces;
                 } else {
                     for (const item of group.items) {
@@ -431,7 +496,7 @@ export default function OffsettingWorkspace({
         let pieces = 0;
         if (groupingViewMode === "PRODUCT_GROUPED") {
             for (const group of groupedSurplusProducts) {
-                if (selectedSurplusProductIds.includes(group.productId)) {
+                if (selectedSurplusProductIds.includes(group.groupId) || selectedSurplusProductIds.includes(group.productId)) {
                     pieces += group.totalSurplusPieces;
                 } else {
                     for (const item of group.items) {
@@ -449,6 +514,54 @@ export default function OffsettingWorkspace({
             }
         }
         return pieces;
+    }, [groupingViewMode, groupedSurplusProducts, surplusItems, selectedSurplusProductIds, selectedSurplusDetailIds]);
+
+    const selectedShortageTotalCost = useMemo(() => {
+        let cost = 0;
+        if (groupingViewMode === "PRODUCT_GROUPED") {
+            for (const group of groupedShortageProducts) {
+                if (selectedShortageProductIds.includes(group.groupId) || selectedShortageProductIds.includes(group.productId)) {
+                    cost += group.totalShortageCost;
+                } else {
+                    for (const item of group.items) {
+                        if (selectedShortageDetailIds.includes(item.detailId)) {
+                            cost += item.shortageAmount;
+                        }
+                    }
+                }
+            }
+        } else {
+            for (const item of shortageItems) {
+                if (selectedShortageDetailIds.includes(item.detailId)) {
+                    cost += item.shortageAmount;
+                }
+            }
+        }
+        return cost;
+    }, [groupingViewMode, groupedShortageProducts, shortageItems, selectedShortageProductIds, selectedShortageDetailIds]);
+
+    const selectedSurplusTotalCost = useMemo(() => {
+        let cost = 0;
+        if (groupingViewMode === "PRODUCT_GROUPED") {
+            for (const group of groupedSurplusProducts) {
+                if (selectedSurplusProductIds.includes(group.groupId) || selectedSurplusProductIds.includes(group.productId)) {
+                    cost += group.totalSurplusCost;
+                } else {
+                    for (const item of group.items) {
+                        if (selectedSurplusDetailIds.includes(item.detailId)) {
+                            cost += item.surplusAmount;
+                        }
+                    }
+                }
+            }
+        } else {
+            for (const item of surplusItems) {
+                if (selectedSurplusDetailIds.includes(item.detailId)) {
+                    cost += item.surplusAmount;
+                }
+            }
+        }
+        return cost;
     }, [groupingViewMode, groupedSurplusProducts, surplusItems, selectedSurplusProductIds, selectedSurplusDetailIds]);
 
     // Auto-calculate suggested offset quantity in pieces on selection change
@@ -657,6 +770,24 @@ export default function OffsettingWorkspace({
             return;
         }
 
+        // Strict Same-Product Validation (matching product ID or normalized base product name)
+        for (const sItem of checkedShortageItems) {
+            const sProdId = getProdId(sItem.product_id);
+            const sNormName = normalizeProductName(sItem.resolvedName).toLowerCase();
+
+            for (const surpItem of checkedSurplusItems) {
+                const surpProdId = getProdId(surpItem.product_id);
+                const surpNormName = normalizeProductName(surpItem.resolvedName).toLowerCase();
+
+                const isSame = sProdId === surpProdId || (sNormName.length > 0 && sNormName === surpNormName);
+
+                if (!isSame) {
+                    toast.error(`Cross-product offsetting is disabled. Shortage product "${sItem.resolvedName}" cannot be offset against Surplus "${surpItem.resolvedName}". Offsetting is strictly permitted between lots/batches of the SAME product.`);
+                    return;
+                }
+            }
+        }
+
         const maxPossiblePcs = Math.min(selectedShortageTotalPieces, selectedSurplusTotalPieces);
         if (pcsToAllocate > maxPossiblePcs + 0.0001) {
             toast.error(`Offset quantity cannot exceed ${maxPossiblePcs.toLocaleString()} pcs.`);
@@ -782,13 +913,17 @@ export default function OffsettingWorkspace({
             if (sItem.remPcs <= 0.0001) continue;
             const sProdId = getProdId(sItem.product_id);
             const sUomCount = sItem.uomCount && sItem.uomCount > 0 ? sItem.uomCount : 1;
+            const sNormName = normalizeProductName(sItem.resolvedName).toLowerCase();
 
             for (const surpItem of pSurpItems) {
                 if (sItem.remPcs <= 0.0001) break;
                 if (surpItem.remPcs <= 0.0001) continue;
                 const surpProdId = getProdId(surpItem.product_id);
+                const surpNormName = normalizeProductName(surpItem.resolvedName).toLowerCase();
 
-                if (sProdId === surpProdId) {
+                const isSameProduct = sProdId === surpProdId || (sNormName.length > 0 && sNormName === surpNormName);
+
+                if (isSameProduct) {
                     const surpUomCount = surpItem.uomCount && surpItem.uomCount > 0 ? surpItem.uomCount : 1;
                     const pairPieces = Math.min(sItem.remPcs, surpItem.remPcs);
                     if (pairPieces <= 0.0001) continue;
@@ -896,11 +1031,10 @@ export default function OffsettingWorkspace({
                             <h2 className="text-lg font-bold text-foreground">
                                 Offsetting Audit Workspace — Sheet #{sheet.pi_no}
                             </h2>
-                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                                isCommitted
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${isCommitted
                                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                     : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20"
-                            }`}>
+                                }`}>
                                 {isCommitted ? "COMMITTED" : "AUDITOR WORKSPACE"}
                             </span>
                         </div>
@@ -920,37 +1054,35 @@ export default function OffsettingWorkspace({
                         Print Report
                     </button>
 
+                    <button
+                        type="button"
+                        onClick={handleAutoMatchSameProduct}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs"
+                    >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Auto-Match Same Product
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={handleSaveDraft}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-foreground bg-background border border-input rounded-lg hover:bg-accent transition-colors shadow-xs"
+                    >
+                        <Save className="h-3.5 w-3.5" />
+                        {isCommitted ? "Save Offset Adjustments" : "Save Draft"}
+                    </button>
+
                     {!isCommitted && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={handleAutoMatchSameProduct}
-                                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs"
-                            >
-                                <Sparkles className="h-3.5 w-3.5" />
-                                Auto-Match Same Product
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={handleSaveDraft}
-                                disabled={saving}
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-foreground bg-background border border-input rounded-lg hover:bg-accent transition-colors shadow-xs"
-                            >
-                                <Save className="h-3.5 w-3.5" />
-                                Save Draft
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={handleApproveAndCommit}
-                                disabled={saving}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs"
-                            >
-                                <CheckCircle2 className="h-4 w-4" />
-                                Approve & Commit Stock Adjustments
-                            </button>
-                        </>
+                        <button
+                            type="button"
+                            onClick={handleApproveAndCommit}
+                            disabled={saving}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-xs"
+                        >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Approve & Commit Stock Adjustments
+                        </button>
                     )}
                 </div>
             </div>
@@ -1013,279 +1145,283 @@ export default function OffsettingWorkspace({
                 </div>
             </div>
 
-            {!isCommitted && (
-                /* Interactive Lot Linker Builder */
-                <div className="rounded-xl border border-border bg-card p-5 space-y-4 shadow-xs">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b pb-3">
-                        <div>
-                            <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
-                                <Link2 className="h-4 w-4 text-indigo-500" />
-                                Auditor Matching Builder
-                            </h4>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                Pair shortage items against surplus items to reconcile inventory balance
-                            </p>
-                        </div>
-
-                        {/* View Switcher Toggle Button */}
-                        <div className="inline-flex items-center p-0.5 bg-muted rounded-lg border text-xs font-medium">
-                            <button
-                                type="button"
-                                onClick={() => setGroupingViewMode("PRODUCT_GROUPED")}
-                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
-                                    groupingViewMode === "PRODUCT_GROUPED"
-                                        ? "bg-background text-foreground font-bold shadow-xs"
-                                        : "text-muted-foreground hover:text-foreground"
-                                }`}
-                            >
-                                <Package className="h-3.5 w-3.5" />
-                                Grouped by Product
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setGroupingViewMode("LOT_GRANULAR")}
-                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
-                                    groupingViewMode === "LOT_GRANULAR"
-                                        ? "bg-background text-foreground font-bold shadow-xs"
-                                        : "text-muted-foreground hover:text-foreground"
-                                }`}
-                            >
-                                <Boxes className="h-3.5 w-3.5" />
-                                Granular Lots & Batches
-                            </button>
-                        </div>
+            {/* Interactive Lot Linker Builder */}
+            <div className="rounded-xl border border-border bg-card p-5 space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b pb-3">
+                    <div>
+                        <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <Link2 className="h-4 w-4 text-indigo-500" />
+                            Auditor Matching Builder
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Pair shortage items against surplus items to reconcile inventory balance
+                        </p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Shortage Column (Left) */}
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={
-                                            groupingViewMode === "PRODUCT_GROUPED"
-                                                ? groupedShortageProducts.length > 0 && selectedShortageProductIds.length === groupedShortageProducts.length
-                                                : shortageItems.length > 0 && selectedShortageDetailIds.length === shortageItems.length
-                                        }
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                if (groupingViewMode === "PRODUCT_GROUPED") {
-                                                    setSelectedShortageProductIds(groupedShortageProducts.map(g => g.productId));
-                                                    setSelectedShortageDetailIds(shortageItems.map(i => i.detailId));
-                                                } else {
-                                                    setSelectedShortageDetailIds(shortageItems.map(i => i.detailId));
-                                                }
+                    {/* View Switcher Toggle Button */}
+                    <div className="inline-flex items-center p-0.5 bg-muted rounded-lg border text-xs font-medium">
+                        <button
+                            type="button"
+                            onClick={() => setGroupingViewMode("PRODUCT_GROUPED")}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${groupingViewMode === "PRODUCT_GROUPED"
+                                    ? "bg-background text-foreground font-bold shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                        >
+                            <Package className="h-3.5 w-3.5" />
+                            Grouped by Product
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setGroupingViewMode("LOT_GRANULAR")}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${groupingViewMode === "LOT_GRANULAR"
+                                    ? "bg-background text-foreground font-bold shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                        >
+                            <Boxes className="h-3.5 w-3.5" />
+                            Granular Lots & Batches
+                        </button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Shortage Column (Left) */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={
+                                        groupingViewMode === "PRODUCT_GROUPED"
+                                            ? groupedShortageProducts.length > 0 && selectedShortageProductIds.length === groupedShortageProducts.length
+                                            : shortageItems.length > 0 && selectedShortageDetailIds.length === shortageItems.length
+                                    }
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            if (groupingViewMode === "PRODUCT_GROUPED") {
+                                                setSelectedShortageProductIds(groupedShortageProducts.map(g => g.productId));
+                                                setSelectedShortageDetailIds(shortageItems.map(i => i.detailId));
                                             } else {
-                                                setSelectedShortageProductIds([]);
-                                                setSelectedShortageDetailIds([]);
+                                                setSelectedShortageDetailIds(shortageItems.map(i => i.detailId));
                                             }
-                                        }}
-                                        className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                                    />
-                                    <TrendingDown className="h-3.5 w-3.5" />
-                                    Shortage Discrepancies (Deficits)
-                                </label>
-                                {selectedShortageTotalQty > 0 && (
-                                    <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                                        Selected: -{selectedShortageTotalPieces.toLocaleString()} pcs ({selectedShortageTotalQty} units)
-                                    </span>
-                                )}
-                            </div>
+                                        } else {
+                                            setSelectedShortageProductIds([]);
+                                            setSelectedShortageDetailIds([]);
+                                        }
+                                    }}
+                                    className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                />
+                                <TrendingDown className="h-3.5 w-3.5" />
+                                Shortage Discrepancies (Deficits)
+                            </label>
+                            {selectedShortageTotalQty > 0 && (
+                                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                    Selected: -{selectedShortageTotalPieces.toLocaleString()} pcs • -{formatCurrency(selectedShortageTotalCost)}
+                                </span>
+                            )}
+                        </div>
 
-                            <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-border rounded-lg p-2 bg-muted/20">
-                                {groupingViewMode === "PRODUCT_GROUPED" ? (
-                                    /* PRODUCT GROUPED VIEW FOR SHORTAGES */
-                                    groupedShortageProducts.length === 0 ? (
-                                        <div className="p-4 text-center text-xs text-muted-foreground">
-                                            No unallocated shortage products remaining.
-                                        </div>
-                                    ) : (
-                                        groupedShortageProducts.map(group => {
-                                            const isExpanded = !!expandedShortageProducts[group.productId];
-                                            const isProductChecked = selectedShortageProductIds.includes(group.productId);
-                                            const hasCheckedChild = group.items.some(i => selectedShortageDetailIds.includes(i.detailId));
-
-                                            return (
-                                                <div
-                                                    key={group.productId}
-                                                    onClick={() => toggleShortageProduct(group.productId, group.items.map(i => i.detailId))}
-                                                    className={`rounded-lg border transition-all cursor-pointer ${
-                                                        isProductChecked
-                                                            ? "border-amber-500 bg-amber-500/15 ring-2 ring-amber-500 shadow-md"
-                                                            : hasCheckedChild
-                                                                ? "border-amber-500/80 bg-amber-500/10 ring-1 ring-amber-500/50"
-                                                                : "border-border bg-background hover:border-amber-500/50 hover:bg-amber-500/5"
-                                                    }`}
-                                                >
-                                                    {/* Product Header Card */}
-                                                    <div className="p-3">
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <div className="flex items-start gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={isProductChecked}
-                                                                    onChange={(e) => {
-                                                                        e.stopPropagation();
-                                                                        toggleShortageProduct(group.productId, group.items.map(i => i.detailId));
-                                                                    }}
-                                                                    className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer mt-0.5 shrink-0"
-                                                                />
-                                                                <div className="font-bold text-foreground text-xs flex items-center gap-1.5 flex-wrap">
-                                                                    <span>{group.productName}</span>
-                                                                    {group.uomName && (
-                                                                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase">
-                                                                            {group.uomName}
-                                                                        </span>
-                                                                    )}
-                                                                    {group.productCode && (
-                                                                        <span className="text-[10px] text-muted-foreground font-normal font-mono">
-                                                                            ({group.productCode})
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <div className="text-right shrink-0">
-                                                                <span className="text-amber-600 dark:text-amber-400 font-extrabold text-sm font-mono block">
-                                                                    -{group.totalShortagePieces.toLocaleString()} PCS
-                                                                </span>
-                                                                {group.uomCount && group.uomCount > 1 ? (
-                                                                    <span className="text-[10px] text-amber-700 dark:text-amber-300 font-medium font-mono block">
-                                                                        (-{group.totalShortageQty} {group.baseUom})
-                                                                    </span>
-                                                                ) : null}
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mt-2 flex items-center justify-between border-t pt-2 text-[11px]">
-                                                            <span className="text-muted-foreground font-medium flex items-center gap-1">
-                                                                <Layers className="h-3 w-3 text-amber-500" />
-                                                                Total Product Deficit ({group.items.length} {group.items.length === 1 ? "lot/batch" : "lots/batches"})
-                                                            </span>
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => toggleShortageExpand(group.productId, e)}
-                                                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:underline"
-                                                            >
-                                                                {isExpanded ? "Hide Breakdown" : `Show Lot/Batch Breakdown (${group.items.length})`}
-                                                                {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Expanded Breakdown of Batches & Lots */}
-                                                    {isExpanded && (
-                                                        <div className="border-t bg-muted/40 p-2 space-y-1.5 rounded-b-lg">
-                                                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 pb-1">
-                                                                Detailed Lots & Batches Breakdown:
-                                                            </div>
-                                                            {group.items.map(item => {
-                                                                const isDetailChecked = selectedShortageDetailIds.includes(item.detailId);
-                                                                return (
-                                                                    <div
-                                                                        key={item.detailId}
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            toggleShortageDetail(item.detailId);
-                                                                        }}
-                                                                        className={`cursor-pointer rounded-md border p-2 text-xs transition-all ${
-                                                                            isDetailChecked
-                                                                                ? "border-amber-500 bg-amber-500/20 shadow-2xs font-bold ring-1 ring-amber-500"
-                                                                                : "border-border/60 bg-background hover:bg-amber-500/10"
-                                                                        }`}
-                                                                    >
-                                                                        <div className="flex items-center justify-between text-[11px]">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <input
-                                                                                    type="checkbox"
-                                                                                    checked={isDetailChecked}
-                                                                                    onChange={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        toggleShortageDetail(item.detailId);
-                                                                                    }}
-                                                                                    className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
-                                                                                />
-                                                                                <span className="font-semibold text-foreground flex items-center gap-1">
-                                                                                    <Boxes className="h-3 w-3 text-amber-500 shrink-0" />
-                                                                                    Lot: {item.resolvedLotName}
-                                                                                </span>
-                                                                            </div>
-                                                                            <div className="text-right shrink-0">
-                                                                                <span className="text-amber-600 dark:text-amber-400 font-bold text-xs font-mono block">
-                                                                                    -{item.shortagePieces.toLocaleString()} PCS
-                                                                                </span>
-                                                                                {item.uomCount && item.uomCount > 1 ? (
-                                                                                    <span className="text-[9px] text-amber-700 dark:text-amber-300 font-medium font-mono block">
-                                                                                        (-{item.remainingShortage} {item.baseUom})
-                                                                                    </span>
-                                                                                ) : null}
-                                                                            </div>
-                                                                        </div>
-                                                                        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground pl-5">
-                                                                            <span className="flex items-center gap-1">
-                                                                                <Tag className="h-2.5 w-2.5 text-muted-foreground" />
-                                                                                Batch: {item.resolvedBatchNo}
-                                                                            </span>
-                                                                            <span>Cost: {formatCurrency(item.unitCost)}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })
-                                    )
+                        <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-border rounded-lg p-2 bg-muted/20">
+                            {groupingViewMode === "PRODUCT_GROUPED" ? (
+                                /* PRODUCT GROUPED VIEW FOR SHORTAGES */
+                                groupedShortageProducts.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-muted-foreground">
+                                        No unallocated shortage products remaining.
+                                    </div>
                                 ) : (
-                                    /* GRANULAR LOT/BATCH FLAT VIEW FOR SHORTAGES */
-                                    shortageItems.length === 0 ? (
-                                        <div className="p-4 text-center text-xs text-muted-foreground">
-                                            No unallocated shortage lots remaining.
-                                        </div>
-                                    ) : (
-                                        shortageItems.map(item => {
-                                            const isChecked = selectedShortageDetailIds.includes(item.detailId);
-                                            return (
-                                                <div
-                                                    key={item.detailId}
-                                                    onClick={() => toggleShortageDetail(item.detailId)}
-                                                    className={`cursor-pointer rounded-lg border p-3 text-xs transition-all ${
-                                                        isChecked
-                                                            ? "border-amber-500 bg-amber-500/15 shadow-xs ring-1 ring-amber-500 font-bold"
-                                                            : "border-border bg-background hover:border-amber-500/40"
+                                    groupedShortageProducts.map(group => {
+                                        const isExpanded = !!expandedShortageProducts[group.productId];
+                                        const isProductChecked = selectedShortageProductIds.includes(group.productId);
+                                        const hasCheckedChild = group.items.some(i => selectedShortageDetailIds.includes(i.detailId));
+
+                                        return (
+                                            <div
+                                                key={group.productId}
+                                                onClick={() => toggleShortageProduct(group.productId, group.items.map(i => i.detailId))}
+                                                className={`rounded-lg border transition-all cursor-pointer ${isProductChecked
+                                                        ? "border-amber-500 bg-amber-500/15 ring-2 ring-amber-500 shadow-md"
+                                                        : hasCheckedChild
+                                                            ? "border-amber-500/80 bg-amber-500/10 ring-1 ring-amber-500/50"
+                                                            : "border-border bg-background hover:border-amber-500/50 hover:bg-amber-500/5"
                                                     }`}
-                                                >
-                                                    <div className="flex items-start justify-between font-medium gap-2">
-                                                        <div className="flex items-center gap-2 flex-wrap">
+                                            >
+                                                {/* Product Header Card */}
+                                                <div className="p-3">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex items-start gap-2">
                                                             <input
                                                                 type="checkbox"
-                                                                checked={isChecked}
+                                                                checked={isProductChecked}
                                                                 onChange={(e) => {
                                                                     e.stopPropagation();
-                                                                    toggleShortageDetail(item.detailId);
+                                                                    toggleShortageProduct(group.productId, group.items.map(i => i.detailId));
                                                                 }}
-                                                                className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                                                                className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer mt-0.5 shrink-0"
                                                             />
-                                                            <span className="font-bold text-foreground">{item.resolvedName}</span>
-                                                            {item.resolvedUom && (
-                                                                <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase">
-                                                                    {item.resolvedUom}
-                                                                </span>
-                                                            )}
+                                                            <div className="font-bold text-foreground text-xs flex items-center gap-1.5 flex-wrap">
+                                                                <span>{group.productName}</span>
+                                                                {group.uomName && (
+                                                                    <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase">
+                                                                        {group.uomName}
+                                                                    </span>
+                                                                )}
+                                                                {group.productCode && (
+                                                                    <span className="text-[10px] text-muted-foreground font-normal font-mono">
+                                                                        ({group.productCode})
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                         <div className="text-right shrink-0">
-                                                            <span className="text-amber-600 dark:text-amber-400 font-bold text-xs font-mono block">
-                                                                -{item.shortagePieces.toLocaleString()} PCS
+                                                            <span className="text-amber-600 dark:text-amber-400 font-extrabold text-sm font-mono block">
+                                                                -{group.totalShortagePieces.toLocaleString()} PCS
                                                             </span>
-                                                            {item.uomCount && item.uomCount > 1 ? (
-                                                                <span className="text-[9px] text-amber-700 dark:text-amber-300 font-medium font-mono block">
-                                                                    (-{item.remainingShortage} {item.baseUom})
+                                                            <span className="text-[11px] font-bold font-mono text-amber-700 dark:text-amber-300 block">
+                                                                Total: -{formatCurrency(group.totalShortageCost)}
+                                                            </span>
+                                                            {group.uomCount && group.uomCount > 1 ? (
+                                                                <span className="text-[10px] text-amber-700/80 dark:text-amber-300/80 font-medium font-mono block">
+                                                                    (-{group.totalShortageQty} {group.baseUom})
                                                                 </span>
                                                             ) : null}
                                                         </div>
                                                     </div>
-                                                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground pl-5.5">
+
+                                                    <div className="mt-2 flex items-center justify-between border-t pt-2 text-[11px]">
+                                                        <span className="text-muted-foreground font-medium flex items-center gap-1">
+                                                            <Layers className="h-3 w-3 text-amber-500" />
+                                                            Total Product Deficit ({group.items.length} {group.items.length === 1 ? "lot/batch" : "lots/batches"})
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => toggleShortageExpand(group.productId, e)}
+                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:underline"
+                                                        >
+                                                            {isExpanded ? "Hide Breakdown" : `Show Lot/Batch Breakdown (${group.items.length})`}
+                                                            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Expanded Breakdown of Batches & Lots */}
+                                                {isExpanded && (
+                                                    <div className="border-t bg-muted/40 p-2 space-y-1.5 rounded-b-lg">
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 pb-1">
+                                                            Detailed Lots & Batches Breakdown:
+                                                        </div>
+                                                        {group.items.map(item => {
+                                                            const isDetailChecked = selectedShortageDetailIds.includes(item.detailId);
+                                                            return (
+                                                                <div
+                                                                    key={item.detailId}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleShortageDetail(item.detailId);
+                                                                    }}
+                                                                    className={`cursor-pointer rounded-md border p-2 text-xs transition-all ${isDetailChecked
+                                                                            ? "border-amber-500 bg-amber-500/20 shadow-2xs font-bold ring-1 ring-amber-500"
+                                                                            : "border-border/60 bg-background hover:bg-amber-500/10"
+                                                                        }`}
+                                                                >
+                                                                    <div className="flex items-center justify-between text-[11px]">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={isDetailChecked}
+                                                                                onChange={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    toggleShortageDetail(item.detailId);
+                                                                                }}
+                                                                                className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                                                                            />
+                                                                            <span className="font-semibold text-foreground flex items-center gap-1">
+                                                                                <Boxes className="h-3 w-3 text-amber-500 shrink-0" />
+                                                                                Lot: {item.resolvedLotName}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="text-right shrink-0">
+                                                                            <span className="text-amber-600 dark:text-amber-400 font-bold text-xs font-mono block">
+                                                                                -{item.shortagePieces.toLocaleString()} PCS
+                                                                            </span>
+                                                                            <span className="text-[10px] font-bold font-mono text-amber-700 dark:text-amber-300 block">
+                                                                                -{formatCurrency(item.shortageAmount)}
+                                                                            </span>
+                                                                            {item.uomCount && item.uomCount > 1 ? (
+                                                                                <span className="text-[9px] text-amber-700/80 dark:text-amber-300/80 font-medium font-mono block">
+                                                                                    (-{item.remainingShortage} {item.baseUom})
+                                                                                </span>
+                                                                            ) : null}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground pl-5 border-t border-border/40 pt-1">
+                                                                        <span className="flex items-center gap-1">
+                                                                            <Tag className="h-2.5 w-2.5 text-muted-foreground" />
+                                                                            Batch: {item.resolvedBatchNo}
+                                                                        </span>
+                                                                        <span className="font-medium">Unit: {formatCurrency(item.unitCost)} • Total Cost: <strong className="text-amber-600 dark:text-amber-400 font-mono">-{formatCurrency(item.shortageAmount)}</strong></span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )
+                            ) : (
+                                /* GRANULAR LOT/BATCH FLAT VIEW FOR SHORTAGES */
+                                shortageItems.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-muted-foreground">
+                                        No unallocated shortage lots remaining.
+                                    </div>
+                                ) : (
+                                    shortageItems.map(item => {
+                                        const isChecked = selectedShortageDetailIds.includes(item.detailId);
+                                        return (
+                                            <div
+                                                key={item.detailId}
+                                                onClick={() => toggleShortageDetail(item.detailId)}
+                                                className={`cursor-pointer rounded-lg border p-3 text-xs transition-all ${isChecked
+                                                        ? "border-amber-500 bg-amber-500/15 shadow-xs ring-1 ring-amber-500 font-bold"
+                                                        : "border-border bg-background hover:border-amber-500/40"
+                                                    }`}
+                                            >
+                                                <div className="flex items-start justify-between font-medium gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isChecked}
+                                                            onChange={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleShortageDetail(item.detailId);
+                                                            }}
+                                                            className="h-3.5 w-3.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                                                        />
+                                                        <span className="font-bold text-foreground">{item.resolvedName}</span>
+                                                        {item.resolvedUom && (
+                                                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase">
+                                                                {item.resolvedUom}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <span className="text-amber-600 dark:text-amber-400 font-bold text-xs font-mono block">
+                                                            -{item.shortagePieces.toLocaleString()} PCS
+                                                        </span>
+                                                        <span className="text-[11px] font-bold font-mono text-amber-700 dark:text-amber-300 block">
+                                                            Total: -{formatCurrency(item.shortageAmount)}
+                                                        </span>
+                                                        {item.uomCount && item.uomCount > 1 ? (
+                                                            <span className="text-[9px] text-amber-700/80 dark:text-amber-300/80 font-medium font-mono block">
+                                                                (-{item.remainingShortage} {item.baseUom})
+                                                            </span>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-1.5 flex flex-wrap items-center justify-between text-[11px] text-muted-foreground pl-5.5 border-t border-border/40 pt-1.5">
+                                                    <div className="flex items-center gap-3">
                                                         <span className="flex items-center gap-1">
                                                             <Boxes className="h-3 w-3 text-amber-500" />
                                                             Lot: {item.resolvedLotName}
@@ -1294,245 +1430,253 @@ export default function OffsettingWorkspace({
                                                             <Tag className="h-3 w-3 text-muted-foreground" />
                                                             Batch: {item.resolvedBatchNo}
                                                         </span>
-                                                        <span>Cost: {formatCurrency(item.unitCost)}</span>
                                                     </div>
+                                                    <span className="font-medium">Unit: {formatCurrency(item.unitCost)} • Total: <strong className="text-amber-600 dark:text-amber-400 font-mono">-{formatCurrency(item.shortageAmount)}</strong></span>
                                                 </div>
-                                            );
-                                        })
-                                    )
-                                )}
-                            </div>
+                                            </div>
+                                        );
+                                    })
+                                )
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Surplus Column (Right) */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={
+                                        groupingViewMode === "PRODUCT_GROUPED"
+                                            ? groupedSurplusProducts.length > 0 && selectedSurplusProductIds.length === groupedSurplusProducts.length
+                                            : surplusItems.length > 0 && selectedSurplusDetailIds.length === surplusItems.length
+                                    }
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            if (groupingViewMode === "PRODUCT_GROUPED") {
+                                                setSelectedSurplusProductIds(groupedSurplusProducts.map(g => g.productId));
+                                                setSelectedSurplusDetailIds(surplusItems.map(i => i.detailId));
+                                            } else {
+                                                setSelectedSurplusDetailIds(surplusItems.map(i => i.detailId));
+                                            }
+                                        } else {
+                                            setSelectedSurplusProductIds([]);
+                                            setSelectedSurplusDetailIds([]);
+                                        }
+                                    }}
+                                    className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                />
+                                <TrendingUp className="h-3.5 w-3.5" />
+                                Surplus Discrepancies (Overages)
+                            </label>
+                            {selectedSurplusTotalQty > 0 && (
+                                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                    Selected: +{selectedSurplusTotalPieces.toLocaleString()} pcs • +{formatCurrency(selectedSurplusTotalCost)}
+                                </span>
+                            )}
                         </div>
 
-                        {/* Surplus Column (Right) */}
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={
-                                            groupingViewMode === "PRODUCT_GROUPED"
-                                                ? groupedSurplusProducts.length > 0 && selectedSurplusProductIds.length === groupedSurplusProducts.length
-                                                : surplusItems.length > 0 && selectedSurplusDetailIds.length === surplusItems.length
-                                        }
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                if (groupingViewMode === "PRODUCT_GROUPED") {
-                                                    setSelectedSurplusProductIds(groupedSurplusProducts.map(g => g.productId));
-                                                    setSelectedSurplusDetailIds(surplusItems.map(i => i.detailId));
-                                                } else {
-                                                    setSelectedSurplusDetailIds(surplusItems.map(i => i.detailId));
-                                                }
-                                            } else {
-                                                setSelectedSurplusProductIds([]);
-                                                setSelectedSurplusDetailIds([]);
-                                            }
-                                        }}
-                                        className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                                    />
-                                    <TrendingUp className="h-3.5 w-3.5" />
-                                    Surplus Discrepancies (Overages)
-                                </label>
-                                {selectedSurplusTotalQty > 0 && (
-                                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                        Selected: +{selectedSurplusTotalPieces.toLocaleString()} pcs ({selectedSurplusTotalQty} units)
-                                    </span>
-                                )}
-                            </div>
-
-                            <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-border rounded-lg p-2 bg-muted/20">
-                                {groupingViewMode === "PRODUCT_GROUPED" ? (
-                                    /* PRODUCT GROUPED VIEW FOR SURPLUSES */
-                                    groupedSurplusProducts.length === 0 ? (
-                                        <div className="p-4 text-center text-xs text-muted-foreground">
-                                            No unallocated surplus products remaining.
-                                        </div>
-                                    ) : (
-                                        groupedSurplusProducts.map(group => {
-                                            const isExpanded = !!expandedSurplusProducts[group.productId];
-                                            const isProductChecked = selectedSurplusProductIds.includes(group.productId);
-                                            const hasCheckedChild = group.items.some(i => selectedSurplusDetailIds.includes(i.detailId));
-
-                                            return (
-                                                <div
-                                                    key={group.productId}
-                                                    onClick={() => toggleSurplusProduct(group.productId, group.items.map(i => i.detailId))}
-                                                    className={`rounded-lg border transition-all cursor-pointer ${
-                                                        isProductChecked
-                                                            ? "border-emerald-500 bg-emerald-500/15 ring-2 ring-emerald-500 shadow-md"
-                                                            : hasCheckedChild
-                                                                ? "border-emerald-500/80 bg-emerald-500/10 ring-1 ring-emerald-500/50"
-                                                                : "border-border bg-background hover:border-emerald-500/50 hover:bg-emerald-500/5"
-                                                    }`}
-                                                >
-                                                    {/* Product Header Card */}
-                                                    <div className="p-3">
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <div className="flex items-start gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={isProductChecked}
-                                                                    onChange={(e) => {
-                                                                        e.stopPropagation();
-                                                                        toggleSurplusProduct(group.productId, group.items.map(i => i.detailId));
-                                                                    }}
-                                                                    className="h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer mt-0.5 shrink-0"
-                                                                />
-                                                                <div className="font-bold text-foreground text-xs flex items-center gap-1.5 flex-wrap">
-                                                                    <span>{group.productName}</span>
-                                                                    {group.uomName && (
-                                                                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold uppercase">
-                                                                            {group.uomName}
-                                                                        </span>
-                                                                    )}
-                                                                    {group.productCode && (
-                                                                        <span className="text-[10px] text-muted-foreground font-normal font-mono">
-                                                                            ({group.productCode})
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <div className="text-right shrink-0">
-                                                                <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm font-mono block">
-                                                                    +{group.totalSurplusPieces.toLocaleString()} PCS
-                                                                </span>
-                                                                {group.uomCount && group.uomCount > 1 ? (
-                                                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium font-mono block">
-                                                                        (+{group.totalSurplusQty} {group.baseUom})
-                                                                    </span>
-                                                                ) : null}
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="mt-2 flex items-center justify-between border-t pt-2 text-[11px]">
-                                                            <span className="text-muted-foreground font-medium flex items-center gap-1">
-                                                                <Layers className="h-3 w-3 text-emerald-500" />
-                                                                Total Product Overage ({group.items.length} {group.items.length === 1 ? "lot/batch" : "lots/batches"})
-                                                            </span>
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => toggleSurplusExpand(group.productId, e)}
-                                                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
-                                                            >
-                                                                {isExpanded ? "Hide Breakdown" : `Show Lot/Batch Breakdown (${group.items.length})`}
-                                                                {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Expanded Breakdown of Batches & Lots */}
-                                                    {isExpanded && (
-                                                        <div className="border-t bg-muted/40 p-2 space-y-1.5 rounded-b-lg">
-                                                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 pb-1">
-                                                                Detailed Lots & Batches Breakdown:
-                                                            </div>
-                                                            {group.items.map(item => {
-                                                                const isDetailChecked = selectedSurplusDetailIds.includes(item.detailId);
-                                                                return (
-                                                                    <div
-                                                                        key={item.detailId}
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            toggleSurplusDetail(item.detailId);
-                                                                        }}
-                                                                        className={`cursor-pointer rounded-md border p-2 text-xs transition-all ${
-                                                                            isDetailChecked
-                                                                                ? "border-emerald-500 bg-emerald-500/20 shadow-2xs font-bold ring-1 ring-emerald-500"
-                                                                                : "border-border/60 bg-background hover:bg-emerald-500/10"
-                                                                        }`}
-                                                                    >
-                                                                        <div className="flex items-center justify-between text-[11px]">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <input
-                                                                                    type="checkbox"
-                                                                                    checked={isDetailChecked}
-                                                                                    onChange={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        toggleSurplusDetail(item.detailId);
-                                                                                    }}
-                                                                                    className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
-                                                                                />
-                                                                                <span className="font-semibold text-foreground flex items-center gap-1">
-                                                                                    <Boxes className="h-3 w-3 text-emerald-500 shrink-0" />
-                                                                                    Lot: {item.resolvedLotName}
-                                                                                </span>
-                                                                            </div>
-                                                                            <div className="text-right shrink-0">
-                                                                                <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs font-mono block">
-                                                                                    +{item.surplusPieces.toLocaleString()} PCS
-                                                                                </span>
-                                                                                {item.uomCount && item.uomCount > 1 ? (
-                                                                                    <span className="text-[9px] text-emerald-700 dark:text-emerald-300 font-medium font-mono block">
-                                                                                        (+{item.remainingSurplus} {item.baseUom})
-                                                                                    </span>
-                                                                                ) : null}
-                                                                            </div>
-                                                                        </div>
-                                                                        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground pl-5">
-                                                                            <span className="flex items-center gap-1">
-                                                                                <Tag className="h-2.5 w-2.5 text-muted-foreground" />
-                                                                                Batch: {item.resolvedBatchNo}
-                                                                            </span>
-                                                                            <span>Cost: {formatCurrency(item.unitCost)}</span>
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })
-                                    )
+                        <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-border rounded-lg p-2 bg-muted/20">
+                            {groupingViewMode === "PRODUCT_GROUPED" ? (
+                                /* PRODUCT GROUPED VIEW FOR SURPLUSES */
+                                groupedSurplusProducts.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-muted-foreground">
+                                        No unallocated surplus products remaining.
+                                    </div>
                                 ) : (
-                                    /* GRANULAR LOT/BATCH FLAT VIEW FOR SURPLUSES */
-                                    surplusItems.length === 0 ? (
-                                        <div className="p-4 text-center text-xs text-muted-foreground">
-                                            No unallocated surplus lots remaining.
-                                        </div>
-                                    ) : (
-                                        surplusItems.map(item => {
-                                            const isChecked = selectedSurplusDetailIds.includes(item.detailId);
-                                            return (
-                                                <div
-                                                    key={item.detailId}
-                                                    onClick={() => toggleSurplusDetail(item.detailId)}
-                                                    className={`cursor-pointer rounded-lg border p-3 text-xs transition-all ${
-                                                        isChecked
-                                                            ? "border-emerald-500 bg-emerald-500/15 shadow-xs ring-1 ring-emerald-500 font-bold"
-                                                            : "border-border bg-background hover:border-emerald-500/40"
+                                    groupedSurplusProducts.map(group => {
+                                        const isExpanded = !!expandedSurplusProducts[group.productId];
+                                        const isProductChecked = selectedSurplusProductIds.includes(group.productId);
+                                        const hasCheckedChild = group.items.some(i => selectedSurplusDetailIds.includes(i.detailId));
+
+                                        return (
+                                            <div
+                                                key={group.productId}
+                                                onClick={() => toggleSurplusProduct(group.productId, group.items.map(i => i.detailId))}
+                                                className={`rounded-lg border transition-all cursor-pointer ${isProductChecked
+                                                        ? "border-emerald-500 bg-emerald-500/15 ring-2 ring-emerald-500 shadow-md"
+                                                        : hasCheckedChild
+                                                            ? "border-emerald-500/80 bg-emerald-500/10 ring-1 ring-emerald-500/50"
+                                                            : "border-border bg-background hover:border-emerald-500/50 hover:bg-emerald-500/5"
                                                     }`}
-                                                >
-                                                    <div className="flex items-start justify-between font-medium gap-2">
-                                                        <div className="flex items-center gap-2 flex-wrap">
+                                            >
+                                                {/* Product Header Card */}
+                                                <div className="p-3">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex items-start gap-2">
                                                             <input
                                                                 type="checkbox"
-                                                                checked={isChecked}
+                                                                checked={isProductChecked}
                                                                 onChange={(e) => {
                                                                     e.stopPropagation();
-                                                                    toggleSurplusDetail(item.detailId);
+                                                                    toggleSurplusProduct(group.productId, group.items.map(i => i.detailId));
                                                                 }}
-                                                                className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                                                className="h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer mt-0.5 shrink-0"
                                                             />
-                                                            <span className="font-bold text-foreground">{item.resolvedName}</span>
-                                                            {item.resolvedUom && (
-                                                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold uppercase">
-                                                                    {item.resolvedUom}
-                                                                </span>
-                                                            )}
+                                                            <div className="font-bold text-foreground text-xs flex items-center gap-1.5 flex-wrap">
+                                                                <span>{group.productName}</span>
+                                                                {group.uomName && (
+                                                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold uppercase">
+                                                                        {group.uomName}
+                                                                    </span>
+                                                                )}
+                                                                {group.productCode && (
+                                                                    <span className="text-[10px] text-muted-foreground font-normal font-mono">
+                                                                        ({group.productCode})
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                         <div className="text-right shrink-0">
-                                                            <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs font-mono block">
-                                                                +{item.surplusPieces.toLocaleString()} PCS
+                                                            <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm font-mono block">
+                                                                +{group.totalSurplusPieces.toLocaleString()} PCS
                                                             </span>
-                                                            {item.uomCount && item.uomCount > 1 ? (
-                                                                <span className="text-[9px] text-emerald-700 dark:text-emerald-300 font-medium font-mono block">
-                                                                    (+{item.remainingSurplus} {item.baseUom})
+                                                            <span className="text-[11px] font-bold font-mono text-emerald-700 dark:text-emerald-300 block">
+                                                                Total: +{formatCurrency(group.totalSurplusCost)}
+                                                            </span>
+                                                            {group.uomCount && group.uomCount > 1 ? (
+                                                                <span className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80 font-medium font-mono block">
+                                                                    (+{group.totalSurplusQty} {group.baseUom})
                                                                 </span>
                                                             ) : null}
                                                         </div>
                                                     </div>
-                                                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground pl-5.5">
+
+                                                    <div className="mt-2 flex items-center justify-between border-t pt-2 text-[11px]">
+                                                        <span className="text-muted-foreground font-medium flex items-center gap-1">
+                                                            <Layers className="h-3 w-3 text-emerald-500" />
+                                                            Total Product Overage ({group.items.length} {group.items.length === 1 ? "lot/batch" : "lots/batches"})
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => toggleSurplusExpand(group.productId, e)}
+                                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
+                                                        >
+                                                            {isExpanded ? "Hide Breakdown" : `Show Lot/Batch Breakdown (${group.items.length})`}
+                                                            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Expanded Breakdown of Batches & Lots */}
+                                                {isExpanded && (
+                                                    <div className="border-t bg-muted/40 p-2 space-y-1.5 rounded-b-lg">
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1 pb-1">
+                                                            Detailed Lots & Batches Breakdown:
+                                                        </div>
+                                                        {group.items.map(item => {
+                                                            const isDetailChecked = selectedSurplusDetailIds.includes(item.detailId);
+                                                            return (
+                                                                <div
+                                                                    key={item.detailId}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleSurplusDetail(item.detailId);
+                                                                    }}
+                                                                    className={`cursor-pointer rounded-md border p-2 text-xs transition-all ${isDetailChecked
+                                                                            ? "border-emerald-500 bg-emerald-500/20 shadow-2xs font-bold ring-1 ring-emerald-500"
+                                                                            : "border-border/60 bg-background hover:bg-emerald-500/10"
+                                                                        }`}
+                                                                >
+                                                                    <div className="flex items-center justify-between text-[11px]">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={isDetailChecked}
+                                                                                onChange={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    toggleSurplusDetail(item.detailId);
+                                                                                }}
+                                                                                className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                                                            />
+                                                                            <span className="font-semibold text-foreground flex items-center gap-1">
+                                                                                <Boxes className="h-3 w-3 text-emerald-500 shrink-0" />
+                                                                                Lot: {item.resolvedLotName}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="text-right shrink-0">
+                                                                            <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs font-mono block">
+                                                                                +{item.surplusPieces.toLocaleString()} PCS
+                                                                            </span>
+                                                                            <span className="text-[10px] font-bold font-mono text-emerald-700 dark:text-emerald-300 block">
+                                                                                +{formatCurrency(item.surplusAmount)}
+                                                                            </span>
+                                                                            {item.uomCount && item.uomCount > 1 ? (
+                                                                                <span className="text-[9px] text-emerald-700/80 dark:text-emerald-300/80 font-medium font-mono block">
+                                                                                    (+{item.remainingSurplus} {item.baseUom})
+                                                                                </span>
+                                                                            ) : null}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground pl-5 border-t border-border/40 pt-1">
+                                                                        <span className="flex items-center gap-1">
+                                                                            <Tag className="h-2.5 w-2.5 text-muted-foreground" />
+                                                                            Batch: {item.resolvedBatchNo}
+                                                                        </span>
+                                                                        <span className="font-medium">Unit: {formatCurrency(item.unitCost)} • Total Val: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">+{formatCurrency(item.surplusAmount)}</strong></span>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )
+                            ) : (
+                                /* GRANULAR LOT/BATCH FLAT VIEW FOR SURPLUSES */
+                                surplusItems.length === 0 ? (
+                                    <div className="p-4 text-center text-xs text-muted-foreground">
+                                        No unallocated surplus lots remaining.
+                                    </div>
+                                ) : (
+                                    surplusItems.map(item => {
+                                        const isChecked = selectedSurplusDetailIds.includes(item.detailId);
+                                        return (
+                                            <div
+                                                key={item.detailId}
+                                                onClick={() => toggleSurplusDetail(item.detailId)}
+                                                className={`cursor-pointer rounded-lg border p-3 text-xs transition-all ${isChecked
+                                                        ? "border-emerald-500 bg-emerald-500/15 shadow-xs ring-1 ring-emerald-500 font-bold"
+                                                        : "border-border bg-background hover:border-emerald-500/40"
+                                                    }`}
+                                            >
+                                                <div className="flex items-start justify-between font-medium gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isChecked}
+                                                            onChange={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleSurplusDetail(item.detailId);
+                                                            }}
+                                                            className="h-3.5 w-3.5 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                                        />
+                                                        <span className="font-bold text-foreground">{item.resolvedName}</span>
+                                                        {item.resolvedUom && (
+                                                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold uppercase">
+                                                                {item.resolvedUom}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs font-mono block">
+                                                            +{item.surplusPieces.toLocaleString()} PCS
+                                                        </span>
+                                                        <span className="text-[11px] font-bold font-mono text-emerald-700 dark:text-emerald-300 block">
+                                                            Total: +{formatCurrency(item.surplusAmount)}
+                                                        </span>
+                                                        {item.uomCount && item.uomCount > 1 ? (
+                                                            <span className="text-[9px] text-emerald-700/80 dark:text-emerald-300/80 font-medium font-mono block">
+                                                                (+{item.remainingSurplus} {item.baseUom})
+                                                            </span>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-1.5 flex flex-wrap items-center justify-between text-[11px] text-muted-foreground pl-5.5 border-t border-border/40 pt-1.5">
+                                                    <div className="flex items-center gap-3">
                                                         <span className="flex items-center gap-1">
                                                             <Boxes className="h-3 w-3 text-emerald-500" />
                                                             Lot: {item.resolvedLotName}
@@ -1541,77 +1685,77 @@ export default function OffsettingWorkspace({
                                                             <Tag className="h-3 w-3 text-muted-foreground" />
                                                             Batch: {item.resolvedBatchNo}
                                                         </span>
-                                                        <span>Cost: {formatCurrency(item.unitCost)}</span>
                                                     </div>
+                                                    <span className="font-medium">Unit: {formatCurrency(item.unitCost)} • Total: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">+{formatCurrency(item.surplusAmount)}</strong></span>
                                                 </div>
-                                            );
-                                        })
-                                    )
-                                )}
-                            </div>
+                                            </div>
+                                        );
+                                    })
+                                )
+                            )}
                         </div>
-                    </div>
-
-                    {/* Action inputs bar */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-3 border-t bg-muted/20 p-3 rounded-lg">
-                        <div className="flex-1 space-y-1">
-                            <label className="text-[11px] font-semibold text-muted-foreground flex items-center justify-between">
-                                <span>Offset Qty (pcs)</span>
-                                {selectedShortageTotalPieces > 0 && selectedSurplusTotalPieces > 0 && (
-                                    <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
-                                        Max: {Math.min(selectedShortageTotalPieces, selectedSurplusTotalPieces).toLocaleString()} pcs
-                                    </span>
-                                )}
-                            </label>
-                            <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                value={linkQty}
-                                onChange={e => setLinkQty(e.target.value)}
-                                placeholder="Pieces to link (e.g. 400)"
-                                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
-                            />
-                        </div>
-
-                        <div className="flex-1 space-y-1">
-                            <label className="text-[11px] font-semibold text-muted-foreground">Reason Code</label>
-                            <select
-                                value={linkReason}
-                                onChange={e => setLinkReason(e.target.value)}
-                                className="w-full h-9 rounded-md border border-input bg-background px-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-                            >
-                                {REASON_CODES.map(code => (
-                                    <option key={code} value={code}>
-                                        {code}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="flex-1 space-y-1">
-                            <label className="text-[11px] font-semibold text-muted-foreground">Auditor Note</label>
-                            <input
-                                type="text"
-                                value={linkNotes}
-                                onChange={e => setLinkNotes(e.target.value)}
-                                placeholder="Audit remarks"
-                                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-                            />
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={handleAddPairing}
-                            disabled={selectedShortageTotalPieces === 0 || selectedSurplusTotalPieces === 0 || !linkQty}
-                            className="h-9 inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 text-xs font-semibold text-white shadow-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-                        >
-                            <Link2 className="h-3.5 w-3.5" />
-                            Link Offset Pair
-                        </button>
                     </div>
                 </div>
-            )}
+
+                {/* Action inputs bar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 pt-3 border-t bg-muted/20 p-3 rounded-lg">
+                    <div className="flex-1 space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground flex items-center justify-between">
+                            <span>Offset Qty (pcs)</span>
+                            {selectedShortageTotalPieces > 0 && selectedSurplusTotalPieces > 0 && (
+                                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
+                                    Max: {Math.min(selectedShortageTotalPieces, selectedSurplusTotalPieces).toLocaleString()} pcs
+                                </span>
+                            )}
+                        </label>
+                        <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={linkQty}
+                            onChange={e => setLinkQty(e.target.value)}
+                            placeholder="Pieces to link (e.g. 400)"
+                            className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 font-mono font-bold"
+                        />
+                    </div>
+
+                    <div className="flex-1 space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground">Reason Code</label>
+                        <select
+                            value={linkReason}
+                            onChange={e => setLinkReason(e.target.value)}
+                            className="w-full h-9 rounded-md border border-input bg-background px-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                        >
+                            {REASON_CODES.map(code => (
+                                <option key={code} value={code}>
+                                    {code}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="flex-1 space-y-1">
+                        <label className="text-[11px] font-semibold text-muted-foreground">Auditor Note</label>
+                        <input
+                            type="text"
+                            value={linkNotes}
+                            onChange={e => setLinkNotes(e.target.value)}
+                            placeholder="Audit remarks"
+                            className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleAddPairing}
+                        disabled={selectedShortageTotalPieces === 0 || selectedSurplusTotalPieces === 0 || !linkQty}
+                        className="h-9 inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 text-xs font-semibold text-white shadow-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                    >
+                        <Link2 className="h-3.5 w-3.5" />
+                        Link Offset Pair
+                    </button>
+                </div>
+            </div>
 
             {/* Active Offsetting Pairings Table */}
             <div className="space-y-3">
@@ -1626,11 +1770,10 @@ export default function OffsettingWorkspace({
                         <button
                             type="button"
                             onClick={() => setAuditTableMode("GROUPED_PRODUCT")}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
-                                auditTableMode === "GROUPED_PRODUCT"
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${auditTableMode === "GROUPED_PRODUCT"
                                     ? "bg-background text-foreground font-bold shadow-xs"
                                     : "text-muted-foreground hover:text-foreground"
-                            }`}
+                                }`}
                         >
                             <Package className="h-3.5 w-3.5" />
                             Consolidated Product Pairs
@@ -1638,11 +1781,10 @@ export default function OffsettingWorkspace({
                         <button
                             type="button"
                             onClick={() => setAuditTableMode("GRANULAR_LOT")}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${
-                                auditTableMode === "GRANULAR_LOT"
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-all ${auditTableMode === "GRANULAR_LOT"
                                     ? "bg-background text-foreground font-bold shadow-xs"
                                     : "text-muted-foreground hover:text-foreground"
-                            }`}
+                                }`}
                         >
                             <Boxes className="h-3.5 w-3.5" />
                             Granular Lot Pairs
@@ -1654,7 +1796,10 @@ export default function OffsettingWorkspace({
                     <div className="rounded-xl border border-dashed border-border p-8 text-center bg-card shadow-xs">
                         <AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/60" />
                         <p className="mt-2 text-xs font-medium text-muted-foreground">
-                            No offset pairings linked yet. Use the lot matching builder above or click &quot;Auto-Match Same Product&quot;.
+                            {isCommitted
+                                ? "No offset pairings were linked for this committed physical inventory sheet."
+                                : "No offset pairings linked yet. Use the lot matching builder above or click \"Auto-Match Same Product\"."
+                            }
                         </p>
                     </div>
                 ) : auditTableMode === "GROUPED_PRODUCT" ? (
@@ -1669,7 +1814,7 @@ export default function OffsettingWorkspace({
                                     <th className="px-4 py-3 text-right">Matched Offset Pieces</th>
                                     <th className="px-4 py-3 text-right">Net Financial Impact</th>
                                     <th className="px-4 py-3">Reason Code & Remarks</th>
-                                    {!isCommitted && <th className="px-4 py-3 text-center">Action</th>}
+                                    <th className="px-4 py-3 text-center">Action</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -1724,16 +1869,14 @@ export default function OffsettingWorkspace({
                                                             {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                                                             <span>{isExpanded ? "Hide" : `Lots (${group.pairs.length})`}</span>
                                                         </button>
-                                                        {!isCommitted && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleRemoveGroupPairings(group.groupId)}
-                                                                className="rounded-md p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 transition-colors"
-                                                                title="Delete pair group"
-                                                            >
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </button>
-                                                        )}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRemoveGroupPairings(group.groupId)}
+                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 transition-colors"
+                                                            title="Delete pair group"
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1754,7 +1897,7 @@ export default function OffsettingWorkspace({
                                                                         <th className="py-1">Surplus Lot / Batch</th>
                                                                         <th className="py-1 text-right">Offset Pieces & Deduction</th>
                                                                         <th className="py-1 text-right">Net Impact</th>
-                                                                        {!isCommitted && <th className="py-1 text-center">Action</th>}
+                                                                        <th className="py-1 text-center">Action</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody className="divide-y divide-border/60">
@@ -1771,7 +1914,7 @@ export default function OffsettingWorkspace({
                                                                                 <td className="py-1.5 font-medium text-emerald-700 dark:text-emerald-300">
                                                                                     Lot: {pair.surplus_lot_name} (Batch: {pair.surplus_batch_no})
                                                                                 </td>
-                                                                                 <td className="py-1.5 text-right font-mono font-bold">
+                                                                                <td className="py-1.5 text-right font-mono font-bold">
                                                                                     <div>{pcs.toLocaleString()} pcs</div>
                                                                                     <div className="text-[9px] text-muted-foreground font-normal">
                                                                                         (-{formatQty(shortDeduction)} / +{formatQty(surpDeduction)})
@@ -1780,18 +1923,16 @@ export default function OffsettingWorkspace({
                                                                                 <td className="py-1.5 text-right font-mono font-bold">
                                                                                     {formatCurrency(pair.net_financial_impact)}
                                                                                 </td>
-                                                                                {!isCommitted && (
-                                                                                    <td className="py-1.5 text-center">
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => handleRemovePairing(pair.id)}
-                                                                                            className="rounded p-1 text-muted-foreground hover:text-rose-600"
-                                                                                            title="Remove single lot pair"
-                                                                                        >
-                                                                                            <Trash2 className="h-3 w-3" />
-                                                                                        </button>
-                                                                                    </td>
-                                                                                )}
+                                                                                <td className="py-1.5 text-center">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleRemovePairing(pair.id)}
+                                                                                        className="rounded p-1 text-muted-foreground hover:text-rose-600"
+                                                                                        title="Remove single lot pair"
+                                                                                    >
+                                                                                        <Trash2 className="h-3 w-3" />
+                                                                                    </button>
+                                                                                </td>
                                                                             </tr>
                                                                         );
                                                                     })}
@@ -1819,7 +1960,7 @@ export default function OffsettingWorkspace({
                                     <th className="px-4 py-3 text-right">Offset Pieces & Deduction</th>
                                     <th className="px-4 py-3 text-right">Net Financial Impact</th>
                                     <th className="px-4 py-3">Reason Code & Remarks</th>
-                                    {!isCommitted && <th className="px-4 py-3 text-center">Action</th>}
+                                    <th className="px-4 py-3 text-center">Action</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -1864,18 +2005,16 @@ export default function OffsettingWorkspace({
                                                 </span>
                                                 {pair.notes && <div className="text-[10px] text-muted-foreground italic mt-0.5">{pair.notes}</div>}
                                             </td>
-                                            {!isCommitted && (
-                                                <td className="px-4 py-3 text-center">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemovePairing(pair.id)}
-                                                        className="rounded-md p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 transition-colors"
-                                                        title="Unlink pair"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </button>
-                                                </td>
-                                            )}
+                                            <td className="px-4 py-3 text-center">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemovePairing(pair.id)}
+                                                    className="rounded-md p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-600 transition-colors"
+                                                    title="Unlink pair"
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </button>
+                                            </td>
                                         </tr>
                                     );
                                 })}
@@ -1885,19 +2024,117 @@ export default function OffsettingWorkspace({
                 )}
             </div>
 
-            {!isCommitted && (
-                /* Auditor Sign-off Remarks */
-                <div className="rounded-xl border border-border bg-card p-4 space-y-2 shadow-xs">
-                    <label className="text-xs font-bold text-foreground uppercase tracking-wider">Auditor Sign-off Remarks</label>
-                    <textarea
-                        rows={2}
-                        value={auditSignoffNotes}
-                        onChange={e => setAuditSignoffNotes(e.target.value)}
-                        placeholder="Enter supervisor audit notes before committing final inventory adjustments..."
-                        className="w-full rounded-lg border border-input bg-background p-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-                    />
+            {/* Inventory Line Items & Discrepancies Audit Table */}
+            <div className="space-y-3 pt-4 border-t border-border">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div>
+                        <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <ClipboardList className="h-4 w-4 text-indigo-500" />
+                            Physical Inventory Line Items Audit Trail ({formattedLineItems.length} items logged)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Complete list of counted inventory lines, system balances, physical counts, and cost variances
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowLineItems(prev => !prev)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-colors shrink-0 cursor-pointer"
+                    >
+                        <span>{showLineItems ? "Hide Line Items" : `Show Line Items (${formattedLineItems.length})`}</span>
+                        {showLineItems ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </button>
                 </div>
-            )}
+
+                {showLineItems && (
+                    formattedLineItems.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-border p-6 text-center bg-card shadow-xs">
+                            <AlertCircle className="mx-auto h-6 w-6 text-muted-foreground/60" />
+                            <p className="mt-2 text-xs font-medium text-muted-foreground">
+                                No physical count detail line items found for this sheet.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-muted/60 border-b text-[11px] font-bold text-muted-foreground uppercase">
+                                    <tr>
+                                        <th className="px-4 py-3">Product</th>
+                                        <th className="px-4 py-3">Lot & Batch No.</th>
+                                        <th className="px-4 py-3">Condition</th>
+                                        <th className="px-4 py-3 text-right">System Count</th>
+                                        <th className="px-4 py-3 text-right">Physical Count</th>
+                                        <th className="px-4 py-3 text-right">Variance</th>
+                                        <th className="px-4 py-3 text-right">Unit Cost</th>
+                                        <th className="px-4 py-3 text-right">Diff. Cost</th>
+                                        <th className="px-4 py-3">Remarks / Reason</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border">
+                                    {formattedLineItems.map((item) => {
+                                        const isShortage = item.variance < -0.0001;
+                                        const isSurplus = item.variance > 0.0001;
+
+                                        return (
+                                            <tr key={item.id} className="hover:bg-muted/20 transition-colors">
+                                                <td className="px-4 py-3">
+                                                    <div className="font-bold text-foreground">{item.prodName}</div>
+                                                    {item.prodCode && (
+                                                        <div className="text-[10px] text-muted-foreground font-mono">{item.prodCode}</div>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-semibold text-foreground">{item.lotName}</div>
+                                                    <div className="text-[10px] text-muted-foreground">Batch: {item.batchNo}</div>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-muted text-foreground">
+                                                        {item.condition}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono font-medium">
+                                                    {formatQty(item.systemCount)} {item.uomShortcut}
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono font-medium">
+                                                    {formatQty(item.physicalCount)} {item.uomShortcut}
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono font-bold">
+                                                    <span className={isShortage ? "text-amber-600 dark:text-amber-400" : isSurplus ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                                                        {item.variance > 0 ? `+${formatQty(item.variance)}` : formatQty(item.variance)} {item.uomShortcut}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono text-muted-foreground">
+                                                    {formatCurrency(item.unitCost)}
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono font-bold">
+                                                    <span className={isShortage ? "text-amber-600 dark:text-amber-400" : isSurplus ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                                                        {formatCurrency(item.differenceCost)}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">
+                                                    {item.remarks || "—"}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )
+                )}
+            </div>
+
+            {/* Auditor Sign-off Remarks */}
+            <div className="rounded-xl border border-border bg-card p-4 space-y-2 shadow-xs">
+                <label className="text-xs font-bold text-foreground uppercase tracking-wider">Auditor Sign-off Remarks</label>
+                <textarea
+                    rows={2}
+                    value={auditSignoffNotes}
+                    onChange={e => setAuditSignoffNotes(e.target.value)}
+                    placeholder="Enter supervisor audit notes..."
+                    className="w-full rounded-lg border border-input bg-background p-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+            </div>
 
             <OffsettingPrintModal
                 isOpen={isPrintModalOpen}

@@ -6,7 +6,8 @@ import {
     Printer,
     TrendingDown,
     TrendingUp,
-    GitCompare
+    GitCompare,
+    ExternalLink
 } from "lucide-react";
 import {
     OffsettingSheetQueueItem,
@@ -355,7 +356,192 @@ export default function OffsettingPrintModal({
     const netUnresolvedVarianceValue = unresolvedOverTotalValue - unresolvedShortTotalValue;
 
     const handleTriggerPrint = () => {
-        window.print();
+        const reportEl = document.getElementById("printable-reconciliation-report");
+        if (!reportEl) {
+            window.print();
+            return;
+        }
+
+        const printFrame = document.createElement("iframe");
+        printFrame.name = "print_frame";
+        printFrame.style.position = "fixed";
+        printFrame.style.left = "-9999px";
+        printFrame.style.top = "-9999px";
+        printFrame.style.width = "0px";
+        printFrame.style.height = "0px";
+        printFrame.style.border = "none";
+
+        document.body.appendChild(printFrame);
+
+        const frameDoc = printFrame.contentWindow?.document;
+        if (!frameDoc) {
+            window.print();
+            return;
+        }
+
+        const styleTags = Array.from(document.querySelectorAll("style, link[rel='stylesheet']"))
+            .map(el => el.outerHTML)
+            .join("\n");
+
+        frameDoc.open();
+        frameDoc.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Physical Inventory Reconciliation & Offsetting Report - Sheet #${sheet.pi_no}</title>
+                ${styleTags}
+                <style>
+                    @page {
+                        size: A4 portrait;
+                        margin: 12mm 10mm 12mm 10mm;
+                    }
+                    *, *::before, *::after {
+                        box-sizing: border-box !important;
+                        -webkit-print-color-adjust: exact !important;
+                        print-color-adjust: exact !important;
+                    }
+                    html, body {
+                        background: #ffffff !important;
+                        color: #0f172a !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        width: 100% !important;
+                        height: auto !important;
+                        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+                    }
+                    #printable-reconciliation-report {
+                        position: static !important;
+                        width: 100% !important;
+                        min-height: 268mm !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: space-between !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                        box-sizing: border-box !important;
+                    }
+                    .report-content-body {
+                        flex: 1 1 auto !important;
+                    }
+                    .report-signoff-block {
+                        margin-top: auto !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    table {
+                        width: 100% !important;
+                        table-layout: fixed !important;
+                        border-collapse: collapse !important;
+                        page-break-inside: auto !important;
+                    }
+                    tr {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    th, td {
+                        box-sizing: border-box !important;
+                        word-wrap: break-word !important;
+                        overflow-wrap: break-word !important;
+                    }
+                    .page-break-avoid {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                </style>
+            </head>
+            <body class="bg-white text-slate-900 font-sans p-4">
+                ${reportEl.outerHTML}
+            </body>
+            </html>
+        `);
+        frameDoc.close();
+
+        setTimeout(() => {
+            try {
+                printFrame.contentWindow?.focus();
+                printFrame.contentWindow?.print();
+            } catch (err) {
+                console.error("Print error:", err);
+                window.print();
+            } finally {
+                setTimeout(() => {
+                    if (document.body.contains(printFrame)) {
+                        document.body.removeChild(printFrame);
+                    }
+                }, 1000);
+            }
+        }, 300);
+    };
+
+    const handleOpenPrintWindow = () => {
+        const reportEl = document.getElementById("printable-reconciliation-report");
+        if (!reportEl) return;
+
+        const win = window.open("", "_blank");
+        if (!win) return;
+
+        const styleTags = Array.from(document.querySelectorAll("style, link[rel='stylesheet']"))
+            .map(el => el.outerHTML)
+            .join("\n");
+
+        win.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Physical Inventory Reconciliation & Offsetting Report - Sheet #${sheet.pi_no}</title>
+                ${styleTags}
+                <style>
+                    @page {
+                        size: A4 portrait;
+                        margin: 12mm 10mm 12mm 10mm;
+                    }
+                    body {
+                        background: #ffffff !important;
+                        color: #0f172a !important;
+                        margin: 0 !important;
+                        padding: 24px !important;
+                        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+                    }
+                    #printable-reconciliation-report {
+                        position: static !important;
+                        width: 100% !important;
+                        min-height: 268mm !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: space-between !important;
+                        box-sizing: border-box !important;
+                    }
+                    .report-content-body {
+                        flex: 1 1 auto !important;
+                    }
+                    .report-signoff-block {
+                        margin-top: auto !important;
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    tr {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    .page-break-avoid {
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                    }
+                    @media print {
+                        .no-print-toolbar { display: none !important; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="no-print-toolbar" style="margin-bottom: 20px; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: bold; font-size: 13px; color: #1e293b;">Print Blueprint Preview — Sheet #${sheet.pi_no}</span>
+                    <button onclick="window.print()" style="background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">Print / Save as PDF</button>
+                </div>
+                ${reportEl.outerHTML}
+            </body>
+            </html>
+        `);
+        win.document.close();
     };
 
     return (
@@ -377,11 +563,20 @@ export default function OffsettingPrintModal({
                     <div className="flex items-center gap-2">
                         <button
                             type="button"
+                            onClick={handleOpenPrintWindow}
+                            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors shadow-xs"
+                            title="Open in new window for direct print preview"
+                        >
+                            <ExternalLink className="h-4 w-4" />
+                            Open Print Window
+                        </button>
+                        <button
+                            type="button"
                             onClick={handleTriggerPrint}
                             className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs"
                         >
                             <Printer className="h-4 w-4" />
-                            Print Document
+                            Print / Save as PDF
                         </button>
                         <button
                             type="button"
@@ -397,28 +592,59 @@ export default function OffsettingPrintModal({
                 <div className="flex-1 overflow-y-auto p-6 bg-white text-slate-900 font-sans leading-relaxed" ref={printContainerRef}>
                     <style>{`
                         @media print {
-                            body * {
-                                visibility: hidden;
+                            @page {
+                                size: A4 portrait;
+                                margin: 12mm 10mm 12mm 10mm;
                             }
-                            .no-print {
-                                display: none !important;
-                            }
-                            #printable-reconciliation-report, #printable-reconciliation-report * {
-                                visibility: visible;
-                            }
-                            #printable-reconciliation-report {
-                                position: absolute;
-                                left: 0;
-                                top: 0;
-                                width: 100%;
-                                padding: 0;
-                                margin: 0;
+                            html, body {
+                                height: auto !important;
+                                min-height: 0 !important;
+                                max-height: none !important;
+                                overflow: visible !important;
                                 background: white !important;
                                 color: black !important;
                             }
-                            @page {
-                                size: A4 portrait;
-                                margin: 10mm;
+                            .no-print, .no-print * {
+                                display: none !important;
+                                height: 0 !important;
+                                margin: 0 !important;
+                                padding: 0 !important;
+                            }
+                            #printable-reconciliation-report {
+                                position: static !important;
+                                width: 100% !important;
+                                min-height: 268mm !important;
+                                display: flex !important;
+                                flex-direction: column !important;
+                                justify-content: space-between !important;
+                                margin: 0 !important;
+                                padding: 0 !important;
+                                background: white !important;
+                                color: black !important;
+                                box-sizing: border-box !important;
+                            }
+                            .report-content-body {
+                                flex: 1 1 auto !important;
+                            }
+                            .report-signoff-block {
+                                margin-top: auto !important;
+                                page-break-inside: avoid !important;
+                                break-inside: avoid !important;
+                            }
+                            table {
+                                width: 100% !important;
+                                table-layout: fixed !important;
+                                border-collapse: collapse !important;
+                                page-break-inside: auto !important;
+                            }
+                            tr {
+                                page-break-inside: avoid !important;
+                                break-inside: avoid !important;
+                            }
+                            th, td {
+                                box-sizing: border-box !important;
+                                word-wrap: break-word !important;
+                                overflow-wrap: break-word !important;
                             }
                             .page-break-avoid {
                                 page-break-inside: avoid !important;
@@ -427,50 +653,51 @@ export default function OffsettingPrintModal({
                         }
                     `}</style>
 
-                    <div id="printable-reconciliation-report" className="space-y-6">
-                        {/* 1. REPORT HEADER & METADATA BLOCK */}
-                        <div className="border-b border-slate-300 pb-4 page-break-avoid">
+                    <div id="printable-reconciliation-report" className="min-h-[268mm] flex flex-col justify-between space-y-4 text-slate-900">
+                        <div className="space-y-4 flex-1 report-content-body">
+                            {/* 1. REPORT HEADER & METADATA BLOCK */}
+                        <div className="border-b-2 border-slate-900 pb-4 page-break-avoid">
                             <div className="flex items-start justify-between">
                                 <div>
-                                    <div className="flex items-center gap-2 text-slate-700 font-extrabold text-xs uppercase tracking-wider">
-                                        <GitCompare className="h-4 w-4" />
-                                        VOS ERP — Manufacturing Management
+                                    <div className="flex items-center gap-2 text-slate-800 font-extrabold text-xs uppercase tracking-wider">
+                                        <GitCompare className="h-4 w-4 text-slate-700" />
+                                        VOS ERP — MANUFACTURING MANAGEMENT
                                     </div>
-                                    <h1 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                                    <h1 className="text-xl font-black text-slate-950 tracking-tight mt-0.5">
                                         PHYSICAL INVENTORY RECONCILIATION & OFFSETTING REPORT
                                     </h1>
-                                    <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                                    <p className="text-xs text-slate-600 font-medium">
                                         Official Audit Document for Product Discrepancy Offsetting & Stock Variance Settlement
                                     </p>
                                 </div>
                                 <div className="text-right">
-                                    <div className="inline-block px-3 py-1 bg-slate-100 border border-slate-200 rounded-md text-xs font-mono font-bold text-slate-900">
+                                    <div className="inline-block px-3 py-1 bg-slate-100 border border-slate-300 rounded text-xs font-mono font-bold text-slate-950">
                                         Sheet #: {sheet.pi_no}
                                     </div>
-                                    <div className="text-[11px] text-slate-500 mt-1 font-mono">
+                                    <div className="text-[11px] text-slate-600 mt-1 font-mono">
                                         Printed: {printTimestamp}
                                     </div>
                                 </div>
                             </div>
 
                             {/* Metadata Grid */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs bg-slate-50/80 p-3 rounded-lg border border-slate-200">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-xs bg-slate-50 p-2.5 rounded border border-slate-300">
                                 <div>
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Branch / Location:</span>
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">Branch / Location:</span>
                                     <span className="font-bold text-slate-900">{sheet.branch_name || "N/A"}</span>
                                 </div>
                                 <div>
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Stock Type:</span>
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">Stock Type:</span>
                                     <span className="font-bold text-slate-900">{sheet.stock_type || "REGULAR"}</span>
                                 </div>
                                 <div>
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Audit Period:</span>
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">Audit Period:</span>
                                     <span className="font-bold text-slate-900">
                                         {sheet.starting_date ? new Date(sheet.starting_date).toLocaleDateString() : "N/A"} — {sheet.cutoff_date ? new Date(sheet.cutoff_date).toLocaleDateString() : "N/A"}
                                     </span>
                                 </div>
                                 <div>
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Header Status:</span>
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">Header Status:</span>
                                     <span className="font-bold text-slate-900">{sheet.status}</span>
                                 </div>
                             </div>
@@ -478,102 +705,107 @@ export default function OffsettingPrintModal({
 
                         {/* 2. EXECUTIVE FINANCIAL SUMMARY BLOCK */}
                         <div className="page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2 border-b border-slate-200 pb-1">
                                 2. Executive Financial Summary
                             </h2>
                             <div className="grid grid-cols-4 gap-3 text-xs">
-                                <div className="p-3.5 rounded-lg border border-slate-200 bg-white border-t-2 border-t-rose-500 shadow-2xs">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Shortage Value</div>
-                                    <div className="text-base font-black font-mono text-rose-700 mt-1 whitespace-nowrap">
+                                <div className="p-3 rounded border border-slate-300 bg-white">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Total Shortage Value</div>
+                                    <div className="text-base font-black font-mono text-slate-950 mt-0.5 whitespace-nowrap">
                                         -{formatCurrency(totalShortageValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-0.5 font-medium">{shortageFindings.length} shortage items</div>
+                                    <div className="text-[10px] text-slate-600 font-medium">{shortageFindings.length} shortage items</div>
                                 </div>
 
-                                <div className="p-3.5 rounded-lg border border-slate-200 bg-white border-t-2 border-t-emerald-500 shadow-2xs">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Surplus Value</div>
-                                    <div className="text-base font-black font-mono text-emerald-700 mt-1 whitespace-nowrap">
+                                <div className="p-3 rounded border border-slate-300 bg-white">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Total Surplus Value</div>
+                                    <div className="text-base font-black font-mono text-slate-950 mt-0.5 whitespace-nowrap">
                                         +{formatCurrency(totalSurplusValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-0.5 font-medium">{overFindings.length} surplus items</div>
+                                    <div className="text-[10px] text-slate-600 font-medium">{overFindings.length} surplus items</div>
                                 </div>
 
-                                <div className="p-3.5 rounded-lg border border-slate-200 bg-white border-t-2 border-t-indigo-500 shadow-2xs">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Offset / Balanced</div>
-                                    <div className="text-base font-black font-mono text-indigo-900 mt-1 whitespace-nowrap">
+                                <div className="p-3 rounded border border-slate-300 bg-white">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Total Offset / Balanced</div>
+                                    <div className="text-base font-black font-mono text-slate-950 mt-0.5 whitespace-nowrap">
                                         {formatCurrency(totalOffsetAmountValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-0.5 font-medium">{activePairings.length} matched pairs</div>
+                                    <div className="text-[10px] text-slate-600 font-medium">{activePairings.length} matched pairs</div>
                                 </div>
 
-                                <div className="p-3.5 rounded-lg border border-slate-200 bg-white border-t-2 border-t-slate-800 shadow-2xs">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Net Unresolved Variance</div>
-                                    <div className={`text-base font-black font-mono mt-1 whitespace-nowrap ${
-                                        netUnresolvedVarianceValue > 0 ? "text-emerald-700" : netUnresolvedVarianceValue < 0 ? "text-rose-700" : "text-slate-900"
-                                    }`}>
+                                <div className="p-3 rounded border border-slate-400 bg-slate-50">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-700">Net Unresolved Variance</div>
+                                    <div className="text-base font-black font-mono text-slate-950 mt-0.5 whitespace-nowrap">
                                         {formatCurrency(netUnresolvedVarianceValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-0.5 font-medium">Post to Stock Ledger</div>
+                                    <div className="text-[10px] text-slate-600 font-medium">Post to Stock Ledger</div>
                                 </div>
                             </div>
                         </div>
 
                         {/* 3. AUDIT FINDINGS TABLES (SHORT & OVER LISTS) */}
-                        <div className="space-y-4 page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        <div className="space-y-4">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 border-b border-slate-200 pb-1">
                                 3. Itemized Audit Discrepancies
                             </h2>
 
                             {/* A. Short Findings Table */}
                             <div>
-                                <h3 className="text-xs font-bold text-rose-800 mb-1.5 flex items-center gap-1.5">
-                                    <TrendingDown className="h-3.5 w-3.5 text-rose-600" />
+                                <h3 className="text-xs font-bold text-slate-900 mb-1.5 flex items-center gap-1.5">
+                                    <TrendingDown className="h-3.5 w-3.5 text-slate-700" />
                                     A. Short Findings Table (Deficits & Missing Items)
                                 </h3>
-                                <table className="w-full text-left text-[11px] border-collapse border border-slate-200 table-fixed">
-                                    <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] tracking-wider border-b border-slate-300">
+                                <table className="w-full text-left text-[11px] border-collapse border border-slate-300 table-fixed">
+                                    <colgroup>
+                                        <col style={{ width: "30%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "18%" }} />
+                                        <col style={{ width: "10%" }} />
+                                    </colgroup>
+                                    <thead className="bg-slate-100 text-slate-900 font-bold uppercase text-[10px] tracking-wider border-b-2 border-slate-300">
                                         <tr>
-                                            <th className="p-2 border border-slate-200 w-[10%] whitespace-nowrap">Category</th>
-                                            <th className="p-2 border border-slate-200 min-w-[200px]">Item Description</th>
-                                            <th className="p-2 border border-slate-200 w-[12%] whitespace-nowrap">UOM</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[9%] whitespace-nowrap">System Qty</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[9%] whitespace-nowrap">Physical Count</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[11%] whitespace-nowrap">Short Qty</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[10%] whitespace-nowrap">Unit Cost</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[13%] whitespace-nowrap">Short Value</th>
-                                            <th className="p-2 border border-slate-200 text-center w-[12%] whitespace-nowrap">Offset Status</th>
+                                            <th className="p-2 border border-slate-300 text-left">Item & Category Details</th>
+                                            <th className="p-2 border border-slate-300 text-right">System / Phys Count</th>
+                                            <th className="p-2 border border-slate-300 text-right">Short Qty</th>
+                                            <th className="p-2 border border-slate-300 text-right">Unit Cost</th>
+                                            <th className="p-2 border border-slate-300 text-right">Short Value</th>
+                                            <th className="p-2 border border-slate-300 text-center">Offset Status</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200">
                                         {shortageFindings.length === 0 ? (
                                             <tr>
-                                                <td colSpan={9} className="p-3 text-center text-slate-500 font-medium">
+                                                <td colSpan={6} className="p-3 text-center text-slate-500 font-medium border border-slate-300">
                                                     No inventory shortage findings recorded.
                                                 </td>
                                             </tr>
                                         ) : (
                                             shortageFindings.map((f, idx) => (
-                                                <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/50" : "bg-white"}>
-                                                    <td className="p-2 border border-slate-200 text-slate-600 truncate">{f.productCategory}</td>
-                                                    <td className="p-2 border border-slate-200 font-bold text-slate-900 leading-tight">
-                                                        [{f.productCode}] {f.productName}
+                                                <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/60" : "bg-white"}>
+                                                    <td className="p-2 border border-slate-300">
+                                                        <div className="font-bold text-slate-950 leading-tight">
+                                                            [{f.productCode}] {f.productName}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-600 mt-0.5">
+                                                            Cat: <span className="font-medium text-slate-800">{f.productCategory}</span> | UOM: <span className="font-medium text-slate-800">{f.uomStr}</span>
+                                                        </div>
                                                     </td>
-                                                    <td className="p-2 border border-slate-200 font-medium text-slate-700 whitespace-nowrap">{f.uomStr}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatQty(f.systemQty)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatQty(f.physicalQty)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono font-bold text-rose-700 whitespace-nowrap">
+                                                    <td className="p-2 border border-slate-300 text-right font-mono text-slate-900 leading-tight whitespace-nowrap">
+                                                        <div>Sys: {formatQty(f.systemQty)}</div>
+                                                        <div className="text-[10px] text-slate-600">Phys: {formatQty(f.physicalQty)}</div>
+                                                    </td>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono font-bold text-slate-950 whitespace-nowrap">
                                                         <div>-{formatQty(f.shortQty)}</div>
                                                         {f.uomCount > 1 && (
-                                                            <div className="text-[9px] text-slate-500 font-normal">(-{formatQty(f.shortPieces)} pcs total)</div>
+                                                            <div className="text-[9px] text-slate-600 font-normal">(-{formatQty(f.shortPieces)} pcs total)</div>
                                                         )}
                                                     </td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatCurrency(f.unitCost)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono font-bold text-rose-800 whitespace-nowrap">-{formatCurrency(f.totalShortValue)}</td>
-                                                    <td className="p-2 border border-slate-200 text-center whitespace-nowrap">
-                                                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap shadow-2xs ${
-                                                            f.offsetStatus === "Fully Offset" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                                                            f.offsetStatus === "Partially Offset" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-amber-50 text-amber-700 border-amber-200"
-                                                        }`}>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono text-slate-900 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrency(f.unitCost)}</td>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono font-bold text-slate-950 whitespace-nowrap overflow-hidden text-ellipsis">-{formatCurrency(f.totalShortValue)}</td>
+                                                    <td className="p-2 border border-slate-300 text-center whitespace-nowrap">
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-300 bg-slate-100 text-slate-800">
                                                             {f.offsetStatus}
                                                         </span>
                                                     </td>
@@ -586,54 +818,61 @@ export default function OffsettingPrintModal({
 
                             {/* B. Over Findings Table */}
                             <div>
-                                <h3 className="text-xs font-bold text-emerald-800 mb-1.5 flex items-center gap-1.5">
-                                    <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />
+                                <h3 className="text-xs font-bold text-slate-900 mb-1.5 flex items-center gap-1.5">
+                                    <TrendingUp className="h-3.5 w-3.5 text-slate-700" />
                                     B. Over Findings Table (Surplus & Overage Items)
                                 </h3>
-                                <table className="w-full text-left text-[11px] border-collapse border border-slate-200 table-fixed">
-                                    <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] tracking-wider border-b border-slate-300">
+                                <table className="w-full text-left text-[11px] border-collapse border border-slate-300 table-fixed">
+                                    <colgroup>
+                                        <col style={{ width: "30%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "14%" }} />
+                                        <col style={{ width: "18%" }} />
+                                        <col style={{ width: "10%" }} />
+                                    </colgroup>
+                                    <thead className="bg-slate-100 text-slate-900 font-bold uppercase text-[10px] tracking-wider border-b-2 border-slate-300">
                                         <tr>
-                                            <th className="p-2 border border-slate-200 w-[10%] whitespace-nowrap">Category</th>
-                                            <th className="p-2 border border-slate-200 min-w-[200px]">Item Description</th>
-                                            <th className="p-2 border border-slate-200 w-[12%] whitespace-nowrap">UOM</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[9%] whitespace-nowrap">System Qty</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[9%] whitespace-nowrap">Physical Count</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[11%] whitespace-nowrap">Over Qty</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[10%] whitespace-nowrap">Unit Cost</th>
-                                            <th className="p-2 border border-slate-200 text-right w-[13%] whitespace-nowrap">Over Value</th>
-                                            <th className="p-2 border border-slate-200 text-center w-[12%] whitespace-nowrap">Offset Status</th>
+                                            <th className="p-2 border border-slate-300 text-left">Item & Category Details</th>
+                                            <th className="p-2 border border-slate-300 text-right">System / Phys Count</th>
+                                            <th className="p-2 border border-slate-300 text-right">Over Qty</th>
+                                            <th className="p-2 border border-slate-300 text-right">Unit Cost</th>
+                                            <th className="p-2 border border-slate-300 text-right">Over Value</th>
+                                            <th className="p-2 border border-slate-300 text-center">Offset Status</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200">
                                         {overFindings.length === 0 ? (
                                             <tr>
-                                                <td colSpan={9} className="p-3 text-center text-slate-500 font-medium">
+                                                <td colSpan={6} className="p-3 text-center text-slate-500 font-medium border border-slate-300">
                                                     No inventory surplus findings recorded.
                                                 </td>
                                             </tr>
                                         ) : (
                                             overFindings.map((f, idx) => (
-                                                <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/50" : "bg-white"}>
-                                                    <td className="p-2 border border-slate-200 text-slate-600 truncate">{f.productCategory}</td>
-                                                    <td className="p-2 border border-slate-200 font-bold text-slate-900 leading-tight">
-                                                        [{f.productCode}] {f.productName}
+                                                <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/60" : "bg-white"}>
+                                                    <td className="p-2 border border-slate-300">
+                                                        <div className="font-bold text-slate-950 leading-tight">
+                                                            [{f.productCode}] {f.productName}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-600 mt-0.5">
+                                                            Cat: <span className="font-medium text-slate-800">{f.productCategory}</span> | UOM: <span className="font-medium text-slate-800">{f.uomStr}</span>
+                                                        </div>
                                                     </td>
-                                                    <td className="p-2 border border-slate-200 font-medium text-slate-700 whitespace-nowrap">{f.uomStr}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatQty(f.systemQty)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatQty(f.physicalQty)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                                    <td className="p-2 border border-slate-300 text-right font-mono text-slate-900 leading-tight whitespace-nowrap">
+                                                        <div>Sys: {formatQty(f.systemQty)}</div>
+                                                        <div className="text-[10px] text-slate-600">Phys: {formatQty(f.physicalQty)}</div>
+                                                    </td>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono font-bold text-slate-950 whitespace-nowrap">
                                                         <div>+{formatQty(f.overQty)}</div>
                                                         {f.uomCount > 1 && (
-                                                            <div className="text-[9px] text-slate-500 font-normal">(+{formatQty(f.overPieces)} pcs total)</div>
+                                                            <div className="text-[9px] text-slate-600 font-normal">(+{formatQty(f.overPieces)} pcs total)</div>
                                                         )}
                                                     </td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono text-slate-700 whitespace-nowrap">{formatCurrency(f.unitCost)}</td>
-                                                    <td className="p-2 border border-slate-200 text-right font-mono font-bold text-emerald-800 whitespace-nowrap">+{formatCurrency(f.totalOverValue)}</td>
-                                                    <td className="p-2 border border-slate-200 text-center whitespace-nowrap">
-                                                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap shadow-2xs ${
-                                                            f.offsetStatus === "Fully Offset" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                                                            f.offsetStatus === "Partially Offset" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-amber-50 text-amber-700 border-amber-200"
-                                                        }`}>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono text-slate-900 whitespace-nowrap overflow-hidden text-ellipsis">{formatCurrency(f.unitCost)}</td>
+                                                    <td className="p-2 border border-slate-300 text-right font-mono font-bold text-slate-950 whitespace-nowrap overflow-hidden text-ellipsis">+{formatCurrency(f.totalOverValue)}</td>
+                                                    <td className="p-2 border border-slate-300 text-center whitespace-nowrap">
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-300 bg-slate-100 text-slate-800">
                                                             {f.offsetStatus}
                                                         </span>
                                                     </td>
@@ -647,60 +886,74 @@ export default function OffsettingPrintModal({
 
                         {/* 4. MATCHED OFFSET GROUPS / PAIRS TABLE */}
                         <div className="page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2 border-b border-slate-200 pb-1">
                                 4. Matched Offset Groups & Reconciled Pairs
                             </h2>
-                            <table className="w-full text-left text-[11px] border-collapse border border-slate-200 table-fixed">
-                                <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] tracking-wider border-b border-slate-300">
+                            <table className="w-full text-left text-[11px] border-collapse border border-slate-300 table-fixed">
+                                <colgroup>
+                                    <col style={{ width: "10%" }} />
+                                    <col style={{ width: "45%" }} />
+                                    <col style={{ width: "20%" }} />
+                                    <col style={{ width: "15%" }} />
+                                    <col style={{ width: "10%" }} />
+                                </colgroup>
+                                <thead className="bg-slate-100 text-slate-900 font-bold uppercase text-[10px] tracking-wider border-b-2 border-slate-300">
                                     <tr>
-                                        <th className="p-2 border border-slate-200 w-[12%] whitespace-nowrap">Group No</th>
-                                        <th className="p-2 border border-slate-200 w-[27%]">Shortage Items Included</th>
-                                        <th className="p-2 border border-slate-200 w-[27%]">Surplus Items Included</th>
-                                        <th className="p-2 border border-slate-200 text-right w-[10%] whitespace-nowrap">Matched Qty</th>
-                                        <th className="p-2 border border-slate-200 text-right w-[12%] whitespace-nowrap">Short Value</th>
-                                        <th className="p-2 border border-slate-200 text-right w-[12%] whitespace-nowrap">Surplus Value</th>
-                                        <th className="p-2 border border-slate-200 w-[16%]">Audit Reason / Notes</th>
+                                        <th className="p-2 border border-slate-300 text-left">Group No</th>
+                                        <th className="p-2 border border-slate-300 text-left">Reconciled Items (Shortage ↔ Surplus)</th>
+                                        <th className="p-2 border border-slate-300 text-right">Matched Qty & Value</th>
+                                        <th className="p-2 border border-slate-300 text-left">Audit Reason & Notes</th>
+                                        <th className="p-2 border border-slate-300 text-center">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-200">
                                     {matchedGroupsList.length === 0 ? (
                                         <tr>
-                                            <td colSpan={7} className="p-3 text-center text-slate-500 font-medium">
+                                            <td colSpan={5} className="p-3 text-center text-slate-500 font-medium border border-slate-300">
                                                 No offset pairings created or matched yet.
                                             </td>
                                         </tr>
                                     ) : (
                                         matchedGroupsList.map((g, idx) => (
-                                            <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/50" : "bg-white"}>
-                                                <td className="p-2 border border-slate-200 font-bold font-mono text-slate-900 whitespace-nowrap">
+                                            <tr key={idx} className={idx % 2 === 1 ? "bg-slate-50/60" : "bg-white"}>
+                                                <td className="p-2 border border-slate-300 font-bold font-mono text-slate-950 whitespace-nowrap">
                                                     {g.groupNo}
                                                 </td>
-                                                <td className="p-2 border border-slate-200">
-                                                    {g.shortItems.map((si, sIdx) => (
-                                                        <div key={sIdx} className="font-semibold text-slate-900 leading-tight">
-                                                            {si.code ? `[${si.code}] ` : ""}{si.name}
-                                                        </div>
-                                                    ))}
+                                                <td className="p-2 border border-slate-300">
+                                                    <div className="text-[10px]">
+                                                        <span className="font-bold text-slate-700 uppercase tracking-wider block text-[9px]">Shortage:</span>
+                                                        {g.shortItems.map((si, sIdx) => (
+                                                            <div key={sIdx} className="font-semibold text-slate-900 leading-tight">
+                                                                {si.code ? `[${si.code}] ` : ""}{si.name}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <div className="text-[10px] mt-1 border-t border-slate-200 pt-1">
+                                                        <span className="font-bold text-slate-700 uppercase tracking-wider block text-[9px]">Surplus:</span>
+                                                        {g.surplusItems.map((surp, surpIdx) => (
+                                                            <div key={surpIdx} className="font-semibold text-slate-900 leading-tight">
+                                                                {surp.code ? `[${surp.code}] ` : ""}{surp.name}
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </td>
-                                                <td className="p-2 border border-slate-200">
-                                                    {g.surplusItems.map((surp, surpIdx) => (
-                                                        <div key={surpIdx} className="font-semibold text-slate-900 leading-tight">
-                                                            {surp.code ? `[${surp.code}] ` : ""}{surp.name}
-                                                        </div>
-                                                    ))}
+                                                <td className="p-2 border border-slate-300 text-right font-mono text-slate-950 whitespace-nowrap">
+                                                    <div className="font-bold text-slate-950">{formatQty(g.totalOffsetPieces)} pcs</div>
+                                                    <div className="text-[9px] text-slate-600 mt-0.5">
+                                                        Short: -{formatCurrency(g.totalShortValue)}
+                                                    </div>
+                                                    <div className="text-[9px] text-slate-600">
+                                                        Surp: +{formatCurrency(g.totalSurplusValue)}
+                                                    </div>
                                                 </td>
-                                                <td className="p-2 border border-slate-200 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
-                                                    {formatQty(g.totalOffsetPieces)} pcs
+                                                <td className="p-2 border border-slate-300 text-slate-800 text-[10px]">
+                                                    <div className="font-bold text-slate-900">{g.reasonCode}</div>
+                                                    {g.notes && <div className="italic text-slate-600">{g.notes}</div>}
                                                 </td>
-                                                <td className="p-2 border border-slate-200 text-right font-mono text-rose-700 font-bold whitespace-nowrap">
-                                                    -{formatCurrency(g.totalShortValue)}
-                                                </td>
-                                                <td className="p-2 border border-slate-200 text-right font-mono text-emerald-700 font-bold whitespace-nowrap">
-                                                    +{formatCurrency(g.totalSurplusValue)}
-                                                </td>
-                                                <td className="p-2 border border-slate-200 text-slate-700 text-[10px]">
-                                                    <div className="font-bold text-slate-800">{g.reasonCode}</div>
-                                                    {g.notes && <div className="italic text-slate-500">{g.notes}</div>}
+                                                <td className="p-2 border border-slate-300 text-center whitespace-nowrap">
+                                                    <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-300 bg-slate-100 text-slate-800">
+                                                        Reconciled
+                                                    </span>
                                                 </td>
                                             </tr>
                                         ))
@@ -711,47 +964,45 @@ export default function OffsettingPrintModal({
 
                         {/* 5. UNRESOLVED & FINAL SETTLEMENT SUMMARY */}
                         <div className="page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-2 border-b border-slate-200 pb-1">
                                 5. Unresolved & Final Stock Settlement Summary
                             </h2>
-                            <div className="grid grid-cols-3 gap-3 text-xs bg-slate-50/80 p-3 rounded-lg border border-slate-200">
-                                <div className="p-3 bg-white border border-amber-200/80 rounded-lg shadow-2xs">
-                                    <div className="font-bold text-rose-900 text-[11px] uppercase tracking-wider">Unresolved Shortage Items</div>
+                            <div className="grid grid-cols-3 gap-3 text-xs">
+                                <div className="p-3 bg-white border border-slate-300 rounded">
+                                    <div className="font-bold text-slate-900 text-[11px] uppercase tracking-wider">Unresolved Shortage Items</div>
                                     <div className="text-slate-600 text-[11px] mt-0.5">
-                                        Count: <span className="font-bold text-slate-800">{unresolvedShortItems.length} items</span>
+                                        Count: <span className="font-bold text-slate-900">{unresolvedShortItems.length} items</span>
                                     </div>
-                                    <div className="text-rose-700 font-bold font-mono mt-1 text-sm whitespace-nowrap">
+                                    <div className="text-slate-950 font-bold font-mono mt-1 text-sm whitespace-nowrap">
                                         Value: -{formatCurrency(unresolvedShortTotalValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-1 font-medium">
+                                    <div className="text-[10px] text-slate-600 mt-1 font-medium">
                                         Action: Record as Stock Loss / Expense
                                     </div>
                                 </div>
 
-                                <div className="p-3 bg-white border border-emerald-200/80 rounded-lg shadow-2xs">
-                                    <div className="font-bold text-emerald-900 text-[11px] uppercase tracking-wider">Unresolved Surplus Items</div>
+                                <div className="p-3 bg-white border border-slate-300 rounded">
+                                    <div className="font-bold text-slate-900 text-[11px] uppercase tracking-wider">Unresolved Surplus Items</div>
                                     <div className="text-slate-600 text-[11px] mt-0.5">
-                                        Count: <span className="font-bold text-slate-800">{unresolvedOverItems.length} items</span>
+                                        Count: <span className="font-bold text-slate-900">{unresolvedOverItems.length} items</span>
                                     </div>
-                                    <div className="text-emerald-700 font-bold font-mono mt-1 text-sm whitespace-nowrap">
+                                    <div className="text-slate-950 font-bold font-mono mt-1 text-sm whitespace-nowrap">
                                         Value: +{formatCurrency(unresolvedOverTotalValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-1 font-medium">
+                                    <div className="text-[10px] text-slate-600 mt-1 font-medium">
                                         Action: Record as Stock Gain / Adjustment
                                     </div>
                                 </div>
 
-                                <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs">
-                                    <div className="font-bold text-slate-900 text-[11px] uppercase tracking-wider">Final Net Variance to Post</div>
+                                <div className="p-3 bg-slate-50 border border-slate-400 rounded">
+                                    <div className="font-bold text-slate-950 text-[11px] uppercase tracking-wider">Final Net Variance to Post</div>
                                     <div className="text-slate-600 text-[11px] mt-0.5">
                                         Net Financial Impact
                                     </div>
-                                    <div className={`font-bold font-mono mt-1 text-sm whitespace-nowrap ${
-                                        netUnresolvedVarianceValue > 0 ? "text-emerald-700" : netUnresolvedVarianceValue < 0 ? "text-rose-700" : "text-slate-900"
-                                    }`}>
+                                    <div className="font-bold font-mono mt-1 text-sm text-slate-950 whitespace-nowrap">
                                         {formatCurrency(netUnresolvedVarianceValue)}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 mt-1 font-medium">
+                                    <div className="text-[10px] text-slate-600 mt-1 font-medium">
                                         Action: Stock Ledger Adjustment Entry
                                     </div>
                                 </div>
@@ -760,10 +1011,10 @@ export default function OffsettingPrintModal({
 
                         {/* 6. AUDIT FINDINGS NARRATIVE / REMARKS */}
                         <div className="page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-1 border-b border-slate-200 pb-1">
                                 6. Auditor Notes & Remarks Narrative
                             </h2>
-                            <div className="p-3 bg-slate-50/80 border border-slate-200 rounded-lg text-xs text-slate-800 min-h-[60px]">
+                            <div className="p-2.5 bg-slate-50 border border-slate-300 rounded text-xs text-slate-900 min-h-[50px]">
                                 {auditNotes && auditNotes.trim() ? (
                                     <p className="whitespace-pre-wrap">{auditNotes.trim()}</p>
                                 ) : (
@@ -773,36 +1024,37 @@ export default function OffsettingPrintModal({
                                 )}
                             </div>
                         </div>
+                        </div>
 
                         {/* 7. VERIFICATION & SIGN-OFF BLOCK */}
-                        <div className="pt-6 border-t border-slate-300 page-break-avoid">
-                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4">
+                        <div className="pt-3 border-t-2 border-slate-900 page-break-avoid mt-auto shrink-0 report-signoff-block">
+                            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 mb-3">
                                 7. Verification & Audit Sign-Off
                             </h2>
                             <div className="grid grid-cols-3 gap-8 text-center text-xs">
                                 <div>
-                                    <div className="border-b-2 border-slate-800 pb-1 h-8 flex items-end justify-center font-bold">
+                                    <div className="border-b-2 border-slate-800 pb-1 h-7 flex items-end justify-center font-bold">
                                         {sheet.encoder_id ? String(sheet.encoder_id) : ""}
                                     </div>
                                     <div className="font-bold text-slate-900 mt-1">Prepared By:</div>
-                                    <div className="text-[10px] text-slate-500">Inventory Custodian / Encoder</div>
-                                    <div className="mt-2 text-[10px] text-slate-400">Date: ________________________</div>
+                                    <div className="text-[10px] text-slate-600">Inventory Custodian / Encoder</div>
+                                    <div className="mt-1.5 text-[10px] text-slate-500">Date: ________________________</div>
                                 </div>
 
                                 <div>
-                                    <div className="border-b-2 border-slate-800 pb-1 h-8 flex items-end justify-center font-bold">
+                                    <div className="border-b-2 border-slate-800 pb-1 h-7 flex items-end justify-center font-bold">
                                     </div>
                                     <div className="font-bold text-slate-900 mt-1">Reviewed By:</div>
-                                    <div className="text-[10px] text-slate-500">Internal Auditor</div>
-                                    <div className="mt-2 text-[10px] text-slate-400">Date: ________________________</div>
+                                    <div className="text-[10px] text-slate-600">Internal Auditor</div>
+                                    <div className="mt-1.5 text-[10px] text-slate-500">Date: ________________________</div>
                                 </div>
 
                                 <div>
-                                    <div className="border-b-2 border-slate-800 pb-1 h-8 flex items-end justify-center font-bold">
+                                    <div className="border-b-2 border-slate-800 pb-1 h-7 flex items-end justify-center font-bold">
                                     </div>
                                     <div className="font-bold text-slate-900 mt-1">Approved By:</div>
-                                    <div className="text-[10px] text-slate-500">Branch / Warehouse Manager</div>
-                                    <div className="mt-2 text-[10px] text-slate-400">Date: ________________________</div>
+                                    <div className="text-[10px] text-slate-600">Branch / Warehouse Manager</div>
+                                    <div className="mt-1.5 text-[10px] text-slate-500">Date: ________________________</div>
                                 </div>
                             </div>
                         </div>

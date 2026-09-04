@@ -110,6 +110,7 @@ export interface MmOffsetPairing {
     surplus_lot_name?: string;
     surplus_batch_no?: string;
     offset_qty: number;
+    offset_pieces?: number;
     shortage_unit_cost: number;
     surplus_unit_cost: number;
     unit_cost_variance: number;
