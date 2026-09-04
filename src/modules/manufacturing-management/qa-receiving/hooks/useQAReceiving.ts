@@ -6,6 +6,7 @@ import {
     fetchActiveShipments, 
     fetchBranches, 
     fetchSupplierDocumentTypes,
+    fetchQaReceivingDetail,
     fetchShipmentDetails, 
     previewReceivingQa,
     commitReceivingQa,
@@ -101,9 +102,30 @@ function isLockedReceivingShipment(shipment: Shipment | null, replacementDisposi
     );
 }
 
-export function useQAReceiving(initialShipmentId?: number) {
+type QAReceivingMode = "queue" | "detail";
+
+interface QAReceivingOptions {
+    mode?: QAReceivingMode;
+    shipmentId?: number;
+    replacementDispositionId?: number;
+}
+
+interface ShipmentSelectionOptions {
+    preloadedLineItems?: ShipmentLineItem[];
+    branchCatalog?: Branch[];
+    throwOnError?: boolean;
+    preserveCommitState?: boolean;
+}
+
+export function useQAReceiving({
+    mode = "queue",
+    shipmentId: detailShipmentId,
+    replacementDispositionId
+}: QAReceivingOptions = {}) {
+    const isDetailMode = mode === "detail";
     const listController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
+    const detailLoadController = useRef<AbortController | null>(null);
     const fifoController = useRef<AbortController | null>(null);
     const previewController = useRef<AbortController | null>(null);
     const quarantineController = useRef<AbortController | null>(null);
@@ -124,9 +146,10 @@ export function useQAReceiving(initialShipmentId?: number) {
 
     // Selected active container details
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
-    const initialShipmentHandled = useRef(false);
     const [lineItems, setLineItems] = useState<ShipmentLineItem[]>([]);
     const [loadingLines, setLoadingLines] = useState(false);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [detailError, setDetailError] = useState<string | null>(null);
 
     // Inspection form state
     const [receivingTicketNumber, setReceivingTicketNumber] = useState<string>("");
@@ -214,6 +237,7 @@ export function useQAReceiving(initialShipmentId?: number) {
 
     const clearInspection = useCallback(() => {
         detailController.current?.abort();
+        detailLoadController.current?.abort();
         previewController.current?.abort();
         setSelectedShipment(null);
         setLineItems([]);
@@ -354,6 +378,7 @@ export function useQAReceiving(initialShipmentId?: number) {
         return () => {
             listController.current?.abort();
             detailController.current?.abort();
+            detailLoadController.current?.abort();
             fifoController.current?.abort();
             previewController.current?.abort();
             quarantineController.current?.abort();
@@ -361,6 +386,7 @@ export function useQAReceiving(initialShipmentId?: number) {
     }, []);
 
     useEffect(() => {
+        if (isDetailMode) return;
         const timeout = window.setTimeout(() => {
             void loadShipments({
                 search: searchPO.trim() || undefined,
@@ -371,12 +397,13 @@ export function useQAReceiving(initialShipmentId?: number) {
             });
         }, 250);
         return () => window.clearTimeout(timeout);
-    }, [searchPO, searchStatus, startDate, endDate, showReceived, loadShipments]);
+    }, [isDetailMode, searchPO, searchStatus, startDate, endDate, showReceived, loadShipments]);
 
     useEffect(() => {
+        if (isDetailMode) return;
         if (!selectedShipment || shipments.some(shipment => shipment.shipment_id === selectedShipment.shipment_id)) return;
         clearInspection();
-    }, [shipments, selectedShipment, clearInspection]);
+    }, [isDetailMode, shipments, selectedShipment, clearInspection]);
 
     const loadBranches = async () => {
         setLoadingBranches(true);
@@ -428,7 +455,17 @@ export function useQAReceiving(initialShipmentId?: number) {
         return request;
     }, [selectedBranchId]);
 
-    const handleSelectShipment = async (shipment: Shipment, replacementContext: QuarantineDisposition | null = null) => {
+    const handleSelectShipment = useCallback(async (
+        shipment: Shipment,
+        replacementContext: QuarantineDisposition | null = null,
+        options: ShipmentSelectionOptions = {}
+    ) => {
+        const {
+            preloadedLineItems,
+            branchCatalog = branches,
+            throwOnError = false,
+            preserveCommitState = false
+        } = options;
         const isReplacement = Boolean(replacementContext);
         const isReceived = shipment.status === "Received" || Number(shipment.inventory_status) === INVENTORY_STATUS.RECEIVED;
         const isPartiallyReceived = shipment.status === "Partially Received"
@@ -455,18 +492,20 @@ export function useQAReceiving(initialShipmentId?: number) {
         setQaSpecificationStates({});
         setQaReadings({});
         setQaEvaluationResults({});
-        setReceivingCommitContext(null);
-        setCommittedResult(null);
-        setPreviewOpen(false);
-        setPreviewAcknowledged(false);
-        setPreviewError(null);
+        if (!preserveCommitState) {
+            setReceivingCommitContext(null);
+            setCommittedResult(null);
+            setPreviewOpen(false);
+            setPreviewAcknowledged(false);
+            setPreviewError(null);
+        }
         setLoadingLines(true);
         setStorageLotsByProductId({});
         setRejectedStorageLotsByProductId({});
         storageLotBatchCache.current = {};
         storageLotBatchRequestCache.current = {};
         try {
-            const fetchedLines = await fetchShipmentDetails(shipment.shipment_id, controller.signal);
+            const fetchedLines = preloadedLineItems ?? await fetchShipmentDetails(shipment.shipment_id, controller.signal);
             const lines = isReplacement
                 ? fetchedLines.filter(line => line.line_id === replacementContext?.purchaseOrderLineId)
                 : fetchedLines;
@@ -558,7 +597,7 @@ export function useQAReceiving(initialShipmentId?: number) {
             setReceiptDate(!isReplacement && isReceived && storedReceiptDate ? storedReceiptDate : getTodayReceiptDate());
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
-            const selectedBranch = branches.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
+            const selectedBranch = branchCatalog.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
             const badStockBranchId = selectedBranch?.bad_stock_branch_id && typeof selectedBranch.bad_stock_branch_id === "object"
                 ? Number(selectedBranch.bad_stock_branch_id.id)
                 : Number(selectedBranch?.bad_stock_branch_id || 0);
@@ -612,6 +651,7 @@ export function useQAReceiving(initialShipmentId?: number) {
             }));
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
+            if (e.name !== "AbortError" && throwOnError) throw e;
             if (e.name !== "AbortError") {
                 console.error(e);
                 toast.error(e.message || "Failed to load shipment lines");
@@ -619,41 +659,55 @@ export function useQAReceiving(initialShipmentId?: number) {
         } finally {
             if (!controller.signal.aborted) setLoadingLines(false);
         }
-    };
+    }, [branches, clearInspection]);
+
+    const loadDetail = useCallback(async (preserveCommitState = false) => {
+        if (!isDetailMode || !detailShipmentId) return;
+
+        if (!preserveCommitState) clearInspection();
+        detailLoadController.current?.abort();
+        const controller = new AbortController();
+        detailLoadController.current = controller;
+        setDetailLoading(true);
+        setDetailError(null);
+
+        try {
+            const [detail, branchData] = await Promise.all([
+                fetchQaReceivingDetail(detailShipmentId, replacementDispositionId, controller.signal),
+                fetchBranches()
+            ]);
+            if (controller.signal.aborted) return;
+            setBranches(branchData || []);
+            await handleSelectShipment(detail.shipment, detail.replacementDisposition, {
+                preloadedLineItems: detail.lineItems,
+                branchCatalog: branchData || [],
+                throwOnError: true,
+                preserveCommitState
+            });
+        } catch (error) {
+            if (controller.signal.aborted || (error as Error).name === "AbortError") return;
+            setDetailError((error as Error).message || "Failed to load QA receiving details.");
+        } finally {
+            if (!controller.signal.aborted) setDetailLoading(false);
+        }
+    }, [isDetailMode, detailShipmentId, replacementDispositionId, clearInspection, handleSelectShipment]);
+
+    const retryDetail = useCallback(() => {
+        void loadDetail();
+    }, [loadDetail]);
 
     useEffect(() => {
-        if (
-            !initialShipmentId
-            || initialShipmentHandled.current
-            || selectedShipment
-            || loadingShipments
-            || shipments.length === 0
-        ) return;
-        const shipment = shipments.find(item => item.shipment_id === initialShipmentId);
-        if (!shipment) return;
-        initialShipmentHandled.current = true;
-        void handleSelectShipment(shipment);
-        // handleSelectShipment intentionally remains a local workflow command;
-        // the handoff query should be consumed once after the queue is loaded.
+        if (!isDetailMode || !detailShipmentId) return;
+        void loadDetail();
+        return () => {
+            detailLoadController.current?.abort();
+            detailController.current?.abort();
+        };
+        // The route parameters are the source of truth for this screen. The
+        // load callback is intentionally omitted so a branch-list update does
+        // not restart an in-flight detail load.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [initialShipmentId, loadingShipments, selectedShipment, shipments]);
-
-    const handleStartReplacement = async (disposition: QuarantineDisposition) => {
-        try {
-            const candidates = await fetchActiveShipments({
-                includeReceived: true
-            });
-            const shipment = candidates.find(item => item.shipment_id === disposition.purchaseOrderId);
-            if (!shipment) {
-                toast.error("The original purchase order could not be loaded for replacement receiving.");
-                return;
-            }
-            setActiveTab("inbound");
-            await handleSelectShipment(shipment, disposition);
-        } catch (error) {
-            toast.error((error as Error).message || "Failed to open replacement receiving.");
-        }
-    };
+    }, [isDetailMode, detailShipmentId, replacementDispositionId]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleUpdateRow = (lineId: number, field: string, value: any) => {
@@ -1099,20 +1153,24 @@ export function useQAReceiving(initialShipmentId?: number) {
             setCommittedResult(result);
             setPreviewAcknowledged(true);
             setPreviewOpen(true);
-            await loadShipments({
-                search: searchPO.trim() || undefined,
-                status: searchStatus || undefined,
-                startDate: startDate || undefined,
-                endDate: endDate || undefined,
-                includeReceived: showReceived
-            });
+            if (isDetailMode) {
+                await loadDetail(true);
+            } else {
+                await loadShipments({
+                    search: searchPO.trim() || undefined,
+                    status: searchStatus || undefined,
+                    startDate: startDate || undefined,
+                    endDate: endDate || undefined,
+                    includeReceived: showReceived
+                });
+            }
             await loadQuarantine();
         } catch (error) {
             toast.error((error as Error).message || "Failed to post receiving.");
         } finally {
             setPostingInspection(false);
         }
-    }, [postingInspection, receivingCommitContext, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
+    }, [postingInspection, receivingCommitContext, isDetailMode, loadDetail, loadShipments, loadQuarantine, searchPO, searchStatus, startDate, endDate, showReceived]);
 
     const handleForceReceived = useCallback(async (reason: string) => {
         if (forceReceivedSubmitting || !selectedShipment) return;
@@ -1136,30 +1194,45 @@ export function useQAReceiving(initialShipmentId?: number) {
                 forceReceivedByName: result.forceReceivedByName,
                 forceReceivedReason: result.forceReceivedReason
             };
-            await loadShipments({
-                search: searchPO.trim() || undefined,
-                status: searchStatus || undefined,
-                startDate: startDate || undefined,
-                endDate: endDate || undefined,
-                includeReceived: showReceived
-            });
-            if (showReceived) {
-                setSelectedShipment(updatedShipment);
-                setLineItems(await fetchShipmentDetails(updatedShipment.shipment_id));
+            if (isDetailMode) {
+                await loadDetail();
             } else {
-                clearInspection();
+                await loadShipments({
+                    search: searchPO.trim() || undefined,
+                    status: searchStatus || undefined,
+                    startDate: startDate || undefined,
+                    endDate: endDate || undefined,
+                    includeReceived: showReceived
+                });
+                if (showReceived) {
+                    setSelectedShipment(updatedShipment);
+                    setLineItems(await fetchShipmentDetails(updatedShipment.shipment_id));
+                } else {
+                    clearInspection();
+                }
             }
         } catch (error) {
             toast.error((error as Error).message || "Failed to force-receive the purchase order.");
         } finally {
             setForceReceivedSubmitting(false);
         }
-    }, [forceReceivedSubmitting, selectedShipment, loadShipments, searchPO, searchStatus, startDate, endDate, showReceived, clearInspection]);
+    }, [forceReceivedSubmitting, selectedShipment, isDetailMode, loadDetail, loadShipments, searchPO, searchStatus, startDate, endDate, showReceived, clearInspection]);
+
+    const finishCommittedInspection = useCallback(() => {
+        setPreviewOpen(false);
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewAcknowledged(false);
+        setQaEvaluationResults({});
+    }, []);
 
     const handlePreviewOpenChange = useCallback((open: boolean) => {
         setPreviewOpen(open);
-        if (!open && committedResult) clearInspection();
-    }, [committedResult, clearInspection]);
+        if (!open && committedResult) {
+            if (isDetailMode) finishCommittedInspection();
+            else clearInspection();
+        }
+    }, [committedResult, isDetailMode, finishCommittedInspection, clearInspection]);
 
     // Load FIFO inventory breakdown
     const handleLoadFifoInventory = async (branchId: string) => {
@@ -1273,6 +1346,9 @@ export function useQAReceiving(initialShipmentId?: number) {
         loadingShipments,
         loadingBranches,
         selectedShipment,
+        detailLoading,
+        detailError,
+        retryDetail,
         readOnly: isLockedReceivingShipment(selectedShipment, replacementDisposition),
         replacementDisposition,
         setSelectedShipment,
@@ -1303,7 +1379,7 @@ export function useQAReceiving(initialShipmentId?: number) {
         previewOpen,
         setPreviewOpen: handlePreviewOpenChange,
         handlePreviewOpenChange,
-        handleFinishCommitted: clearInspection,
+        handleFinishCommitted: finishCommittedInspection,
         previewAcknowledged,
         postingInspection,
         handleCommitReceiving,
@@ -1314,7 +1390,6 @@ export function useQAReceiving(initialShipmentId?: number) {
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleSelectShipment,
-        handleStartReplacement,
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,

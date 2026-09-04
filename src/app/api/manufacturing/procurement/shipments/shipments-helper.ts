@@ -637,6 +637,41 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     clauses.push({ purchase_order_id: { _in: [-1] } });
 }
 
+const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
+
+async function mapPurchaseOrderRows(rows: DirectusPO[]) {
+    const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
+    const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+    const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
+    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
+        purchaseOrderId: Number(row.purchase_order_id),
+        inventoryStatus: row.inventory_status ?? null,
+        workflowRevision: Number(row.workflow_revision || 0)
+    })));
+
+    return rows.map(row => mapPurchaseOrder(
+        row,
+        suppliers,
+        paymentModes,
+        true,
+        rejectionStages.get(Number(row.purchase_order_id)) || null,
+        revisionCounts.get(Number(row.purchase_order_id)) || 0
+    ));
+}
+
+export async function fetchIncomingShipmentById(shipmentId: number) {
+    const params = new URLSearchParams({
+        fields: PURCHASE_ORDER_LIST_FIELDS,
+        "filter[purchase_order_id][_eq]": String(shipmentId),
+        limit: "1"
+    });
+    const response = await fetchItemsWithDeliveryTermsFallback("purchase_order", params);
+    if (!response.ok) throw new Error(`Failed to load purchase order (${response.status}).`);
+    const body = await response.json();
+    const rows = (body.data || []) as DirectusPO[];
+    return (await mapPurchaseOrderRows(rows))[0] || null;
+}
+
 export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) {
     const filter: Record<string, unknown> = {};
     const clauses: Record<string, unknown>[] = [];
@@ -676,7 +711,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
+        fields: PURCHASE_ORDER_LIST_FIELDS,
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -688,24 +723,10 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (!res.ok) throw new Error(`Failed to load purchase orders (${res.status}).`);
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
-    const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
-    const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
-    const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
-    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
-        purchaseOrderId: Number(row.purchase_order_id),
-        inventoryStatus: row.inventory_status ?? null,
-        workflowRevision: Number(row.workflow_revision || 0)
-    })));
+    const mappedRows = await mapPurchaseOrderRows(rows);
     const total = Number(body.meta?.filter_count || 0);
     return {
-        data: rows.map(row => mapPurchaseOrder(
-            row,
-            suppliers,
-            paymentModes,
-            true,
-            rejectionStages.get(Number(row.purchase_order_id)) || null,
-            revisionCounts.get(Number(row.purchase_order_id)) || 0
-        )),
+        data: mappedRows,
         meta: {
             page: query.page,
             limit: query.limit,
