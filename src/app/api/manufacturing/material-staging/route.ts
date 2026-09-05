@@ -33,6 +33,7 @@ interface DirectusAllocation {
     branch_id?: number;
     jo_material_id?: number;
     product_id?: number;
+    mm_lot_id?: number;
     lot_id?: number;
     batch_no?: string;
     allocated_quantity?: number;
@@ -168,7 +169,7 @@ export async function GET(request: Request) {
             const normalizedBatchNo = normalizeBatchNo(batchNo) || "lot-n/a";
             const qty = Number(m.quantity || 0);
             const branchId = Number(m.branch_id || 0);
-            const lotId = Number(m.lot_id || 0);
+            const lotId = Number(m.mm_lot_id || 0);
             if (pId && branchId) {
                 const productKey = branchProductKey(branchId, pId);
                 stockByBranchProduct.set(productKey, (stockByBranchProduct.get(productKey) || 0) + qty);
@@ -296,7 +297,7 @@ export async function GET(request: Request) {
         rawMovements.forEach((movement) => {
             const remarks = String(movement.remarks || "");
             const productId = Number(movement.product_id || 0);
-            const lotId = Number(movement.lot_id || 0);
+            const lotId = Number(movement.mm_lot_id || 0);
             const jobOrderId = Number(movement.source_document_id || 0);
             const branchId = Number(movement.branch_id || 0);
             const batchNo = String(movement.batch_no || "").trim().toLowerCase();
@@ -332,6 +333,7 @@ export async function GET(request: Request) {
             branch_id?: number;
             jo_material_id?: number;
             product_id?: number;
+            mm_lot_id?: number;
             lot_id?: number;
             batch_no?: string;
             reserved_quantity?: number;
@@ -344,7 +346,7 @@ export async function GET(request: Request) {
             const branchId = Number(res.branch_id || 0);
             const batchNo = String(res.batch_no || "").trim();
             const normalizedBatchNo = normalizeBatchNo(batchNo);
-            const reservationLotId = Number(res.lot_id || 0);
+            const reservationLotId = Number(res.mm_lot_id || 0);
             const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${normalizedBatchNo}`);
             const lot = reservationLotId > 0
                 ? stockByBranchProductBatchLot.get(
@@ -369,6 +371,7 @@ export async function GET(request: Request) {
                     branch_id: branchId,
                     jo_material_id: materialId,
                     product_id: productId,
+                    mm_lot_id: stagingMovement?.lotId || reservationLotId || lot?.lotId || 0,
                     lot_id: stagingMovement?.lotId || reservationLotId || lot?.lotId || 0,
                     batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
@@ -449,6 +452,7 @@ export async function GET(request: Request) {
 
                     return {
                         allocation_id: al.allocation_id || al.id,
+                        mm_lot_id: lotId,
                         lot_id: lotId,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
@@ -474,6 +478,7 @@ export async function GET(request: Request) {
                     const defaultOnHand = defaultLot?.quantity ?? 0;
                     allocatedLots.push({
                         allocation_id: undefined,
+                        mm_lot_id: defaultLot?.lotId || 0,
                         lot_id: defaultLot?.lotId || 0,
                         batch_no: defaultLot?.batchNo || `LOT-${mProductId}-MAIN`,
                         allocated_quantity: requiredQty,

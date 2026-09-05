@@ -24,12 +24,11 @@ import { summarizeReceivingHistory } from "../../qa-receiving/_receiving-history
 import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-receiving/_receiving-status";
 import { sumMovementQuantitiesByStorageLot } from "../../qa-receiving/_movement-stock";
 import {
-    legacyToMmLotMap,
-    loadMmLotMappings,
     loadMmLots,
-    loadMovementRowsForLotRefs,
-    MmLotCompatibilityError
-} from "../../qa-receiving/_mm-lot-compat";
+    resolveOrCreateMmInventoryLot,
+    loadMovementRowsForMmLots,
+    MmLotError
+} from "../../services/mm-lots.service";
 import { QuarantineDispositionError, validateReplacementContext } from "../../qa-receiving/_quarantine-disposition";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { ensureQaResults, QaResultPersistenceError } from "./_qa-results";
@@ -226,11 +225,13 @@ function finalizeMovements(pending: PendingMovement[], rows: Record<string, unkn
     for (const row of rows) {
         if (row.version_id !== null) return null;
         const movementId = Number(row.movement_id);
+        const storageLotId = relationValueId(row.mm_lot_id, ["lot_id", "id"]);
+        if (!storageLotId) return null;
         const key = movementKey({
             receivingLineId: relationId(row.source_document_id, "purchase_order_product_id"),
             branchId: relationId(row.branch_id, "id"),
             transactionTypeId: relationId(row.transaction_type_id, "transaction_type_id"),
-            storageLotId: relationValueId(row.mm_lot_id, ["lot_id", "id"]) || relationId(row.lot_id, "lot_id"),
+            storageLotId,
             quantity: Number(row.quantity),
             batchNumber: String(row.batch_no || "")
         });
@@ -524,21 +525,9 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             ...rejectedLotRows.map(lot => [Number(lot.lot_id), Number(badBranch?.id)] as const)
         ]);
         const mmLotIds = lotRows.map(lot => Number(lot.lot_id)).filter((id): id is number => Number.isSafeInteger(id) && id > 0);
-        const [acceptedMappings, rejectedMappings] = await Promise.all([
-            acceptedLotRows.length > 0 ? loadMmLotMappings(acceptedLotRows.map(lot => Number(lot.lot_id)), branchId) : Promise.resolve([]),
-            rejectedLotRows.length > 0 && badBranch
-                ? loadMmLotMappings(rejectedLotRows.map(lot => Number(lot.lot_id)), Number(badBranch.id))
-                : Promise.resolve([])
-        ]);
-        const lotMappings = [...acceptedMappings, ...rejectedMappings];
-        const mappingByMmLot = new Map(lotMappings.map(mapping => [mapping.mm_lot_id, mapping]));
         const validLotIds = new Set(mmLotIds);
         if (mmLotIds.length !== requestedLotIds.length) {
             throw new ReceivingError("One or more selected storage lots do not exist, are inactive, or belong to another branch.", 409);
-        }
-        const missingMappings = requestedLotIds.filter(lotId => !mappingByMmLot.has(lotId));
-        if (missingMappings.length > 0) {
-            throw new ReceivingError(`Storage lot mapping is not configured for MM lot(s): ${missingMappings.join(", ")}.`, 409);
         }
         const passedMovementTypeId = movementTypeId(movementTypes, "Purchase Receiving QA");
         const rejectedMovementTypeId = lineItemUpdates.some(item => Number(item.quantity_rejected) > 0)
@@ -781,9 +770,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required inventory branch.`, 409);
                 }
-                if (!mappingByMmLot.has(allocation.storageLotId)) {
-                    throw new ReceivingError(`Storage lot ${allocation.storageLotId} has no approved legacy mapping.`, 409);
-                }
                 const lotUomId = relationValueId(lot.unit_id, ["unit_id", "id"]);
                 if (lotUomId !== productUomId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`, 409);
@@ -860,6 +846,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
 
         const receiptIds: number[] = [];
         const createdReceiptIds: number[] = [];
+        const createdInventoryLotIds: number[] = [];
         const updatedPreQaAnchorRows: Array<{ id: number; snapshot: Record<string, unknown> }> = [];
         const pendingMovements: PendingMovement[] = [];
         const allocationChanges: AllocationChange[] = [];
@@ -911,23 +898,14 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     : Promise.resolve([])
             ]);
             const freshLots = [...freshAcceptedLots, ...freshRejectedLots];
-            const [freshAcceptedMappings, freshRejectedMappings] = await Promise.all([
-                freshAcceptedLotIds.length > 0 ? loadMmLotMappings(freshAcceptedLotIds, branchId) : Promise.resolve([]),
-                freshRejectedLotIds.length > 0 && badBranch
-                    ? loadMmLotMappings(freshRejectedLotIds, Number(badBranch.id))
-                    : Promise.resolve([])
-            ]);
-            const freshMappings = [...freshAcceptedMappings, ...freshRejectedMappings];
-            const freshMappingByMmLot = new Map(freshMappings.map(mapping => [mapping.mm_lot_id, mapping]));
-            if (freshLots.length !== allocationLotIds.length || allocationLotIds.some(lotId => !freshMappingByMmLot.has(lotId))) {
-                throw new ReceivingError("A selected storage lot was removed, deactivated, moved, or unmapped while receiving was being prepared.", 409);
+            if (freshLots.length !== allocationLotIds.length) {
+                throw new ReceivingError("A selected storage lot was removed, deactivated, or moved while receiving was being prepared.", 409);
             }
-            const freshMovementRows = await loadMovementRowsForLotRefs(
+            const freshMovementRows = await loadMovementRowsForMmLots(
                 allocationLotIds,
-                freshMappings.map(mapping => mapping.legacy_lot_id),
                 "movement_id,mm_lot_id,lot_id,quantity"
             );
-            const freshOccupied = sumMovementQuantitiesByStorageLot(freshMovementRows, legacyToMmLotMap(freshMappings));
+            const freshOccupied = sumMovementQuantitiesByStorageLot(freshMovementRows);
             const freshCapacityByLot = new Map<number, number | null>();
             for (const lotId of allocationLotIds) {
                 const lot = freshLots.find(row => Number(row.lot_id) === lotId);
@@ -964,10 +942,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 const allocation = allocations.get(line.item.line_id)!;
                 const primaryAllocation = line.acceptedLotAllocations[0] || line.rejectedLotAllocations[0];
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
-                const primaryLotMapping = mappingByMmLot.get(primaryAllocation.storageLotId);
-                if (!primaryLotMapping) throw new ReceivingError(`Storage lot ${primaryAllocation.storageLotId} has no approved legacy mapping.`, 409);
                 const receiptPayload = {
-                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: primaryLotMapping.legacy_lot_id,
+                    purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: null,
                     expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCostPhp,
                     discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
                     total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
@@ -1023,13 +999,40 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 });
 
                 commitPhase = "inventory";
-                const saveInventory = async (targetBranchId: number, storageLotId: number, quantity: number, qaStatus: string, reason: string | null): Promise<number | null> => {
-                    void targetBranchId;
-                    void qaStatus;
-                    void reason;
-                    if (quantity <= 0) return null;
-                    return storageLotId;
-                };
+                 const saveInventory = async (
+                     targetBranchId: number,
+                     storageLotId: number,
+                     quantity: number,
+                     qaStatus: string,
+                     reason: string | null,
+                     batchNumber: string,
+                     manufacturingDate: string | null,
+                     expirationDate: string | null,
+                     unitCost: number,
+                     sourceReference: string
+                 ): Promise<number | null> => {
+                     if (quantity <= 0) return null;
+                     const inventoryLot = await resolveOrCreateMmInventoryLot({
+                         mmLotId: storageLotId,
+                         branchId: targetBranchId,
+                         productId: line.productId,
+                         batchNo: batchNumber,
+                         manufacturingDate,
+                         expiryDate: expirationDate,
+                         unitCost,
+                         qaStatus: qaStatus === "Rejected" ? "REJECTED" : "GOOD",
+                         sourceType: qaStatus === "Rejected"
+                             ? "PURCHASE_RECEIVING_QA_REJECTED"
+                             : "PURCHASE_RECEIVING_QA_ACCEPTED",
+                         sourceReference,
+                         remarks: reason,
+                         createdBy: options.actorUserId
+                     });
+                     if (inventoryLot.created && !createdInventoryLotIds.includes(inventoryLot.inventory_lot_id)) {
+                         createdInventoryLotIds.push(inventoryLot.inventory_lot_id);
+                     }
+                     return inventoryLot.inventory_lot_id;
+                 };
 
                 const receiptNo = receiptNumberForLine(referenceNumber, line.item.line_id);
                 const addPendingMovement = (
@@ -1046,8 +1049,6 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     capacityAudit: LotCapacityAllocationAudit
                 ) => {
                     if (!inventoryLotId || quantity <= 0) return;
-                    const lotMapping = mappingByMmLot.get(storageLotId);
-                    if (!lotMapping) throw new ReceivingError(`Storage lot ${storageLotId} has no approved legacy mapping.`, 409);
                     pendingMovements.push({
                         lineId: line.item.line_id,
                         kind,
@@ -1056,7 +1057,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                         productId: line.productId,
                         storageLotId,
                         mmLotId: storageLotId,
-                        legacyLotId: lotMapping.legacy_lot_id,
+                        legacyLotId: null,
                         branchId: targetBranchId,
                         transactionTypeId,
                         sourceDocumentNo: receiptNo,
@@ -1070,11 +1071,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                         payload: {
                             product_id: line.productId,
                             mm_lot_id: storageLotId,
-                            lot_id: lotMapping.legacy_lot_id,
+                            lot_id: null,
                             branch_id: targetBranchId,
                             transaction_type_id: transactionTypeId,
                             source_document_id: receiptId,
                             source_document_no: receiptNo,
+                            inventory_lot_id: inventoryLotId,
                             batch_no: batchNumber,
                             expiry_date: expirationDate,
                             manufacturing_date: manufacturingDate,
@@ -1094,12 +1096,34 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     return audit;
                 };
                 for (const [index, acceptedAllocation] of line.acceptedLotAllocations.entries()) {
-                    const inventoryLotId = await saveInventory(branchId, acceptedAllocation.storageLotId, acceptedAllocation.quantity, "Passed", null);
+                     const inventoryLotId = await saveInventory(
+                         branchId,
+                         acceptedAllocation.storageLotId,
+                         acceptedAllocation.quantity,
+                         "Passed",
+                         null,
+                         acceptedAllocation.batchNumber,
+                         acceptedAllocation.manufacturingDate,
+                         acceptedAllocation.expirationDate,
+                         line.baseUnitCostPhp,
+                         receiptNo
+                     );
                     addPendingMovement("Passed", inventoryLotId, branchId, acceptedAllocation.storageLotId, passedMovementTypeId, acceptedAllocation.quantity, acceptedAllocation.batchNumber, acceptedAllocation.manufacturingDate, acceptedAllocation.expirationDate, line.item.rejection_reason, capacityAuditFor("Passed", index));
                 }
                 if (rejectedMovementTypeId) {
                     for (const [index, rejectedAllocation] of line.rejectedLotAllocations.entries()) {
-                        const inventoryLotId = await saveInventory(Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedAllocation.quantity, "Rejected", line.item.rejection_reason);
+                        const inventoryLotId = await saveInventory(
+                            Number(badBranch?.id),
+                            rejectedAllocation.storageLotId,
+                            rejectedAllocation.quantity,
+                            "Rejected",
+                            line.item.rejection_reason,
+                            rejectedAllocation.batchNumber,
+                            rejectedAllocation.manufacturingDate,
+                            rejectedAllocation.expirationDate,
+                            line.baseUnitCostPhp,
+                            receiptNo
+                        );
                         addPendingMovement("Rejected", inventoryLotId, Number(badBranch?.id), rejectedAllocation.storageLotId, rejectedMovementTypeId, rejectedAllocation.quantity, rejectedAllocation.batchNumber, rejectedAllocation.manufacturingDate, rejectedAllocation.expirationDate, line.item.rejection_reason, capacityAuditFor("Rejected", index));
                     }
                 }
@@ -1200,6 +1224,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     throw new Error(`Receiving failed during ${commitPhase}; movement ${movementId} could not be removed after compensation. Reconciliation is required. Original error: ${(error as Error).message}`);
                 }
             }
+            for (const inventoryLotId of [...createdInventoryLotIds].reverse()) {
+                const inventoryLotDelete = await mutate("mm_inventory_lots", inventoryLotId, "DELETE");
+                if (!inventoryLotDelete.ok) {
+                    throw new Error(`Receiving failed during ${commitPhase}; inventory lot ${inventoryLotId} could not be removed after compensation. Reconciliation is required. Original error: ${(error as Error).message}`);
+                }
+            }
             throw error;
         }
 
@@ -1210,7 +1240,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             ? error.status
             : error instanceof QuarantineDispositionError
                 ? error.statusCode
-                : error instanceof MmLotCompatibilityError
+            : error instanceof MmLotError
                     ? error.status
                     : error instanceof QaResultPersistenceError
                         ? error.status

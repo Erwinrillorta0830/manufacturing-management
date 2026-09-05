@@ -5,14 +5,12 @@ import { canonicalBatchNumber } from "../_domain";
 import { handleQaReceivingPost } from "./_receiving-service";
 import { movementStockKey, sumMovementQuantitiesByStorageLot, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import {
-    legacyToMmLotMap,
-    loadMmLotMappings,
     loadMmLots,
-    loadMovementRowsForLotRefs,
-    MmLotCompatibilityError,
+    loadMovementRowsForMmLots,
+    MmLotError,
     unitId,
     type MmLotRecord
-} from "../../qa-receiving/_mm-lot-compat";
+} from "../../services/mm-lots.service";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
     PurchaseOrderAuthorizationError,
@@ -28,6 +26,7 @@ interface DirectusLotLog {
     source_reference?: string;
     lot_number?: string;
     batch_no?: string;
+    mm_lot_id?: number | { lot_id: number; lot_name?: string } | null;
     lot_id?: number | { lot_id: number; lot_name?: string } | null;
     expiry_date?: string;
     created_on?: string;
@@ -161,21 +160,16 @@ export async function GET(request: Request) {
                 onlyActive: true
             });
             const lotIds = lots.map(lot => lotNumber(lot.lot_id)).filter((id): id is number => id !== null);
-            const mappings = await loadMmLotMappings(lotIds, parsedBranchId);
-            const mappingByMmLot = new Map(mappings.map(mapping => [mapping.mm_lot_id, mapping]));
-            const movementRows = await loadMovementRowsForLotRefs(
+            const movementRows = await loadMovementRowsForMmLots(
                 lotIds,
-                mappings.map(mapping => mapping.legacy_lot_id),
                 "movement_id,product_id,mm_lot_id,lot_id,batch_no,quantity,manufacturing_date,expiry_date"
             );
-            const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows, legacyToMmLotMap(mappings));
+            const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows);
 
             if (action === "batches") {
                 const lot = lots[0] as MmLotRecord | undefined;
                 if (!lot) return NextResponse.json({ error: "The selected storage lot does not exist." }, { status: 404 });
                 const lotId = lotNumber(lot.lot_id) as number;
-                const mapping = mappingByMmLot.get(lotId);
-                if (!mapping) return NextResponse.json({ error: "The selected storage lot is not mapped to a legacy inbound lot." }, { status: 409 });
                 const capacity = finiteCapacity(lot.max_batch_capacity);
                 const occupied = Math.max(0, occupiedByLot.get(lotId) || 0);
                 const lotUomId = unitId(lot.unit_id);
@@ -184,8 +178,7 @@ export async function GET(request: Request) {
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
                 for (const movement of movementRows.filter(row =>
-                    (relationNumber(row.mm_lot_id, ["lot_id", "id"]) === lotId
-                        || relationNumber(row.lot_id, ["lot_id", "id"]) === mapping.legacy_lot_id)
+                    relationNumber(row.mm_lot_id, ["lot_id", "id"]) === lotId
                     && relationNumber(row.product_id, ["product_id", "id"]) === product.productId
                 )) {
                     const batchNumber = String(movement.batch_no ?? "").trim();
@@ -208,11 +201,9 @@ export async function GET(request: Request) {
                 const remainingCapacity = capacity === null ? null : Math.max(0, capacity - occupiedQuantity);
                 const uomId = unitId(lot.unit_id);
                 if (uomId !== product.uomId || remainingCapacity === null || remainingCapacity <= 0) return [];
-                const mapping = mappingByMmLot.get(lotId);
                 return [{
                     ...lot,
                     mm_lot_id: lotId,
-                    legacy_lot_id: mapping?.legacy_lot_id || null,
                     branch_id: parsedBranchId,
                     inventory_type_id: null,
                     unit_id: uomId,
@@ -221,10 +212,10 @@ export async function GET(request: Request) {
                     occupiedQuantity,
                     availableQuantity: remainingCapacity,
                     remainingCapacity,
-                    mapping_status: mapping ? "MAPPED" : "UNMAPPED",
-                    is_selectable: Boolean(mapping),
+                    mapping_status: "CANONICAL",
+                    is_selectable: true,
                     is_legacy_only: false,
-                    read_only: !mapping
+                    read_only: false
                 }];
             });
             return NextResponse.json(eligibleLots);
@@ -232,7 +223,7 @@ export async function GET(request: Request) {
 
         const getMovementsAndResolveMetadata = async (filterKey: "product_id" | "branch_id", filterVal: number) => {
             const movementRes = await fetch(
-                `${DIRECTUS_URL}/items/inventory_movements?filter[${filterKey}][_eq]=${filterVal}&fields=*,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`,
+                `${DIRECTUS_URL}/items/inventory_movements?filter[${filterKey}][_eq]=${filterVal}&fields=*,mm_lot_id.lot_id,mm_lot_id.lot_name,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`,
                 { headers, cache: "no-store" }
             );
             if (!movementRes.ok) throw new Error(`Directus error loading movement stock: ${movementRes.status}`);
@@ -271,7 +262,8 @@ export async function GET(request: Request) {
                 if (totalQty <= 0) continue;
 
                 const firstM = list.find((m: any) => Number(m.quantity) > 0) || list[0];
-                const lotIdObj = firstM.lot_id;
+                const mmLotIdObj = firstM.mm_lot_id;
+                const historicalLotIdObj = firstM.lot_id;
                 const productId = Number(firstM.product_id);
                 const batchNo = String(firstM.batch_no || "LOT-N/A").trim() || "LOT-N/A";
 
@@ -296,7 +288,11 @@ export async function GET(request: Request) {
                     branch_id: Number(firstM.branch_id),
                     lot_number: batchNo,
                     batch_no: batchNo,
-                    lot_id: lotIdObj,
+                    mm_lot_id: mmLotIdObj || null,
+                    lot_id: mmLotIdObj || historicalLotIdObj || null,
+                    lot_name: typeof mmLotIdObj === "object"
+                        ? mmLotIdObj?.lot_name || null
+                        : null,
                     expiry_date: expiryDate,
                     created_on: firstM.created_at,
                     qa_status: qaStatus,
@@ -377,9 +373,14 @@ export async function GET(request: Request) {
                     quantity_received: Number(r.quantity || 0),
                     batch_no: canonicalBatchNumber(r.batch_no, r.lot_number),
                     lot_number: canonicalBatchNumber(r.batch_no, r.lot_number) || "LOT-N/A",
-                    lot_id: typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null,
-                    lot_name: typeof r.lot_id === "object" ? r.lot_id?.lot_name || null : null,
-                    storage_assignment_state: r.lot_id ? "assigned" : "legacy_unassigned",
+                    mm_lot_id: typeof r.mm_lot_id === "object" ? r.mm_lot_id?.lot_id : r.mm_lot_id || null,
+                    lot_id: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_id
+                        : r.mm_lot_id || (typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null),
+                    lot_name: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_name || null
+                        : null,
+                    storage_assignment_state: r.mm_lot_id ? "assigned" : "legacy_unassigned",
                     expiration_date: r.expiry_date,
                     branch_id: branchMap[Number(r.branch_id)] || { branch_name: `Branch ID ${r.branch_id}`, branch_code: `BR-${r.branch_id}` },
                     rejection_reason: "",
@@ -448,9 +449,14 @@ export async function GET(request: Request) {
                     quantity_received: Number(r.quantity || 0),
                     batch_no: canonicalBatchNumber(r.batch_no, r.lot_number),
                     lot_number: canonicalBatchNumber(r.batch_no, r.lot_number) || "LOT-N/A",
-                    lot_id: typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null,
-                    lot_name: typeof r.lot_id === "object" ? r.lot_id?.lot_name || null : null,
-                    storage_assignment_state: r.lot_id ? "assigned" : "legacy_unassigned",
+                    mm_lot_id: typeof r.mm_lot_id === "object" ? r.mm_lot_id?.lot_id : r.mm_lot_id || null,
+                    lot_id: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_id
+                        : r.mm_lot_id || (typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null),
+                    lot_name: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_name || null
+                        : null,
+                    storage_assignment_state: r.mm_lot_id ? "assigned" : "legacy_unassigned",
                     expiration_date: r.expiry_date,
                     branch_id: r.branch_id,
                     rejection_reason: "",
@@ -470,7 +476,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Internal server error" }, {
         status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError
             ? e.status
-            : e instanceof MmLotCompatibilityError
+            : e instanceof MmLotError
                 ? e.status
                 : 500
         });

@@ -34,12 +34,10 @@ import { summarizeReceivingHistory } from "../_receiving-history";
 import { evaluateReceivingStatus, quantityStatusFromReceivingStatus } from "../_receiving-status";
 import { sumMovementQuantitiesByStorageLot } from "../_movement-stock";
 import {
-    legacyToMmLotMap,
-    loadMmLotMappings,
     loadMmLots,
-    loadMovementRowsForLotRefs,
-    MmLotCompatibilityError,
-} from "../_mm-lot-compat";
+    loadMovementRowsForMmLots,
+    MmLotError,
+} from "../../services/mm-lots.service";
 import { QuarantineDispositionError, validateReplacementContext, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../../procurement/_category-type";
 import { forceReceivedIntakeMessage } from "../_force-received";
@@ -408,24 +406,11 @@ export async function POST(request: Request) {
         const storageLotIds = storageLots
             .map(lot => Number(lot.lot_id))
             .filter((id): id is number => Number.isSafeInteger(id) && id > 0);
-        const [acceptedMappings, rejectedMappings] = await Promise.all([
-            acceptedStorageLots.length > 0 ? loadMmLotMappings(acceptedStorageLots.map(lot => Number(lot.lot_id)), purchaseOrderBranchId) : Promise.resolve([]),
-            rejectedStorageLots.length > 0 && badStockBranch
-                ? loadMmLotMappings(rejectedStorageLots.map(lot => Number(lot.lot_id)), Number(badStockBranch.id))
-                : Promise.resolve([])
-        ]);
-        const mappings = [...acceptedMappings, ...rejectedMappings];
-        const mappingByMmLot = new Map(mappings.map(mapping => [mapping.mm_lot_id, mapping]));
-        const missingMappings = storageLotIds.filter(id => !mappingByMmLot.has(id));
-        if (missingMappings.length > 0) {
-            throw new ReceivingPreviewError(`Storage lot mapping is not configured for MM lot(s): ${missingMappings.join(", ")}.`, 409);
-        }
         if (storageLotIds.length !== requestedLotIds.length) {
             throw new ReceivingPreviewError("One or more selected storage lots do not exist, are inactive, or belong to another branch.", 409);
         }
-        const movementRows = await loadMovementRowsForLotRefs(
+        const movementRows = await loadMovementRowsForMmLots(
             storageLotIds,
-            mappings.map(mapping => mapping.legacy_lot_id),
             "movement_id,product_id,mm_lot_id,lot_id,quantity,batch_no,manufacturing_date,expiry_date"
         );
 
@@ -541,7 +526,7 @@ export async function POST(request: Request) {
         if (requestedLotIds.some(id => !validLotIds.has(id))) {
             throw new ReceivingPreviewError("One or more storage lots do not exist.");
         }
-        const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows, legacyToMmLotMap(mappings));
+        const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows);
         const productTypesByLot = new Map<number, Set<number>>();
         const lotCapacityInputs: LotCapacityAllocationInput[] = [];
         const normalizedAllocationsByLine = new Map<number, { accepted: ReceivingLotAllocation[]; rejected: ReceivingLotAllocation[] }>();
@@ -583,9 +568,6 @@ export async function POST(request: Request) {
                 if (!lot) throw new ReceivingPreviewError(`Storage lot ${allocation.storageLotId} does not exist.`);
                 if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
                     throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required receiving branch.`, 409);
-                }
-                if (!mappingByMmLot.has(allocation.storageLotId)) {
-                    throw new ReceivingPreviewError(`Storage lot ${allocation.storageLotId} has no approved legacy mapping.`, 409);
                 }
                 const lotUomId = relationId(lot.unit_id, ["unit_id", "id"]);
                 const capacity = normalizeLotCapacity(lot.max_batch_capacity);
@@ -823,7 +805,7 @@ export async function POST(request: Request) {
             : error;
         const status = normalizedError instanceof PurchaseOrderAuthorizationError || normalizedError instanceof PurchaseQaConfigurationError || normalizedError instanceof ProductCategoryTypeValidationError
             ? normalizedError.status
-            : normalizedError instanceof MmLotCompatibilityError
+            : normalizedError instanceof MmLotError
                 ? normalizedError.status
             : normalizedError instanceof QuarantineDispositionError
                 ? normalizedError.statusCode

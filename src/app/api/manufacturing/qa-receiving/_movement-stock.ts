@@ -1,4 +1,4 @@
-import { canonicalMovementLotId, movementLegacyLotId, movementMmLotId } from "./_mm-lot-compat";
+import { historicalLotId, movementMmLotId } from "../services/mm-lots.service";
 
 export function relationId(value: unknown, key: string): number {
     const raw = value && typeof value === "object"
@@ -14,7 +14,9 @@ function movementQuantity(value: unknown): number {
 }
 
 export function movementLotId(row: Record<string, unknown>): number {
-    return canonicalMovementLotId(row) || 0;
+    // Keep legacy rows visible in historical inventory screens, but make the
+    // MM-lot reference authoritative whenever one is present.
+    return movementMmLotId(row) || historicalLotId(row) || 0;
 }
 
 export function movementMmLotReference(row: Record<string, unknown>): number {
@@ -22,7 +24,7 @@ export function movementMmLotReference(row: Record<string, unknown>): number {
 }
 
 export function movementLegacyLotReference(row: Record<string, unknown>): number {
-    return movementLegacyLotId(row) || 0;
+    return historicalLotId(row) || 0;
 }
 
 export function movementStockKey(row: Record<string, unknown>): string {
@@ -44,16 +46,13 @@ export function sumMovementQuantitiesByLot(rows: Record<string, unknown>[]): Map
 }
 
 export function sumMovementQuantitiesByStorageLot(
-    rows: Record<string, unknown>[],
-    legacyToMmLot: Map<number, number> = new Map()
+    rows: Record<string, unknown>[]
 ): Map<number, number> {
     const quantities = new Map<number, number>();
     for (const row of rows) {
         const mmLotId = movementMmLotReference(row);
-        const legacyLotId = movementLegacyLotReference(row);
-        const lotId = mmLotId || legacyToMmLot.get(legacyLotId) || legacyLotId;
-        if (!lotId) continue;
-        quantities.set(lotId, (quantities.get(lotId) || 0) + movementQuantity(row.quantity));
+        if (!mmLotId) continue;
+        quantities.set(mmLotId, (quantities.get(mmLotId) || 0) + movementQuantity(row.quantity));
     }
     return quantities;
 }

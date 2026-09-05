@@ -1,4 +1,4 @@
-import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { loadMmLots } from "@/app/api/manufacturing/services/mm-lots.service";
 
 export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 export const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -14,6 +14,7 @@ export interface FinalQAReleaseRecord extends Record<string, unknown> {
     final_release_id?: unknown;
     id?: unknown;
     job_order_id?: unknown;
+    mm_lot_id?: unknown;
     lot_id?: unknown;
 }
 
@@ -44,6 +45,7 @@ export interface DirectusMovement {
 export interface DirectusLot {
     lot_id?: unknown;
     lot_name?: unknown;
+    branch_id?: unknown;
 }
 
 export function relationId(value: unknown, keys: string[] = ["id"]): number {
@@ -79,44 +81,27 @@ export async function directusCollection<T>(url: string, description: string): P
     return Array.isArray(json.data) ? json.data as T[] : [];
 }
 
-/**
- * Resolve a release's stored lot reference to the canonical master lot.
- * Older records may contain an inventory movement id in lot_id; that
- * reference is read for display only and is never returned as a write target.
- */
 export async function resolveCanonicalLotId(storedLotId: number): Promise<number> {
     if (!Number.isSafeInteger(storedLotId) || storedLotId <= 0) return 0;
-
-    const [masterLots, legacyMovements] = await Promise.all([
-        directusCollection<DirectusLot>(
-            `${DIRECTUS_URL}/items/lots?filter[lot_id][_eq]=${storedLotId}&fields=lot_id,lot_name&limit=1`,
-            "Master lot lookup"
-        ),
-        fetchMmInventoryMovements({ movementId: storedLotId })
-    ]);
-
-    const movementLotId = relationId(legacyMovements[0]?.lot_id, ["lot_id", "id"]);
-    if (movementLotId > 0 && movementLotId !== storedLotId) return movementLotId;
-
-    const masterLot = masterLots[0] || null;
-    if (masterLot && relationId(masterLot.lot_id, ["lot_id", "id"]) === storedLotId) {
-        return storedLotId;
-    }
-    if (movementLotId > 0) return movementLotId;
-
-    return relationId(legacyMovements[0]?.lot_id, ["lot_id", "id"]);
+    const masterLots = await loadMmLots({ onlyActive: false });
+    return masterLots.some((lot) => relationId(lot.lot_id, ["lot_id", "id"]) === storedLotId)
+        ? storedLotId
+        : 0;
 }
 
 export async function normalizeFinalQARelease(release: FinalQAReleaseRecord) {
-    const storedLotId = relationId(release.lot_id, ["lot_id", "id"]);
+    const storedLotId = relationId(release.mm_lot_id, ["lot_id", "id"]);
+    const historicalLotId = relationId(release.lot_id, ["lot_id", "id"]);
     const canonicalLotId = await resolveCanonicalLotId(storedLotId);
     const finalReleaseId = relationId(release.final_release_id ?? release.id, ["final_release_id", "id"]);
 
     return {
         ...release,
         final_release_id: finalReleaseId || release.final_release_id || release.id,
-        stored_lot_id: storedLotId || null,
+        stored_lot_id: storedLotId || historicalLotId || null,
+        mm_lot_id: storedLotId || null,
+        lot_id: null,
         canonical_lot_id: canonicalLotId || null,
-        is_legacy_lot_reference: Boolean(storedLotId > 0 && canonicalLotId > 0 && storedLotId !== canonicalLotId)
+        is_legacy_lot_reference: Boolean(!storedLotId && historicalLotId > 0)
     };
 }
