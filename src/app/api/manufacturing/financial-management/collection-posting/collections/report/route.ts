@@ -102,20 +102,17 @@ export async function GET(request: Request) {
                 
                 const hasDenomination = typeof d.check_no === 'string' && d.check_no.includes(" x ");
 
-                let isCash = false;
                 let isCheck = false;
                 let isFindingOrAdjustment = false;
 
                 if (hasDenomination || Number(d.type) === 1 || Number(d.payment_method) === 1) {
-                    isCash = true;
+                    // It's cash, handled below
                 } else if (d.finding != null) {
                     isFindingOrAdjustment = true;
                 } else if (d.bank != null || Number(d.type) === 2 || Number(d.payment_method) === 2 || d.check_no) {
                     isCheck = true;
                 } else if (d.type != null && d.payment_method == null) {
                     isFindingOrAdjustment = true;
-                } else {
-                    isCash = true;
                 }
                 
                 if (isFindingOrAdjustment) {

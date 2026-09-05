@@ -184,7 +184,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 ? (pouch.salesmanId as { id?: number; salesman_id?: number }).id || (pouch.salesmanId as { id?: number; salesman_id?: number }).salesman_id
                 : pouch.salesmanId || null;
             setSalesmanId(currentSalesmanId as number | null);
-            setSalesmanName(salesmen?.find(s => s.id === currentSalesmanId)?.salesmanName || (salesmen?.find(s => s.id === currentSalesmanId) as any)?.salesman_name || `Owner ID: ${currentSalesmanId}`);
+            setSalesmanName(salesmen?.find(s => s.id === currentSalesmanId)?.salesmanName || (salesmen?.find(s => s.id === currentSalesmanId) as unknown as { salesman_name?: string })?.salesman_name as string || `Owner ID: ${currentSalesmanId}`);
             setCompanyProfile(profileResult.profile);
             setFindings(fetchedFindings || []);
 

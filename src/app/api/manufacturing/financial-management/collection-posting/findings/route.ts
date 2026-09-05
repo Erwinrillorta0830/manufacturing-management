@@ -17,7 +17,7 @@ export async function GET() {
         if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
         const data = await res.json();
         
-        const mappedData = (data.data || []).map((item: any) => ({
+        const mappedData = (data.data || []).map((item: { id: string | number; finding_name: string; coa_id?: { coa_id: string | number; account_title: string; balance_type: string } }) => ({
             id: item.id,
             findingName: item.finding_name,
             chartOfAccount: item.coa_id ? {

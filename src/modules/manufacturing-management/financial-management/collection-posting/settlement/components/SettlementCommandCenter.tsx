@@ -6,7 +6,6 @@ import {
     ShieldCheck,
     Wallet,
     Save,
-    ChevronDown,
     Plus,
     X,
     Loader2,
@@ -19,11 +18,8 @@ import {
     ChevronsUpDown,
     Check,
     Layers,
-    MapPin,
-    Calendar,
     FileText,
     CheckCircle2,
-    Search,
     Receipt
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -70,7 +66,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
         isLoadingRoute, loadRouteInvoices, addToCart, removeFromCart, clearCart, 
         getUsedAmount, getInvoiceApplied, handleAllocate, createAdjustment, createEwt, submitSettlement,
         hasPartialChanges, hasClearableCart, savePartialSettlement,
-        deleteWalletItem, editWalletItem, collectedByName,
+        deleteWalletItem, editWalletItem,
         isLoadingCredits, creditsError, retryCredits, hasMoreCredits, loadMoreCredits, collectionDate
     } = useSettlement(id, activeInvoiceId);
 
@@ -127,7 +123,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
             }
         });
         return Array.from(coaMap.values()).sort((a, b) => a.title.localeCompare(b.title));
-    }, [findings, adjBalanceType]);
+    }, [findings]);
 
     const filteredFindings = useMemo(() => {
         if (!adjCoaId) return [];
