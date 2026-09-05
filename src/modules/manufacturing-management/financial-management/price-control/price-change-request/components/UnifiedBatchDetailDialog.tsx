@@ -237,7 +237,17 @@ export function UnifiedBatchDetailDialog({
     );
     const lineSummary = React.useMemo(() => {
         const summary = buildLineSummary(lines);
-        summary.isFGBatch = detail?.product_types?.every((t) => t.name === "FG") ?? false;
+        
+        // Check if product_types explicitly states it is FG
+        const isFgFromTypes = detail?.product_types?.length 
+            ? detail.product_types.every((t) => t.name === "FG") 
+            : undefined;
+        
+        // Fallback to checking if all line items are FG
+        summary.isFGBatch = isFgFromTypes !== undefined 
+            ? isFgFromTypes 
+            : (lines.length > 0 && lines.every((l) => l.product_type_name === "FG"));
+            
         return summary;
     }, [lines, detail]);
 

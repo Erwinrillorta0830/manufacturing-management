@@ -10,6 +10,48 @@ const DIRECTUS_URL        = process.env.NEXT_PUBLIC_API_BASE_URL;
 const DIRECTUS_TOKEN      = process.env.DIRECTUS_STATIC_TOKEN;
 const COOKIE_NAME         = 'vos_access_token';
 
+/**
+ * Decode JWT payload (No Verify) and extract numeric userId from 'sub'.
+ */
+function decodeUserIdFromJwtCookie(req: NextRequest): number | null {
+    const token = req.cookies.get(COOKIE_NAME)?.value;
+    if (!token) return null;
+
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+
+    try {
+        const payloadPart = parts[1];
+        const pad = "=".repeat((4 - (payloadPart.length % 4)) % 4);
+        const b64 = (payloadPart + pad).replace(/-/g, "+").replace(/_/g, "/");
+        const jsonStr = Buffer.from(b64, "base64").toString("utf8");
+
+        const payload = JSON.parse(jsonStr) as { sub?: string | number };
+        const userId = Number(payload.sub);
+        return Number.isFinite(userId) ? userId : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Helper to get Philippine Standard Time (Asia/Manila) timestamps for database operations.
+ * Returns formatted string: "YYYY-MM-DD HH:mm:ss"
+ */
+function getPhTimestamp(date?: Date | string | null): string {
+    const d = date ? (typeof date === "string" ? new Date(date) : date) : new Date();
+    const validDate = isNaN(d.getTime()) ? new Date() : d;
+    return validDate.toLocaleString("sv-SE", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    }).replace("T", " ");
+}
+
 // ─── GET /api/fm/accounting/supplier-debit-memo ───────────────────────────────
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
@@ -118,17 +160,17 @@ export async function GET(request: NextRequest) {
       let created_at = m.created_at;
       if (created_at && typeof created_at === 'string') {
         if (!created_at.includes('T') && !created_at.includes('Z')) {
-          created_at = created_at.replace(' ', 'T') + 'Z';
-        } else if (created_at.includes('T') && !created_at.endsWith('Z')) {
-          created_at = created_at + 'Z';
+          created_at = created_at.replace(' ', 'T') + '+08:00';
+        } else if (created_at.includes('T') && !created_at.endsWith('Z') && !created_at.includes('+')) {
+          created_at = created_at + '+08:00';
         }
       }
       let updated_at = m.updated_at;
       if (updated_at && typeof updated_at === 'string') {
         if (!updated_at.includes('T') && !updated_at.includes('Z')) {
-          updated_at = updated_at.replace(' ', 'T') + 'Z';
-        } else if (updated_at.includes('T') && !updated_at.endsWith('Z')) {
-          updated_at = updated_at + 'Z';
+          updated_at = updated_at.replace(' ', 'T') + '+08:00';
+        } else if (updated_at.includes('T') && !updated_at.endsWith('Z') && !updated_at.includes('+')) {
+          updated_at = updated_at + '+08:00';
         }
       }
       return { ...m, created_at, updated_at };
@@ -160,6 +202,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { supplier_id, chart_of_account, date, amount, reason, encoder_id } = body;
+    
+    const userId = decodeUserIdFromJwtCookie(request);
 
     if (!supplier_id || !chart_of_account || !date || !amount) {
       return NextResponse.json(
@@ -187,7 +231,9 @@ export async function POST(request: NextRequest) {
       date,
       amount:           Number(amount),
       reason:           reason || null,
-      encoder_id:       encoder_id || null,
+      encoder_id:       userId || encoder_id || null,
+      created_at:       getPhTimestamp(),
+      updated_at:       getPhTimestamp(),
     };
 
     const res = await fetch(`${DIRECTUS_URL}/items/suppliers_memo`, {
