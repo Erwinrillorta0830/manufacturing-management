@@ -10,7 +10,7 @@ import { Supplier } from "@/modules/manufacturing-management/financial-managemen
 import { Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { EditSupplierModal } from "./components/modals/edit-supplier-modal";
-import { DataTableSkeleton } from "@/app/(manufacturing-management)/mm/_components/DataTableSkeleton";
+import { DataTableSkeleton } from "./components/data-table/DataTableSkeleton";
 import { AddSupplierModal } from "./components/modals/add-supplier-modal";
 import { ErrorPage } from "@/app/(manufacturing-management)/mm/_components/ErrorPage";
 
