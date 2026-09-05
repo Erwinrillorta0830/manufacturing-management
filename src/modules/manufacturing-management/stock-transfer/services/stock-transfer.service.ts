@@ -378,7 +378,7 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
           : d.manufacturing_date;
         const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null)
           ? ((d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiry_date || (d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiration_date)
-          : (d.expiry_date || d.expiration_date);
+          : ((d as { expiry_date?: string; expiration_date?: string }).expiry_date || d.expiration_date);
         const invLotId = typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null
           ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id
           : d.inventory_lot_id;
