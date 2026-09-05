@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN;
 
+function getPHLocalTime() {
+  return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace(" ", "T");
+}
+
 async function fetchDirectus(collection: string, method: string = "GET", body: unknown = null, params: string = "") {
   const url = `${DIRECTUS_URL}/items/${collection}${params ? `?${params}` : ""}`;
   const response = await fetch(url, {
@@ -67,7 +71,7 @@ export async function POST(request: NextRequest) {
       // Soft delete existing records
       for (const existing of existingRes.data) {
         await fetchDirectus(`supplier_category_discount_per_customer/${existing.id}`, "PATCH", {
-          deleted_at: new Date().toISOString(),
+          deleted_at: getPHLocalTime(),
           deleted_by: body.created_by || null,
           updated_by: body.created_by || null,
         });
@@ -81,12 +85,19 @@ export async function POST(request: NextRequest) {
           supplier_id: existing.supplier_id,
           category_id: existing.category_id,
           changed_by_user_id: body.created_by || null,
+          created_at: getPHLocalTime(),
         });
       }
     }
 
     // Create the new record
-    const res = await fetchDirectus("supplier_category_discount_per_customer", "POST", body);
+    const newBody = {
+      ...body,
+      created_at: getPHLocalTime(),
+      updated_at: null,
+      updated_by: null,
+    };
+    const res = await fetchDirectus("supplier_category_discount_per_customer", "POST", newBody);
     const newRecord = res.data;
 
     // Log the action
@@ -98,6 +109,7 @@ export async function POST(request: NextRequest) {
       supplier_id: newRecord.supplier_id,
       category_id: newRecord.category_id,
       changed_by_user_id: body.created_by,
+      created_at: getPHLocalTime(),
     });
 
     return NextResponse.json(newRecord);
@@ -130,9 +142,10 @@ export async function DELETE(request: NextRequest) {
 
     // 2. Soft delete the record
     await fetchDirectus(`supplier_category_discount_per_customer/${id}`, "PATCH", {
-      deleted_at: new Date().toISOString(),
+      deleted_at: getPHLocalTime(),
       deleted_by: userId ? Number(userId) : null,
       updated_by: userId ? Number(userId) : null,
+      updated_at: getPHLocalTime(),
     });
 
     // 3. Log the deletion
@@ -144,6 +157,7 @@ export async function DELETE(request: NextRequest) {
       supplier_id: record.supplier_id,
       category_id: record.category_id,
       changed_by_user_id: userId ? Number(userId) : null,
+      created_at: getPHLocalTime(),
     });
 
     return NextResponse.json({ success: true });
@@ -169,7 +183,7 @@ export async function PATCH(request: NextRequest) {
     const res = await fetchDirectus(`supplier_category_discount_per_customer/${id}`, "PATCH", {
       ...updateData,
       updated_by: updated_by ? Number(updated_by) : null,
-      updated_at: new Date().toISOString()
+      updated_at: getPHLocalTime()
     });
     const updatedRecord = res.data;
 
@@ -182,6 +196,7 @@ export async function PATCH(request: NextRequest) {
       supplier_id: updatedRecord.supplier_id,
       category_id: updatedRecord.category_id,
       changed_by_user_id: updated_by ? Number(updated_by) : null,
+      created_at: getPHLocalTime(),
     });
 
     return NextResponse.json(updatedRecord);

@@ -42,7 +42,7 @@ function decodeJwtPayload(token: string): DecodedToken | null {
 export default async function ForexManagerPage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
-    
+
     let headerUser = {
         name: "User",
         email: "",
@@ -71,7 +71,11 @@ export default async function ForexManagerPage() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm">Manufacturing</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="/mm/financials-and-costing">Financials & Costing</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
@@ -85,7 +89,7 @@ export default async function ForexManagerPage() {
                     <NavUser user={headerUser} />
                 </div>
             </header>
-            
+
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
                 <ForexManagerModule />
             </main>
