@@ -633,8 +633,6 @@ export function ShipmentFormModal({
                                                  const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
                                                  const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
                                                  const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
-                                                 const selectedDiscountType = discountTypes?.find(dt => String(dt.id) === String(line.discount_type_id));
-                                                 const selectedDiscountPercent = Number(selectedDiscountType?.total_percent ?? line.discount_percent ?? 0);
 
                                                 return (
                                                     <tr 
@@ -907,12 +905,6 @@ export function ShipmentFormModal({
                                                                          </option>
                                                                      ))}
                                                                  </select>
-                                                                 <p
-                                                                     data-testid={`discount-rate-${idx}`}
-                                                                     className="text-[9px] font-semibold text-muted-foreground"
-                                                                 >
-                                                                     {selectedDiscountType?.discount_type || (line.discount_type_id ? `Discount Type #${line.discount_type_id}` : "No Discount")} — {Number.isFinite(selectedDiscountPercent) ? selectedDiscountPercent.toFixed(2) : "0.00"}%
-                                                                 </p>
                                                              </div>
                                                          </td>
 
