@@ -68,7 +68,11 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
 
     const name = [first, last].filter(Boolean).join(" ") || email || "User";
 
+    const idStr = pickString(payload, ["sub", "id", "userId", "user_id"]);
+    const id = idStr ? Number(idStr) : null;
+
     return {
+        id,
         name,
         email: email || "",
         avatar: "/avatars/shadcn.jpg",
@@ -116,7 +120,9 @@ export default async function Page() {
 
             <ScrollArea className="min-h-0 flex-1">
                 <div className="p-4">
-                    <ChartOfAccountsModule />
+                    <ChartOfAccountsModule 
+                        currentUser={{ id: headerUser.id, name: headerUser.name }}
+                    />
                 </div>
             </ScrollArea>
         </div>
