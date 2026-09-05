@@ -105,11 +105,70 @@ function SearchableStorageLotSelect({
                 options={options}
                 value={String(value || "")}
                 onValueChange={onChange}
+                aria-label={ariaLabel}
                 placeholder="Select storage lot..."
                 searchPlaceholder="Search storage lot..."
                 disabled={disabled}
                 className="h-9 w-full rounded-lg text-[10px] font-semibold"
                 popoverClassName="z-[100] min-w-[240px] max-w-[calc(100vw-2rem)] p-0"
+            />
+        </div>
+    );
+}
+
+interface SearchableBatchSelectProps {
+    value: string;
+    disabled?: boolean;
+    availableBatches: StorageLotBatch[];
+    id?: string;
+    ariaLabel?: string;
+    className?: string;
+    invalid?: boolean;
+    onChange: (value: string) => void;
+}
+
+function SearchableBatchSelect({
+    value,
+    disabled,
+    availableBatches,
+    id,
+    ariaLabel,
+    className,
+    invalid,
+    onChange
+}: SearchableBatchSelectProps) {
+    const options = React.useMemo(() => {
+        const seenBatchNumbers = new Set<string>();
+        const batchOptions = availableBatches.flatMap(batch => {
+            const batchNumber = String(batch.batchNumber || "").trim();
+            if (!batchNumber || seenBatchNumbers.has(batchNumber)) return [];
+            seenBatchNumbers.add(batchNumber);
+            return [{ value: batchNumber, label: batchNumber }];
+        });
+        const currentBatchNumber = value.trim();
+
+        if (currentBatchNumber && !seenBatchNumbers.has(currentBatchNumber)) {
+            batchOptions.unshift({ value: currentBatchNumber, label: currentBatchNumber });
+        }
+
+        return batchOptions;
+    }, [availableBatches, value]);
+
+    return (
+        <div data-testid="batch-picker" aria-label={ariaLabel} className="relative min-w-0 w-full overflow-visible">
+            <CreatableSelect
+                id={id}
+                options={options}
+                value={value}
+                onValueChange={onChange}
+                onCreateOption={onChange}
+                aria-label={ariaLabel}
+                placeholder="Select or assign batch"
+                searchPlaceholder="Search or assign batch..."
+                disabled={disabled}
+                aria-invalid={invalid}
+                className={className || "h-9 w-full rounded-lg text-[10px] font-semibold"}
+                popoverClassName="z-[100] min-w-[220px] max-w-[calc(100vw-2rem)] p-0"
             />
         </div>
     );
@@ -409,34 +468,26 @@ function LotAllocationEditor({
                                     const dateRequired = !isPackaging && Number(allocation.quantity) > 0;
                                     const missingBatch = !allocation.batchNumber.trim();
                                     const invalidDates = dateRequired && (!allocation.manufacturingDate || !allocation.expirationDate);
-                                    const batchListId = "receiving-batches-" + lineId + "-" + disposition + "-" + allocation.clientId;
-                                    const capacityWarningId = batchListId + "-capacity-warning";
+                                    const batchControlId = "receiving-batches-" + lineId + "-" + disposition + "-" + allocation.clientId;
+                                    const capacityWarningId = batchControlId + "-capacity-warning";
 
                                     return (
                                         <tr key={allocation.clientId} className="bg-background/70 align-top">
                                             <td className="px-2 py-2">
-                                                <input
-                                                    id={batchListId + "-input"}
-                                                    list={batchListId}
+                                                <SearchableBatchSelect
+                                                    id={batchControlId}
                                                     value={allocation.batchNumber}
-                                                    onChange={event => updateAllocation(group.groupId, allocation.clientId, "batchNumber", event.target.value)}
+                                                    availableBatches={batchOptions}
                                                     disabled={readOnly || !group.storageLotId}
-                                                    placeholder={group.storageLotId ? "Select or assign batch" : "Select a lot first"}
-                                                    className={"h-9 w-full rounded-lg border bg-background px-2.5 text-[10px] font-semibold outline-none " + (missingBatch && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
-                                                    aria-label={tone.label + " batch number"}
+                                                    ariaLabel={tone.label + " batch number"}
+                                                    invalid={missingBatch && !readOnly}
+                                                    className={"h-9 w-full rounded-lg text-[10px] font-semibold " + (missingBatch && !readOnly ? "border-amber-500" : "border-border") + " " + tone.input}
+                                                    onChange={value => updateAllocation(group.groupId, allocation.clientId, "batchNumber", value)}
                                                 />
-                                                <datalist id={batchListId}>
-                                                    {batchOptions.map((batch, batchIndex) => (
-                                                        <option
-                                                            key={batch.batchNumber + "-" + (batch.manufacturingDate ?? "") + "-" + (batch.expirationDate ?? "") + "-" + batchIndex}
-                                                            value={batch.batchNumber}
-                                                        />
-                                                    ))}
-                                                </datalist>
                                             </td>
                                             <td className="px-2 py-2">
                                                 <input
-                                                    id={batchListId + "-manufacturing-date"}
+                                                    id={batchControlId + "-manufacturing-date"}
                                                     type="date"
                                                     value={allocation.manufacturingDate}
                                                     max={allocation.expirationDate || undefined}
@@ -449,7 +500,7 @@ function LotAllocationEditor({
                                             </td>
                                             <td className="px-2 py-2">
                                                 <input
-                                                    id={batchListId + "-expiration-date"}
+                                                    id={batchControlId + "-expiration-date"}
                                                     type="date"
                                                     value={allocation.expirationDate}
                                                     min={allocation.manufacturingDate || undefined}
@@ -462,7 +513,7 @@ function LotAllocationEditor({
                                             </td>
                                             <td className="px-2 py-2">
                                                 <input
-                                                    id={batchListId + "-quantity"}
+                                                    id={batchControlId + "-quantity"}
                                                     type="number"
                                                     min="0"
                                                     step="any"

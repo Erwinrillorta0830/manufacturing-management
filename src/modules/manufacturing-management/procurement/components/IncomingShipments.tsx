@@ -93,8 +93,10 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         totalUsdValue,
         draftSummary,
         priceControlStatus,
+        priceControlError,
         fxRateStatus,
-        fxRateError
+        fxRateError,
+        priceTypeResolution
     } = useIncomingShipmentsForm({
         suppliers,
         rawMaterials,
@@ -355,6 +357,8 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
                 priceControlStatus={priceControlStatus}
+                priceControlError={priceControlError}
+                priceTypeResolution={priceTypeResolution}
                 hasSubmitted={hasSubmitted}
                 draftSummary={draftSummary}
                 totalUsdValue={totalUsdValue}

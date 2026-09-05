@@ -15,6 +15,7 @@ export interface RawProductSelectorProps {
     parentProductId?: string;
     productName?: string;
     materialType?: PurchaseOrderMaterialType | "";
+    canonicalDrafting?: boolean;
     disabled?: boolean;
     onSelect: (selected: {
         parent_product_id: string;
@@ -54,6 +55,7 @@ export function RawProductSelector({
     selectedProductId,
     parentProductId,
     materialType = "",
+    canonicalDrafting = false,
     disabled = false,
     onSelect
 }: RawProductSelectorProps) {
@@ -118,7 +120,7 @@ export function RawProductSelector({
             product_name: parentMaterial.product_name || defaultMaterial.product_name,
             product_code: defaultMaterial.product_code || "",
             selected_uom: defaultMaterial.unit_of_measurement?.unit_shortcut || "PCS",
-            base_unit_cost_php: String(cost),
+            base_unit_cost_php: canonicalDrafting ? "" : String(cost),
             uom_options: members.map(member => ({
                 product_id: member.product_id,
                 parent_product_id: resolveProductParentId(member) || member.product_id,

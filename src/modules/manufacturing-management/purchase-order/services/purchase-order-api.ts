@@ -3,6 +3,7 @@ import type {
     PurchaseOrderApprovalCommand,
     PurchaseOrderApprovalDetail,
     PurchaseOrderCatalog,
+    PurchaseOrderCommercialResolution,
     PurchaseOrderDecisionStage,
     PurchaseOrderDetailResponse,
     PurchaseOrderDraftPayload,
@@ -60,6 +61,20 @@ export async function fetchPurchaseOrderFxRate(currencyCode: "PHP" | "USD", sign
     const params = new URLSearchParams({ currency: currencyCode });
     const response = await fetch(`/api/manufacturing/purchase-orders/fx-rate?${params.toString()}`, { signal });
     return responseJson<PurchaseOrderFxRateResponse>(response, "Failed to load the current exchange rate.");
+}
+
+export async function resolvePurchaseOrderCommercialTerms(
+    supplierId: number,
+    productIds: number[],
+    signal?: AbortSignal
+) {
+    const response = await fetch("/api/manufacturing/purchase-orders/commercial-resolution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ supplierId, productIds }),
+        signal
+    });
+    return responseJson<PurchaseOrderCommercialResolution>(response, "Failed to resolve purchase-order commercial terms.");
 }
 
 export async function createPurchaseOrder(payload: PurchaseOrderDraftPayload) {
