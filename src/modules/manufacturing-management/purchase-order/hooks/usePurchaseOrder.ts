@@ -28,7 +28,7 @@ import { calculatePercentageDiscount } from "../../procurement/discount-calculat
 
 const blankLine = (): ManifestLineFormItem => ({
     parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
-    purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "", vat_percent: "", withholding_percent: ""
+    purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_type_id: "", discount_source: "none", discount_amount: "0", discount_percent: "", vat_percent: "", withholding_percent: ""
 });
 const blankForm = (): ShipmentFormState => ({
     reference_number: "", remark: "", supplier_id: "", exchange_rate: "", total_foreign_currency: "0", total_php_value: "0",
@@ -338,6 +338,8 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
                 quantity: Number(line.quantity_ordered),
                 unitPrice: Number(line.base_unit_cost_php),
                 discountMode: "Percentage",
+                discountType: line.discount_type_id ? Number(line.discount_type_id) : null,
+                discountSource: line.discount_source || "supplier",
                 discountPercent: Number(line.discount_percent) || 0,
                 discountAmount: Number(calculatePercentageDiscount(
                     line.quantity_ordered,

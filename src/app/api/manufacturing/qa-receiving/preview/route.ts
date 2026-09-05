@@ -52,13 +52,28 @@ import {
     type LotCapacityAllocationInput,
     type LotCapacityAllocationAudit
 } from "../_lot-capacity";
+import {
+    discrepancyRemarkError,
+    RECEIVING_ERROR_CODES,
+    receivingErrorCodeForStatus,
+    type ReceivingErrorCode,
+    type ReceivingValidationDetails
+} from "../_receiving-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 class ReceivingPreviewError extends Error {
-    constructor(message: string, readonly status = 422) {
+    readonly code: ReceivingErrorCode;
+
+    constructor(
+        message: string,
+        readonly status = 422,
+        code?: ReceivingErrorCode,
+        readonly details?: ReceivingValidationDetails
+    ) {
         super(message);
+        this.code = code || receivingErrorCodeForStatus(status);
     }
 }
 
@@ -195,7 +210,11 @@ export async function POST(request: Request) {
         const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
         const parsed = receivingPreviewRequestSchema.safeParse(await request.json());
         if (!parsed.success) {
-            return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
+            return NextResponse.json({
+                error: "Invalid receiving preview request.",
+                code: RECEIVING_ERROR_CODES.VALIDATION,
+                details: parsed.error.flatten()
+            }, { status: 400 });
         }
 
         const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
@@ -407,6 +426,22 @@ export async function POST(request: Request) {
             }
             remainingByLine.set(line.lineId, remainingQuantity);
             remainingAcceptedByLine.set(line.lineId, remainingAcceptedQuantity);
+            const remarkError = discrepancyRemarkError({
+                lineId: line.lineId,
+                productId: line.productId,
+                receivedQuantity: line.receivedQuantity,
+                remainingQuantity,
+                rejectedQuantity: line.rejectedQuantity,
+                remarks: line.remarks
+            });
+            if (remarkError) {
+                throw new ReceivingPreviewError(
+                    remarkError.message,
+                    400,
+                    RECEIVING_ERROR_CODES.VALIDATION,
+                    remarkError.details
+                );
+            }
         }
 
         const overDeliveryLines = lines.map(line => ({
@@ -711,6 +746,13 @@ export async function POST(request: Request) {
                 : error instanceof ReceivingQuantityError
                     ? 422
                     : 500;
-        return NextResponse.json({ error: (error as Error).message || "Failed to generate receiving preview." }, { status });
+        const response: Record<string, unknown> = {
+            error: (error as Error).message || "Failed to generate receiving preview.",
+            code: error instanceof ReceivingPreviewError
+                ? error.code
+                : receivingErrorCodeForStatus(status)
+        };
+        if (error instanceof ReceivingPreviewError && error.details) response.details = error.details;
+        return NextResponse.json(response, { status });
     }
 }

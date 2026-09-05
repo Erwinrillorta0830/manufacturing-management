@@ -20,6 +20,7 @@ export interface ResolvedPurchaseOrderPriceType {
     priceTypeName: string;
     productTypeIds: number[];
     pricesByProductId: Record<number, string>;
+    priceSourceProductIds: Record<number, number>;
     missingProductIds: number[];
 }
 
@@ -263,12 +264,14 @@ export function resolvePurchaseOrderPriceTypeFromRows(
 
     const priceTypeId = priceTypeIds[0];
     const matrixByProductId = new Map<number, string>();
+    const priceSourceProductIds = new Map<number, number>();
     for (const row of matrixRows) {
         const rowProductId = relationId(row.product_id, ["product_id", "id"]);
         const rowPriceTypeId = relationId(row.price_type_id, ["price_type_id", "id"]);
         const price = row.price == null ? "" : String(row.price).trim();
         if (rowProductId && rowPriceTypeId === priceTypeId && price && Number(price) > 0) {
             matrixByProductId.set(rowProductId, price);
+            priceSourceProductIds.set(rowProductId, rowProductId);
         }
     }
 
@@ -280,12 +283,20 @@ export function resolvePurchaseOrderPriceTypeFromRows(
         priceTypeName,
         productTypeIds: [...new Set(resolutions.map(resolution => resolution.productTypeId))],
         pricesByProductId: Object.fromEntries(matrixByProductId.entries()),
+        priceSourceProductIds: Object.fromEntries(priceSourceProductIds.entries()),
         missingProductIds
     };
 }
 
 export async function resolvePurchaseOrderPriceType(productIds: number[]): Promise<ResolvedPurchaseOrderPriceType> {
     const uniqueProductIds = [...new Set(productIds)];
+    if (uniqueProductIds.length === 0) {
+        throw new PurchaseOrderPriceTypeError(
+            "At least one purchase-order product is required for Price Type determination.",
+            "PRICE_TYPE_NOT_CONFIGURED",
+            400
+        );
+    }
     const productFilter = uniqueProductIds.join(",");
     const [selectedProducts, rules] = await Promise.all([
         directusData<DirectusProductRow[]>(
@@ -328,17 +339,37 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
     if (priceTypeIds.length !== 1) {
         return resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, []);
     }
+    const matrixProductIds = [...new Set([...uniqueProductIds, ...parentProductIds])];
     const matrixRows = await directusData<DirectusPriceMatrixRow[]>(
-        `/items/product_per_price_type?filter[product_id][_in]=${productFilter}&filter[price_type_id][_eq]=${priceTypeIds[0]}&fields=product_id,price_type_id,price&limit=-1`,
+        `/items/product_per_price_type?filter[product_id][_in]=${matrixProductIds.join(",")}&filter[price_type_id][_eq]=${priceTypeIds[0]}&fields=product_id,price_type_id,price&limit=-1`,
         "Unable to load Price Control matrix entries."
     );
     const resolved = resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, matrixRows);
+    const pricesByProductId = { ...resolved.pricesByProductId };
+    const priceSourceProductIds = { ...resolved.priceSourceProductIds };
+    const missingProductIds = uniqueProductIds.filter(productId => {
+        if (pricesByProductId[productId]) return false;
+        const product = selectedProducts.find(row => relationId(row.product_id, ["product_id", "id"]) === productId);
+        const parentId = relationId(product?.parent_id, ["product_id", "id"]);
+        if (parentId && pricesByProductId[parentId]) {
+            pricesByProductId[productId] = pricesByProductId[parentId];
+            priceSourceProductIds[productId] = parentId;
+            return false;
+        }
+        return true;
+    });
+    const withResolvedParents = {
+        ...resolved,
+        pricesByProductId,
+        priceSourceProductIds,
+        missingProductIds
+    };
     if (!resolved.priceTypeName || resolved.priceTypeName.startsWith("Price Type #")) {
         const priceType = await directusData<{ price_type_name?: string }>(
             `/items/price_types/${resolved.priceTypeId}?fields=price_type_id,price_type_name`,
             "Unable to load the resolved Price Type."
         );
-        return { ...resolved, priceTypeName: priceType.price_type_name || resolved.priceTypeName };
+        return { ...withResolvedParents, priceTypeName: priceType.price_type_name || resolved.priceTypeName };
     }
-    return resolved;
+    return withResolvedParents;
 }

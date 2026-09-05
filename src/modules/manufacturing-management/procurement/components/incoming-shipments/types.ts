@@ -1,5 +1,6 @@
 import React from "react";
 import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+import type { PurchaseOrderDiscountSource } from "../../../purchase-order/types";
 import { normalizeProductRelationId } from "../../product-relation";
 
 export type PurchaseOrderMaterialType = "raw_material" | "packaging" | "finished_goods";
@@ -70,6 +71,7 @@ export interface ManifestLineFormItem {
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
     job_order_id?: string;
     discount_type_id?: string | number;
+    discount_source?: PurchaseOrderDiscountSource;
     discount_mode?: "Percentage" | "Fixed Amount";
     discount_amount?: string;
     discount_percent?: string;

@@ -12,16 +12,20 @@ import type { z } from "zod";
 import type { purchaseOrderCreateSchema } from "./_schemas";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { PurchaseOrderFxRateError, resolvePurchaseOrderFxRate } from "./_fx-rate";
-import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import { compareDecimals, DecimalValue, normalizeDecimal, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
 import { normalizeProductRelationId } from "@/modules/manufacturing-management/procurement/product-relation";
 import { validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPaymentModeError } from "./_payment-modes";
 import {
     assertEnteredPricesForMissingPriceControl,
     fetchPurchaseOrderPriceTypeRules,
-    PurchaseOrderPriceTypeError,
-    resolvePurchaseOrderPriceType
+    PurchaseOrderPriceTypeError
 } from "./_price-type";
+import {
+    PurchaseOrderCommercialResolutionError,
+    resolvePurchaseOrderCommercialTerms,
+    resolvePurchaseOrderDiscountType
+} from "./_commercial-resolution";
 import { validatePurchaseOrderCategoryTypes } from "../procurement/_category-type";
 import {
     ProductWeightValidationError,
@@ -117,6 +121,80 @@ function assertExpectedTotals(order: PurchaseOrderDraft, totals: ReturnType<type
     if (mismatches.length) {
         throw new PurchaseOrderDraftError("Purchase-order totals changed during validation. Review the calculated totals and submit again.", 409, actual);
     }
+}
+
+async function applyCommercialTerms(
+    order: PurchaseOrderDraft,
+    commercial: Awaited<ReturnType<typeof resolvePurchaseOrderCommercialTerms>>,
+    exchangeRate: DecimalInput
+): Promise<PurchaseOrderDraft> {
+    const commercialByProductId = new Map(commercial.lines.map(line => [line.productId, line]));
+    const manualDiscountTypeIds = [...new Set(order.lines
+        .filter(line => line.discountSource === "manual" && line.discountType !== null)
+        .map(line => line.discountType as number))];
+    const manualDiscounts = await Promise.all(manualDiscountTypeIds.map(async discountTypeId => [
+        discountTypeId,
+        await resolvePurchaseOrderDiscountType(discountTypeId)
+    ] as const));
+    const manualDiscountsById = new Map(manualDiscounts);
+
+    return {
+        ...order,
+        lines: order.lines.map(line => {
+            const terms = commercialByProductId.get(line.productId);
+            if (!terms) {
+                throw new PurchaseOrderDraftError(`Commercial terms could not be resolved for product ${line.productId}.`, 503, {
+                    productId: line.productId
+                });
+            }
+
+            const unitPrice = terms.pricePhp
+                ? order.currencyCode === "USD"
+                    ? DecimalValue.from(terms.pricePhp).divideRounded(exchangeRate, UNIT_PRICE_DECIMAL_SCALE).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                    : DecimalValue.from(terms.pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                : line.unitPrice;
+
+            if (line.discountSource === "manual") {
+                if (line.discountType === null) {
+                    throw new PurchaseOrderDraftError(`Select a discount preset for product ${line.productId}, or choose No Discount.`, 400, {
+                        productId: line.productId
+                    });
+                }
+                const manualDiscount = manualDiscountsById.get(line.discountType);
+                if (!manualDiscount) {
+                    throw new PurchaseOrderDraftError(`Discount Type ${line.discountType} could not be validated.`, 400, {
+                        productId: line.productId,
+                        discountTypeId: line.discountType
+                    });
+                }
+                return {
+                    ...line,
+                    unitPrice,
+                    discountType: manualDiscount.id,
+                    discountPercent: Number(manualDiscount.percent),
+                    discountAmount: "0"
+                };
+            }
+
+            if (line.discountSource === "none") {
+                return {
+                    ...line,
+                    unitPrice,
+                    discountType: null,
+                    discountPercent: 0,
+                    discountAmount: "0"
+                };
+            }
+
+            return {
+                ...line,
+                unitPrice,
+                discountType: terms.discountTypeId,
+                discountPercent: Number(terms.discountPercent),
+                discountAmount: "0"
+            };
+        })
+    };
 }
 
 async function validateDraft(order: PurchaseOrderDraft) {
@@ -332,17 +410,22 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         throw error;
     }
     const productCategoryIds = await validateDraft(order);
-    let resolvedPriceType;
+    let resolvedCommercial;
     try {
-        resolvedPriceType = await resolvePurchaseOrderPriceType(order.lines.map(line => line.productId));
-        assertEnteredPricesForMissingPriceControl(
-            order.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
-            resolvedPriceType.missingProductIds
+        resolvedCommercial = await resolvePurchaseOrderCommercialTerms(
+            order.supplierId,
+            order.lines.map(line => line.productId)
         );
+        const effectiveOrder = await applyCommercialTerms(order, resolvedCommercial, exchangeRate);
+        assertEnteredPricesForMissingPriceControl(
+            effectiveOrder.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
+            resolvedCommercial.missingPriceProductIds
+        );
+        order = effectiveOrder;
     } catch (error) {
-        if (error instanceof PurchaseOrderPriceTypeError) {
+        if (error instanceof PurchaseOrderPriceTypeError || error instanceof PurchaseOrderCommercialResolutionError) {
             throw new PurchaseOrderDraftError(error.message, error.status, {
-                code: error.code,
+                ...(error instanceof PurchaseOrderPriceTypeError ? { code: error.code } : {}),
                 ...(error.details && typeof error.details === "object" ? error.details : {})
             });
         }
@@ -359,7 +442,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         receiving_type: 1,
         payment_type: order.paymentArrangementId,
         payment_mode: order.paymentModeId,
-        price_type: resolvedPriceType.priceTypeName,
+        price_type: resolvedCommercial.priceTypeName,
         delivery_terms: order.deliveryTerms,
         date_encoded: now.toISOString(),
         date: await getTodayDateString(),
@@ -401,6 +484,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
                     discountAmount: line.discountAmount,
                     vatPercent: line.vatPercent,
                     withholdingPercent: line.withholdingPercent,
+                    discountType: line.discountType,
                     exchangeRate: exchangeRate,
                     branchId: order.branchId,
                     purchaseIntent: line.purchaseIntent,
@@ -432,8 +516,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         status: "For Approval",
         currencyCode: authoritativeFxRate.currencyCode,
         exchangeRate,
-        priceType: resolvedPriceType.priceTypeName,
-        priceTypeId: resolvedPriceType.priceTypeId,
+        priceType: resolvedCommercial.priceTypeName,
+        priceTypeId: resolvedCommercial.priceTypeId,
         totals: {
             grossPhp: totals.grossPhp,
             discountPhp: totals.discountPhp,
