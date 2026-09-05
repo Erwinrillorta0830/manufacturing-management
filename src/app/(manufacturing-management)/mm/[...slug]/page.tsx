@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
 
 // ✅ Wire the requirements module
 import RequirementsSpecModule from "@/modules/manufacturing-management/shared/RequirementsSpecModule";
@@ -18,6 +19,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const COOKIE_NAME = "vos_access_token";
+const RETIRED_RFID_PATH = "supplier-management/purchase-order/purchase-order-receiving-rfid";
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
     try {
@@ -74,6 +76,10 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
 export default async function CatchAllHRMPage(props: { params: Promise<{ slug: string[] }> }) {
     const { slug } = await props.params;
     const pathString = slug.join("/");
+
+    if (pathString === RETIRED_RFID_PATH || pathString.startsWith(`${RETIRED_RFID_PATH}/`)) {
+        notFound();
+    }
     
     // ✅ Next.js 16: cookies() is async
     const cookieStore = await cookies();

@@ -132,6 +132,7 @@ export async function GET(request: Request) {
         // Aggregate movements by inventoryLotId and (lotId, productId, batchNo)
         const movementNetByInvLotId = new Map<number, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; mfgDate?: string; expDate?: string }>();
         const movementNetByLotProductBatch = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
+        const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
 
         rawMovements.forEach((m) => {
             const lId = Number(m.lotId || m.lot_id || 0);
@@ -156,8 +157,11 @@ export async function GET(request: Request) {
             }
 
             if (bNo) {
-                const key = `${lId}_${pId}_${bNo.toLowerCase()}`;
-                const cur = movementNetByLotProductBatch.get(key) || {
+                const mfgDateStr = (m.manufacturingDate || m.manufacturing_date ? String(m.manufacturingDate || m.manufacturing_date).slice(0, 10) : "");
+                const expDateStr = (m.expirationDate || m.expiration_date || m.expiry_date ? String(m.expirationDate || m.expiration_date || m.expiry_date).slice(0, 10) : "");
+                const baseKey = `${lId}_${pId}_${bNo.toLowerCase()}`;
+
+                const curBase = movementNetByLotProductBatch.get(baseKey) || {
                     onhand: 0,
                     totalIn: 0,
                     totalOut: 0,
@@ -166,8 +170,8 @@ export async function GET(request: Request) {
                     lotId: lId,
                     productId: pId,
                     batchNo: bNo,
-                    mfgDate: (m.manufacturingDate || m.manufacturing_date) as string | undefined,
-                    expDate: (m.expirationDate || m.expiration_date || m.expiry_date) as string | undefined,
+                    mfgDate: mfgDateStr || undefined,
+                    expDate: expDateStr || undefined,
                     condition: String(m.inventoryCondition || m.inventory_condition || "GOOD"),
                     remarks: (m.remarks as string) || undefined,
                     referenceNo: (m.referenceNo || m.reference_no) as string | undefined,
@@ -177,15 +181,35 @@ export async function GET(request: Request) {
                     productName: (m.productName || m.product_name) as string | undefined,
                     productCode: (m.productCode || m.product_code) as string | undefined
                 };
-                cur.onhand += net;
-                cur.totalIn += qIn;
-                cur.totalOut += qOut;
-                if (cost > 0) cur.unitCost = cost;
-                if (m.manufacturingDate || m.manufacturing_date) cur.mfgDate = (m.manufacturingDate || m.manufacturing_date) as string;
-                if (m.expirationDate || m.expiration_date || m.expiry_date) cur.expDate = (m.expirationDate || m.expiration_date || m.expiry_date) as string;
-                if (m.inventoryCondition || m.inventory_condition) cur.condition = String(m.inventoryCondition || m.inventory_condition);
-                cur.count += 1;
-                movementNetByLotProductBatch.set(key, cur);
+                curBase.onhand += net;
+                curBase.totalIn += qIn;
+                curBase.totalOut += qOut;
+                if (cost > 0) curBase.unitCost = cost;
+                if (mfgDateStr) curBase.mfgDate = mfgDateStr;
+                if (expDateStr) curBase.expDate = expDateStr;
+                if (m.inventoryCondition || m.inventory_condition) curBase.condition = String(m.inventoryCondition || m.inventory_condition);
+                curBase.count += 1;
+                movementNetByLotProductBatch.set(baseKey, curBase);
+
+                if (mfgDateStr || expDateStr) {
+                    const dateKey = `${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
+                    const curDate = movementNetByLotProductBatchDate.get(dateKey) || {
+                        ...curBase,
+                        onhand: 0,
+                        totalIn: 0,
+                        totalOut: 0,
+                        unitCost: cost,
+                        count: 0,
+                        mfgDate: mfgDateStr || undefined,
+                        expDate: expDateStr || undefined
+                    };
+                    curDate.onhand += net;
+                    curDate.totalIn += qIn;
+                    curDate.totalOut += qOut;
+                    if (cost > 0) curDate.unitCost = cost;
+                    curDate.count += 1;
+                    movementNetByLotProductBatchDate.set(dateKey, curDate);
+                }
             }
         });
 
@@ -203,17 +227,23 @@ export async function GET(request: Request) {
 
             if (invId > 0) {
                 const cur = movementNetByInvLotId.get(invId) || { onhand: 0, totalIn: 0, totalOut: 0, unitCost: 0, count: 0 };
-                cur.onhand = onhand;
-                cur.totalIn = qIn;
-                cur.totalOut = qOut;
-                if (mfgDate) cur.mfgDate = mfgDate;
-                if (expDate) cur.expDate = expDate;
+                // Only use onhand snapshot if no movements were found
+                if (cur.count === 0) {
+                    cur.onhand = onhand;
+                    cur.totalIn = qIn;
+                    cur.totalOut = qOut;
+                }
+                if (mfgDate && !cur.mfgDate) cur.mfgDate = mfgDate;
+                if (expDate && !cur.expDate) cur.expDate = expDate;
                 movementNetByInvLotId.set(invId, cur);
             }
 
             if (bNo) {
-                const key = `${lId}_${pId}_${bNo.toLowerCase()}`;
-                const cur = movementNetByLotProductBatch.get(key) || {
+                const mfgDateStr = mfgDate ? String(mfgDate).slice(0, 10) : "";
+                const expDateStr = expDate ? String(expDate).slice(0, 10) : "";
+                const baseKey = `${lId}_${pId}_${bNo.toLowerCase()}`;
+
+                const curBase = movementNetByLotProductBatch.get(baseKey) || {
                     onhand: 0,
                     totalIn: 0,
                     totalOut: 0,
@@ -228,12 +258,35 @@ export async function GET(request: Request) {
                     branchId: Number(oh.branchId || oh.branch_id || 1),
                     unitId: Number(oh.unitId || oh.unit_id || 1)
                 };
-                cur.onhand = onhand;
-                cur.totalIn = qIn;
-                cur.totalOut = qOut;
-                if (mfgDate) cur.mfgDate = mfgDate;
-                if (expDate) cur.expDate = expDate;
-                movementNetByLotProductBatch.set(key, cur);
+                // Only use onhand snapshot if no movements were found
+                if (curBase.count === 0) {
+                    curBase.onhand = onhand;
+                    curBase.totalIn = qIn;
+                    curBase.totalOut = qOut;
+                }
+                if (mfgDate && !curBase.mfgDate) curBase.mfgDate = mfgDate;
+                if (expDate && !curBase.expDate) curBase.expDate = expDate;
+                movementNetByLotProductBatch.set(baseKey, curBase);
+
+                if (mfgDateStr || expDateStr) {
+                    const dateKey = `${lId}_${pId}_${bNo.toLowerCase()}_${mfgDateStr}_${expDateStr}`;
+                    const curDate = movementNetByLotProductBatchDate.get(dateKey) || {
+                        ...curBase,
+                        onhand: 0,
+                        totalIn: 0,
+                        totalOut: 0,
+                        unitCost: 0,
+                        count: 0,
+                        mfgDate,
+                        expDate
+                    };
+                    if (curDate.count === 0) {
+                        curDate.onhand = onhand;
+                        curDate.totalIn = qIn;
+                        curDate.totalOut = qOut;
+                    }
+                    movementNetByLotProductBatchDate.set(dateKey, curDate);
+                }
             }
         });
 
@@ -341,10 +394,15 @@ export async function GET(request: Request) {
             const matchedP = productsList.find((p) => Number(p.product_id) === productId);
 
             // Compute live onhand quantity and unit cost from movements if present
-            // Prioritize comprehensive lot/product/batch movements which aggregates all transactions for this batch
+            // Prioritize exact dates movement first, then general lot/product/batch
+            const mfgNorm = String(row.manufacturing_date || "").slice(0, 10);
+            const expNorm = String(row.expiry_date || row.expiration_date || "").slice(0, 10);
+            const movementByExactDates = (mfgNorm || expNorm)
+                ? movementNetByLotProductBatchDate.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}_${mfgNorm}_${expNorm}`)
+                : undefined;
             const movementByLotProdBatch = movementNetByLotProductBatch.get(`${lotId}_${productId}_${batchNumber.toLowerCase()}`);
             const movementByInvId = batchId > 0 ? movementNetByInvLotId.get(batchId) : undefined;
-            const movementInfo = movementByLotProdBatch || movementByInvId;
+            const movementInfo = movementByExactDates || movementByLotProdBatch || movementByInvId;
 
             const quantity = movementInfo !== undefined
                 ? Number(movementInfo.onhand || 0)
@@ -390,14 +448,83 @@ export async function GET(request: Request) {
         // Synthesize any batches that exist in movements but not in Directus mm_inventory_lots
         const existingKeys = new Set<string>();
         mappedBatches.forEach((b) => {
+            const mfg = (b.manufacturingDate || "").slice(0, 10);
+            const exp = (b.expirationDate || "").slice(0, 10);
+            if (mfg || exp) {
+                existingKeys.add(`${b.lotId}_${b.productId}_${b.batchNumber.toLowerCase()}_${mfg}_${exp}`);
+            }
             existingKeys.add(`${b.lotId}_${b.productId}_${b.batchNumber.toLowerCase()}`);
             if (b.batchId > 0) existingKeys.add(`id_${b.batchId}`);
         });
 
         let synthIdCounter = -1;
-        movementNetByLotProductBatch.forEach((mv, key) => {
-            if (!existingKeys.has(key)) {
-                // Find lot and product info
+        // First synthesize any date-specific groups that aren't represented
+        movementNetByLotProductBatchDate.forEach((mv, dateKey) => {
+            if (!existingKeys.has(dateKey)) {
+                existingKeys.add(dateKey);
+                let lotName = "Unassigned Storage Lot";
+                const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
+                if (matchedLot) lotName = matchedLot.lot_name;
+                else if (mv.lotId > 0) lotName = `Lot #${mv.lotId}`;
+
+                let prodName = mv.productName || "";
+                let itemCode = mv.productCode || "";
+                const matchedP = productsList.find((p) => Number(p.product_id) === mv.productId);
+                if (matchedP) {
+                    prodName = prodName || matchedP.product_name || `Product #${mv.productId}`;
+                    itemCode = itemCode || matchedP.sku_code || `PROD-${mv.productId}`;
+                } else if (mv.productId > 0) {
+                    prodName = prodName || `Product #${mv.productId}`;
+                    itemCode = itemCode || `PROD-${mv.productId}`;
+                }
+
+                let uomName = "";
+                let uomShortcut = "";
+                const matchedUnit = unitsList.find((u) => Number(u.unit_id) === mv.unitId);
+                if (matchedUnit) {
+                    uomName = matchedUnit.unit_name || "";
+                    uomShortcut = matchedUnit.unit_shortcut || matchedUnit.unit_name || "";
+                }
+
+                const rawQa = String(mv.condition || "GOOD").toUpperCase();
+                let qaStatus: BatchQaStatus = "GOOD";
+                if (["GOOD", "DAMAGED", "QUARANTINED", "EXPIRED"].includes(rawQa)) {
+                    qaStatus = rawQa as BatchQaStatus;
+                }
+
+                mappedBatches.push({
+                    batchId: synthIdCounter--,
+                    batchNumber: mv.batchNo,
+                    lotId: mv.lotId,
+                    lotName,
+                    branchId: mv.branchId || 1,
+                    productId: mv.productId,
+                    productName: prodName,
+                    itemCode,
+                    quantity: mv.onhand,
+                    unitCost: mv.unitCost || (matchedP?.unit_cost || 0),
+                    uomId: mv.unitId || null,
+                    uomName,
+                    uomShortcut,
+                    manufacturingDate: mv.mfgDate || "",
+                    expirationDate: mv.expDate || "",
+                    qaStatus,
+                    status: "ACTIVE",
+                    sourceType: "INVENTORY_MOVEMENT",
+                    sourceReference: mv.referenceNo,
+                    remarks: mv.remarks || "",
+                    createdAt: mv.postedAt || new Date().toISOString(),
+                    updatedAt: mv.postedAt || new Date().toISOString(),
+                    createdBy: "System",
+                    updatedBy: "System"
+                });
+            }
+        });
+
+        // Next synthesize any base batches with no dates that were not represented
+        movementNetByLotProductBatch.forEach((mv, baseKey) => {
+            if (!existingKeys.has(baseKey)) {
+                existingKeys.add(baseKey);
                 let lotName = "Unassigned Storage Lot";
                 const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
                 if (matchedLot) lotName = matchedLot.lot_name;

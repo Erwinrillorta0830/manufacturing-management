@@ -32,18 +32,36 @@ import { quantityStatusFromReceivingStatus } from "../_receiving-status";
 import {
     allocateReceivingTicket,
     fetchReceivingTicketByIdempotencyKey,
+    fetchWarehouseReceivingTicket,
     markReceivingTicketFailed,
     markReceivingTicketPosted,
     ReceivingTicketError
 } from "../_receiving-ticket";
 import { LOT_CAPACITY_EPSILON, readLotCapacityAudit } from "../_lot-capacity";
 import { movementLegacyLotId, movementMmLotId } from "../_mm-lot-compat";
+import {
+    discrepancyRemarkError,
+    isReceivingErrorCode,
+    RECEIVING_ERROR_CODES,
+    receivingErrorCodeForStatus,
+    type ReceivingErrorCode
+} from "../_receiving-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 class CommitError extends Error {
-    constructor(readonly statusCode: number, message: string) { super(message); }
+    readonly code: ReceivingErrorCode;
+
+    constructor(
+        readonly statusCode: number,
+        message: string,
+        code?: ReceivingErrorCode,
+        readonly details?: unknown
+    ) {
+        super(message);
+        this.code = code || receivingErrorCodeForStatus(statusCode);
+    }
 }
 
 function rows(body: unknown): Record<string, unknown>[] {
@@ -499,7 +517,11 @@ export async function POST(request: Request) {
         }
         const parsed = receivingCommitRequestSchema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
-            return NextResponse.json({ error: "Invalid receiving commit request.", details: parsed.error.flatten() }, { status: 400 });
+            return NextResponse.json({
+                error: "Invalid receiving commit request.",
+                code: RECEIVING_ERROR_CODES.VALIDATION,
+                details: parsed.error.flatten()
+            }, { status: 400 });
         }
         const purchaseOrderBranchId = await assertReceivingStatusOpen(parsed.data.shipmentId, parsed.data.replacementDispositionId);
         if (parsed.data.destinationBranchId !== purchaseOrderBranchId) {
@@ -535,8 +557,43 @@ export async function POST(request: Request) {
             })
         }));
         const previewBody = await previewResponse.json();
-        if (!previewResponse.ok) throw new CommitError(previewResponse.status, previewBody.error || "Receiving validation failed.");
+        if (!previewResponse.ok) {
+            const previewError = previewBody && typeof previewBody === "object"
+                ? previewBody as Record<string, unknown>
+                : {};
+            throw new CommitError(
+                previewResponse.status,
+                String(previewError.error || "Receiving validation failed."),
+                isReceivingErrorCode(previewError.code)
+                    ? previewError.code
+                    : receivingErrorCodeForStatus(previewResponse.status),
+                previewError.details
+            );
+        }
         const preview = previewBody.data as ReceivingPreviewResult;
+        const previewByLine = new Map(preview.lines.map(line => [line.lineId, line]));
+        for (const line of parsed.data.lines) {
+            const previewLine = previewByLine.get(line.lineId);
+            if (!previewLine) {
+                throw new CommitError(422, `Line ${line.lineId} is missing from the receiving preview.`);
+            }
+            const remarkError = discrepancyRemarkError({
+                lineId: line.lineId,
+                productId: line.productId,
+                receivedQuantity: line.receivedQuantity,
+                remainingQuantity: previewLine.remainingQuantity,
+                rejectedQuantity: line.rejectedQuantity,
+                remarks: line.remarks
+            });
+            if (remarkError) {
+                throw new CommitError(
+                    400,
+                    remarkError.message,
+                    RECEIVING_ERROR_CODES.VALIDATION,
+                    remarkError.details
+                );
+            }
+        }
         if (preview.workflowRevision !== parsed.data.workflowRevision) {
             throw new CommitError(409, "The purchase order changed after preview. Generate a new preview before posting.");
         }
@@ -550,7 +607,6 @@ export async function POST(request: Request) {
             `/items/purchase_order_products?${poLineParams}`,
             "Unable to verify complete purchase-order quantities."
         );
-        const previewByLine = new Map(preview.lines.map(line => [line.lineId, line]));
         if (poLines.length === 0 || (!parsed.data.replacementDispositionId && poLines.length !== preview.lines.length)) {
             throw new CommitError(422, "Every purchase-order line must be included before final receiving can be posted.");
         }
@@ -577,16 +633,19 @@ export async function POST(request: Request) {
                 quantity: allocation.quantity
                 })));
             });
-        const receivingTicket = await allocateReceivingTicket({
-            purchaseOrderId: parsed.data.shipmentId,
-            branchId: purchaseOrderBranchId,
-            receiptNumber: parsed.data.receiptNumber,
-            receiptDate: parsed.data.receiptDate,
-            quantityStatus: preview.quantityStatus,
-            workflowRevision: parsed.data.workflowRevision,
-            idempotencyKey,
-            createdBy: actor.userId
-        });
+        const warehouseTicket = parsed.data.replacementDispositionId
+            ? null
+            : await fetchWarehouseReceivingTicket(parsed.data.shipmentId, parsed.data.workflowRevision);
+        const receivingTicket = warehouseTicket || await allocateReceivingTicket({
+                purchaseOrderId: parsed.data.shipmentId,
+                branchId: purchaseOrderBranchId,
+                receiptNumber: parsed.data.receiptNumber,
+                receiptDate: parsed.data.receiptDate,
+                quantityStatus: preview.quantityStatus,
+                workflowRevision: parsed.data.workflowRevision,
+                idempotencyKey,
+                createdBy: actor.userId
+            });
         allocatedTicketId = receivingTicket.id;
         if (!receivingTicket.receiving_ticket_no) {
             throw new CommitError(503, "The submitted Receipt Number was not persisted.");
@@ -640,7 +699,7 @@ export async function POST(request: Request) {
                             actual_reading: line.readings.find(reading => reading.specId === evaluation.specId)?.actualReading || "",
                             is_passed: evaluation.status === "passed"
                         })),
-                        rejection_reason: result.rejectionReason || line.remarks,
+                        rejection_reason: line.remarks || result.rejectionReason || null,
                         qa_status: result.acceptedQuantity === 0
                             ? "Rejected"
                             : result.rejectedQuantity > 0
@@ -670,7 +729,11 @@ export async function POST(request: Request) {
         ticketPosted = true;
         return NextResponse.json({ data: committed }, { status: legacyBody.idempotent ? 200 : 201 });
     } catch (error) {
-        if (allocatedTicketId && !ticketPosted) {
+        if (
+            allocatedTicketId
+            && !ticketPosted
+            && !(error instanceof CommitError && error.code === RECEIVING_ERROR_CODES.VALIDATION)
+        ) {
             await markReceivingTicketFailed(allocatedTicketId).catch(() => false);
         }
         const status = error instanceof PurchaseOrderAuthorizationError
@@ -682,6 +745,15 @@ export async function POST(request: Request) {
                 : error instanceof ReceivingTicketError
                     ? error.statusCode
                 : 500;
-        return NextResponse.json({ error: (error as Error).message || "Failed to post receiving." }, { status });
+        const response: Record<string, unknown> = {
+            error: (error as Error).message || "Failed to post receiving.",
+            code: error instanceof CommitError
+                ? error.code
+                : error instanceof ReceivingTicketError
+                    ? error.code
+                    : receivingErrorCodeForStatus(status)
+        };
+        if (error instanceof CommitError && error.details) response.details = error.details;
+        return NextResponse.json(response, { status });
     }
 }

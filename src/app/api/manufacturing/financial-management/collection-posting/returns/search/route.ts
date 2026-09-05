@@ -19,7 +19,24 @@ export async function GET(request: Request) {
         if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
         
         const data = await res.json();
-        return NextResponse.json(data);
+        const ret = data.data?.[0];
+
+        if (!ret) {
+            return NextResponse.json(null);
+        }
+
+        const mappedReturn = {
+            id: ret.return_id,
+            returnNumber: ret.return_number,
+            customerCode: ret.customer_code,
+            customerName: ret.customer_name || "",
+            totalAmount: Number(ret.total_amount) || 0,
+            availableAmount: Number(ret.total_amount) || 0,
+            isApplied: ret.isApplied === 1 || ret.isApplied === true || ret.status === 'Applied',
+            status: ret.status
+        };
+
+        return NextResponse.json(mappedReturn);
     } catch (e) {
         console.error("API Error searching returns:", e);
         return NextResponse.json({ error: (e as Error).message }, { status: 500 });

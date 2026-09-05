@@ -59,6 +59,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
     const {
         matrixRows,
         usedUnitIds,
+        usedPriceTypeKeys,
         loading: productsLoading,
         error: productsError,
         refresh: refreshProducts,
@@ -457,6 +458,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
                 priceTypes={priceTypes}
                 units={units}
                 usedUnitIds={usedUnitIds}
+                usedPriceTypeKeys={usedPriceTypeKeys}
                 selectedPriceTypeIds={filters.price_type_ids}
             />
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, X, PackageCheck } from "lucide-react";
 import {
     CURRENCY_DECIMAL_SCALE,
     formatDecimal
@@ -83,6 +83,12 @@ export function getStatusBadge(status: string) {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-500/10 text-teal-600 border border-teal-500/20 uppercase tracking-wider">
                     <CheckCircle2 className="h-3 w-3" /> Approved
+                </span>
+            );
+        case "Warehouse Receiving":
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-cyan-500/10 text-cyan-700 border border-cyan-500/20 uppercase tracking-wider">
+                    <PackageCheck className="h-3 w-3" /> Warehouse Receiving
                 </span>
             );
         case "Awaiting Payment":

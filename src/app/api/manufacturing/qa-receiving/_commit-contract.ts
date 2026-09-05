@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { deriveRejectedQuantity, validateReceivingQuantities } from "../qa/_receiving-evaluation";
 import { receivingLotAllocationError, rejectedLotAllocationError } from "./_lot-allocation";
+import { normalizeReceivingRemark } from "./_receiving-errors";
 
 export const RECEIVING_COMMIT_CONTRACT_VERSION = "v1" as const;
 export const RECEIVING_POSTING_ENABLED = true;
@@ -35,7 +36,7 @@ export const receivingCommitLineSchema = z.object({
     rejectedQuantity: quantity,
     acceptedLotAllocations: z.array(acceptedLotAllocation).default([]),
     rejectedLotAllocations: z.array(rejectedLotAllocation).default([]),
-    remarks: z.string().max(255).nullable(),
+    remarks: z.string().trim().max(255).nullable().transform(normalizeReceivingRemark),
     isPackaging: z.boolean(),
     readings: z.array(z.object({
         specId: z.number().int().positive(),

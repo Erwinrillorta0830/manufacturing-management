@@ -4,7 +4,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 
-import type { AccountTypeRow, BalanceTypeRow, BSISTypeRow, COARow } from "../types";
+import type { AccountTypeRow, BalanceTypeRow, BSISTypeRow, COARow, UserRow } from "../types";
 import * as api from "../providers/fetchProvider";
 
 type EditState =
@@ -15,7 +15,9 @@ const getPHLocalTime = () => {
   return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace(" ", "T");
 };
 
-export function useChartOfAccounts() {
+export function useChartOfAccounts(props?: { currentUser?: { id: number | null; name: string } | null }) {
+  const { currentUser } = props || {};
+  
   const [glCode, setGlCode] = React.useState("");
   const [accountTitle, setAccountTitle] = React.useState("");
   const [accountType, setAccountType] = React.useState("");
@@ -39,43 +41,27 @@ export function useChartOfAccounts() {
   const [balanceTypes, setBalanceTypes] = React.useState<BalanceTypeRow[]>([]);
   const [bsisTypes, setBsisTypes] = React.useState<BSISTypeRow[]>([]);
   const [accountTitlesLookup, setAccountTitlesLookup] = React.useState<string[]>([]);
+  const [users, setUsers] = React.useState<UserRow[]>([]);
   const [lookupsLoading, setLookupsLoading] = React.useState(true);
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editState, setEditState] = React.useState<EditState>({ open: false, row: null });
 
-  const [currentUser, setCurrentUser] = React.useState<{ id: number | null; name: string } | null>(null);
-
-  React.useEffect(() => {
-    async function loadMe() {
-      try {
-        const res = await fetch("/api/auth/me");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data?.id) {
-          const name = [data.user_fname, data.user_lname].filter(Boolean).join(" ") || data.user_email || "User";
-          setCurrentUser({ id: Number(data.id), name });
-        }
-      } catch (e) {
-        console.error("Failed to load session user", e);
-      }
-    }
-    loadMe();
-  }, []);
-
   const loadLookups = React.useCallback(async () => {
     try {
       setLookupsLoading(true);
-      const [a, b, c, titles] = await Promise.all([
+      const [a, b, c, titles, uList] = await Promise.all([
         api.listAccountTypes(),
         api.listBalanceTypes(),
         api.listBSISTypes(),
         api.listAccountTitles(),
+        api.listUsers(),
       ]);
       setAccountTypes(a);
       setBalanceTypes(b);
       setBsisTypes(c);
       setAccountTitlesLookup(titles);
+      setUsers(uList);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to load lookups");
     } finally {
@@ -220,6 +206,7 @@ export function useChartOfAccounts() {
     balanceTypes,
     bsisTypes,
     accountTitlesLookup,
+    users,
     lookupsLoading,
 
     // dialogs

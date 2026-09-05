@@ -6,7 +6,6 @@ import {
     Ban,
     Check,
     CheckCircle2,
-    CircleDollarSign,
     Clock3,
     FileCheck2,
     History,
@@ -24,13 +23,12 @@ import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison"
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../procurement/discount-calculation";
 
-type QueueTab = "For Approval" | "Awaiting Payment" | "Approved" | "Rejected";
+type QueueTab = "For Approval" | "Approved" | "Rejected";
 
-const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3 }> = [
-    { value: "For Approval", label: "For Approval", icon: Clock3 },
-    { value: "Awaiting Payment", label: "Awaiting Payment", icon: CircleDollarSign },
-    { value: "Approved", label: "Approved", icon: CheckCircle2 },
-    { value: "Rejected", label: "Rejected", icon: X }
+const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3; activeClass: string }> = [
+    { value: "For Approval", label: "For Approval", icon: Clock3, activeClass: "border-amber-300 bg-amber-50 text-amber-700 shadow-sm" },
+    { value: "Approved", label: "Approved", icon: CheckCircle2, activeClass: "border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm" },
+    { value: "Rejected", label: "Rejected", icon: X, activeClass: "border-red-300 bg-red-50 text-red-700 shadow-sm" }
 ];
 
 function money(value: unknown, currency = "PHP") {
@@ -115,7 +113,7 @@ function FinanceDecisionControls({
         try {
             setSubmitting("approve");
             await approve(shipment.shipment_id);
-            toast.success("Finance approval completed. The purchase order is now available in QA Receiving.");
+            toast.success("Finance approval completed. The purchase order is now available in Warehouse Receiving.");
         } catch (error) {
             await handleActionError(error);
         } finally {
@@ -514,7 +512,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                     type="button"
                                     onClick={() => setTab(item.value)}
                                     aria-pressed={tab === item.value}
-                                    className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded px-3 text-xs font-semibold ${tab === item.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                                    className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border px-3 text-xs font-semibold ${tab === item.value ? item.activeClass : "border-transparent text-muted-foreground hover:text-foreground"}`}
                                 >
                                     <Icon className="h-3.5 w-3.5" />
                                     {item.label}
@@ -547,17 +545,17 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                 ) : (
                     <>
                         <div className="hidden grid-cols-[1.1fr_1.4fr_1fr_1fr_1fr_auto] gap-3 border-b bg-muted/30 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground md:grid">
-                            <span>PO No. / Reference</span><span>Supplier</span><span>Status</span><span>Workflow Stage</span><span>Total Amount</span><span>Action</span>
+                            <span>PO No. / Reference</span><span>Supplier</span><span>Approval Status</span><span>PO Lifecycle</span><span>Total Amount</span><span>Action</span>
                         </div>
                         <div className="divide-y">
                             {shipments.map(order => {
                                 const supplier = typeof order.supplier_id === "object"
                                     ? order.supplier_id?.supplier_name
                                     : suppliers.find(item => item.id === Number(order.supplier_id))?.supplier_name;
-                                const displayedStatus = statusForApprovalStage(order.status);
+                                const lifecycleStatus = statusForApprovalStage(order.status);
                                 const workflowStage = !order.finance_id && (order.status === "For Approval" || order.status === "Requested")
                                     ? "Finance"
-                                    : displayedStatus;
+                                    : lifecycleStatus;
                                 const orderLabel = order.purchase_order_no || order.reference_number || `PO ${order.shipment_id}`;
                                 return (
                                     <button
@@ -571,7 +569,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                             <span className="mt-1 block truncate text-[11px] text-muted-foreground" title={order.reference_number || "No reference"}>{order.reference_number || "No reference"}</span>
                                         </span>
                                         <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={supplier || "Unknown supplier"}>{supplier || "Unknown supplier"}</span>
-                                        <span>{statusBadge(displayedStatus)}</span>
+                                        <span>{statusBadge(tab)}</span>
                                         <span className="text-[11px] font-semibold text-muted-foreground">{workflowStage}</span>
                                         <span className="font-mono text-xs font-bold text-foreground">{money(order.total_php_value)}</span>
                                         <span className="text-xs font-bold text-primary md:text-right">Review PO <span aria-hidden="true">→</span></span>

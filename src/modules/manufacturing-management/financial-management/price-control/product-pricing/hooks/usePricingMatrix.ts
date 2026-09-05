@@ -612,7 +612,12 @@ export function usePricingMatrix(args: {
             const meta = dirtyMeta.get(k);
             const product = findProductInRows(rows, productId);
             const pObj = typeof product?.product_id === "object" ? product?.product_id : null;
-            const product_name = meta?.product_name ?? pObj?.product_name ?? product?.product_name ?? `Product #${productId}`;
+            
+            let product_name = meta?.product_name;
+            if (!product_name || product_name.startsWith("Product #")) {
+                product_name = pObj?.product_name ?? product?.product_name ?? `Product #${productId}`;
+            }
+            
             const product_code = meta?.product_code ?? pObj?.product_code ?? product?.product_code ?? null;
 
             if (!price.trim()) {
@@ -1131,8 +1136,9 @@ function snapshotDirtyCellMeta(
     } else {
         for (const row of rows) {
             for (const variant of Object.values(row.variantsByUnitId)) {
-                const pid = toNumberOrNull(variant.product.product_id);
-                if (pid === productId) {
+                const pidObj = variant.product.product_id;
+                const pIdNum = typeof pidObj === "object" && pidObj !== null ? toNumberOrNull(pidObj.product_id) : toNumberOrNull(pidObj);
+                if (pIdNum === productId) {
                     current_value = toNumberOrNull(variant.tiers[tier]);
                     break;
                 }
@@ -1143,8 +1149,8 @@ function snapshotDirtyCellMeta(
 
     const pObj = typeof product?.product_id === "object" ? product?.product_id : null;
     return {
-        product_name: pObj?.product_name ?? `Product #${productId}`,
-        product_code: pObj?.product_code ?? null,
+        product_name: pObj?.product_name ?? product?.product_name ?? `Product #${productId}`,
+        product_code: pObj?.product_code ?? product?.product_code ?? null,
         current_value,
     };
 }
@@ -1152,7 +1158,9 @@ function snapshotDirtyCellMeta(
 function findProductInRows(rows: MatrixRow[], productId: number): ProductRow | null {
     for (const row of rows) {
         for (const variant of Object.values(row.variantsByUnitId)) {
-            if (toNumberOrNull(variant.product.product_id) === productId) {
+            const pidObj = variant.product.product_id;
+            const pIdNum = typeof pidObj === "object" && pidObj !== null ? toNumberOrNull(pidObj.product_id) : toNumberOrNull(pidObj);
+            if (pIdNum === productId) {
                 return variant.product;
             }
         }

@@ -10,6 +10,8 @@ export interface ReceivingHistoryReference {
     quantity_rejected?: unknown;
     is_replacement?: unknown;
     is_reverted?: unknown;
+    isPosted?: unknown;
+    receiving_method?: unknown;
 }
 
 export interface ReceivingHistoryTotals {
@@ -57,6 +59,9 @@ export function summarizeReceivingHistory(
     for (const receiving of receivingRows) {
         if (receiving.is_replacement === true || Number(receiving.is_replacement) === 1) continue;
         if (receiving.is_reverted === true || Number(receiving.is_reverted) === 1) continue;
+        if (String(receiving.receiving_method || "").trim().toUpperCase() === "WAREHOUSE"
+            && receiving.isPosted !== true
+            && Number(receiving.isPosted) !== 1) continue;
         const lineId = resolvePurchaseOrderLineId(receiving, purchaseOrderLines);
         if (!lineId) {
             unresolvedRows.push(receiving);

@@ -138,6 +138,13 @@ export interface ShipmentLineItem {
         over_delivery_quantity: number;
         supplier_document_type_id: number | null;
     } | null;
+    warehouse_receipt?: {
+        receiving_header_id: number | null;
+        receipt_number: string;
+        receipt_date?: string | null;
+        receipt_type?: string | null;
+        received_quantity: number;
+    } | null;
     base_unit_cost_php: number;
     lot_number?: string;
     batch_no?: string;

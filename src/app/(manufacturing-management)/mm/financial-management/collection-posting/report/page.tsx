@@ -6,11 +6,11 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import {Separator} from "@/components/ui/separator";
-import {SidebarTrigger} from "@/components/ui/sidebar";
-import {NavUser} from "@/components/shared/app-sidebar/nav-user";
+import { Separator } from "@/components/ui/separator";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 
-import {cookies} from "next/headers";
+import { cookies } from "next/headers";
 
 // 🚀 IMPORT THE NEW MODULE
 import CollectionReport from "@/modules/manufacturing-management/financial-management/collection-posting/report/CollectionReportModule";
@@ -85,7 +85,7 @@ export default async function Page() {
             <header
                 className="relative z-10 flex h-14 shrink-0 items-center justify-between border-b shadow-sm bg-background sm:h-16 overflow-hidden">
                 <div className="flex h-full min-w-0 items-center gap-2 px-3 sm:px-4 overflow-hidden">
-                    <SidebarTrigger className="-ml-1 shrink-0"/>
+                    <SidebarTrigger className="-ml-1 shrink-0" />
                     <Separator
                         orientation="vertical"
                         className="hidden sm:block mr-2 data-[orientation=vertical]:h-4 shrink-0"
@@ -95,17 +95,17 @@ export default async function Page() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">FM</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm">Manufacturing</BreadcrumbLink>
                                 </BreadcrumbItem>
-                                <BreadcrumbSeparator className="hidden md:block shrink-0"/>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Treasury</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm/financial-management">Financial Management</BreadcrumbLink>
                                 </BreadcrumbItem>
-                                <BreadcrumbSeparator className="hidden md:block shrink-0"/>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Collection</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm/financial-management/collection-posting">Collection Posting</BreadcrumbLink>
                                 </BreadcrumbItem>
-                                <BreadcrumbSeparator className="hidden md:block shrink-0"/>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage
                                         className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none font-semibold">
@@ -119,12 +119,12 @@ export default async function Page() {
 
                 <div
                     className="flex h-full items-center px-2 sm:px-4 shrink-0 max-w-[48vw] sm:max-w-none overflow-hidden">
-                    <NavUser user={headerUser}/>
+                    <NavUser user={headerUser} />
                 </div>
             </header>
 
             <main className="min-h-0 min-w-0 flex-1 overflow-hidden p-2 sm:p-4 bg-background">
-                <CollectionReport/>
+                <CollectionReport />
             </main></div>
     );
 }

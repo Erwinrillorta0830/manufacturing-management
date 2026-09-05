@@ -126,12 +126,15 @@ export async function fetchStockAvailability(batchId: number): Promise<ProductSt
 export interface LotAllocation {
     productId: number;
     productName: string;
+    inventoryLotId?: number;
     lotId: number;
     lotName: string;
     batchNo: string;
     expiryDate: string | null;
     manufacturingDate: string | null;
     quantity: number;
+    pickedQuantity?: number;
+    status?: string;
 }
 
 export async function fetchAllocations(batchId: number): Promise<LotAllocation[]> {

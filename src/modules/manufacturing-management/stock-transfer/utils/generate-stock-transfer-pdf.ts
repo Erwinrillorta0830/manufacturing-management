@@ -1,6 +1,176 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { ScannedItem, CompanyData, OrderGroupItem, ProductRow } from '../types/stock-transfer.types';
+import { formatPhDateTime } from './date-utils';
+
+export interface FormattedBatchDetail {
+  batchNo: string;
+  quantity?: number;
+  mfgDate?: string | null;
+  expDate?: string | null;
+  qaStatus?: string | null;
+}
+
+export interface FormattedLotGroup {
+  lotName: string;
+  batches: FormattedBatchDetail[];
+}
+
+export interface FormattedBatchEntry {
+  lotName: string;
+  batchNo: string;
+  quantity?: number;
+  mfgDate?: string | null;
+  expDate?: string | null;
+  qaStatus?: string | null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function extractLotGroups(item: any): FormattedLotGroup[] {
+  const lotGroups: FormattedLotGroup[] = [];
+
+  // 1. Check lot_allocations (standard LotAllocationGroup[])
+  if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+    for (const grp of item.lot_allocations) {
+      const lotName = grp.lot_name || (grp.lot_id ? `${grp.lot_id}` : 'Lot');
+      const batches: FormattedBatchDetail[] = [];
+      if (Array.isArray(grp.batches) && grp.batches.length > 0) {
+        for (const b of grp.batches) {
+          batches.push({
+            batchNo: b.batch_no || 'N/A',
+            quantity: b.quantity,
+            mfgDate: b.manufacturing_date || null,
+            expDate: b.expiry_date || null,
+            qaStatus: b.qa_status || null,
+          });
+        }
+      } else {
+        batches.push({
+          batchNo: 'N/A',
+          quantity: grp.allocated_quantity,
+        });
+      }
+      lotGroups.push({ lotName, batches });
+    }
+  }
+
+  // 2. Check allocations (FEFO BatchAllocationResult[] or client allocations)
+  if (lotGroups.length === 0 && Array.isArray(item.allocations) && item.allocations.length > 0) {
+    const lotMap = new Map<string, FormattedBatchDetail[]>();
+    for (const a of item.allocations) {
+      const lotName = a.lot_name || (a.lot_id ? `${a.lot_id}` : 'Lot');
+      if (!lotMap.has(lotName)) lotMap.set(lotName, []);
+      lotMap.get(lotName)!.push({
+        batchNo: a.batch_no || 'N/A',
+        quantity: a.allocated_quantity ?? a.quantity,
+        mfgDate: a.manufacturing_date || null,
+        expDate: a.expiry_date || null,
+        qaStatus: a.qa_status || null,
+      });
+    }
+    lotMap.forEach((batches, lotName) => {
+      lotGroups.push({ lotName, batches });
+    });
+  }
+
+  // 3. Fallback to scalar fields
+  if (lotGroups.length === 0 && (item.batch_no || item.source_lot_id || item.lot_id || item.destination_lot_id)) {
+    const lotId = item.source_lot_id ?? item.destination_lot_id ?? item.lot_id;
+    const lotName = lotId ? `${lotId}` : 'Lot';
+    lotGroups.push({
+      lotName,
+      batches: [{
+        batchNo: item.batch_no || 'N/A',
+        quantity: item.receivedQty ?? item.allocated_quantity ?? item.unitQty ?? item.ordered_quantity,
+        mfgDate: item.manufacturing_date || null,
+        expDate: item.expiry_date || null,
+        qaStatus: item.qa_status || null,
+      }],
+    });
+  }
+
+  return lotGroups;
+}
+
+export function formatLotLabel(lotName?: string | null): string {
+  if (!lotName) return 'Lot: —';
+  const trimmed = lotName.trim();
+  const withoutLotPrefix = trimmed.replace(/^lot\s*[:#-]?\s*/i, '').trim();
+  if (!withoutLotPrefix) return 'Lot: —';
+  return `Lot ${withoutLotPrefix}`;
+}
+
+export function formatBatchLabel(batchNo?: string | null): string {
+  if (!batchNo || batchNo === 'N/A') return 'Batch: N/A';
+  const trimmed = String(batchNo).trim();
+  const withoutBatchPrefix = trimmed.replace(/^batch\s*[:#-]?\s*/i, '').trim();
+  if (!withoutBatchPrefix) return 'Batch: N/A';
+  return `Batch: ${withoutBatchPrefix}`;
+}
+
+export function formatHierarchicalLotBatches(lotGroups: FormattedLotGroup[]): string {
+  const lines: string[] = [];
+  lotGroups.forEach((group) => {
+    lines.push(`  ${formatLotLabel(group.lotName)}`);
+    group.batches.forEach((b) => {
+      const parts: string[] = [];
+      const batchLabel = formatBatchLabel(b.batchNo);
+      parts.push(`- ${batchLabel}`);
+      if (b.quantity !== undefined && b.quantity !== null && !isNaN(Number(b.quantity))) {
+        parts.push(`Qty: ${b.quantity}`);
+      }
+      if (b.mfgDate) {
+        parts.push(`Mfg: ${formatPhDateTime(b.mfgDate, { formatType: 'dateOnly' })}`);
+      }
+      if (b.expDate) {
+        parts.push(`Exp: ${formatPhDateTime(b.expDate, { formatType: 'dateOnly' })}`);
+      }
+      if (b.qaStatus && b.qaStatus !== 'GOOD') {
+        parts.push(`Status: ${b.qaStatus}`);
+      }
+      lines.push(`    ${parts.join(' | ')}`);
+    });
+  });
+  return lines.join('\n');
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function extractBatchEntries(item: any): FormattedBatchEntry[] {
+  const groups = extractLotGroups(item);
+  const entries: FormattedBatchEntry[] = [];
+  for (const g of groups) {
+    for (const b of g.batches) {
+      entries.push({
+        lotName: g.lotName,
+        batchNo: b.batchNo,
+        quantity: b.quantity,
+        mfgDate: b.mfgDate,
+        expDate: b.expDate,
+        qaStatus: b.qaStatus,
+      });
+    }
+  }
+  return entries;
+}
+
+export function formatBatchEntryLine(entry: FormattedBatchEntry): string {
+  const parts: string[] = [];
+  const batchLabel = formatBatchLabel(entry.batchNo);
+  parts.push(`- ${batchLabel}`);
+  if (entry.quantity !== undefined && entry.quantity !== null && !isNaN(Number(entry.quantity))) {
+    parts.push(`Qty: ${entry.quantity}`);
+  }
+  if (entry.mfgDate) {
+    parts.push(`Mfg: ${formatPhDateTime(entry.mfgDate, { formatType: 'dateOnly' })}`);
+  }
+  if (entry.expDate) {
+    parts.push(`Exp: ${formatPhDateTime(entry.expDate, { formatType: 'dateOnly' })}`);
+  }
+  if (entry.qaStatus && entry.qaStatus !== 'GOOD') {
+    parts.push(`Status: ${entry.qaStatus}`);
+  }
+  return `  ${formatLotLabel(entry.lotName)}\n    ${parts.join(' | ')}`;
+}
 
 export interface StockTransferPDFData {
   orderNo: string;
@@ -11,6 +181,7 @@ export interface StockTransferPDFData {
   scannedItems: ScannedItem[];
   companyData: CompanyData | null;
   salesmanName?: string;
+  documentTitle?: string;
 }
 
 // ── Corporate Header Helper ────────────────────────────────────
@@ -68,7 +239,8 @@ function drawCorporateHeader(doc: jsPDF, companyData: CompanyData | null, margin
 }
 
 export function generateStockTransferPDF(data: StockTransferPDFData): jsPDF {
-  const { orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName } = data;
+  const { orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName, documentTitle } = data;
+  console.log('[generateStockTransferPDF:Debug] Generating PDF with salesmanName:', salesmanName, 'for targetBranchLabel:', targetBranchLabel);
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'legal' });
 
@@ -83,7 +255,7 @@ export function generateStockTransferPDF(data: StockTransferPDFData): jsPDF {
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
-  doc.text('STOCK TRANSFER SLIP', margin, y);
+  doc.text(documentTitle || 'STOCK TRANSFER SLIP', margin, y);
 
   if (orderNo) {
     doc.setFontSize(9);
@@ -144,15 +316,23 @@ export function generateStockTransferPDF(data: StockTransferPDFData): jsPDF {
 
   y += 12;
 
-  // ── Table ─────────────────────────────────────────────────────
   const grandTotal = scannedItems.reduce((sum, i) => sum + i.totalAmount, 0);
-  const rows = scannedItems.map((item) => [
-    item.brandName || 'N/A',
-    item.productName,
-    item.unit,
-    String(item.unitQty),
-    `PHP ${item.totalAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-  ]);
+  const rows = scannedItems.map((item) => {
+    let productDesc = item.productName;
+    const lotGroups = extractLotGroups(item);
+    if (lotGroups.length > 0) {
+      const batchDetails = formatHierarchicalLotBatches(lotGroups);
+      productDesc += `\n${batchDetails}`;
+    }
+
+    return [
+      item.brandName || 'N/A',
+      productDesc,
+      item.unit,
+      String(item.unitQty),
+      `PHP ${item.totalAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
+    ];
+  });
 
   autoTable(doc, {
     startY: y,
@@ -195,11 +375,11 @@ export function generateStockTransferPDF(data: StockTransferPDFData): jsPDF {
       fillColor: [255, 255, 255] as [number, number, number],
     },
     columnStyles: {
-      0: { cellWidth: 35 },
+      0: { cellWidth: 26 },
       1: { cellWidth: 'auto' },
-      2: { cellWidth: 25, halign: 'center' },
-      3: { cellWidth: 30, halign: 'center' },
-      4: { cellWidth: 40, halign: 'right', fontStyle: 'bold' },
+      2: { cellWidth: 20, halign: 'center' },
+      3: { cellWidth: 26, halign: 'center' },
+      4: { cellWidth: 32, halign: 'right', fontStyle: 'bold' },
     },
   });
 
@@ -332,7 +512,7 @@ export function generateStockTransferPicklistPDF(data: PicklistPDFData): jsPDF {
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(0, 0, 0);
-  doc.text(`Picker: ${pickerName.toUpperCase()}`, margin, y);
+   
   y += 5;
 
   if (salesmanName) {
@@ -430,6 +610,63 @@ export function generateStockTransferPicklistPDF(data: PicklistPDFData): jsPDF {
       doc.text(unit, pageW - margin - 35, y, { align: 'center' });
       doc.text(String(qty), pageW - margin - 10, y, { align: 'center' });
       
+      // Lot & Batch Info with Mfg & Exp dates (grouped by lot then batches)
+      const lotGroups = extractLotGroups(item);
+      if (lotGroups.length > 0) {
+        lotGroups.forEach((group) => {
+          y += 3.5;
+          if (y > pageH - 25) {
+            doc.addPage();
+            y = 20;
+          }
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(60, 60, 60);
+          doc.text(`Lot: ${group.lotName}`, margin + 12, y);
+
+          doc.setFontSize(7);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(100, 100, 100);
+
+          group.batches.forEach((b) => {
+            y += 3;
+            if (y > pageH - 25) {
+              doc.addPage();
+              y = 20;
+            }
+            const parts: string[] = [];
+            if (b.quantity !== undefined && b.quantity !== null && !isNaN(Number(b.quantity))) {
+              parts.push(`Qty: ${b.quantity}`);
+            }
+            if (b.mfgDate) {
+              parts.push(`Mfg: ${formatPhDateTime(b.mfgDate, { formatType: 'dateOnly' })}`);
+            }
+            if (b.expDate) {
+              parts.push(`Exp: ${formatPhDateTime(b.expDate, { formatType: 'dateOnly' })}`);
+            }
+            if (b.qaStatus && b.qaStatus !== 'GOOD') {
+              parts.push(`Status: ${b.qaStatus}`);
+            }
+            const details = parts.length > 0 ? ` (${parts.join(' | ')})` : '';
+            const line = `• Batch: ${b.batchNo}${details}`;
+
+            const maxLineW = pageW - margin - (margin + 16);
+            const wrappedLines = doc.splitTextToSize(line, maxLineW);
+            wrappedLines.forEach((wLine: string, wIdx: number) => {
+              if (wIdx > 0) {
+                y += 3;
+                if (y > pageH - 25) {
+                  doc.addPage();
+                  y = 20;
+                }
+              }
+              doc.text(wLine, margin + 16, y);
+            });
+          });
+        });
+        doc.setTextColor(0, 0, 0);
+      }
+      
       y += 4;
       doc.setDrawColor(245, 245, 245);
       doc.line(margin + 12, y, pageW - margin, y);
@@ -454,15 +691,11 @@ export function generateStockTransferPicklistPDF(data: PicklistPDFData): jsPDF {
       y = 20;
     }
 
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.2);
-    doc.line(margin + 12, y - 2, pageW - margin, y - 2);
-
+    // Subtotal Row
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(80, 80, 80);
-    doc.text(`SUBTOTAL FOR ${groupTitle.toUpperCase()}:`, margin + 12, y);
-    
+    doc.setTextColor(100, 100, 100);
+    doc.text('SUBTOTAL:', pageW - margin - 65, y, { align: 'right' });
     doc.setTextColor(0, 0, 0);
     doc.text(`PHP ${groupSubtotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`, pageW - margin, y, { align: 'right' });
     y += 8;
@@ -492,30 +725,16 @@ export function generateStockTransferPicklistPDF(data: PicklistPDFData): jsPDF {
   doc.setTextColor(0, 0, 0); // Reset text color
   y += 20;
 
-  // ── Reference Info (Below table) ──────────────────────────────
-  if (y > pageH - 55) {
+  // ── Encoder Name ──────────────────────────────────────────────
+  if (y > pageH - 45) {
     doc.addPage();
     y = 20;
   }
-
-  y += 6;
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(0, 0, 0);
-  doc.text('ORDER DETAILS', margin, y);
-  y += 5;
-
+  
+  y += 4;
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(80, 80, 80);
-  doc.text('Reference No:', margin, y);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(0, 0, 0);
-  doc.text(orderNo.toUpperCase(), margin + 25, y);
-  
-  y += 4.5;
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(80, 80, 80);
+  doc.setTextColor(100, 100, 100);
   doc.text('Encoder Name:', margin, y);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
@@ -589,12 +808,25 @@ export function generateStockTransferReceivingPDF(data: ReceivingPDFData): jsPDF
   // ── Table ─────────────────────────────────────────────────────
   const rows = items.map((item) => {
     const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
+    let prodDesc = product?.product_name || `ID: ${item.product_id}`;
+    const lotGroups = extractLotGroups(item);
+    if (lotGroups.length > 0) {
+      const batchDetails = formatHierarchicalLotBatches(lotGroups);
+      prodDesc += `\n${batchDetails}`;
+    }
+
+    const batchTotal = lotGroups.reduce((sum, g) => sum + g.batches.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0);
+    const receivedNum = item.receivedQty !== undefined && item.receivedQty !== null && !isNaN(Number(item.receivedQty))
+      ? Number(item.receivedQty)
+      : (batchTotal > 0 ? batchTotal : Number(item.received_quantity || 0));
+    const expectedNum = Number(item.allocated_quantity || item.ordered_quantity || 0);
+
     return [
-      product?.product_name || `ID: ${item.product_id}`,
+      prodDesc,
       (typeof product?.unit_of_measurement === 'object' ? product.unit_of_measurement?.unit_name : 'PCS') || 'PCS',
       product?.product_code || '---',
-      String(item.receivedQty || 0),
-      String(item.allocated_quantity || 0),
+      String(receivedNum),
+      String(expectedNum),
     ];
   });
 
@@ -604,15 +836,23 @@ export function generateStockTransferReceivingPDF(data: ReceivingPDFData): jsPDF
     head: [['Product', 'Unit', 'Barcode', 'Received', 'Expected']],
     body: rows,
     styles: {
-      fontSize: 8,
+      fontSize: 7.5,
       cellPadding: 3,
       lineColor: [210, 210, 210],
       lineWidth: 0.1,
+      overflow: 'linebreak',
     },
     headStyles: {
       fillColor: [240, 240, 240],
       textColor: [0, 0, 0],
       fontStyle: 'bold',
+    },
+    columnStyles: {
+      0: { cellWidth: 'auto' },
+      1: { cellWidth: 20, halign: 'center' },
+      2: { cellWidth: 35, halign: 'center' },
+      3: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
+      4: { cellWidth: 25, halign: 'center' },
     },
   });
 

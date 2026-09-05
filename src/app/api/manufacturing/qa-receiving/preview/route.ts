@@ -52,13 +52,28 @@ import {
     type LotCapacityAllocationInput,
     type LotCapacityAllocationAudit
 } from "../_lot-capacity";
+import {
+    discrepancyRemarkError,
+    RECEIVING_ERROR_CODES,
+    receivingErrorCodeForStatus,
+    type ReceivingErrorCode,
+    type ReceivingValidationDetails
+} from "../_receiving-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 class ReceivingPreviewError extends Error {
-    constructor(message: string, readonly status = 422) {
+    readonly code: ReceivingErrorCode;
+
+    constructor(
+        message: string,
+        readonly status = 422,
+        code?: ReceivingErrorCode,
+        readonly details?: ReceivingValidationDetails
+    ) {
         super(message);
+        this.code = code || receivingErrorCodeForStatus(status);
     }
 }
 
@@ -195,7 +210,11 @@ export async function POST(request: Request) {
         const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
         const parsed = receivingPreviewRequestSchema.safeParse(await request.json());
         if (!parsed.success) {
-            return NextResponse.json({ error: "Invalid receiving preview request.", details: parsed.error.flatten() }, { status: 400 });
+            return NextResponse.json({
+                error: "Invalid receiving preview request.",
+                code: RECEIVING_ERROR_CODES.VALIDATION,
+                details: parsed.error.flatten()
+            }, { status: 400 });
         }
 
         const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
@@ -249,13 +268,13 @@ export async function POST(request: Request) {
         const [headerResponse, lineResponse, receivingResponseWithLine, movementTypeResponse, productResponse] = await Promise.all([
             procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`),
             procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
-            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`),
+            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`),
             procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1"),
             procurementDirectusFetch(`/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`)
         ]);
         let receivingResponse = receivingResponseWithLine;
         if (!receivingResponse.ok) {
-            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement&limit=-1`);
+            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`);
         }
         if (headerResponse.status === 404) throw new ReceivingPreviewError("Purchase order not found.", 404);
         if (!headerResponse.ok || !lineResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok || !productResponse.ok) {
@@ -407,6 +426,22 @@ export async function POST(request: Request) {
             }
             remainingByLine.set(line.lineId, remainingQuantity);
             remainingAcceptedByLine.set(line.lineId, remainingAcceptedQuantity);
+            const remarkError = discrepancyRemarkError({
+                lineId: line.lineId,
+                productId: line.productId,
+                receivedQuantity: line.receivedQuantity,
+                remainingQuantity,
+                rejectedQuantity: line.rejectedQuantity,
+                remarks: line.remarks
+            });
+            if (remarkError) {
+                throw new ReceivingPreviewError(
+                    remarkError.message,
+                    400,
+                    RECEIVING_ERROR_CODES.VALIDATION,
+                    remarkError.details
+                );
+            }
         }
 
         const overDeliveryLines = lines.map(line => ({
@@ -711,6 +746,13 @@ export async function POST(request: Request) {
                 : error instanceof ReceivingQuantityError
                     ? 422
                     : 500;
-        return NextResponse.json({ error: (error as Error).message || "Failed to generate receiving preview." }, { status });
+        const response: Record<string, unknown> = {
+            error: (error as Error).message || "Failed to generate receiving preview.",
+            code: error instanceof ReceivingPreviewError
+                ? error.code
+                : receivingErrorCodeForStatus(status)
+        };
+        if (error instanceof ReceivingPreviewError && error.details) response.details = error.details;
+        return NextResponse.json(response, { status });
     }
 }

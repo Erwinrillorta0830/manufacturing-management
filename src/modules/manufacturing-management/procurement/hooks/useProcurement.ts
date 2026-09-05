@@ -734,7 +734,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         }
     };
 
-    const handleUpdateShipmentStatus = async (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => {
+    const handleUpdateShipmentStatus = async (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => {
         setLoading(true);
         try {
             await updateShipmentStatus(shipmentId, status);

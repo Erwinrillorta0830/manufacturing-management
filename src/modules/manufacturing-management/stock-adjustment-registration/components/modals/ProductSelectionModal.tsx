@@ -622,9 +622,22 @@ export function ProductSelectionModal({
                           </button>
                           <input
                             type="number"
-                            value={qty === undefined || qty === null ? "" : qty}
+                            value={qty === 0 || qty === undefined || qty === null ? "" : qty}
+                            placeholder="0"
+                            onFocus={(e) => e.target.select()}
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
                             onChange={(e) => {
-                              let val = parseInt(e.target.value, 10);
+                              const raw = e.target.value;
+                              if (raw === "") {
+                                setCartItems(cartItems.map((cItem) => {
+                                  if (Number(cItem.product_id) === pid) {
+                                    return { ...cItem, quantity: 0 };
+                                  }
+                                  return cItem;
+                                }));
+                                return;
+                              }
+                              let val = parseInt(raw, 10);
                               if (isNaN(val) || val < 0) val = 0;
                               setCartItems(cartItems.map((cItem) => {
                                 if (Number(cItem.product_id) === pid) {

@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 
 const SPRING_API_BASE = process.env.SPRING_API_BASE_URL?.replace(/\/$/, "") || "http://100.95.246.18:8188";
 
-import { BatchItem, LineAvailability, SalesOrderAvailability, SiblingConsolidatedOrder } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/types";
+import { BatchItem, LineAvailability, RawSalesOrderReservation, SalesOrderAvailability, SiblingConsolidatedOrder } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/types";
 
-export type { BatchItem, LineAvailability, SalesOrderAvailability, SiblingConsolidatedOrder };
+export type { BatchItem, LineAvailability, RawSalesOrderReservation, SalesOrderAvailability, SiblingConsolidatedOrder };
 
 async function getAuthToken(): Promise<string | undefined> {
     try {
@@ -58,6 +58,22 @@ export async function GET(request: Request) {
         }
         const details: { detail_id: number; product_id: number; ordered_quantity: number }[] =
             (await detailsRes.json()).data || [];
+
+        const detailIds = details.map((d) => Number(d.detail_id)).filter(Boolean);
+        let rawReservations: RawSalesOrderReservation[] = [];
+        if (detailIds.length > 0) {
+            try {
+                const resRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (resRes.ok) {
+                    rawReservations = (await resRes.json()).data || [];
+                }
+            } catch (err) {
+                console.warn("[Invoicing Availability] Warning fetching direct reservations:", err);
+            }
+        }
 
         if (details.length === 0) {
             return NextResponse.json({
@@ -262,6 +278,7 @@ export async function GET(request: Request) {
         let allBatchSodList: Array<{ detail_id: number; order_id: number; product_id?: number; ordered_quantity?: number }> = [];
         let sibSoMap = new Map<number, { order_id: number; order_no: string; customer_code?: string }>();
         let invoicedSibIds = new Set<number>();
+        const siblingInvoicedByProduct = new Map<number, number>();
 
         try {
             const ciRes = await fetch(
@@ -316,7 +333,27 @@ export async function GET(request: Request) {
                             invoicedSibIds = new Set(
                                 sibInvRes.ok ? ((await sibInvRes.json()).data || []).map((x: { order_id: number }) => Number(x.order_id)) : []
                             );
+                            invoicedSibIds.delete(salesOrderId);
                             sibSoMap = new Map(sibSoList.map((s) => [Number(s.order_id), s]));
+
+                            if (invoicedSibIds.size > 0) {
+                                try {
+                                    const sibInvDetailsRes = await fetch(
+                                        `${DIRECTUS_URL}/items/sales_invoice_details?filter[order_id][_in]=${Array.from(invoicedSibIds).join(",")}&fields=order_id,product_id,quantity&limit=-1`,
+                                        { headers: directusHeaders, cache: "no-store" }
+                                    );
+                                    if (sibInvDetailsRes.ok) {
+                                        const sibInvDetails = (await sibInvDetailsRes.json()).data || [];
+                                        for (const d of sibInvDetails) {
+                                            const prodId = Number(d.product_id);
+                                            const qty = Number(d.quantity || 0);
+                                            siblingInvoicedByProduct.set(prodId, (siblingInvoicedByProduct.get(prodId) || 0) + qty);
+                                        }
+                                    }
+                                } catch (sibErr) {
+                                    console.warn("[Invoicing Availability] Warning fetching sibling invoice details:", sibErr);
+                                }
+                            }
 
                             const allBatchDetailIds = allBatchSodList.map((d) => Number(d.detail_id)).filter(Boolean);
                             if (allBatchDetailIds.length > 0) {
@@ -383,7 +420,11 @@ export async function GET(request: Request) {
                 const lotName = masterLotMap.get(lotId) || (matchedDil?.lot_id && typeof matchedDil.lot_id === "object" ? matchedDil.lot_id.lot_name : undefined);
 
                 const totalBatchPickedPool = groupRows.reduce((sum, r) => {
-                    const q = Number(r.picked_quantity !== undefined ? r.picked_quantity : (r.status === "Picked" || r.status === "Consumed" ? r.reserved_quantity : 0));
+                    const q = Math.max(
+                        Number(r.picked_quantity || 0),
+                        r.status === "Picked" || r.status === "Consumed" ? Number(r.reserved_quantity || 0) : 0,
+                        Number(r.reserved_quantity || 0)
+                    );
                     return sum + q;
                 }, 0);
 
@@ -519,17 +560,88 @@ export async function GET(request: Request) {
                 totalPicked = lineBatches.reduce((sum, b) => sum + (b.pickedQuantity || 0), 0) || reqQty;
             }
 
+            // Calculate consolidation pool and sibling demand specific to THIS product
+            let totalPoolQuantity = totalPicked;
+            let lineSiblingOrders: SiblingConsolidatedOrder[] = [];
+            const siblingInvoicedQty = siblingInvoicedByProduct.get(pId) || 0;
+
+            if (consolidatorId) {
+                // Find all reservations for this product across the consolidation batch
+                const prodConsolidatorReservations = allBatchReservations.filter(
+                    (r) => Number(r.product_id) === pId && r.status !== "Released"
+                );
+
+                const totalConsolidationPool = prodConsolidatorReservations.reduce((sum, r) => {
+                    const q = Math.max(
+                        Number(r.picked_quantity || 0),
+                        r.status === "Picked" || r.status === "Consumed" ? Number(r.reserved_quantity || 0) : 0,
+                        Number(r.reserved_quantity || 0)
+                    );
+                    return sum + q;
+                }, 0);
+
+                const poolBase = totalConsolidationPool > 0 ? totalConsolidationPool : totalPicked;
+                const remainingPool = Math.max(0, poolBase - siblingInvoicedQty);
+                totalPoolQuantity = remainingPool;
+
+                // If consolidation pool is capped by sibling invoices, clamp batch picked quantities accordingly
+                if (totalPoolQuantity < totalPicked) {
+                    let remainingBudget = totalPoolQuantity;
+                    lineBatches = lineBatches.map((b) => {
+                        const originalPicked = Number(b.pickedQuantity || 0);
+                        const cappedPicked = Math.min(originalPicked, remainingBudget);
+                        remainingBudget = Math.max(0, remainingBudget - cappedPicked);
+                        return {
+                            ...b,
+                            pickedQuantity: cappedPicked,
+                        };
+                    });
+                }
+
+                // Build sibling orders specifically for this product
+                const siblingOrdersForProd = new Map<number, SiblingConsolidatedOrder>();
+                for (const sod of allBatchSodList) {
+                    const sOrderId = Number(sod.order_id);
+                    if (sOrderId === salesOrderId) continue;
+                    if (Number(sod.product_id) !== pId) continue;
+                    const so = sibSoMap.get(sOrderId);
+                    if (!so) continue;
+
+                    const existing = siblingOrdersForProd.get(sOrderId);
+                    const qty = Number(sod.ordered_quantity || 0);
+                    if (existing) {
+                        existing.orderedQuantity += qty;
+                    } else {
+                        siblingOrdersForProd.set(sOrderId, {
+                            orderId: sOrderId,
+                            orderNo: so.order_no || `SO #${sOrderId}`,
+                            customerCode: so.customer_code,
+                            customerName: so.customer_code,
+                            orderedQuantity: qty,
+                            isInvoiced: invoicedSibIds.has(sOrderId),
+                        });
+                    }
+                }
+                lineSiblingOrders = Array.from(siblingOrdersForProd.values());
+            } else {
+                lineSiblingOrders = allSiblingOrders;
+            }
+
+            const finalPickedQty = consolidatorId ? Math.min(totalPicked, totalPoolQuantity) : totalPicked;
+
             lines.push({
                 productId: pId,
                 productName: prod?.description || prod?.product_name || `Product #${pId}`,
                 productCode: prod?.product_code || "",
                 requiredQuantity: reqQty,
                 onhandQuantity: Math.max(onhand, totalPicked),
-                pickedQuantity: totalPicked,
+                pickedQuantity: finalPickedQty,
+                totalPoolQuantity,
+                siblingInvoicedQuantity: siblingInvoicedQty,
                 isAvailable: true,
                 isPicked: true,
                 batches: lineBatches,
-                siblingOrders: allSiblingOrders,
+                siblingOrders: lineSiblingOrders,
             });
         }
 
@@ -542,7 +654,12 @@ export async function GET(request: Request) {
             isFullyPicked: true,
             lines,
             siblingOrders: allSiblingOrders,
+            rawReservations,
+            rawDetails: details,
         };
+
+        console.log(`[Invoicing Availability API] SalesOrder #${salesOrderId} - Raw sales_order_details (${details.length} rows):`, JSON.stringify(details, null, 2));
+        console.log(`[Invoicing Availability API] SalesOrder #${salesOrderId} - Raw sales_order_reservation (${rawReservations.length} rows):`, JSON.stringify(rawReservations, null, 2));
 
         return NextResponse.json(result);
     } catch (error) {
