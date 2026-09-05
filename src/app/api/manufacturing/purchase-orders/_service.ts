@@ -119,7 +119,7 @@ function assertExpectedTotals(order: PurchaseOrderDraft, totals: ReturnType<type
         compareDecimals(value, expected[field as keyof typeof expected]) !== 0
     );
     if (mismatches.length) {
-        throw new PurchaseOrderDraftError("Purchase-order totals changed during validation. Review the calculated totals and submit again.", 409, actual);
+        throw new PurchaseOrderDraftError("The configured purchase-order terms changed during validation. Refresh the form and submit again.", 409, actual);
     }
 }
 
