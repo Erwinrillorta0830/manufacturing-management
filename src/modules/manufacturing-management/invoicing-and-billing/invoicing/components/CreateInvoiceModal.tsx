@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Building2, Calendar, FileCheck2, FileText, Loader2, Package, PackageCheck, Printer, RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, Printer, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
-import { archiveInvoiceDocument, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
-import { CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineBatchAllocation, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability, SiblingConsolidatedOrder } from "../types";
+import { archiveInvoiceDocument, fetchCompanyInfo, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
+import { CompanyInfo, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineBatchAllocation, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability, SiblingConsolidatedOrder } from "../types";
 import { generateInvoiceReceiptPdf } from "../utils/generateInvoiceReceiptPdf";
 import { DEFAULT_RECEIPT_TEMPLATE, normalizeReceiptTemplate } from "../receipt-template";
 import { ReceiptPreview } from "./ReceiptPreview";
@@ -56,11 +56,13 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [availability, setAvailability] = useState<SalesOrderAvailability | null>(null);
     const [loadingAvailability, setLoadingAvailability] = useState(true);
     const [previewingBeforeCreate, setPreviewingBeforeCreate] = useState(false);
+    const [downloadingProvisional, setDownloadingProvisional] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(false);
     const [template, setTemplate] = useState<ORTemplate>(DEFAULT_RECEIPT_TEMPLATE);
     const [loadingTemplate, setLoadingTemplate] = useState(false);
     const [printingDirectly, setPrintingDirectly] = useState(false);
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [showConsolidationSummary, setShowConsolidationSummary] = useState(false);
     const [confirmationNotes, setConfirmationNotes] = useState("");
     const [lineInvoiceQtys, setLineInvoiceQtys] = useState<Record<number, number | string>>({});
     const pdfBlobRef = useRef<Blob | null>(null);
@@ -145,7 +147,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         for (const detail of candidate.details) {
             const product = typeof detail.product_id === "object" ? detail.product_id : null;
             const pId = product ? Number(product.product_id) : Number(detail.product_id);
-            const displayName = product?.description || product?.product_name || `Product #${detail.product_id}`;
+            const displayName = product?.description || product?.product_name || "Item";
             const uomStr = product?.uom || "PCS";
             const orderedQty = Number(detail.ordered_quantity || 0);
 
@@ -207,10 +209,27 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         URL.revokeObjectURL(url);
     };
 
+    const handlePrintProvisional = async () => {
+        setDownloadingProvisional(true);
+        try {
+            await downloadReceipt(provisional);
+            toast.success("Receipt downloaded");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to generate receipt PDF");
+        } finally {
+            setDownloadingProvisional(false);
+        }
+    };
+
+    const [companyInfo, setCompanyInfo] = useState<CompanyInfo | undefined>(undefined);
+
     useEffect(() => {
         void fetchReceiptTypes().then((types) => {
             setReceiptTypes(types);
             setInvoiceTypeId(types[0]?.id || 0);
+        });
+        void fetchCompanyInfo(2).then((info) => {
+            if (info) setCompanyInfo(info);
         });
     }, []);
 
@@ -465,10 +484,10 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         poNo: candidate.po_no,
         customerName: candidate.customer_name,
         storeName: candidate.customer_name,
-        customerTin: "N/A",
-        customerAddress: "",
-        salesmanName: "N/A",
-        paymentTermName: "N/A",
+        customerTin: candidate.customer_tin || "N/A",
+        customerAddress: candidate.customer_address || "",
+        salesmanName: candidate.salesman_name || "N/A",
+        paymentTermName: candidate.payment_term_name || "N/A",
         lines: candidate.details.map(line => {
             const product = typeof line.product_id === "object" ? line.product_id : null;
             const pId = product ? Number(product.product_id) : Number(line.product_id);
@@ -479,7 +498,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             return {
                 detailId: line.detail_id,
                 productCode: product?.product_code || "",
-                productName: product?.description || product?.product_name || `Product #${line.product_id}`,
+                productName: product?.description || product?.product_name || "Item",
                 quantity: invoiceQty,
                 unit: product?.uom || "PCS",
                 unitPrice: unitPrice,
@@ -490,6 +509,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         }),
         totals: { gross: lineTotals.subtotal, discount: lineTotals.discount, vat: 0, net: lineTotals.grandTotal },
         templateConfig: template,
+        companyInfo,
     };
 
     return (
@@ -515,12 +535,12 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                             <h3 className="text-sm font-black uppercase tracking-wide">
                                 {printable ? `${printable.receiptType.type} Ready` : "Create Invoice & Receipt"}
                             </h3>
-                            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
                                 <span className="font-bold text-foreground">{candidate.order_no}</span>
                                 <span>•</span>
                                 <span>{candidate.customer_name}</span>
                                 <span>•</span>
-                                <span className="text-primary font-semibold">Advances to Dispatched</span>
+                                <span className="text-primary font-semibold">For Invoicing</span>
                             </p>
                         </div>
                     </div>
@@ -536,14 +556,26 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
                 {/* KPI Top Cards */}
                 {!printable && !previewingBeforeCreate && (
-                    <div className="grid grid-cols-2 gap-3 border-b border-border/60 bg-muted/10 px-6 py-3 sm:grid-cols-4 shrink-0">
+                    <div className="grid grid-cols-2 gap-3 border-b border-border/60 bg-muted/10 px-6 py-3 sm:grid-cols-3 shrink-0">
                         <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
                             <div className="flex items-center justify-between text-muted-foreground mb-0.5">
                                 <span className="text-[10px] font-extrabold uppercase tracking-wider">Sales Order</span>
                                 <FileText className="h-3.5 w-3.5 text-primary" />
                             </div>
                             <p className="text-xs font-black text-foreground truncate">{candidate.order_no}</p>
-                            <p className="text-[10px] text-muted-foreground truncate">{candidate.customer_name}</p>
+                            <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground mt-0.5">
+                                <span className="truncate">{candidate.customer_name}</span>
+                                {availability?.consolidatorNo ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowConsolidationSummary(true)}
+                                        className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
+                                        title="Click to view Consolidation Summary"
+                                    >
+                                        {availability.consolidatorNo}
+                                    </button>
+                                ) : null}
+                            </div>
                         </div>
 
                         <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
@@ -553,15 +585,6 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                             </div>
                             <p className="text-xs font-black text-foreground truncate">{candidate.branch_name || `Branch #${candidate.branch_id}`}</p>
                             <p className="text-[10px] text-muted-foreground truncate">PO: {candidate.po_no || "—"}</p>
-                        </div>
-
-                        <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
-                            <div className="flex items-center justify-between text-muted-foreground mb-0.5">
-                                <span className="text-[10px] font-extrabold uppercase tracking-wider">Picking Status</span>
-                                <PackageCheck className="h-3.5 w-3.5 text-emerald-500" />
-                            </div>
-                            <p className="text-xs font-black text-emerald-600 dark:text-emerald-400">✓ Fully Picked</p>
-                            <p className="text-[10px] text-muted-foreground">{candidate.details.length} Line{candidate.details.length === 1 ? "" : "s"} Verified</p>
                         </div>
 
                         <div className="rounded-xl border border-border/50 bg-background p-2.5 shadow-xs">
@@ -591,23 +614,32 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                         </div>
                     </div>
                 ) : previewingBeforeCreate ? (
-                    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:flex-row">
-                        <div className="min-h-[65vh] flex-1 overflow-auto rounded-xl border bg-muted/50 p-6">
-                            <div className="mx-auto" style={{ width: `${template.width * 0.72}mm`, height: `${template.height * 0.72}mm` }}>
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+                        <div className="min-h-[65vh] flex-1 overflow-auto rounded-xl border bg-muted/50 p-6 flex justify-center">
+                            <div style={{ width: `${template.width * 0.72}mm`, height: `${template.height * 0.72}mm` }}>
                                 <ReceiptPreview invoice={provisional} template={template} scale={0.72} />
                             </div>
                         </div>
-                        <div className="w-full shrink-0 space-y-3 md:w-72 lg:w-80">
-                            <div className="rounded-xl border bg-primary/5 p-4">
-                                <p className="text-[9px] font-black uppercase text-primary">Receipt Preview</p>
-                                <p className="mt-1 font-black">{provisional.invoiceNo}</p>
-                                <p className="mt-2 text-[10px] text-muted-foreground">The scanned background is for alignment. Print physical forms at 100% or Actual Size.</p>
-                            </div>
-                            <button type="button" onClick={() => setEditingTemplate(true)} className="flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black hover:bg-muted transition-colors">
-                                <Settings2 className="h-4 w-4" />Configure Layout
+                        <div className="flex items-center justify-end gap-3 border-t bg-muted/20 px-6 py-3 shrink-0 mt-3 rounded-xl">
+                            <button
+                                type="button"
+                                disabled={downloadingProvisional}
+                                onClick={handlePrintProvisional}
+                                className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2 text-xs font-black text-foreground hover:bg-muted transition-colors disabled:opacity-50 shadow-xs"
+                            >
+                                {downloadingProvisional ? (
+                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                ) : (
+                                    <Printer className="h-4 w-4 text-primary" />
+                                )}
+                                <span>Print Invoice Receipt</span>
                             </button>
-                            <button type="button" onClick={() => setPreviewingBeforeCreate(false)} className="w-full rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground hover:bg-primary/90 transition-colors">
-                                Close Preview
+                            <button
+                                type="button"
+                                onClick={() => setPreviewingBeforeCreate(false)}
+                                className="rounded-xl bg-primary px-5 py-2 text-xs font-black text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                Back to Invoice Form
                             </button>
                         </div>
                     </div>
@@ -690,7 +722,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                         {candidate.details.map(line => {
                                             const product = typeof line.product_id === "object" ? line.product_id : null;
                                             const pId = product ? Number(product.product_id) : Number(line.product_id);
-                                            const displayName = product?.description || product?.product_name || `Product #${line.product_id}`;
+                                            const displayName = product?.description || product?.product_name || "Item";
                                             const uomStr = product?.uom || "PCS";
                                             const unitPrice = Number(line.unit_price || 0);
                                             const orderedQty = Number(line.ordered_quantity || 0);
@@ -712,7 +744,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                         <div className="min-w-0 space-y-0.5">
                                                             <p className="font-bold text-foreground text-xs leading-snug">{displayName}</p>
                                                             <p className="text-[10px] text-muted-foreground font-mono">
-                                                                {product?.product_code || `ID: ${pId}`} · {line.bom_version_name || "Standard Version"} · ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} / {uomStr}
+                                                                {product?.product_code ? `${product.product_code} · ` : ""}{line.bom_version_name || "Standard Version"} · ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} / {uomStr}
                                                             </p>
                                                         </div>
                                                         <div className="shrink-0 text-right">
@@ -726,7 +758,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                     {/* Middle Row: Demand Info Badge */}
                                                     <div className="flex flex-wrap items-center gap-2 text-[10px]">
                                                         <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
-                                                            Ordered: <strong>{orderedQty} {uomStr}</strong>
+                                                            Ordered: <strong>{orderedQty} {uomStr}</strong> / Picked Left: <strong>{availablePool} {uomStr}</strong>
                                                         </span>
                                                         {maxInvoiceable < orderedQty && (
                                                             <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
@@ -890,7 +922,9 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                     </div>
 
                                     <div className="space-y-1">
-                                        <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Receipt Type</span>
+                                        <span className="text-[10px] font-extrabold uppercase text-muted-foreground">
+                                            Receipt Type <span className="text-red-500 font-bold">*</span>
+                                        </span>
                                         <Select
                                             value={invoiceTypeId ? String(invoiceTypeId) : ""}
                                             onValueChange={(val) => setInvoiceTypeId(Number(val))}
@@ -1110,7 +1144,105 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 </div>
             )}
         </AnimatePresence>
-        {editingTemplate ? <ReceiptTemplateEditor receiptTypeId={invoiceTypeId} initialTemplate={template} onClose={() => setEditingTemplate(false)} onSave={saved => { setTemplate(saved); setEditingTemplate(false); }} /> : null}
+        <AnimatePresence>
+            {showConsolidationSummary && availability?.consolidatorNo && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-3 backdrop-blur-sm sm:p-4">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border bg-card p-5 shadow-2xl space-y-4 max-h-[85dvh]"
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between border-b pb-3">
+                            <div className="flex items-center gap-2.5">
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2 text-emerald-600 dark:text-emerald-400">
+                                    <Layers className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-black uppercase tracking-wide flex items-center gap-2">
+                                        <span>Consolidation Summary</span>
+                                        <span className="rounded bg-emerald-500/10 px-2 py-0.5 font-mono text-xs font-bold text-emerald-600 border border-emerald-500/30">
+                                            {availability.consolidatorNo}
+                                        </span>
+                                    </h3>
+                                    <p className="text-[10px] text-muted-foreground">Warehouse Fulfillment & Picked Stock Allocations</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={() => setShowConsolidationSummary(false)} aria-label="Close consolidation summary" className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* Body Content */}
+                        <div className="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
+                            {/* Linked Orders */}
+                            <div className="rounded-xl border bg-muted/20 p-3 space-y-2">
+                                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">
+                                    Consolidated Sales Orders ({1 + (availability.siblingOrders?.length || 0)})
+                                </span>
+                                <div className="flex flex-wrap gap-2 text-[11px]">
+                                    <span className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 font-bold text-primary flex items-center gap-1">
+                                        {candidate.order_no} (Current)
+                                    </span>
+                                    {availability.siblingOrders?.map((sib) => (
+                                        <span key={sib.orderId} className={`rounded-lg border px-2.5 py-1 font-medium ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through" : "bg-background text-foreground"}`}>
+                                            {sib.orderNo} ({sib.customerName || "Customer"}) {sib.isInvoiced ? "✓ Invoiced" : ""}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Consolidated Items & Picked Pools */}
+                            <div className="space-y-2">
+                                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">
+                                    Consolidated Products & Picked Batches
+                                </span>
+                                <div className="divide-y rounded-xl border bg-background overflow-hidden">
+                                    {availability.lines.map((line) => (
+                                        <div key={line.productId} className="p-3 space-y-1.5">
+                                            <div className="flex items-center justify-between font-bold">
+                                                <span className="text-foreground">{line.productName}</span>
+                                                <span className="font-mono text-xs text-primary">
+                                                    Total Picked: {line.totalPoolQuantity ?? line.pickedQuantity ?? line.requiredQuantity} PCS
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground flex justify-between">
+                                                <span>Required for {candidate.order_no}: {line.requiredQuantity} PCS</span>
+                                                <span>Batches Allocated: {line.batches?.length || 0}</span>
+                                            </div>
+                                            {line.batches && line.batches.length > 0 && (
+                                                <div className="mt-1 space-y-1 pl-2 border-l-2 border-primary/20 text-[10px] font-mono">
+                                                    {line.batches.map((b, bIdx) => (
+                                                        <div key={bIdx} className="flex items-center justify-between text-muted-foreground">
+                                                            <span>Batch: {b.batchNo} ({b.lotName || `Lot #${b.lotId}`})</span>
+                                                            <span>Picked Left: {b.pickedQuantity || b.onhandQuantity} PCS</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex items-center justify-end border-t pt-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowConsolidationSummary(false)}
+                                className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:bg-primary/90 transition-colors"
+                            >
+                                Close Summary
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+        </AnimatePresence>
+        {editingTemplate ? <ReceiptTemplateEditor receiptTypeId={invoiceTypeId} initialTemplate={template} invoice={provisional} onClose={() => setEditingTemplate(false)} onSave={saved => { setTemplate(saved); setEditingTemplate(false); }} /> : null}
         </div>
     );
 }

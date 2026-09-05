@@ -68,9 +68,9 @@ export async function GET(req: Request) {
     if (productTypeNumber) filtered = filtered.filter((movement) => Number(movement.productTypeId) === productTypeNumber);
     if (referenceNumber) filtered = filtered.filter((movement) => Number(movement.referenceId) === referenceNumber);
     if (productNumber) filtered = filtered.filter((movement) => Number(movement.productId) === productNumber);
-    if (lotNumber) filtered = filtered.filter((movement) => Number(movement.lotId) === lotNumber);
-    if (mmLotNumber) filtered = filtered.filter((movement) => Number(movement.mmLotId) === mmLotNumber);
-    if (inventoryLotNumber) filtered = filtered.filter((movement) => Number(movement.inventoryLotId) === inventoryLotNumber);
+    if (lotNumber) filtered = filtered.filter((movement) => Number(movement.lotId ?? movement.lot_id ?? movement.mmLotId ?? movement.mm_lot_id) === lotNumber);
+    if (mmLotNumber) filtered = filtered.filter((movement) => Number(movement.mmLotId ?? movement.mm_lot_id ?? movement.lotId ?? movement.lot_id) === mmLotNumber);
+    if (inventoryLotNumber) filtered = filtered.filter((movement) => Number(movement.inventoryLotId ?? movement.inventory_lot_id) === inventoryLotNumber);
     if (transactionTypeNumber) filtered = filtered.filter((movement) => Number(movement.transactionTypeId) === transactionTypeNumber);
     if (movementNumber) filtered = filtered.filter((movement) => Number(movement.movementId) === movementNumber);
 

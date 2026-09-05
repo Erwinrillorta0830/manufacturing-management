@@ -7,15 +7,21 @@ import { Loader2, Move, Save, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { normalizeReceiptTemplate } from "../receipt-template";
 import { receiptBackgroundUrl, saveReceiptTemplate, uploadReceiptBackground } from "../services/invoicing-api";
-import { ORFieldConfig, ORTemplate } from "../types";
+import { ORFieldConfig, ORTemplate, PrintableInvoice } from "../types";
+import { ReceiptPreview } from "./ReceiptPreview";
 
-export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, onClose, onSave }: { receiptTypeId: number; initialTemplate: ORTemplate; onClose: () => void; onSave: (template: ORTemplate) => void }) {
+export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, invoice, onClose, onSave }: { receiptTypeId: number; initialTemplate: ORTemplate; invoice?: PrintableInvoice; onClose: () => void; onSave: (template: ORTemplate) => void }) {
     const [template, setTemplate] = useState(() => normalizeReceiptTemplate(initialTemplate));
     const [selected, setSelected] = useState("customer_name");
     const [zoom, setZoom] = useState(0.8);
     const [saving, setSaving] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [bgImageError, setBgImageError] = useState(false);
     const canvas = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setBgImageError(false);
+    }, [template.backgroundImage]);
 
     useEffect(() => {
         let cancelled = false;
@@ -88,7 +94,72 @@ export default function ReceiptTemplateEditor({ receiptTypeId, initialTemplate, 
                 {active ? <section className="space-y-2"><h3 className="font-black uppercase">Selected Field</h3><div className="grid grid-cols-2 gap-2"><NumberInput label="X" value={active.x} onChange={x => updateField(selected, { x })} /><NumberInput label="Y" value={active.y} onChange={y => updateField(selected, { y })} /><NumberInput label="Font" value={active.fontSize || 10} onChange={fontSize => updateField(selected, { fontSize })} /><NumberInput label="Max width" value={active.maxWidth || 0} onChange={maxWidth => updateField(selected, { maxWidth: maxWidth || undefined })} /></div><label className="flex gap-2"><input type="checkbox" checked={!!active.hidden} onChange={event => updateField(selected, { hidden: event.target.checked })} />Hidden</label></section> : null}
                 <section className="space-y-2"><h3 className="font-black uppercase">Table</h3><div className="grid grid-cols-2 gap-2"><NumberInput label="Start Y" value={template.tableSettings.startY} onChange={startY => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, startY } }))} /><NumberInput label="Row height" value={template.tableSettings.rowHeight} onChange={rowHeight => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, rowHeight } }))} /><NumberInput label="Font" value={template.tableSettings.fontSize} onChange={fontSize => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, fontSize } }))} /><NumberInput label="Description width" value={template.tableSettings.product_name_width || 65} onChange={product_name_width => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, product_name_width } }))} /></div>{Object.entries(template.tableSettings.columns || {}).map(([key, column]) => <NumberInput key={key} label={`${key} X`} value={column?.x || 0} onChange={x => setTemplate(current => ({ ...current, tableSettings: { ...current.tableSettings, columns: { ...current.tableSettings.columns, [key]: { x } } } }))} />)}</section>
             </aside>
-            <main className="flex-1 overflow-auto bg-muted/50 p-12"><div className="mx-auto origin-top" style={{ width: `${template.width * zoom}mm`, height: `${template.height * zoom}mm` }}><div ref={canvas} className="relative overflow-hidden bg-white text-black shadow-2xl" style={{ width: `${template.width}mm`, height: `${template.height}mm`, transform: `scale(${zoom})`, transformOrigin: "top left" }}>{template.backgroundImage ? <Image src={receiptBackgroundUrl(template.backgroundImage)} alt="Receipt form" fill unoptimized className="pointer-events-none object-fill opacity-70" /> : null}{Object.entries(template.fields).map(([key, field]) => field.hidden ? null : <button key={key} onMouseDown={event => drag(key, event)} className={`absolute cursor-move whitespace-nowrap border border-dashed px-0.5 font-mono ${selected === key ? "border-primary bg-primary/10" : "border-zinc-400 bg-white/70"}`} style={{ left: `${field.x}mm`, top: `${field.y}mm`, fontSize: `${field.fontSize || 10}pt` }}>{field.label || key}</button>)}<div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500" style={{ top: `${template.tableSettings.startY}mm` }}><span className="bg-red-500 px-1 text-[8px] text-white">TABLE START</span></div></div></div></main>
+            <main className="flex-1 overflow-auto bg-muted/50 p-12">
+                <div className="mx-auto origin-top" style={{ width: `${template.width * zoom}mm`, height: `${template.height * zoom}mm` }}>
+                    <div ref={canvas} className="relative overflow-hidden bg-white text-black shadow-2xl border-2 border-black" style={{ width: `${template.width}mm`, height: `${template.height}mm`, transform: `scale(${zoom})`, transformOrigin: "top left" }}>
+                        {template.backgroundImage && !bgImageError ? (
+                            <Image
+                                src={receiptBackgroundUrl(template.backgroundImage)}
+                                alt="Receipt form"
+                                fill
+                                unoptimized
+                                onError={() => setBgImageError(true)}
+                                className="pointer-events-none object-fill opacity-70"
+                            />
+                        ) : invoice ? (
+                            <div className="pointer-events-none absolute inset-0">
+                                <ReceiptPreview invoice={invoice} scale={1} />
+                            </div>
+                        ) : (
+                            /* Default BIR Charge Invoice Grid Background */
+                            <div className="pointer-events-none absolute inset-0 p-4 opacity-40 flex flex-col justify-between border-2 border-black text-xs font-sans">
+                                <div className="space-y-2">
+                                    <div className="text-center">
+                                        <div className="font-black text-sm uppercase">MEN2 MARKETING & DISTRIBUTION ENTERPRISE CORPORATION</div>
+                                        <div className="text-[9px]">VAT REG. TIN: 009-553-391-00000</div>
+                                        <div className="text-[9px]">Gonzales, Bonuan Boquig, Dagupan City, Pangasinan</div>
+                                    </div>
+                                    <div className="flex justify-between border-b border-black pb-1 font-bold text-xs">
+                                        <span>CHARGE INVOICE</span>
+                                        <span className="text-red-600 font-black">2281</span>
+                                    </div>
+                                    <div className="border border-black p-2 text-[10px] space-y-1">
+                                        <div>SOLD TO: _______________________________ Date: ___________</div>
+                                        <div>Registered Name: _______________________ Terms: ___________</div>
+                                        <div>TIN: ___________________________________</div>
+                                        <div>Business Address: ______________________________________</div>
+                                    </div>
+                                    <div className="border border-black h-36">
+                                        <div className="grid grid-cols-4 border-b border-black font-bold text-[9px] p-1 text-center bg-gray-100">
+                                            <span className="col-span-2 text-left">Item Description / Nature of Service</span>
+                                            <span>Quantity</span>
+                                            <span>Amount</span>
+                                        </div>
+                                    </div>
+                                    <div className="border border-black grid grid-cols-2 text-[9px] p-1 h-20">
+                                        <div className="border-r border-black pr-1 space-y-0.5">
+                                            <div>VATable Sales</div>
+                                            <div>VAT</div>
+                                            <div>PO NO. :</div>
+                                        </div>
+                                        <div className="pl-1 space-y-0.5">
+                                            <div>Total Sales (VAT Inclusive)</div>
+                                            <div>Amount: Net of VAT</div>
+                                            <div className="font-bold">TOTAL AMOUNT DUE</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between text-[8px] border-t pt-1">
+                                    <div>BIR Auth. No. OCN: 004AU20250000005735</div>
+                                    <div className="font-bold">Cashier / Authorized Representative</div>
+                                </div>
+                            </div>
+                        )}
+                        {Object.entries(template.fields).map(([key, field]) => field.hidden ? null : <button key={key} onMouseDown={event => drag(key, event)} className={`absolute cursor-move whitespace-nowrap border border-dashed px-0.5 font-mono ${selected === key ? "border-primary bg-primary/10" : "border-zinc-400 bg-white/70"}`} style={{ left: `${field.x}mm`, top: `${field.y}mm`, fontSize: `${field.fontSize || 10}pt` }}>{field.label || key}</button>)}
+                        <div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500" style={{ top: `${template.tableSettings.startY}mm` }}><span className="bg-red-500 px-1 text-[8px] text-white">TABLE START</span></div>
+                    </div>
+                </div>
+            </main>
         </div>
     </div>, document.body);
 }

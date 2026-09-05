@@ -874,8 +874,20 @@ export function StockAdjustmentForm({
   const handlePost = async () => {
     if (!id) return;
     const currentType = form.getValues("type");
+    const items = form.getValues("items") || [];
+
+    const invalidQtyItem = items.find(
+      (item) => item.quantity == null || isNaN(Number(item.quantity)) || Number(item.quantity) <= 0
+    );
+    if (invalidQtyItem) {
+      toast.error("Invalid Quantity in Posting Data", {
+        description: `Product "${invalidQtyItem.product_name || "Unknown"}" has null or invalid quantity (${invalidQtyItem.quantity}). Please enter a valid quantity before posting.`,
+        duration: 5000,
+      });
+      return;
+    }
+
     if (currentType === "OUT") {
-      const items = form.getValues("items") || [];
       const nonZeroItems = items.filter((item) => item.quantity > 0);
       if (nonZeroItems.length === 0) {
         toast.error("RFID Scan Required", {

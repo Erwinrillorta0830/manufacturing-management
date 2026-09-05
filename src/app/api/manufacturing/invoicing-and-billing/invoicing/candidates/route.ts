@@ -70,6 +70,34 @@ export async function GET(request: Request) {
             for (const candidate of candidates) candidate.branch_name = branchMap.get(Number(candidate.branch_id)) || `Branch #${candidate.branch_id}`;
         }
 
+        const customerCodes = [...new Set(candidates.map((c: Record<string, unknown>) => String(c.customer_code || "")).filter(Boolean))];
+        const salesmanIds = [...new Set(candidates.map((c: Record<string, unknown>) => Number(c.salesman_id)).filter(Boolean))];
+        const paymentTermIds = [...new Set(candidates.map((c: Record<string, unknown>) => Number(c.payment_terms)).filter(Boolean))];
+
+        const [customersResult, salesmenResult, termsResult] = await Promise.all([
+            customerCodes.length > 0 ? read("customer", new URLSearchParams({ "filter[customer_code][_in]": customerCodes.join(","), fields: "customer_code,customer_name,store_name,customer_tin,brgy,city,province", limit: "-1" })) : Promise.resolve({ data: [] }),
+            salesmanIds.length > 0 ? read("salesman", new URLSearchParams({ "filter[id][_in]": salesmanIds.join(","), fields: "id,salesman_name", limit: "-1" })) : Promise.resolve({ data: [] }),
+            paymentTermIds.length > 0 ? read("payment_terms", new URLSearchParams({ "filter[id][_in]": paymentTermIds.join(","), fields: "id,payment_name,payment_days", limit: "-1" })) : Promise.resolve({ data: [] }),
+        ]);
+
+        const customerMap = new Map<string, Record<string, unknown>>((customersResult.data || []).map((c: Record<string, unknown>) => [String(c.customer_code), c]));
+        const salesmanMap = new Map((salesmenResult.data || []).map((s: Record<string, unknown>) => [Number(s.id), String(s.salesman_name)]));
+        const termsMap = new Map((termsResult.data || []).map((t: Record<string, unknown>) => [Number(t.id), String(t.payment_name)]));
+
+        for (const candidate of candidates) {
+            const cust = customerMap.get(String(candidate.customer_code));
+            if (cust) {
+                candidate.customer_tin = String(cust.customer_tin || "N/A");
+                candidate.customer_address = [cust.brgy, cust.city, cust.province].filter(Boolean).join(", ");
+            }
+            if (candidate.salesman_id) {
+                candidate.salesman_name = salesmanMap.get(Number(candidate.salesman_id)) || "N/A";
+            }
+            if (candidate.payment_terms) {
+                candidate.payment_term_name = termsMap.get(Number(candidate.payment_terms)) || "N/A";
+            }
+        }
+
         return NextResponse.json({ data: candidates });
     } catch (error) {
         console.error("Invoicing candidates error:", error);

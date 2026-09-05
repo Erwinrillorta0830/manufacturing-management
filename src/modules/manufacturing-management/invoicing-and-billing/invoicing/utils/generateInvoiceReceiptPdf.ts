@@ -130,86 +130,228 @@ function renderField(doc: jsPDF, key: string, value: string, defaultX: number, d
     }
 }
 
-export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice, options: { includeBackground?: boolean } = {}): Promise<jsPDF> {
-    const template = invoice.templateConfig;
-
-    if (template) {
-        return generateOfficialReceipt(invoice, template as unknown as ORTemplate, options.includeBackground !== false);
+export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice, options?: { includeBackground?: boolean }): Promise<jsPDF> {
+    if (options?.includeBackground && invoice.templateConfig) {
+        return generateOfficialReceipt(invoice, invoice.templateConfig, true);
     }
-
     return generateTableReceipt(invoice);
 }
 
 function generateTableReceipt(invoice: PrintableInvoice): jsPDF {
     const doc = new jsPDF({ unit: "mm", format: [210, 265] });
-    doc.setProperties({ title: `${invoice.receiptType.type} ${invoice.invoiceNo}`, subject: "Sales Invoice", author: "VOS Manufacturing Management" });
+    doc.setProperties({ title: `${invoice.receiptType?.type || "Charge Invoice"} ${invoice.invoiceNo}`, subject: "Sales Invoice", author: "VOS Manufacturing Management" });
+
+    const margin = 10;
+    const pageWidth = 210;
+    const pageHeight = 265;
+    const contentWidth = pageWidth - margin * 2;
+
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.rect(margin, margin, contentWidth, pageHeight - margin * 2);
+
+    // 1. Company Letterhead
+    const companyName = invoice.companyInfo?.companyName || "MEN2 MARKETING & DISTRIBUTION ENTERPRISE CORPORATION";
+    const companyTin = invoice.companyInfo?.companyTin ? `VAT REG. TIN: ${invoice.companyInfo.companyTin}` : "VAT REG. TIN: 009-553-391-00000";
+    const companyAddress = invoice.companyInfo?.companyAddress || "Gonzales, Bonuan Boquig, Dagupan City, Pangasinan";
+
+    let currentY = 16;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text(companyName.toUpperCase(), pageWidth / 2, currentY, { align: "center" });
+
+    currentY += 4.5;
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.text(companyTin, pageWidth / 2, currentY, { align: "center" });
+
+    currentY += 4;
+    doc.text(companyAddress, pageWidth / 2, currentY, { align: "center" });
+
+    // 2. Subheader (Doc Type + Barcode & Invoice No)
+    currentY += 7;
+    const docTitle = (invoice.receiptType?.type || "CHARGE INVOICE").toUpperCase();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(docTitle, margin + 4, currentY + 3);
+
+    // Top Right Invoice No
+    doc.setTextColor(220, 38, 38);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text(invoice.invoiceNo, pageWidth - margin - 4, currentY + 3, { align: "right" });
+    doc.setTextColor(0, 0, 0);
+
+    // 3. Customer Info Block
+    currentY += 10;
+    const customerBlockTop = currentY;
+    const customerBlockHeight = 24;
+
+    doc.setLineWidth(0.3);
+    doc.rect(margin + 2, customerBlockTop, contentWidth - 4, customerBlockHeight);
+
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+
+    const lineH = 5.5;
+    let custY = customerBlockTop + 4.5;
+
+    // Row 1
+    doc.setFont("helvetica", "bold");
+    doc.text("SOLD TO:", margin + 4, custY);
+    doc.setFont("helvetica", "normal");
+    doc.text((invoice.customerName || "N/A").toUpperCase(), margin + 22, custY, { maxWidth: 110 });
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(15);
-    doc.text(invoice.receiptType.type.toUpperCase(), 105, 14, { align: "center" });
-    doc.setFontSize(9);
-    doc.text(`NO. ${invoice.invoiceNo}`, 195, 14, { align: "right" });
-    doc.setLineWidth(0.25);
-    doc.line(15, 18, 195, 18);
-
+    doc.text("Date:", pageWidth - margin - 60, custY);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    const fields: [string, string, string, string][] = [
-        ["DATE", formatDate(invoice.invoiceDate), "PO NO.", invoice.poNo || "N/A"],
-        ["CUSTOMER", invoice.customerName, "SALESMAN", invoice.salesmanName],
-        ["STORE", invoice.storeName, "TERMS", invoice.paymentTermName],
-        ["ADDRESS", invoice.customerAddress || "N/A", "TIN", invoice.customerTin],
-    ];
-    let y = 25;
-    for (const [leftLabel, leftValue, rightLabel, rightValue] of fields) {
-        doc.setFont("helvetica", "bold");
-        doc.text(`${leftLabel}:`, 15, y);
-        doc.text(`${rightLabel}:`, 125, y);
-        doc.setFont("helvetica", "normal");
-        doc.text(String(leftValue), 38, y, { maxWidth: 82 });
-        doc.text(String(rightValue), 148, y, { maxWidth: 47 });
-        y += 6;
+    doc.text(formatDate(invoice.invoiceDate) || "N/A", pageWidth - margin - 6, custY, { align: "right" });
+
+    // Row 2
+    custY += lineH;
+    doc.setFont("helvetica", "bold");
+    doc.text("Registered Name:", margin + 4, custY);
+    doc.setFont("helvetica", "normal");
+    doc.text((invoice.storeName || invoice.customerName || "N/A").toUpperCase(), margin + 33, custY, { maxWidth: 100 });
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Terms:", pageWidth - margin - 60, custY);
+    doc.setFont("helvetica", "normal");
+    doc.text(invoice.paymentTermName || "N/A", pageWidth - margin - 6, custY, { align: "right" });
+
+    // Row 3
+    custY += lineH;
+    doc.setFont("helvetica", "bold");
+    doc.text("TIN:", margin + 4, custY);
+    doc.setFont("helvetica", "normal");
+    doc.text(invoice.customerTin || "N/A", margin + 14, custY);
+
+    // Row 4
+    custY += lineH;
+    doc.setFont("helvetica", "bold");
+    doc.text("Business Address:", margin + 4, custY);
+    doc.setFont("helvetica", "normal");
+    doc.text((invoice.customerAddress || "N/A").toUpperCase(), margin + 33, custY, { maxWidth: contentWidth - 40 });
+
+    // 4. Tabular Item Grid
+    currentY = customerBlockTop + customerBlockHeight + 4;
+    const gridTopY = currentY;
+
+    const netTotal = invoice.totals.net || invoice.totals.gross || 0;
+    const vatableSales = netTotal / 1.12;
+    const vatAmount = netTotal - vatableSales;
+
+    const tableRows = invoice.lines.map((line) => [
+        `${line.productName}${line.productCode ? `\n${line.productCode}` : ""}`,
+        `${line.quantity} ${line.unit || "PCS"}`,
+        `P${money(line.unitPrice)}`,
+        `P${money(line.netAmount)}`
+    ]);
+
+    // Ensure minimum row count so table stretches down like BIR printed booklets
+    const minRows = 10;
+    while (tableRows.length < minRows) {
+        tableRows.push(["", "", "", ""]);
     }
 
     autoTable(doc, {
-        startY: 51,
-        margin: { left: 15, right: 15 },
-        head: [["DESCRIPTION", "QTY", "UNIT", "PRICE", "DISCOUNT", "AMOUNT"]],
-        body: invoice.lines.map((line) => [
-            `${line.productName}${line.productCode ? `\n${line.productCode}` : ""}`,
-            money(line.quantity),
-            line.unit,
-            money(line.unitPrice),
-            money(line.discountAmount),
-            money(line.netAmount),
-        ]),
+        startY: gridTopY,
+        margin: { left: margin + 2, right: margin + 2 },
+        head: [["Item Description / Nature of Service", "Quantity", "Unit Cost/Price", "Amount"]],
+        body: tableRows,
         theme: "grid",
-        styles: { font: "helvetica", fontSize: 7, cellPadding: 2, lineColor: [80, 80, 80], lineWidth: 0.15 },
-        headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: "bold" },
-        columnStyles: { 0: { cellWidth: 73 }, 1: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
+        styles: { font: "helvetica", fontSize: 8, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.2 },
+        headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: "bold", halign: "center" },
+        columnStyles: {
+            0: { cellWidth: 100, halign: "left" },
+            1: { cellWidth: 30, halign: "center" },
+            2: { cellWidth: 28, halign: "right" },
+            3: { cellWidth: 28, halign: "right" },
+        },
     });
 
-    const tableEnd = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY || 70;
-    y = Math.min(Math.max(tableEnd + 8, 185), 225);
-    const vatable = invoice.totals.net - invoice.totals.vat;
-    const totals: [string, number][] = [
-        ["GROSS", invoice.totals.gross],
-        ["DISCOUNT", invoice.totals.discount],
-        ["VATABLE SALES", vatable],
-        ["VAT", invoice.totals.vat],
-        ["TOTAL AMOUNT DUE", invoice.totals.net],
+    const gridBottomY = (doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY || (gridTopY + 70);
+
+    // 5. Footer & Tax Computation Block
+    currentY = Math.max(gridBottomY + 3, 175);
+    const taxBlockTop = currentY;
+    const taxBlockHeight = 44;
+    const colHalfWidth = (contentWidth - 4) / 2;
+
+    doc.setLineWidth(0.3);
+    doc.rect(margin + 2, taxBlockTop, contentWidth - 4, taxBlockHeight);
+    doc.line(margin + 2 + colHalfWidth, taxBlockTop, margin + 2 + colHalfWidth, taxBlockTop + taxBlockHeight);
+
+    // Left Column Tax Breakdown
+    const leftRows: Array<[string, string]> = [
+        ["VATable Sales", `P${money(vatableSales)}`],
+        ["VAT", `P${money(vatAmount)}`],
+        ["Zero-Rated Sales", "P0.00"],
+        ["VAT-Exempt Sales", "P0.00"],
+        [`PO NO. : ${invoice.poNo || "N/A"}`, ""],
+        [`SALESMAN : ${invoice.salesmanName || "N/A"}`, ""],
     ];
-    for (const [label, value] of totals) {
-        doc.setFont("helvetica", label === "TOTAL AMOUNT DUE" ? "bold" : "normal");
-        doc.text(label, 135, y);
-        doc.text(money(value), 195, y, { align: "right" });
-        y += 6;
-    }
-    doc.line(135, y - 4, 195, y - 4);
+
+    // Right Column Tax Breakdown
+    const rightRows: Array<[string, string]> = [
+        ["Total Sales (VAT Inclusive)", `P${money(netTotal)}`],
+        ["Less: VAT", `P${money(vatAmount)}`],
+        ["Amount: Net of VAT", `P${money(vatableSales)}`],
+        ["Add: VAT", `P${money(vatAmount)}`],
+        ["Less: Withholding Tax", "P0.00"],
+        ["TOTAL AMOUNT DUE", `P${money(netTotal)}`],
+    ];
+
+    const rowStep = taxBlockHeight / 6;
+
+    // Draw Left Rows
+    leftRows.forEach(([lbl, val], idx) => {
+        const rowY = taxBlockTop + idx * rowStep;
+        if (idx > 0) doc.line(margin + 2, rowY, margin + 2 + colHalfWidth, rowY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.text(lbl, margin + 5, rowY + 4.5);
+        if (val) {
+            doc.setFont("helvetica", "bold");
+            doc.text(val, margin + colHalfWidth - 3, rowY + 4.5, { align: "right" });
+        }
+    });
+
+    // Draw Right Rows
+    rightRows.forEach(([lbl, val], idx) => {
+        const rowY = taxBlockTop + idx * rowStep;
+        const rightXStart = margin + 2 + colHalfWidth;
+        if (idx > 0) doc.line(rightXStart, rowY, margin + contentWidth - 2, rowY);
+
+        const isTotal = idx === 5;
+        doc.setFont("helvetica", isTotal ? "bold" : "normal");
+        doc.setFontSize(isTotal ? 8.5 : 7.5);
+        doc.text(lbl, rightXStart + 3, rowY + 4.5);
+        doc.setFont("helvetica", "bold");
+        doc.text(val, margin + contentWidth - 4, rowY + 4.5, { align: "right" });
+    });
+
+    // 6. Footnote & Signature Block
+    currentY = taxBlockTop + taxBlockHeight + 4;
+
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-doc.text(`Sales Order: ${invoice.orderNo}`, 15, 250);
-    doc.text(`Status: ${invoice.transactionStatus}`, 195, 250, { align: "right" });
+    doc.setFontSize(6.5);
+
+
+    // Signature on Right Side
+    const sigX = pageWidth - margin - 65;
+    doc.line(sigX, currentY + 12, pageWidth - margin - 4, currentY + 12);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.text("Cashier/Authorized Representative", sigX + 30, currentY + 15, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.5);
+    doc.text("Printer's Accreditation No. 004MP2024000000033", sigX + 30, currentY + 18.5, { align: "center" });
+    doc.text("Date Issued: 03-14-2024", sigX + 30, currentY + 21.5, { align: "center" });
+
     return doc;
 }
 

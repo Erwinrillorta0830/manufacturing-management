@@ -45,21 +45,43 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
             "filter[invoice_no][_eq]": String(invoiceId), fields: "detail_id,product_id,unit_price,quantity,discount_amount,gross_amount,total_amount", limit: "-1",
         }));
         const productIds = [...new Set(detailRows.map((detail) => Number(detail.product_id)).filter(Boolean))];
-        const [orders, customers, salesmen, terms, types, products, templates, batchRows] = await Promise.all([
-            rows("sales_order", new URLSearchParams({ "filter[order_id][_eq]": String(invoice.order_id), fields: "order_id,order_no,po_no", limit: "1" })),
-            rows("customer", new URLSearchParams({ "filter[customer_code][_eq]": String(invoice.customer_code || ""), fields: "customer_code,customer_name,store_name,customer_tin,brgy,city,province", limit: "1" })),
-            invoice.salesman_id ? rows("salesman", new URLSearchParams({ "filter[id][_eq]": String(invoice.salesman_id), fields: "id,salesman_name", limit: "1" })) : [],
-            invoice.payment_terms ? rows("payment_terms", new URLSearchParams({ "filter[id][_eq]": String(invoice.payment_terms), fields: "id,payment_name,payment_days", limit: "1" })) : [],
+        const orders = await rows("sales_order", new URLSearchParams({ "filter[order_id][_eq]": String(invoice.order_id), fields: "order_id,order_no,po_no,salesman_id,payment_terms,customer_code", limit: "1" }));
+        const order = orders[0];
+        const customerCode = String(invoice.customer_code || order?.customer_code || "");
+        const salesmanId = invoice.salesman_id || order?.salesman_id;
+        const paymentTermsId = invoice.payment_terms || order?.payment_terms;
+
+        const [customers, salesmen, terms, types, products, templates, batchRows, companies] = await Promise.all([
+            customerCode ? rows("customer", new URLSearchParams({ "filter[customer_code][_eq]": customerCode, fields: "customer_code,customer_name,store_name,customer_tin,brgy,city,province", limit: "1" })) : [],
+            salesmanId ? rows("salesman", new URLSearchParams({ "filter[id][_eq]": String(salesmanId), fields: "id,salesman_name", limit: "1" })) : [],
+            paymentTermsId ? rows("payment_terms", new URLSearchParams({ "filter[id][_eq]": String(paymentTermsId), fields: "id,payment_name,payment_days", limit: "1" })) : [],
             invoice.invoice_type ? rows("sales_invoice_type", new URLSearchParams({ "filter[id][_eq]": String(invoice.invoice_type), fields: "id,type,isOfficial,max_length", limit: "1" })) : [],
             productIds.length ? rows("products", new URLSearchParams({ "filter[product_id][_in]": productIds.join(","), fields: "product_id,product_code,product_name,description,unit_of_measurement.unit_shortcut", limit: "-1" })) : [],
             invoice.invoice_type ? templateRows(new URLSearchParams({ "filter[sales_invoice_type_id][_eq]": String(invoice.invoice_type), fields: "id,template_config", limit: "1" })) : [],
             rows("sales_invoice_batches", new URLSearchParams({ "filter[invoice_id][_eq]": String(invoiceId), fields: "id,invoice_detail_id,product_id,inventory_lot_id,batch_no,quantity", limit: "-1" })).catch(() => []),
+            rows("company", new URLSearchParams({ "filter[company_id][_eq]": "2", fields: "company_id,company_name,company_tin,company_address,company_brgy,company_city,company_province,company_zipCode", limit: "1" })).catch(() => []),
         ]);
         const productMap = new Map(products.map((product) => [Number(product.product_id), product]));
         const customer = customers[0];
         const type = types[0];
+        const company = companies[0];
         const template = templates[0] as Row | undefined;
         const templateConfig = template?.template_config as Record<string, unknown> | undefined;
+
+        const companyAddress = [
+            company?.company_address,
+            company?.company_brgy,
+            company?.company_city,
+            company?.company_province,
+            company?.company_zipCode
+        ].filter(Boolean).join(", ");
+
+        const companyInfo = {
+            companyId: Number(company?.company_id || 2),
+            companyName: String(company?.company_name || ""),
+            companyTin: String(company?.company_tin || ""),
+            companyAddress: companyAddress || "",
+        };
 
         return NextResponse.json({
             invoiceId,
@@ -73,8 +95,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
                 isOfficial: type?.isOfficial === true || type?.isOfficial === 1 || type?.isOfficial === "1",
                 maxLength: Number(type?.max_length || 0),
             },
-            orderNo: String(orders[0]?.order_no || invoice.order_id || ""),
-            poNo: String(orders[0]?.po_no || ""),
+            orderNo: String(order?.order_no || invoice.order_id || ""),
+            poNo: String(order?.po_no || ""),
             customerName: String(customer?.customer_name || invoice.customer_code || ""),
             storeName: String(customer?.store_name || customer?.customer_name || ""),
             customerTin: String(customer?.customer_tin || "N/A"),
@@ -112,6 +134,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ inv
                 net: Number(invoice.net_amount || 0),
             },
             templateConfig: templateConfig ? templateConfig as unknown as Record<string, unknown> : undefined,
+            companyInfo,
         });
     } catch (error) {
         console.error("Printable invoice error:", error);
