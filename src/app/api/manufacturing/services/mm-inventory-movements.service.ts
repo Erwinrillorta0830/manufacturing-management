@@ -195,7 +195,10 @@ function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovem
     const inventoryLotId = numericValue(raw.inventoryLotId ?? raw.inventory_lot_id);
     const mmLotId = numericValue(raw.mmLotId ?? raw.mm_lot_id);
     const rawLotId = numericValue(raw.lotId ?? raw.lot_id);
-    const lotId = rawLotId ?? mmLotId;
+    // Canonical MM lots are the source of truth for Manufacturing Management;
+    // retain the legacy value only for historical rows that have not yet been
+    // reconciled by the cutover migration.
+    const lotId = mmLotId ?? rawLotId;
     const productId = numericValue(raw.productId ?? raw.product_id);
     const productTypeId = numericValue(raw.productTypeId ?? raw.product_type_id);
     const unitId = numericValue(raw.unitId ?? raw.unit_id);

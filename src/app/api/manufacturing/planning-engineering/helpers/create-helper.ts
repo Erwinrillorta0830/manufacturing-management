@@ -436,7 +436,7 @@ export async function createJobOrder(
                              const isSubAssembly = activeVer && activeVer.version;
 
                              let allocatedQty = 0;
-                             const allocations: { purchase_order_product_id: number; batch_no?: string; allocated: number }[] = [];
+                             const allocations: { purchase_order_product_id: number; mm_lot_id?: number; batch_no?: string; allocated: number }[] = [];
 
                              if (isSubAssembly) {
                                   if (!joData.branch_id) {
@@ -554,9 +554,10 @@ export async function createJobOrder(
 
                                      if (taken > 0) {
                                          allocatedQty += taken;
-                                         allocations.push({
-                                             purchase_order_product_id: recId,
-                                             batch_no: lotNo,
+                                          allocations.push({
+                                              purchase_order_product_id: recId,
+                                              mm_lot_id: Number(rec.mm_lot_id || 0) || undefined,
+                                              batch_no: lotNo,
                                              allocated: taken
                                          });
                                      }
@@ -620,8 +621,9 @@ export async function createJobOrder(
 
                                     const reservationPayload = {
                                         product_id: compProductId,
-                                        branch_id: joData.branch_id ? Number(joData.branch_id) : null,
-                                        batch_no: alloc.batch_no || null,
+                                         branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+                                         mm_lot_id: alloc.mm_lot_id || null,
+                                         batch_no: alloc.batch_no || null,
                                         jo_material_id: jomId,
                                         purchase_order_receiving_id: alloc.purchase_order_product_id || null,
                                         reserved_quantity: alloc.allocated,

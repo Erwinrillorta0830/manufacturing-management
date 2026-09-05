@@ -1,7 +1,7 @@
 import { paymentStatusLabel, inventoryStatusToPurchaseOrderStatus } from "../../procurement/_domain";
 import { DIRECTUS_URL, procurementDirectusFetch, procurementDirectusHeaders } from "../../procurement/_directus";
 import { fetchShipmentLineItems } from "../../procurement/shipments/shipments-helper";
-import { loadMmLots } from "../../qa-receiving/_mm-lot-compat";
+import { loadMmLots } from "../../services/mm-lots.service";
 import {
     getLandedCostComputation,
     resolveBaseUnitCostPhp,

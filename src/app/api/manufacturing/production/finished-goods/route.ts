@@ -4,6 +4,7 @@ import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
+import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 
 
 interface LedgerEntry {
@@ -66,6 +67,7 @@ interface FinishedGoodsMovement {
     id?: number | string;
     movement_id?: number | string;
     product_id?: number | string | Record<string, unknown>;
+    mm_lot_id?: number | string | Record<string, unknown>;
     lot_id?: number | string | Record<string, unknown>;
     branch_id?: number | string | Record<string, unknown>;
     transaction_type_id?: number | string | Record<string, unknown>;
@@ -313,39 +315,6 @@ export async function POST(request: Request) {
             }
         }
 
-        // Helper function to resolve or create master lot in the lots table
-        const resolveMasterLotId = async (name: string, typeId: number) => {
-            const mappedTypeId = typeId === 1 ? 390 : 389;
-            const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-            const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-            if (!lotLookupRes.ok) {
-                throw new Error(`Master lot lookup failed with HTTP ${lotLookupRes.status}.`);
-            }
-            const lotLookup = (await lotLookupRes.json()).data || [];
-            const existingLotId = Number(lotLookup[0]?.lot_id ?? lotLookup[0]?.id ?? 0);
-            if (Number.isFinite(existingLotId) && existingLotId > 0) return existingLotId;
-
-            const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    lot_name: name,
-                    inventory_type_id: mappedTypeId,
-                    max_batch_capacity: 100000,
-                    created_by: 24
-                })
-            });
-            if (!createLotRes.ok) {
-                throw new Error(`Master lot creation failed with HTTP ${createLotRes.status}.`);
-            }
-            const createdLot = (await createLotRes.json()).data;
-            const createdLotId = Number(createdLot?.lot_id ?? createdLot?.id ?? 0);
-            if (!Number.isFinite(createdLotId) || createdLotId <= 0) {
-                throw new Error("Master lot creation returned no valid identifier.");
-            }
-            return createdLotId;
-        };
-
         const qty = Number(quantityProduced);
         const bId = Number(branchId);
         const pId = Number(productId);
@@ -492,12 +461,22 @@ export async function POST(request: Request) {
 
         if (!skipStockOperations) {
             try {
-                const finishedLotId = await resolveMasterLotId(finalLotNo, 2); // 2 = Finished Goods
+                const finishedLotId = await (async () => {
+                    const unitOfMeasureId = await resolveProductUnitId(pId);
+                    return (await resolveOrCreateMmLot({
+                        lotName: finalLotNo,
+                        branchId: bId,
+                        unitId: unitOfMeasureId,
+                        maxBatchCapacity: 100000,
+                        createdBy: 24
+                    })).lot_id;
+                })();
 
                 // 1b. Log finished yield movement in inventory_movements ledger
                 const finishedMovementPayload = {
                     product_id: pId,
-                    lot_id: finishedLotId,
+                    mm_lot_id: finishedLotId,
+                    lot_id: null,
                     branch_id: bId,
                     transaction_type_id: 2, // Job Order Finished Goods
                     source_document_id: sourceDocumentId || null,
@@ -634,10 +613,18 @@ export async function POST(request: Request) {
                                 
                                 // Log negative ledger movement in inventory_movements
                                 try {
-                                    const consumedLotId = await resolveMasterLotId(lot.lot_number || "LOT-N/A", 1); // 1 = Raw Materials
+                                    const componentUnitOfMeasureId = await resolveProductUnitId(compId);
+                                    const consumedLotId = (await resolveOrCreateMmLot({
+                                        lotName: lot.lot_number || "LOT-N/A",
+                                        branchId: bId,
+                                        unitId: componentUnitOfMeasureId,
+                                        maxBatchCapacity: 100000,
+                                        createdBy: 24
+                                    })).lot_id;
                                     const componentMovementPayload = {
                                         product_id: compId,
-                                        lot_id: consumedLotId,
+                                        mm_lot_id: consumedLotId,
+                                        lot_id: null,
                                         branch_id: bId,
                                         transaction_type_id: 1, // Job Order Consumage
                                         source_document_no: joId,
