@@ -632,17 +632,6 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
         return;
     }
 
-    if (query.status === "Awaiting Payment") {
-        clauses.push({
-            _and: [
-                { inventory_status: { _in: [INVENTORY_STATUS.REQUESTED, INVENTORY_STATUS.APPROVED] } },
-                { payment_status: { _eq: PAYMENT_STATUS.AWAITING_PAYMENT } },
-                { finance_id: { _nnull: true } }
-            ]
-        });
-        return;
-    }
-
     if (query.status === "Rejected") {
         const rejectedIds = await findCurrentRejectionPurchaseOrderIds(query.approvalStage);
         clauses.push({ inventory_status: { _eq: INVENTORY_STATUS.REJECTED } });

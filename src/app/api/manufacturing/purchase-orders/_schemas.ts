@@ -184,6 +184,13 @@ export const purchaseOrderListQuerySchema = z.object({
     direction: z.enum(["asc", "desc"]).default("desc"),
     approvalStage: purchaseOrderApprovalStageSchema.optional()
 }).superRefine((query, context) => {
+    if (query.approvalStage === "Finance" && query.status === "Awaiting Payment") {
+        context.addIssue({
+            code: "custom",
+            path: ["status"],
+            message: "Awaiting Payment is a payment lifecycle status and cannot be used in the Finance approval queue."
+        });
+    }
     if (query.queue === "receiving" && query.status && !receivingQueueStatusSchema.safeParse(query.status).success) {
         context.addIssue({
             code: "custom",
