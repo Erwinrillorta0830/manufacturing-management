@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import type { COARow, AccountTypeRow, BalanceTypeRow } from "../types";
+import type { COARow, AccountTypeRow, BalanceTypeRow, UserRow } from "../types";
 
 import {
   Table,
@@ -40,9 +40,10 @@ export default function ChartOfAccountsTable(props: {
   loading: boolean;
   accountTypes: AccountTypeRow[];
   balanceTypes: BalanceTypeRow[];
+  users?: UserRow[];
   onEdit: (row: COARow) => void;
 }) {
-  const { rows, loading, accountTypes, balanceTypes, onEdit } = props;
+  const { rows, loading, accountTypes, balanceTypes, users = [], onEdit } = props;
 
   return (
     <div className="w-full overflow-hidden rounded-md border bg-background">
@@ -96,14 +97,16 @@ export default function ChartOfAccountsTable(props: {
                     const addedBy = r.added_by;
                     if (!addedBy) return "-";
                     
-                    if (typeof addedBy === "object") {
-                      const fname = addedBy.user_fname || addedBy.first_name || "";
-                      const lname = addedBy.user_lname || addedBy.last_name || "";
+                    const u = typeof addedBy === "object" ? addedBy : users.find(x => x.user_id === Number(addedBy) || x.id === Number(addedBy));
+
+                    if (u) {
+                      const fname = (u as Record<string, unknown>).user_fname || (u as Record<string, unknown>).first_name || "";
+                      const lname = (u as Record<string, unknown>).user_lname || (u as Record<string, unknown>).last_name || "";
                       const fullName = [fname, lname].filter(Boolean).join(" ");
-                      return fullName || "-";
+                      return fullName || String(addedBy);
                     }
 
-                    return "-";
+                    return String(addedBy);
                   })()}
                 </TableCell>
                 <TableCell>{formatMDY(r.date_added)}</TableCell>

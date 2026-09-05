@@ -114,7 +114,15 @@ export default async function Page() {
                         <Breadcrumb>
                             <BreadcrumbList>
                                 <BreadcrumbItem className="hidden md:block">
-                                    <BreadcrumbLink href="#">Product Pricing Management</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm">Manufacturing</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block" />
+                                <BreadcrumbItem className="hidden md:block">
+                                    <BreadcrumbLink href="/mm/financial-management">Financial Management</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block" />
+                                <BreadcrumbItem className="hidden md:block">
+                                    <BreadcrumbLink href="/mm/financial-management/price-control">Price Control</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block" />
                                 <BreadcrumbItem>

@@ -620,6 +620,7 @@ export function useCashiering(
         const payload = {
             salesmanId: parseInt(salesmanId),
             collectedBy: collectedBy ? parseInt(collectedBy) : (parseInt(currentUser.id) || 1), // 🚀 Dynamic
+            encoderId: parseInt(currentUser.id) || 1, // 🚀 NEW
             crNo: crNo || undefined, // 🚀 Payload mapping
             collectionDate: `${collectionDate}T00:00:00`,
             remarks: remarks || "",
@@ -628,6 +629,7 @@ export function useCashiering(
                     tempId: `cash-${d.id}`,
                     denominationId: d.id,
                     coaId: 1,
+                    paymentMethodId: 1,
                     amount: d.amount * denominations[d.id],
                     quantity: denominations[d.id],
                     referenceNo: `${d.amount} x ${denominations[d.id]}`
