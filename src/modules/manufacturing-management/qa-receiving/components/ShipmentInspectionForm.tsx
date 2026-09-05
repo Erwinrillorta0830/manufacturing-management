@@ -1,6 +1,6 @@
 import React from "react";
 import Image from "next/image";
-import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays, Radio } from "lucide-react";
+import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
@@ -42,6 +42,7 @@ interface ShipmentInspectionFormProps {
     previewAcknowledged: boolean;
     validatingInspection: boolean;
     previewError: string | null;
+    onRetryPreview: () => void;
     qaSubmissionBlockReason: string | null;
     receivingValidationIssues: ReceivingValidationIssue[];
     loadingLines: boolean;
@@ -602,6 +603,7 @@ export default function ShipmentInspectionForm({
     previewAcknowledged,
     validatingInspection,
     previewError,
+    onRetryPreview,
     qaSubmissionBlockReason,
     receivingValidationIssues,
     loadingLines,
@@ -1433,6 +1435,15 @@ export default function ShipmentInspectionForm({
                         <div>
                             <strong>Preview could not be generated.</strong>
                             <p className="mt-0.5">{previewError}</p>
+                            <button
+                                type="button"
+                                onClick={onRetryPreview}
+                                disabled={validatingInspection || loadingLines || receivingValidationIssues.length > 0}
+                                className="mt-2 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-red-700/40 px-2.5 text-[10px] font-bold text-red-700 hover:bg-red-500/10 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                                Retry preview
+                            </button>
                         </div>
                     </div>
                 ) : receivingValidationIssues.length > 0 ? (
@@ -1492,7 +1503,7 @@ export default function ShipmentInspectionForm({
                         disabled={loadingLines || validatingInspection || Boolean(qaSubmissionBlockReason) || receivingValidationIssues.length > 0 || hasQuantityMismatch || hasAllocationMismatch || hasRejectedAllocationMismatch}
                         className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-xs font-bold flex items-center gap-1.5 shadow h-11 justify-center cursor-pointer disabled:opacity-60 disabled:cursor-wait"
                     >
-                        {validatingInspection ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : qaSubmissionBlockReason ? <><AlertTriangle className="h-4 w-4" /> QA Configuration Required</> : receivingValidationIssues.length > 0 ? <><AlertTriangle className="h-4 w-4" /> Complete Required Fields</> : hasPreview ? <><ReceiptText className="h-4 w-4" /> Review Movement Preview</> : <><CheckCircle2 className="h-4 w-4" /> Preview QA & Routes</>}
+                        {validatingInspection ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : qaSubmissionBlockReason ? <><AlertTriangle className="h-4 w-4" /> QA Configuration Required</> : receivingValidationIssues.length > 0 ? <><AlertTriangle className="h-4 w-4" /> Complete Required Fields</> : hasPreview ? <><ReceiptText className="h-4 w-4" /> Review Movement Preview</> : previewError ? <><RefreshCw className="h-4 w-4" /> Retry Preview</> : <><CheckCircle2 className="h-4 w-4" /> Preview QA & Routes</>}
                     </button>
                 )}
                 </div>

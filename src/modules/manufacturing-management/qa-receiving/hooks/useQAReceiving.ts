@@ -1051,6 +1051,10 @@ export function useQAReceiving({
         const controller = new AbortController();
         previewController.current = controller;
         setPreviewError(null);
+        setReceivingCommitContext(null);
+        setQaEvaluationResults({});
+        setPreviewAcknowledged(false);
+        setPreviewOpen(false);
         setValidatingInspection(true);
         try {
             const evaluationLines = lineItems.map(line => {
@@ -1137,12 +1141,26 @@ export function useQAReceiving({
             toast.success("QA quantities and inventory routes were previewed. No inventory records were written.");
         } catch (error) {
             if (error && typeof error === "object" && "name" in error && error.name === "AbortError") return;
-            const message = error instanceof Error ? error.message : "Failed to generate receiving preview.";
+            const isDependencyFailure = error instanceof ReceivingApiError
+                && (error.code === RECEIVING_ERROR_CODES.DEPENDENCY || error.status === 405 || error.status >= 500);
+            const message = isDependencyFailure
+                ? "Receiving preview is temporarily unavailable. Please retry."
+                : error instanceof Error
+                    ? error.message
+                    : "Failed to generate receiving preview.";
+            setReceivingCommitContext(null);
+            setQaEvaluationResults({});
+            setPreviewAcknowledged(false);
+            setPreviewOpen(false);
             setPreviewError(message);
             toast.error(message);
         } finally {
             if (!controller.signal.aborted) setValidatingInspection(false);
         }
+    };
+
+    const retryPreview = () => {
+        void handleSubmitInspection({ preventDefault: () => undefined } as React.FormEvent);
     };
 
     const handleCommitReceiving = useCallback(async () => {
@@ -1409,6 +1427,7 @@ export function useQAReceiving({
         forceReceivedSubmitting,
         validatingInspection,
         previewError,
+        retryPreview,
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleSelectShipment,
