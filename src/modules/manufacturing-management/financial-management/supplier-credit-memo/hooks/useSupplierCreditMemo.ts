@@ -187,11 +187,9 @@ export function useChartOfAccounts() {
 // ─── Create memo ──────────────────────────────────────────────────────────────
 export function useCreateMemo() {
   const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
 
   const submit = async (payload: CreateMemoPayload) => {
     setLoading(true);
-    setError(null);
     try {
       const res  = await fetch(API_PATH, {
         method:  "POST",
@@ -212,12 +210,11 @@ export function useCreateMemo() {
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
-      setError(msg);
-      return { success: false };
+      return { success: false, message: msg };
     } finally {
       setLoading(false);
     }
   };
 
-  return { submit, loading, error };
+  return { submit, loading };
 }

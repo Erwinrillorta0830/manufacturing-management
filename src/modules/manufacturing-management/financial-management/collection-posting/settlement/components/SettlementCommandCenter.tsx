@@ -6,7 +6,6 @@ import {
     ShieldCheck,
     Wallet,
     Save,
-    ChevronDown,
     Plus,
     X,
     Loader2,
@@ -19,11 +18,8 @@ import {
     ChevronsUpDown,
     Check,
     Layers,
-    MapPin,
-    Calendar,
     FileText,
     CheckCircle2,
-    Search,
     Receipt
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,10 +63,10 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
 
     const {
         isLoading, wallet, credits, cartInvoices, allocations, setAllocations, salesmanName, findings, docNo, isPosted, isClearing, companyProfile,
-        isLoadingRoute, loadRouteInvoices, addToCart, removeFromCart, clearCart, fetchAndInjectExternalCredit,
+        isLoadingRoute, loadRouteInvoices, addToCart, removeFromCart, clearCart, 
         getUsedAmount, getInvoiceApplied, handleAllocate, createAdjustment, createEwt, submitSettlement,
         hasPartialChanges, hasClearableCart, savePartialSettlement,
-        deleteWalletItem, editWalletItem, dispatchPlans, isLoadingPlans, loadDispatchPlanInvoices, dispatchDate, setDispatchDate,
+        deleteWalletItem, editWalletItem,
         isLoadingCredits, creditsError, retryCredits, hasMoreCredits, loadMoreCredits, collectionDate
     } = useSettlement(id, activeInvoiceId);
 
@@ -89,9 +85,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
 
     const [creditSearch, setCreditSearch] = useState("");
     const [poolSearch, setPoolSearch] = useState("");
-    const [externalCreditInput, setExternalCreditInput] = useState("");
-    const [externalCreditType, setExternalCreditType] = useState<"MEMO" | "RETURN">("MEMO");
-    const [isFetchingExternal, setIsFetchingExternal] = useState(false);
+
 
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editAmt, setEditAmt] = useState("");
@@ -118,7 +112,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
     const [globalEwtAmount, setGlobalEwtAmount] = useState("");
     const [globalEwtRef, setGlobalEwtRef] = useState("");
 
-    const [routePopoverOpen, setRoutePopoverOpen] = useState(false);
+
 
     const uniqueCategories = useMemo(() => {
         const coaMap = new Map<number, {id: number, title: string}>();
@@ -432,9 +426,10 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
     const handleCreateAdjustment = async () => {
         const parsedAmount = Math.abs(parseFloat(adjAmount));
         const validFindingId = Number(adjFindingId);
-        if (!validFindingId || validFindingId <= 0 || isNaN(parsedAmount) || parsedAmount === 0) return toast.error("Please select a valid Ledger Account.");
+        const validCoaId = Number(adjCoaId);
+        if (!validFindingId || validFindingId <= 0 || !validCoaId || isNaN(parsedAmount) || parsedAmount === 0) return toast.error("Please select a valid Ledger Account.");
         setIsCreatingAdj(true);
-        await createAdjustment(validFindingId, parsedAmount, adjBalanceType, adjRemarks, adjInvoiceId);
+        await createAdjustment(validFindingId, validCoaId, parsedAmount, adjBalanceType, adjRemarks, adjInvoiceId);
         setIsCreatingAdj(false);
         setAdjOpen(false);
         setAdjCoaId(""); setAdjFindingId(""); setAdjAmount(""); setAdjRemarks(""); setAdjBalanceType(2); setAdjInvoiceId(null);
@@ -472,21 +467,6 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
         if (refNo) createEwt(netOfVat * 0.01, refNo, inv.id);
     };
 
-    const handleFetchExternalCredit = async () => {
-        const docNo = externalCreditInput.trim();
-        if (!docNo) return toast.error("Please enter a valid Document Number.");
-
-        setIsFetchingExternal(true);
-        const success = await fetchAndInjectExternalCredit(docNo, externalCreditType);
-        setIsFetchingExternal(false);
-
-        if (success) {
-            toast.success("External credit successfully pulled into wallet!");
-            setExternalCreditInput("");
-        } else {
-            toast.error("Document not found, invalid, or already fully applied.");
-        }
-    };
 
     const handlePrintAdjustments = () => {
         generateAdjustmentPDF(wallet, findings, allocations, docNo, salesmanName);
@@ -651,8 +631,8 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                                                     <div className="flex flex-col gap-1">
                                                         <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Type</label>
                                                         <div className="flex gap-1.5">
-                                                            <Button variant={adjBalanceType === 2 ? "default" : "outline"} onClick={() => setAdjBalanceType(2)} className={`h-7 w-1/2 text-[10px] font-bold ${adjBalanceType === 2 ? 'bg-purple-600 text-white' : 'text-muted-foreground'}`}>Shortage (Cr)</Button>
-                                                            <Button variant={adjBalanceType === 1 ? "default" : "outline"} onClick={() => setAdjBalanceType(1)} className={`h-7 w-1/2 text-[10px] font-bold ${adjBalanceType === 1 ? 'bg-red-600 text-white' : 'text-muted-foreground'}`}>Overage (Dr)</Button>
+                                                            <Button variant={adjBalanceType === 2 ? "default" : "outline"} onClick={() => { setAdjBalanceType(2); setAdjCoaId(""); setAdjFindingId(""); }} className={`h-7 w-1/2 text-[10px] font-bold ${adjBalanceType === 2 ? 'bg-purple-600 text-white' : 'text-muted-foreground'}`}>Shortage (Cr)</Button>
+                                                            <Button variant={adjBalanceType === 1 ? "default" : "outline"} onClick={() => { setAdjBalanceType(1); setAdjCoaId(""); setAdjFindingId(""); }} className={`h-7 w-1/2 text-[10px] font-bold ${adjBalanceType === 1 ? 'bg-red-600 text-white' : 'text-muted-foreground'}`}>Overage (Dr)</Button>
                                                         </div>
                                                     </div>
                                                     <div className="flex flex-col gap-1"><label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Category</label><Popover open={adjCoaOpen} onOpenChange={setAdjCoaOpen}><PopoverTrigger asChild><Button variant="outline" role="combobox" className={cn("w-full h-7 justify-between text-xs font-bold bg-background", !adjCoaId && "text-muted-foreground border-dashed border-primary/50")}><span className="truncate flex items-center gap-1.5"><Layers size={12}/>{adjCoaId ? uniqueCategories.find((c) => c.id === adjCoaId)?.title : "Select..."}</span><ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50"/></Button></PopoverTrigger><PopoverContent className="w-[260px] p-0" align="start"><Command><CommandInput placeholder="Search..." className="text-xs h-7"/><CommandList className="max-h-[200px] overflow-y-auto" onWheelCapture={(e) => e.stopPropagation()}><CommandEmpty>No categories found.</CommandEmpty><CommandGroup>{uniqueCategories.map((coa) => ( <CommandItem key={coa.id} value={coa.title} onSelect={() => { setAdjCoaId(coa.id); setAdjFindingId(""); setAdjCoaOpen(false); }} className="text-[11px] cursor-pointer py-1"><Check className={cn("mr-1.5 h-3 w-3 text-primary", adjCoaId === coa.id ? "opacity-100" : "opacity-0")}/>{coa.title}</CommandItem> ))}</CommandGroup></CommandList></Command></PopoverContent></Popover></div>
@@ -695,35 +675,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                                         </Badge>
                                     )}
                                 </span>
-                                {!isPosted && (
-                                    <Popover>
-                                        <PopoverTrigger asChild>
-                                            <Button size="sm" variant="outline" className="h-5 text-[8px] px-1.5 font-black uppercase tracking-widest text-purple-600 border-purple-200 hover:bg-purple-50 gap-1"><Search size={8} strokeWidth={3}/> Fetch Remote</Button>
-                                        </PopoverTrigger>
-                                        <PopoverContent className="w-[280px] p-4 space-y-3 shadow-xl border-purple-200" align="start">
-                                            <div className="space-y-0.5 mb-2 border-b border-border/50 pb-2">
-                                                <h4 className="font-black text-xs text-foreground flex items-center gap-1.5"><Search size={14} className="text-purple-500"/> Fetch Cross-Entity Credit</h4>
-                                                <p className="text-[9px] font-bold text-muted-foreground leading-tight">Pull a specific Memo or Return into the wallet even if the customer isn&apos;t in the cart.</p>
-                                            </div>
-                                            <div className="space-y-2">
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Document Type</label>
-                                                    <div className="flex gap-1.5">
-                                                        <Button variant={externalCreditType === "MEMO" ? "default" : "outline"} onClick={() => setExternalCreditType("MEMO")} className={`h-7 w-1/2 text-[10px] font-bold ${externalCreditType === "MEMO" ? 'bg-purple-600 text-white' : 'text-muted-foreground'}`}>Memo</Button>
-                                                        <Button variant={externalCreditType === "RETURN" ? "default" : "outline"} onClick={() => setExternalCreditType("RETURN")} className={`h-7 w-1/2 text-[10px] font-bold ${externalCreditType === "RETURN" ? 'bg-orange-600 text-white border-orange-200' : 'text-muted-foreground'}`}>Return</Button>
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Document No.</label>
-                                                    <Input type="text" placeholder="E.g. CM-152" value={externalCreditInput} onChange={(e) => setExternalCreditInput(e.target.value.toUpperCase())} className="h-7 text-xs font-mono uppercase"/>
-                                                </div>
-                                                <Button className="w-full mt-1 h-7 text-[9px] font-black uppercase tracking-widest bg-purple-600 hover:bg-purple-700 text-white" disabled={isFetchingExternal || !externalCreditInput} onClick={handleFetchExternalCredit}>
-                                                    {isFetchingExternal ? <Loader2 size={12} className="animate-spin"/> : "Pull into Wallet"}
-                                                </Button>
-                                            </div>
-                                        </PopoverContent>
-                                    </Popover>
-                                )}
+
                             </div>
 
                             <Input placeholder="Search local pool..." value={creditSearch} onChange={(e) => setCreditSearch(e.target.value)} className="h-6 text-[10px] font-bold shadow-inner bg-background border-purple-200 focus-visible:ring-purple-500 px-2"/>
@@ -802,30 +754,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                                             <Wand2 size={10} className="mr-1 text-purple-500"/> Smart Match
                                         </Button>
                                         <Button onClick={loadRouteInvoices} disabled={isLoadingRoute} variant="secondary" size="sm" className="h-6 text-[8px] uppercase font-black tracking-widest bg-blue-100 hover:bg-blue-200 text-blue-700 px-2.5">{isLoadingRoute ? <Loader2 size={10} className="mr-1 animate-spin"/> : <Truck size={10} className="mr-1"/>}Load Route</Button>
-                                        <Popover open={routePopoverOpen} onOpenChange={setRoutePopoverOpen}>
-                                            <PopoverTrigger asChild><Button variant="outline" size="sm" className="h-6 text-[8px] uppercase font-black tracking-widest border-blue-200 text-blue-700 hover:bg-blue-50 px-2.5">{isLoadingPlans ? <Loader2 size={10} className="mr-1 animate-spin"/> : <MapPin size={10} className="mr-1"/>}Dispatch Plan <ChevronDown size={10} className="ml-1" /></Button></PopoverTrigger>
-                                            <PopoverContent align="end" className="w-64 p-0 shadow-xl border-blue-200">
-                                                <div className="p-2.5 border-b bg-blue-50/50">
-                                                    <h4 className="font-black text-[10px] uppercase tracking-widest text-blue-800">Select Source</h4>
-                                                    <div className="mt-1.5 flex items-center gap-1.5 bg-background border rounded-md px-1.5">
-                                                        <Calendar size={10} className="text-muted-foreground" />
-                                                        <Input type="date" value={dispatchDate} onChange={(e) => setDispatchDate(e.target.value)} className="h-7 border-none shadow-none text-[10px] font-bold px-0 focus-visible:ring-0"/>
-                                                    </div>
-                                                </div>
-                                                <div className="p-1.5 max-h-[200px] overflow-y-auto scrollbar-thin" onWheelCapture={(e) => e.stopPropagation()}>
-                                                    {dispatchPlans.length > 0 ? (
-                                                        <div className="space-y-0.5 mb-1">
-                                                            {dispatchPlans.map(plan => (
-                                                                <button key={plan.id} onClick={() => { loadDispatchPlanInvoices(plan.id); setRoutePopoverOpen(false); }} className="w-full flex flex-col items-start p-1.5 rounded-md hover:bg-blue-50 transition-colors text-left">
-                                                                    <span className="font-mono font-bold text-[11px] text-primary flex items-center gap-1.5"><MapPin size={10}/> {plan.docNo}</span>
-                                                                    <span className="text-[9px] text-muted-foreground mt-0.5 font-medium">{plan.vehicleName} • {plan.driverName}</span>
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    ) : (<div className="px-2 py-3 text-center text-muted-foreground text-[9px] italic bg-muted/20 rounded-md">No plans found.</div>)}
-                                                </div>
-                                            </PopoverContent>
-                                        </Popover>
+
                                     </>
                                 )}
                     {!isPosted && hasClearableCart && <Button onClick={handleClearCart} disabled={isClearing || isSubmitting || isPartialSaving || isSuccess} variant="ghost" size="sm" className="h-6 text-[8px] uppercase font-black tracking-widest text-destructive hover:bg-destructive/10 px-2.5">{isClearing ? <Loader2 size={10} className="mr-1 animate-spin"/> : <Trash2 size={10} className="mr-1"/>}{isClearing ? "Clearing..." : "Clear Cart"}</Button>}

@@ -11,31 +11,36 @@ if (DIRECTUS_STATIC_TOKEN) {
 }
 
 export async function GET(request: Request) {
+    const noCacheHeaders = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    };
+
     try {
         const { searchParams } = new URL(request.url);
         
         const customerCodesParam = searchParams.get("customerCodes");
         const customerNamesParam = searchParams.get("customerNames");
+        const salesmanId = searchParams.get("salesmanId");
 
         if (!customerCodesParam && !customerNamesParam) {
-            return NextResponse.json([]);
+            return NextResponse.json([], { headers: noCacheHeaders });
         }
 
         const codes = customerCodesParam ? customerCodesParam.split("|") : [];
         const names = customerNamesParam ? customerNamesParam.split("|") : [];
+        const searchTerms = Array.from(new Set([...codes, ...names])).filter(Boolean);
 
         let customerIds: number[] = [];
         const customerMap = new Map<number, { id?: number; customer_code?: string; customer_name?: string }>();
-        const customerFilters: string[] = [];
 
-        if (codes.length > 0) {
-            customerFilters.push(`{"customer_code":{"_in":${JSON.stringify(codes)}}}`);
-        }
-        if (names.length > 0) {
-            customerFilters.push(`{"customer_name":{"_in":${JSON.stringify(names)}}}`);
-        }
-
-        if (customerFilters.length > 0) {
+        if (searchTerms.length > 0) {
+            const customerFilters = [
+                `{"customer_code":{"_in":${JSON.stringify(searchTerms)}}}`,
+                `{"customer_name":{"_in":${JSON.stringify(searchTerms)}}}`
+            ];
+            
             const customerFilterString = `{"_or":[${customerFilters.join(",")}]}`;
             const customerUrl = `${DIRECTUS_URL}/items/customer?filter=${encodeURIComponent(customerFilterString)}&fields=id,customer_code,customer_name`;
             const custRes = await fetch(customerUrl, { headers, cache: "no-store" });
@@ -49,16 +54,30 @@ export async function GET(request: Request) {
             }
         }
 
-        if (customerIds.length === 0) {
-            return NextResponse.json([]);
+        // We check BOTH customer_id OR customer_reference to catch bad mappings
+        const idOrRefConditions: Record<string, unknown>[] = [];
+        if (customerIds.length > 0) {
+            idOrRefConditions.push({ customer_id: { _in: customerIds } });
+        }
+        if (searchTerms.length > 0) {
+            idOrRefConditions.push({ customer_reference: { _in: searchTerms } });
+        }
+        
+        // If neither resolved, we return empty
+        if (idOrRefConditions.length === 0) {
+            return NextResponse.json([], { headers: noCacheHeaders });
         }
 
-        const memoFilter = {
+        const memoFilter: { _and: Record<string, unknown>[] } = {
             _and: [
-                { customer_id: { _in: customerIds } },
-                { status: { _eq: "APPROVED" } }
+                { _or: idOrRefConditions },
+                { status: { _in: ["APPROVED", "PARTIALLY APPLIED"] } }
             ]
         };
+
+        if (salesmanId) {
+            memoFilter._and.push({ salesman_id: { _eq: Number(salesmanId) } });
+        }
 
         const memoUrl = `${DIRECTUS_URL}/items/customers_memo?filter=${encodeURIComponent(JSON.stringify(memoFilter))}&limit=-1`;
         const res = await fetch(memoUrl, { headers, cache: "no-store" });
@@ -67,25 +86,57 @@ export async function GET(request: Request) {
         const data = await res.json();
         const memos = data.data || [];
 
+        const fallbackCode = codes.length === 1 ? codes[0] : undefined;
+
+        type MemoRecord = {
+            id: number;
+            memo_number: string;
+            salesman_id: string | number;
+            customer_id: string | number | { id: number } | null;
+            customer_reference: string;
+            amount: string | number;
+            applied_amount: string | number;
+            status: string;
+        };
+
         const mappedMemos = memos
-            .map((m: { id: number; memo_number?: string; customer_id?: number; customer_reference?: string; amount?: number; applied_amount?: number; status?: string }) => {
-                const customer = (m.customer_id !== undefined ? customerMap.get(m.customer_id) : undefined) || {};
+            .filter((m: MemoRecord) => {
+                // VERY STRICT IN-MEMORY FIREWALL
+                // Directus sometimes ignores relational _or filters and dumps unassigned memos.
+                // We MUST verify the memo truly belongs to the requested customers before mapping it.
+                if (salesmanId && String(m.salesman_id) !== String(salesmanId)) return false;
+                
+                const customerIdVal = typeof m.customer_id === "object" && m.customer_id !== null ? m.customer_id.id : m.customer_id;
+                const matchedById = customerIdVal !== undefined && customerIds.includes(Number(customerIdVal));
+                const matchedByRef = Boolean(m.customer_reference) && searchTerms.includes(String(m.customer_reference).trim());
+                
+                return matchedById || matchedByRef;
+            })
+            .map((m: MemoRecord) => {
+                const customerIdVal = typeof m.customer_id === "object" && m.customer_id !== null ? m.customer_id.id : m.customer_id;
+                const customer = (customerIdVal !== undefined && customerIdVal !== null ? customerMap.get(Number(customerIdVal)) : undefined) || {};
+                
+                const amount = Number(m.amount) || 0;
+                const appliedAmount = Number(m.applied_amount) || 0;
+
                 return {
                     id: m.id,
                     memoNumber: m.memo_number,
                     memo_number: m.memo_number,
-                    customerCode: customer.customer_code || m.customer_reference,
+                    customerCode: customer.customer_code || m.customer_reference || fallbackCode,
                     customerName: customer.customer_name,
-                    amount: m.amount || 0,
-                    appliedAmount: m.applied_amount || 0,
+                    amount: amount,
+                    appliedAmount: appliedAmount,
                     status: m.status
                 };
             })
             .filter((m: { amount: number; appliedAmount: number }) => (m.amount - m.appliedAmount) > 0.009);
 
-        return NextResponse.json(mappedMemos);
+        return NextResponse.json(mappedMemos, { headers: noCacheHeaders });
     } catch (e) {
         console.error("API Error fetching available memos:", e);
-        return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+        return NextResponse.json({ error: (e as Error).message }, { status: 500, headers: {
+            "Cache-Control": "no-store"
+        } });
     }
 }

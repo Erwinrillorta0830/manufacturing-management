@@ -134,7 +134,22 @@ export default function AllocationSidePanel({
                         <Search size={14} className="absolute right-2.5 top-2 text-muted-foreground"/>
                     </div>
 
-                    {credits.map(c => {
+                    {credits.filter(c => {
+                        const targetCode = inv.customerCode?.trim().toUpperCase();
+                        const targetName = inv.customerName?.trim().toUpperCase();
+                        const sourceCode = c.customerCode?.trim().toUpperCase();
+                        const sourceName = c.customerName?.trim().toUpperCase();
+                        
+                        // If no customer code exists on the invoice, it's safer not to show anything than to leak
+                        if (!targetCode && !targetName) return false;
+
+                        return (
+                            (targetCode && targetCode === sourceCode) ||
+                            (targetName && targetName === sourceName) ||
+                            (targetName && targetName === sourceCode) ||
+                            (targetCode && targetCode === sourceName)
+                        );
+                    }).map(c => {
                         if (!c.label.toLowerCase().includes(localSearch.toLowerCase()) && !(c.customerName || "").toLowerCase().includes(localSearch.toLowerCase())) return null;
 
                         const existingAlloc = allocations.find(a => a.invoiceId === inv.id && a.sourceTempId === c.id);
