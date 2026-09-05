@@ -186,26 +186,27 @@ async function getSpringAuth(explicitToken?: string): Promise<{ token: string; c
 }
 
 function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovement {
-    const movementId = numericValue(raw.movementId);
-    const transactionTypeId = numericValue(raw.transactionTypeId);
-    const versionId = numericValue(raw.versionId);
-    const referenceId = numericValue(raw.referenceId);
-    const referenceDetailId = numericValue(raw.referenceDetailId);
-    const branchId = numericValue(raw.branchId);
-    const inventoryLotId = numericValue(raw.inventoryLotId);
-    const mmLotId = numericValue(raw.mmLotId);
-    const lotId = numericValue(raw.lotId);
-    const productId = numericValue(raw.productId);
-    const productTypeId = numericValue(raw.productTypeId);
-    const unitId = numericValue(raw.unitId);
-    const postedBy = numericValue(raw.postedBy);
-    const quantityIn = numericOrZero(raw.quantityIn);
-    const quantityOut = numericOrZero(raw.quantityOut);
-    const batchNo = textValue(raw.batchNo);
-    const sourceDocumentNo = textValue(raw.referenceNo);
-    const createdAt = textValue(raw.transactionDate) || textValue(raw.postedAt);
-    const manufacturingDate = textValue(raw.manufacturingDate);
-    const expiryDate = textValue(raw.expirationDate);
+    const movementId = numericValue(raw.movementId ?? raw.movement_id);
+    const transactionTypeId = numericValue(raw.transactionTypeId ?? raw.transaction_type_id);
+    const versionId = numericValue(raw.versionId ?? raw.version_id);
+    const referenceId = numericValue(raw.referenceId ?? raw.reference_id ?? raw.source_document_id);
+    const referenceDetailId = numericValue(raw.referenceDetailId ?? raw.reference_detail_id);
+    const branchId = numericValue(raw.branchId ?? raw.branch_id);
+    const inventoryLotId = numericValue(raw.inventoryLotId ?? raw.inventory_lot_id);
+    const mmLotId = numericValue(raw.mmLotId ?? raw.mm_lot_id);
+    const rawLotId = numericValue(raw.lotId ?? raw.lot_id);
+    const lotId = rawLotId ?? mmLotId;
+    const productId = numericValue(raw.productId ?? raw.product_id);
+    const productTypeId = numericValue(raw.productTypeId ?? raw.product_type_id);
+    const unitId = numericValue(raw.unitId ?? raw.unit_id);
+    const postedBy = numericValue(raw.postedBy ?? raw.posted_by);
+    const quantityIn = numericOrZero(raw.quantityIn ?? raw.quantity_in);
+    const quantityOut = numericOrZero(raw.quantityOut ?? raw.quantity_out);
+    const batchNo = textValue(raw.batchNo ?? raw.batch_no);
+    const sourceDocumentNo = textValue(raw.referenceNo ?? raw.reference_no ?? raw.source_document_no);
+    const createdAt = textValue(raw.transactionDate ?? raw.transaction_date) || textValue(raw.postedAt ?? raw.posted_at);
+    const manufacturingDate = textValue(raw.manufacturingDate ?? raw.manufacturing_date);
+    const expiryDate = textValue(raw.expirationDate ?? raw.expiration_date ?? raw.expiryDate ?? raw.expiry_date);
     const remarks = textValue(raw.remarks);
 
     return {

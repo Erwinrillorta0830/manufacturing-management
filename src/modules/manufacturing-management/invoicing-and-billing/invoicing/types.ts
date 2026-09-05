@@ -4,6 +4,10 @@ export interface InvoicingCandidate {
     po_no: string;
     customer_code: string;
     customer_name: string;
+    customer_tin?: string;
+    customer_address?: string;
+    salesman_name?: string;
+    payment_term_name?: string;
     branch_id: number;
     branch_name?: string;
     order_status: string;
@@ -116,6 +120,13 @@ export interface ORTemplate {
     tableSettings: ORTableSettings;
 }
 
+export interface CompanyInfo {
+    companyId?: number;
+    companyName: string;
+    companyTin: string;
+    companyAddress: string;
+}
+
 export interface PrintableInvoice {
     invoiceId: number;
     invoiceNo: string;
@@ -134,6 +145,7 @@ export interface PrintableInvoice {
     lines: PrintableInvoiceLine[];
     totals: { gross: number; discount: number; vat: number; net: number };
     templateConfig?: ORTemplate;
+    companyInfo?: CompanyInfo;
 }
 
 export interface CustomerGroup {

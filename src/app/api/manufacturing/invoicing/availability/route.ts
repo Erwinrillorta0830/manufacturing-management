@@ -132,7 +132,7 @@ export async function GET(request: Request) {
                     cache: "no-store",
                 }),
                 fetch(
-                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[product_id][_in]=${productIds.join(",")}&limit=-1&fields=inventory_lot_id,id,lot_id,product_id,batch_no,inventory_condition,manufacturing_date,expiration_date,expiry_date,onhand_quantity,branch_id`,
+                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[product_id][_in]=${productIds.join(",")}&limit=-1&fields=inventory_lot_id,id,lot_id,product_id,batch_no,inventory_condition,manufacturing_date,expiry_date,onhand_quantity,branch_id`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
             ]);

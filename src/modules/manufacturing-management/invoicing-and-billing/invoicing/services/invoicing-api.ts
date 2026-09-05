@@ -107,3 +107,16 @@ export async function fetchBranches(): Promise<Branch[]> {
     }
     return [];
 }
+
+export async function fetchCompanyInfo(companyId: number = 2): Promise<{ companyId?: number; companyName: string; companyTin: string; companyAddress: string } | null> {
+    try {
+        const res = await fetch(`${BASE}/company?companyId=${companyId}`, { cache: "no-store" });
+        if (res.ok) {
+            const data = await res.json();
+            return data.companyInfo || null;
+        }
+    } catch {
+        // ignore
+    }
+    return null;
+}

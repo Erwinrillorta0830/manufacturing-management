@@ -69,6 +69,7 @@ async function syncInventoryLotBatch(params: {
   qa_status?: string;
   doc_no: string;
   userId?: number | null;
+  type?: string | null;
 }): Promise<number | null> {
   if (!params.batch_no || String(params.batch_no).trim() === "") {
     return null;
@@ -96,6 +97,10 @@ async function syncInventoryLotBatch(params: {
       return found.inventory_lot_id || found.id;
     }
 
+    if (params.type === "OUT") {
+      throw new Error(`Cannot adjust out batch "${cleanBatchNo}": batch does not exist in inventory.`);
+    }
+
     // Resolve fallback lot_id if none provided
     let effectiveLotId = lotId;
     if (!effectiveLotId && branchId) {
@@ -106,7 +111,9 @@ async function syncInventoryLotBatch(params: {
         effectiveLotId = lotRes.data[0].lot_id || lotRes.data[0].id;
       }
     }
-    if (!effectiveLotId) effectiveLotId = 1;
+    if (!effectiveLotId) {
+      throw new Error(`Storage lot reference missing for branch ${branchId}.`);
+    }
 
     const expDate = params.expiry_date || null;
     const mfgDate = params.manufacturing_date || null;

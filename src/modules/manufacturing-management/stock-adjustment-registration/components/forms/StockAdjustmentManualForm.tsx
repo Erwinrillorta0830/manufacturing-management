@@ -1066,6 +1066,18 @@ export function StockAdjustmentManualForm({
     }
 
     const currentValues = form.getValues();
+
+    const invalidQtyItem = (currentValues.items || []).find(
+      (item) => item.quantity == null || isNaN(Number(item.quantity)) || Number(item.quantity) <= 0
+    );
+    if (invalidQtyItem) {
+      toast.error(
+        `Invalid Quantity: Product "${invalidQtyItem.product_name || "Unknown"}" has null or 0 quantity. Please enter a valid quantity before posting.`,
+        { duration: 5000 }
+      );
+      return;
+    }
+
     const unassignedIdx = (currentValues.items || []).findIndex(
       (item) => !item.lot_id || !item.batch_no || String(item.batch_no).trim() === ""
     );

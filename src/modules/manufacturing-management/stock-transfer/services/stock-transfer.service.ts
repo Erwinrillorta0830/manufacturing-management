@@ -11,7 +11,7 @@ import type {
   MMStockTransferDetail,
 } from "../types/stock-transfer.types";
 import { CreateStockTransferSchema, UpdateStockTransferSchema, UpdateItemValue } from "../types/stock-transfer.schema";
-import { createInventoryLot, fetchLotsByBranch, fetchInventoryLots, ensureLotForBranch } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { fetchInventoryLots, ensureLotForBranch } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
 import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 
@@ -26,76 +26,32 @@ async function resolveDetailLotReferences(
 ): Promise<{ lot_id: number; inventory_lot_id: number; target_lot_id: number | null; target_inventory_lot_id: number | null } | null> {
   const prodId = typeof transfer.product_id === "object" ? transfer.product_id.product_id : transfer.product_id;
   const srcBranch = typeof transfer.source_branch_id === "object" && transfer.source_branch_id !== null ? transfer.source_branch_id.id : (transfer.source_branch_id || transfer.source_branch);
-  const targetBranch = typeof transfer.target_branch_id === "object" && transfer.target_branch_id !== null ? transfer.target_branch_id.id : (transfer.target_branch_id || transfer.target_branch);
-
+  
   let sourceLotId: number | null = transfer.source_lot_id ? Number(transfer.source_lot_id) : null;
   let sourceInvLotId: number | null = transfer.source_inventory_lot_id ? Number(transfer.source_inventory_lot_id) : null;
 
   // 1. If source lot references are missing, look up existing inventory lot on source branch
   if ((!sourceLotId || !sourceInvLotId) && srcBranch && prodId) {
-    try {
-      const invLots = await fetchInventoryLots({ branchId: Number(srcBranch), productId: Number(prodId) });
-      if (invLots.length > 0) {
-        sourceLotId = sourceLotId || (invLots[0].lot_id ? Number(invLots[0].lot_id) : null);
-        sourceInvLotId = sourceInvLotId || (invLots[0].inventory_lot_id ? Number(invLots[0].inventory_lot_id) : null);
-      }
-    } catch (e) {
-      console.warn("[StockTransfer] Warning looking up source inventory lot:", e);
+    const invLots = await fetchInventoryLots({ branchId: Number(srcBranch), productId: Number(prodId) });
+    const matchingBatch = transfer.batch_no ? invLots.find(l => l.batch_no === transfer.batch_no) : null;
+    if (!matchingBatch) {
+      throw new Error(`Batch "${transfer.batch_no || 'N/A'}" not found for product on source branch.`);
     }
+    sourceLotId = sourceLotId || (matchingBatch.lot_id ? Number(matchingBatch.lot_id) : null);
+    sourceInvLotId = sourceInvLotId || (matchingBatch.inventory_lot_id ? Number(matchingBatch.inventory_lot_id) : null);
   }
 
-  // 2. If lot_id still missing, check if any lot exists for the source branch or create a master lot
+  // 2. If lot_id still missing, check if any lot exists for the source branch
   if (!sourceLotId && srcBranch) {
-    try {
-      const lot = await ensureLotForBranch(Number(srcBranch));
-      if (lot && lot.lot_id) {
-        sourceLotId = Number(lot.lot_id);
-      }
-    } catch (e) {
-      console.warn("[StockTransfer] Warning ensuring source branch lot:", e);
+    const lot = await ensureLotForBranch(Number(srcBranch));
+    if (lot && lot.lot_id) {
+      sourceLotId = Number(lot.lot_id);
     }
   }
 
-  // 3. If still missing, check target lot or target branch lots
-  if (!sourceLotId) {
-    if (destLotId) {
-      sourceLotId = Number(destLotId);
-    } else if (targetBranch) {
-      try {
-        const lots = await fetchLotsByBranch(Number(targetBranch));
-        if (lots.length > 0 && lots[0].lot_id) {
-          sourceLotId = Number(lots[0].lot_id);
-        }
-      } catch (e) {
-        console.warn("[StockTransfer] Warning looking up target branch lots:", e);
-      }
-    }
-  }
-
-  // 4. If source inventory lot is missing but we have sourceLotId, create a base inventory lot record
-  if (!sourceInvLotId && sourceLotId && (srcBranch || targetBranch) && prodId) {
-    try {
-      const branchForLot = srcBranch || targetBranch;
-      const res = await createInventoryLot({
-        lot_id: Number(sourceLotId),
-        branch_id: Number(branchForLot),
-        product_id: Number(prodId),
-        batch_no: transfer.batch_no || `TRF-SRC-${transfer.order_no}-${transfer.id}`,
-        unit_cost: transfer.amount / (transfer.ordered_quantity || 1),
-        qa_status: "GOOD",
-        status: "ACTIVE",
-        source_type: "STOCK_TRANSFER",
-        source_reference: transfer.order_no,
-      });
-      sourceInvLotId = res?.data?.inventory_lot_id ? Number(res.data.inventory_lot_id) : null;
-    } catch (e) {
-      console.warn("[StockTransfer] Warning creating fallback source inventory lot:", e);
-    }
-  }
-
-  // If we couldn't resolve valid foreign keys, return null so we don't attempt an invalid insert
+  // If we couldn't resolve valid source lot/batch foreign keys, throw error (strictly no fallback)
   if (!sourceLotId || !sourceInvLotId) {
-    return null;
+    throw new Error(`Source inventory lot reference for batch "${transfer.batch_no || 'N/A'}" could not be resolved.`);
   }
 
   return {
@@ -420,9 +376,9 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
         const mDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date)
           ? (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date
           : d.manufacturing_date;
-        const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { expiration_date?: string }).expiration_date)
-          ? (d.inventory_lot_id as { expiration_date?: string }).expiration_date
-          : d.expiration_date;
+        const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null)
+          ? ((d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiry_date || (d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiration_date)
+          : ((d as { expiry_date?: string; expiration_date?: string }).expiry_date || d.expiration_date);
         const invLotId = typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null
           ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id
           : d.inventory_lot_id;
@@ -562,31 +518,16 @@ export async function createTransfer(payload: CreateTransferPayload, userId?: nu
             console.warn("[StockTransfer] FEFO lookup warning:", err);
           }
 
-          // If source branch has negative or zero available stock, auto-create new lot / batch for source branch
           if ((!sourceLotId || !sourceInventoryLotId) && validated.sourceBranch) {
-            try {
-              const lot = await ensureLotForBranch(Number(validated.sourceBranch));
-              if (lot) {
-                sourceLotId = sourceLotId || lot.lot_id;
-                batchNo = batchNo || item.batch_no || `TRF-SRC-${orderNo}-${item.productId}`;
-                const res = await createInventoryLot({
-                  lot_id: lot.lot_id,
-                  branch_id: Number(validated.sourceBranch),
-                  product_id: item.productId,
-                  batch_no: batchNo,
-                  unit_cost: item.unitPrice || 0,
-                  qa_status: "GOOD",
-                  status: "ACTIVE",
-                  source_type: "STOCK_TRANSFER",
-                  source_reference: orderNo,
-                  created_by: userId || undefined,
-                });
-                if (res?.data?.inventory_lot_id) {
-                  sourceInventoryLotId = Number(res.data.inventory_lot_id);
-                }
-              }
-            } catch (err) {
-              console.warn("[StockTransfer] Auto-creating source lot/batch for negative stock:", err);
+            const existingLots = await fetchInventoryLots({ branchId: Number(validated.sourceBranch), productId: item.productId }).catch(() => []);
+            const targetBatchNo = item.batch_no || batchNo;
+            const matchingBatch = targetBatchNo ? existingLots.find(l => l.batch_no === targetBatchNo) : null;
+            if (matchingBatch) {
+              sourceLotId = sourceLotId || matchingBatch.lot_id;
+              sourceInventoryLotId = sourceInventoryLotId || matchingBatch.inventory_lot_id;
+              batchNo = batchNo || matchingBatch.batch_no;
+            } else {
+              throw new Error(`Batch "${targetBatchNo || 'N/A'}" not found for product ID ${item.productId} on source branch.`);
             }
           }
         }
@@ -811,31 +752,23 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
             }));
             await repo.createStockTransferDetails(newDetails);
           } else {
-            // Source branch has negative or zero available stock in FEFO:
-            // Ensure/create source lot & new inventory lot batch for this transfer
             let srcLotId = t.source_lot_id ? Number(t.source_lot_id) : null;
             let srcInvLotId = t.source_inventory_lot_id ? Number(t.source_inventory_lot_id) : null;
-            const batchNo = t.batch_no || `TRF-SRC-${t.order_no}-${t.id}`;
+            const batchNo = t.batch_no;
 
-            if (!srcLotId && srcBranch) {
-              const lot = await ensureLotForBranch(Number(srcBranch));
-              if (lot) srcLotId = lot.lot_id;
+            if ((!srcLotId || !srcInvLotId) && srcBranch && prodId) {
+              const existingLots = await fetchInventoryLots({ branchId: Number(srcBranch), productId: Number(prodId) }).catch(() => []);
+              const matching = batchNo ? existingLots.find(l => l.batch_no === batchNo) : null;
+              if (matching) {
+                srcLotId = srcLotId || matching.lot_id;
+                srcInvLotId = srcInvLotId || matching.inventory_lot_id;
+              } else {
+                throw new Error(`Cannot approve transfer ${t.order_no}: batch "${batchNo || 'N/A'}" not found on source branch.`);
+              }
             }
 
-            if (!srcInvLotId && srcLotId && srcBranch && prodId) {
-              const res = await createInventoryLot({
-                lot_id: Number(srcLotId),
-                branch_id: Number(srcBranch),
-                product_id: Number(prodId),
-                batch_no: batchNo,
-                unit_cost: unitCost,
-                qa_status: "GOOD",
-                status: "ACTIVE",
-                source_type: "STOCK_TRANSFER",
-                source_reference: t.order_no,
-                created_by: validated.userId,
-              }).catch(() => null);
-              srcInvLotId = res?.data?.inventory_lot_id ? Number(res.data.inventory_lot_id) : null;
+            if (!srcLotId || !srcInvLotId) {
+              throw new Error(`Cannot approve transfer ${t.order_no}: source inventory lot reference missing for batch "${batchNo || 'N/A'}".`);
             }
 
             if (srcLotId && srcInvLotId) {
@@ -847,7 +780,7 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
                 target_lot_id: null,
                 product_id: Number(prodId),
                 unit_id: Number(unitId),
-                batch_no: batchNo,
+                batch_no: batchNo || t.batch_no || "N/A",
                 inventory_condition: "GOOD",
                 unit_cost: unitCost,
                 allocated_quantity: Number(allocatedQty),
@@ -951,54 +884,45 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
             }
           }
         } else if (detailsForTransfer.length === 0) {
-          // If no details exist yet, create one for this transfer
           let srcLotId = u.source_lot_id || t.source_lot_id ? Number(u.source_lot_id || t.source_lot_id) : null;
           let srcInvLotId = u.source_inventory_lot_id || t.source_inventory_lot_id ? Number(u.source_inventory_lot_id || t.source_inventory_lot_id) : null;
-          const batchNo = u.batch_no || t.batch_no || `TRF-SRC-${t.order_no}-${t.id}`;
+          const batchNo = u.batch_no || t.batch_no;
 
-          if (!srcLotId && srcBranch) {
-            const lot = await ensureLotForBranch(Number(srcBranch));
-            if (lot) srcLotId = lot.lot_id;
+          if ((!srcLotId || !srcInvLotId) && srcBranch && prodId) {
+            const existingLots = await fetchInventoryLots({ branchId: Number(srcBranch), productId: Number(prodId) }).catch(() => []);
+            const matching = batchNo ? existingLots.find(l => l.batch_no === batchNo) : null;
+            if (matching) {
+              srcLotId = srcLotId || matching.lot_id;
+              srcInvLotId = srcInvLotId || matching.inventory_lot_id;
+            } else {
+              throw new Error(`Cannot dispatch transfer ${t.order_no}: batch "${batchNo || 'N/A'}" not found on source branch.`);
+            }
           }
 
-          if (!srcInvLotId && srcLotId && srcBranch && prodId) {
-            const res = await createInventoryLot({
-              lot_id: Number(srcLotId),
-              branch_id: Number(srcBranch),
-              product_id: Number(prodId),
-              batch_no: batchNo,
-              unit_cost: unitCost,
-              qa_status: "GOOD",
-              status: "ACTIVE",
-              source_type: "STOCK_TRANSFER",
-              source_reference: t.order_no,
-              created_by: validated.userId,
-            }).catch(() => null);
-            srcInvLotId = res?.data?.inventory_lot_id ? Number(res.data.inventory_lot_id) : null;
+          if (!srcLotId || !srcInvLotId) {
+            throw new Error(`Cannot dispatch transfer ${t.order_no}: source inventory lot reference missing for batch "${batchNo || 'N/A'}".`);
           }
 
-          if (srcLotId && srcInvLotId) {
-            const dispQty = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
-            await repo.createStockTransferDetails([{
-              stock_transfer_id: t.id,
-              inventory_lot_id: Number(srcInvLotId),
-              target_inventory_lot_id: null,
-              lot_id: Number(srcLotId),
-              target_lot_id: null,
-              product_id: Number(prodId),
-              unit_id: Number(unitId),
-              batch_no: batchNo,
-              manufacturing_date: u.manufacturing_date || t.manufacturing_date || null,
-              expiration_date: u.expiration_date || t.expiry_date || null,
-              inventory_condition: "GOOD",
-              unit_cost: unitCost,
-              allocated_quantity: Number(t.allocated_quantity || dispQty),
-              picked_quantity: Number(dispQty),
-              dispatched_quantity: isDispatchStage ? Number(dispQty) : 0,
-              received_quantity: 0,
-              variance_quantity: 0,
-            }]).catch((e) => console.warn("[StockTransfer] Fallback detail creation error:", e));
-          }
+          const dispQty = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+          await repo.createStockTransferDetails([{
+            stock_transfer_id: t.id,
+            inventory_lot_id: Number(srcInvLotId),
+            target_inventory_lot_id: null,
+            lot_id: Number(srcLotId),
+            target_lot_id: null,
+            product_id: Number(prodId),
+            unit_id: Number(unitId),
+            batch_no: batchNo || `TRF-SRC-${t.order_no}-${t.id}`,
+            manufacturing_date: u.manufacturing_date || t.manufacturing_date || null,
+            expiration_date: u.expiration_date || t.expiry_date || null,
+            inventory_condition: "GOOD",
+            unit_cost: unitCost,
+            allocated_quantity: Number(t.allocated_quantity || dispQty),
+            picked_quantity: Number(dispQty),
+            dispatched_quantity: isDispatchStage ? Number(dispQty) : 0,
+            received_quantity: 0,
+            variance_quantity: 0,
+          }]);
         } else {
           // Standard proportional update for existing details
           const totalAllocated = detailsForTransfer.reduce((sum, d) => sum + Number(d.allocated_quantity || 0), 0);
@@ -1259,7 +1183,8 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
       }
     }
   } catch (err) {
-    console.warn("[StockTransfer] Warning during detail synchronization:", err);
+    console.error("[StockTransfer] Error during detail synchronization:", err);
+    throw err;
   }
 
   // 5. Record RFID tracking if provided
@@ -1423,7 +1348,8 @@ export async function manualReceiveItems(ids: number[], status: string, userId?:
         }
       }
     } catch (err) {
-      console.warn("[StockTransfer] Warning during manual receive detail sync:", err);
+      console.error("[StockTransfer] Error during manual receive detail sync:", err);
+      throw err;
     }
   }
 
