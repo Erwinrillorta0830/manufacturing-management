@@ -42,7 +42,7 @@ export function useProductPrintables(
     const [error, setError] = React.useState<string | null>(null);
     const [matrixRows, setMatrixRows] = React.useState<MatrixRow[]>([]);
     const [usedUnitIds, setUsedUnitIds] = React.useState<Set<number>>(new Set());
-
+    const [usedPriceTypeKeys, setUsedPriceTypeKeys] = React.useState<Set<string>>(new Set());
 
     const refresh = React.useCallback(async () => {
         if (!enabled) return;
@@ -84,6 +84,7 @@ export function useProductPrintables(
             // Grouping logic (now just assembling since server paginates groups)
             const groups = new Map<number, ProductRow[]>();
             const unitIds = new Set<number>();
+            const activePriceTypeKeys = new Set<string>();
 
             for (const p of products) {
                 const groupId = pickId(p.parent_id) ?? pickId(p.product_id);
@@ -114,6 +115,13 @@ export function useProductPrintables(
                             LIST: v.cost_per_unit ? Number(v.cost_per_unit) : null,
                         }
                     };
+
+                    for (const [k, val] of Object.entries(piv)) {
+                        if (val != null) activePriceTypeKeys.add(k);
+                    }
+                    if (v.cost_per_unit != null) {
+                        activePriceTypeKeys.add("LIST");
+                    }
                 }
 
                 assembled.push({
@@ -127,6 +135,7 @@ export function useProductPrintables(
 
             setMatrixRows(assembled);
             setUsedUnitIds(unitIds);
+            setUsedPriceTypeKeys(activePriceTypeKeys);
             setFilters(prev => {
                 const totalPages = Number(meta.total_pages ?? 0);
                 return prev.total_pages === totalPages ? prev : { ...prev, total_pages: totalPages };
@@ -135,6 +144,7 @@ export function useProductPrintables(
             setError(error instanceof Error ? error.message : "Failed to load products");
             setMatrixRows([]);
             setUsedUnitIds(new Set());
+            setUsedPriceTypeKeys(new Set());
             setFilters(prev => prev.total_pages === 0 ? prev : { ...prev, total_pages: 0 });
         } finally {
             setLoading(false);
@@ -155,6 +165,7 @@ export function useProductPrintables(
         error,
         matrixRows,
         usedUnitIds,
+        usedPriceTypeKeys,
         filters,
         setFilters,
         refresh,
