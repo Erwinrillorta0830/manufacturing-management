@@ -2,9 +2,10 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { movementLegacyLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
+import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -86,7 +87,8 @@ function normalizeGenealogyRecord(row: any): any {
         genealogy_id: row.genealogy_id ?? row.id,
         finished_batch_no: row.batch_no ?? row.finished_batch_no,
         raw_product_id: row.component_product_id ?? row.raw_product_id,
-        raw_lot_id: row.component_lot_id ?? row.raw_lot_id,
+        component_mm_lot_id: row.component_mm_lot_id ?? null,
+        raw_lot_id: row.component_mm_lot_id ?? row.component_lot_id ?? row.raw_lot_id,
         raw_batch_no: row.component_batch_no ?? row.raw_batch_no,
         quantity_consumed: row.consumed_quantity ?? row.quantity_consumed,
         created_by: row.created_by ?? null
@@ -229,36 +231,6 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Helper function to resolve or create master lot
-        const resolveMasterLotId = async (name: string, typeId: number) => {
-            let lotId = 1;
-            try {
-                const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-                const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-                const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
-                if (lotLookup.length > 0) {
-                    lotId = lotLookup[0].lot_id;
-                } else {
-                    const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            lot_name: name,
-                            inventory_type_id: typeId,
-                            max_batch_capacity: 100000,
-                            created_by: effectiveEncoderId
-                        })
-                    });
-                    if (createLotRes.ok) {
-                        lotId = (await createLotRes.json()).data.lot_id;
-                    }
-                }
-            } catch (err) {
-                console.error(`Error resolving master lot ID for ${name}:`, err);
-            }
-            return lotId;
-        };
-
         // 2. Validate all material stock levels before writing database entries
         const lotsCache: Record<number, any[]> = {};
         if (materialsConsumed && materialsConsumed.length > 0) {
@@ -310,20 +282,18 @@ export async function POST(request: Request) {
                         const prodId = Number(parts[0]);
                         const bNo = parts[3] || "LOT-N/A";
                         if (prodId === rawProductId) {
-                            // The stock key uses the canonical MM-lot ID for
-                            // grouping, but inventory_movements.lot_id remains
-                            // the legacy foreign key used by backflush writes.
                             const sourceMovement = movements.find((movement: any) =>
                                 movementStockKey(movement) === key
-                                && movementLegacyLotReference(movement) > 0
+                                && Number(movement.mmLotId || movement.mm_lot_id) > 0
                             );
-                            const legacyLotId = sourceMovement
-                                ? movementLegacyLotReference(sourceMovement)
+                            const mmLotId = sourceMovement
+                                ? Number(sourceMovement.mmLotId || sourceMovement.mm_lot_id)
                                 : 0;
                             const status = batchStatusMap.get(bNo) || "Passed";
                             if (status === "Passed" || status === "Partially Accepted") {
                                 lotsEnriched.push({
-                                    lot_id: legacyLotId,
+                                    mm_lot_id: mmLotId,
+                                    lot_id: null,
                                     lot_number: bNo,
                                     batch_no: bNo,
                                     quantity: qty
@@ -472,7 +442,7 @@ export async function POST(request: Request) {
                         && productGenealogyRows.every((genealogy: any) => persistedBackflushMovements.some((movement: any) =>
                             movementHasRunMarker(movement)
                             && Number(movement.product_id) === Number(genealogy.component_product_id)
-                            && sameId(movement.lot_id, Number(genealogy.component_lot_id))
+                            && sameId(movement.mmLotId ?? movement.mm_lot_id, Number(genealogy.component_mm_lot_id ?? genealogy.component_lot_id))
                             && Number(movement.source_document_id) === Number(joId)
                             && Number(movement.transaction_type_id) === 1
                             && String(movement.batch_no || "").trim() === String(genealogy.component_batch_no || "").trim()
@@ -511,10 +481,19 @@ export async function POST(request: Request) {
                     if (qty <= 0) return;
 
                     const batchNumber = String(lot.batch_no || lot.lot_number || item.batch_no || "LOT-STAGING").trim();
-                    const relatedLotId = typeof lot.lot_id === "object"
-                        ? Number(lot.lot_id?.lot_id || 0)
-                        : Number(lot.lot_id || item.lot_id || 0);
-                    const consumedLotId = relatedLotId || await resolveMasterLotId(batchNumber, 1);
+                    const relatedLotId = typeof (lot.mm_lot_id ?? lot.lot_id) === "object"
+                        ? Number((lot.mm_lot_id ?? lot.lot_id)?.lot_id || 0)
+                        : Number(lot.mm_lot_id || lot.lot_id || item.mm_lot_id || item.lot_id || 0);
+                    const consumedLotId = relatedLotId || await (async () => {
+                        const unitOfMeasureId = await resolveProductUnitId(rawProductId);
+                        return (await resolveOrCreateMmLot({
+                            lotName: batchNumber,
+                            branchId,
+                            unitId: unitOfMeasureId,
+                            maxBatchCapacity: 100000,
+                            createdBy: effectiveEncoderId
+                        })).lot_id;
+                    })();
 
                     // Log consumage sub-record if the optional table exists. A matching
                     // yield ledger marks this run as a retry, so do not duplicate it.
@@ -535,7 +514,8 @@ export async function POST(request: Request) {
                     // Standard Negative Backflushing entry into inventory_movements
                     const backflushMovementPayload = {
                         product_id: rawProductId,
-                        lot_id: consumedLotId,
+                        mm_lot_id: consumedLotId,
+                        lot_id: null,
                         branch_id: branchId,
                         transaction_type_id: 1, // Job Order Consumage / Backflushing
                         source_document_id: Number(joId),
@@ -552,7 +532,7 @@ export async function POST(request: Request) {
                         const canReuseLegacyMovement = isRetryRun || movementHasRunMarker(row);
                         return canReuseLegacyMovement
                             && Number(row.product_id) === rawProductId
-                            && sameId(row.lot_id, consumedLotId)
+                            && sameId(row.mmLotId ?? row.mm_lot_id, consumedLotId)
                             && Number(row.transaction_type_id) === 1
                             && Number(row.source_document_id) === Number(joId)
                             && String(row.batch_no || "").trim() === batchNumber
@@ -573,7 +553,8 @@ export async function POST(request: Request) {
                         job_order_id: Number(joId),
                         batch_no: finalBatchNo,
                         component_product_id: rawProductId,
-                        component_lot_id: consumedLotId,
+                        component_mm_lot_id: consumedLotId,
+                        component_lot_id: null,
                         component_batch_no: batchNumber,
                         consumed_quantity: qty,
                         created_at: phtMovementTimestamp
@@ -582,7 +563,7 @@ export async function POST(request: Request) {
                         Number(row.job_order_id) === Number(joId)
                         && String(row.batch_no || "").trim() === finalBatchNo
                         && Number(row.component_product_id) === rawProductId
-                        && sameId(row.component_lot_id, consumedLotId)
+                        && sameId(row.component_mm_lot_id ?? row.component_lot_id, consumedLotId)
                         && String(row.component_batch_no || "").trim() === batchNumber
                         && sameQuantity(row.consumed_quantity, qty)
                     );
@@ -716,7 +697,7 @@ export async function POST(request: Request) {
                     Number(row.job_order_id) === Number(record.job_order_id)
                     && String(row.batch_no || "").trim() === String(record.batch_no || "").trim()
                     && Number(row.component_product_id) === Number(record.component_product_id)
-                    && sameId(row.component_lot_id, Number(record.component_lot_id))
+                    && sameId(row.component_mm_lot_id ?? row.component_lot_id, Number(record.component_mm_lot_id ?? record.component_lot_id))
                     && String(row.component_batch_no || "").trim() === String(record.component_batch_no || "").trim()
                     && sameQuantity(row.consumed_quantity, Number(record.consumed_quantity))
                 );
@@ -727,7 +708,7 @@ export async function POST(request: Request) {
 
                 const durableMovement = verifiedMovementRows.find((row: any) =>
                     Number(row.product_id) === Number(record.component_product_id)
-                    && sameId(row.lot_id, Number(record.component_lot_id))
+                    && sameId(row.mmLotId ?? row.mm_lot_id, Number(record.component_mm_lot_id ?? record.component_lot_id))
                     && Number(row.source_document_id) === Number(joId)
                     && Number(row.transaction_type_id) === 1
                     && String(row.batch_no || "").trim() === String(record.component_batch_no || "").trim()
@@ -745,11 +726,32 @@ export async function POST(request: Request) {
         }
 
         // 6. RECORD FINISHED GOODS / WIP OUTPUT MOVEMENT IN INVENTORY_MOVEMENTS LEDGER
-        const finishedLotId = targetLotId ? Number(targetLotId) : await resolveMasterLotId(finalBatchNo, 2); // 2 = Finished Goods
+        const finishedLotId = targetLotId
+            ? Number(targetLotId)
+            : await (async () => {
+                const unitOfMeasureId = await resolveProductUnitId(producedProductId);
+                return (await resolveOrCreateMmLot({
+                    lotName: finalBatchNo,
+                    branchId,
+                    unitId: unitOfMeasureId,
+                    maxBatchCapacity: 100000,
+                    createdBy: effectiveEncoderId
+                })).lot_id;
+            })();
+
+        const yieldLotUpdate = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ mm_lot_id: finishedLotId })
+        });
+        if (!yieldLotUpdate.ok) {
+            throw new DirectusPersistenceError(`Yield ledger canonical lot update failed with HTTP ${yieldLotUpdate.status}.`);
+        }
 
         const finishedMovementPayload = {
             product_id: producedProductId,
-            lot_id: finishedLotId,
+            mm_lot_id: finishedLotId,
+            lot_id: null,
             branch_id: branchId,
             transaction_type_id: 2, // Job Order Finished Goods
             source_document_id: Number(joId),

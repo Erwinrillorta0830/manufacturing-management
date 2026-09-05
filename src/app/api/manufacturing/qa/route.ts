@@ -14,6 +14,7 @@ import {
     resolveDispositionMetadata
 } from "./_dispositions";
 import { hasPagination, paginate } from "../_pagination";
+import { resolveOrCreateMmLot, resolveProductUnitId } from "../services/mm-lots.service";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -204,37 +205,17 @@ async function getJobOrderById(jobOrderId: number): Promise<{ id: number; produc
     }
 }
 
-// Helper to resolve or create master lot in lots collection
-async function resolveMasterLotId(name: string, typeId: number): Promise<number> {
-    let lotId = 49; // Default fallback
-    const mappedTypeId = typeId === 1 ? 390 : 389; // 1 = Raw Materials, 2 = Finished Goods
-    try {
-        const lotQuery = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-        const lotLookupRes = await fetch(`${DIRECTUS_URL}/items/lots?filter=${lotQuery}&limit=1`, { headers, cache: "no-store" });
-        const lotLookup = lotLookupRes.ok ? (await lotLookupRes.json()).data || [] : [];
-        if (lotLookup.length > 0) {
-            lotId = lotLookup[0].lot_id;
-        } else {
-            const createLotRes = await fetch(`${DIRECTUS_URL}/items/lots`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    lot_name: name,
-                    inventory_type_id: mappedTypeId,
-                    max_batch_capacity: 100000,
-                    created_by: 24
-                })
-            });
-            if (createLotRes.ok) {
-                lotId = (await createLotRes.json()).data.lot_id;
-            } else {
-                console.error(`Failed to create master lot ${name}:`, await createLotRes.text());
-            }
-        }
-    } catch (err) {
-        console.error(`Error resolving master lot ID for ${name}:`, err);
-    }
-    return lotId;
+// Helper to resolve or create a canonical MM master lot for QA output.
+async function resolveMasterLotId(name: string, _typeId: number, branchId: number, productId: number): Promise<number> {
+    const unitId = await resolveProductUnitId(productId);
+    const lot = await resolveOrCreateMmLot({
+        lotName: name,
+        branchId,
+        unitId,
+        maxBatchCapacity: 100000,
+        createdBy: 24
+    });
+    return lot.lot_id;
 }
 
 export async function GET(request: Request) {
@@ -809,10 +790,11 @@ export async function POST(request: Request) {
 
                 // 7. Positive Finished Goods Inventory Movement (if passed_quantity > 0).
                 if (passQty > 0) {
-                    const finishedLotId = await resolveMasterLotId(finalLotNo, 2); // 2 = Finished Goods
+                    const finishedLotId = await resolveMasterLotId(finalLotNo, 2, branchId, productId); // 2 = Finished Goods
                     const movementPayload = {
                         product_id: productId,
-                        lot_id: finishedLotId,
+                        mm_lot_id: finishedLotId,
+                        lot_id: null,
                         branch_id: branchId,
                         transaction_type_id: 2, // Job Order Finished Goods Receipt
                         source_document_id: parentJoIdInt,

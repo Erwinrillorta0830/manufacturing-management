@@ -44,6 +44,7 @@ interface DirectusMovementRaw {
     movement_id: number;
     product_id: number | { product_id?: number };
     branch_id: number | { id?: number };
+    mm_lot_id?: number | { lot_id?: number; lot_name?: string } | null;
     lot_id: number | { lot_id?: number; lot_name?: string } | null;
     batch_no?: string | null;
     quantity: number | string;
@@ -73,6 +74,7 @@ interface DirectusBranchRaw {
 }
 
 interface DirectusFinalQAReleaseRaw {
+    mm_lot_id?: number | { lot_id?: number; id?: number } | null;
     lot_id?: number | { lot_id?: number; id?: number } | null;
     overall_disposition?: string | null;
     approved_at?: string | null;
@@ -118,7 +120,7 @@ export async function GET(request: Request) {
             fetch(`${DIRECTUS_URL}/items/products?limit=500&fields=product_id,product_name,product_code,product_brand.brand_id,product_brand.brand_name,product_category.category_id,product_category.category_name,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,cost_per_unit,product_shelf_life,parent_id,product_type`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?fields=job_order_id,job_order_no&limit=-1`, { headers, cache: "no-store" }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=lot_id,overall_disposition,approved_at&limit=-1&sort=-approved_at`, { headers, cache: "no-store" })
+            fetch(`${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=mm_lot_id,lot_id,overall_disposition,approved_at&limit=-1&sort=-approved_at`, { headers, cache: "no-store" })
         ]);
 
         let ledger = [];
@@ -155,9 +157,10 @@ export async function GET(request: Request) {
         if (finalQARes.ok) {
             const finalQaReleases = (await finalQARes.json()).data as DirectusFinalQAReleaseRaw[] || [];
             finalQaReleases.forEach((release) => {
-                const lotId = typeof release.lot_id === "object" && release.lot_id
-                    ? Number(release.lot_id.lot_id || release.lot_id.id || 0)
-                    : Number(release.lot_id || 0);
+                const lotValue = release.mm_lot_id ?? release.lot_id;
+                const lotId = typeof lotValue === "object" && lotValue
+                    ? Number(lotValue.lot_id || lotValue.id || 0)
+                    : Number(lotValue || 0);
                 if (lotId <= 0 || finalQaStatusByLotId.has(lotId)) return;
                 const disposition = String(release.overall_disposition || "").trim();
                 const status = disposition === "Approved"

@@ -6,10 +6,10 @@ import {
     MmInventoryMovementError,
     movementErrorStatus
 } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { loadMmLots, MmLotError } from "@/app/api/manufacturing/services/mm-lots.service";
 import { resolveJobOrderRelationship } from "../../inventory/_job-order-relationships";
 import {
     normalizeFinalQARelease,
-    resolveCanonicalLotId,
     type FinalQAReleaseRecord
 } from "./_domain";
 import { hasPagination, paginate } from "../../_pagination";
@@ -32,11 +32,6 @@ interface DirectusJobOrder {
     job_order_no?: unknown;
     product_id?: unknown;
     branch_id?: unknown;
-}
-
-interface DirectusLot {
-    lot_id?: unknown;
-    lot_name?: unknown;
 }
 
 type DirectusRelease = FinalQAReleaseRecord;
@@ -113,10 +108,9 @@ async function verifyFinalQALotRelationship(input: {
     branchId: number;
 }) {
     const [lot, requestedJobOrder, jobOrders] = await Promise.all([
-        directusRecord<DirectusLot>(
-            `${DIRECTUS_URL}/items/lots/${input.lotId}?fields=lot_id,lot_name`,
-            "Master lot lookup"
-        ),
+        loadMmLots({ onlyActive: false }).then((lots) => lots.find((candidate) =>
+            relationId(candidate.lot_id, ["lot_id", "id"]) === input.lotId
+        ) || null),
         directusRecord<DirectusJobOrder>(
             `${DIRECTUS_URL}/items/manufacturing_job_orders/${input.jobOrderId}?fields=job_order_id,job_order_no,product_id,branch_id`,
             "Job Order lookup"
@@ -147,11 +141,11 @@ async function verifyFinalQALotRelationship(input: {
     }
 
     const movementRows = await fetchMmInventoryMovements({
-        lot: input.lotId,
+        mmLot: input.lotId,
         transactionTypeId: 2,
         movementDirection: "IN"
     });
-    const lotMovements = movementRows.filter((movement) => sameRelation(movement.lot_id, input.lotId));
+    const lotMovements = movementRows.filter((movement) => sameRelation(movement.mmLotId, input.lotId));
     if (lotMovements.length === 0) {
         throw new FinalQAValidationError(
             "This master lot has no positive finished-goods movement linked to a Job Order.",
@@ -205,6 +199,9 @@ function errorResponse(error: unknown) {
     if (error instanceof MmInventoryMovementError) {
         return NextResponse.json({ error: error.message }, { status: movementErrorStatus(error) });
     }
+    if (error instanceof MmLotError) {
+        return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Failed to release lot";
     console.error("Error in final-qa API:", error);
     return NextResponse.json({ error: message }, { status: 500 });
@@ -212,13 +209,12 @@ function errorResponse(error: unknown) {
 
 async function ensureNoExistingRelease(lotId: number) {
     const releases = await directusCollection<DirectusRelease>(
-        `${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=final_release_id,lot_id&limit=-1`,
+        `${DIRECTUS_URL}/items/manufacturing_final_qa_releases?fields=final_release_id,mm_lot_id,lot_id&limit=-1`,
         "Existing final QA release lookup"
     );
 
     for (const release of releases) {
-        const storedLotId = relationId(release.lot_id, ["lot_id", "id"]);
-        const canonicalLotId = await resolveCanonicalLotId(storedLotId);
+        const canonicalLotId = relationId(release.mm_lot_id, ["lot_id", "id"]);
         if (canonicalLotId === lotId) {
             throw new FinalQAValidationError(
                 "This master lot already has a final QA release and cannot be released again.",
@@ -248,8 +244,8 @@ async function fetchFinalQAQueueRows(request: Request, releases: Array<Record<st
     ]));
     const releaseByLotId = new Map<number, Record<string, unknown>>();
     releases.forEach((release) => {
-        const lotId = relationId(release.canonical_lot_id, ["canonical_lot_id"])
-            || relationId(release.lot_id, ["lot_id", "id"]);
+        const lotId = relationId(release.mm_lot_id, ["lot_id", "id"])
+            || relationId(release.canonical_lot_id, ["canonical_lot_id"]);
         if (lotId > 0 && !releaseByLotId.has(lotId)) releaseByLotId.set(lotId, release);
     });
 
@@ -337,7 +333,8 @@ export async function POST(request: Request) {
         const timestamp = new Date().toISOString();
         const payload = {
             job_order_id: relationship.jobOrderId,
-            lot_id: relationship.lotId,
+            mm_lot_id: relationship.lotId,
+            lot_id: null,
             inspected_quantity: inspectedQuantity,
             defect_quantity: defectQuantity,
             microbiological_status: microbiologicalStatus,
@@ -366,7 +363,7 @@ export async function POST(request: Request) {
             throw new Error("Final QA release insert returned no release identifier.");
         }
         if (relationId(saved.job_order_id, ["job_order_id", "id"]) !== relationship.jobOrderId
-            || relationId(saved.lot_id, ["lot_id", "id"]) !== relationship.lotId) {
+            || relationId(saved.mm_lot_id, ["lot_id", "id"]) !== relationship.lotId) {
             throw new Error("Final QA release insert returned a mismatched Job Order or master lot.");
         }
 

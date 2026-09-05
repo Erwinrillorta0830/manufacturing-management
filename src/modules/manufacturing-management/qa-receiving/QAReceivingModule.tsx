@@ -71,6 +71,7 @@ export default function QAReceivingModule({
         handleFinishCommitted: finishCommittedInspection,
         validatingInspection,
         previewError,
+        retryPreview,
         qaSubmissionBlockReason,
         receivingValidationIssues,
         handleUpdateRow,
@@ -164,6 +165,7 @@ export default function QAReceivingModule({
                 previewAcknowledged={previewAcknowledged}
                 validatingInspection={validatingInspection}
                 previewError={previewError}
+                onRetryPreview={retryPreview}
                 qaSubmissionBlockReason={qaSubmissionBlockReason}
                 receivingValidationIssues={receivingValidationIssues}
                 loadingLines={loadingLines}

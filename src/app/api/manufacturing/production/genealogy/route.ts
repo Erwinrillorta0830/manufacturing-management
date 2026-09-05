@@ -49,7 +49,8 @@ function normalizeGenealogyRecord(row: any): any {
         job_order_no: row.job_order_no || row.job_order_id?.job_order_no || "",
         finished_batch_no: row.batch_no ?? row.finished_batch_no,
         raw_product_id: row.component_product_id ?? row.raw_product_id,
-        raw_lot_id: row.component_lot_id ?? row.raw_lot_id,
+        component_mm_lot_id: row.component_mm_lot_id ?? null,
+        raw_lot_id: row.component_mm_lot_id ?? row.component_lot_id ?? row.raw_lot_id,
         raw_batch_no: row.component_batch_no ?? row.raw_batch_no,
         quantity_consumed: row.consumed_quantity ?? row.quantity_consumed,
         created_by: row.created_by ?? null

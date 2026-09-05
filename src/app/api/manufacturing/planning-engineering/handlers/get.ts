@@ -13,6 +13,7 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
+import { loadMmLots, MmLotError } from "../../services/mm-lots.service";
 import { paginate } from "../../_pagination";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
@@ -827,11 +828,7 @@ export async function handleGET(request: Request) {
         }
 
         if (action === "lots") {
-            const url = `${DIRECTUS_URL}/items/lots?limit=-1`;
-            const res = await fetch(url, { headers, cache: "no-store" });
-            if (!res.ok) throw new Error("Failed to fetch lots");
-            const data = await res.json();
-            return NextResponse.json(data.data || []);
+            return NextResponse.json(await loadMmLots({ onlyActive: true }));
         }
 
         if (action === "users") {
@@ -1451,7 +1448,7 @@ export async function handleGET(request: Request) {
         console.error("API Error in planning-engineering GET:", e);
         return NextResponse.json(
             { error: (e as { message?: string }).message || "Failed to process planning request" },
-            { status: movementErrorStatus(e) }
+            { status: e instanceof MmLotError ? e.status : movementErrorStatus(e) }
         );
     }
 }

@@ -14,6 +14,14 @@ export interface ReceivingValidationDetails {
     productId: number;
 }
 
+export interface ReceivingDependencyDetails {
+    dependency: string;
+    upstreamStatus: number | null;
+    method: string;
+}
+
+export type ReceivingErrorDetails = ReceivingValidationDetails | ReceivingDependencyDetails;
+
 export interface ReceivingDiscrepancyInput {
     lineId: number;
     productId: number;

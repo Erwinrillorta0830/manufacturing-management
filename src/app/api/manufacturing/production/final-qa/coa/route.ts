@@ -6,6 +6,7 @@ import {
     MmInventoryMovementError,
     movementErrorStatus
 } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { loadMmLots, MmLotError } from "@/app/api/manufacturing/services/mm-lots.service";
 import {
     DIRECTUS_URL,
     directusCollection,
@@ -13,7 +14,6 @@ import {
     relationId,
     resolveCanonicalLotId,
     type DirectusJobOrder,
-    type DirectusLot,
     type FinalQAReleaseRecord
 } from "../_domain";
 
@@ -52,7 +52,13 @@ function errorResponse(error: unknown, status = 500) {
     console.error("Error in final-qa COA API:", error);
     return NextResponse.json(
         { error: message },
-        { status: error instanceof MmInventoryMovementError ? movementErrorStatus(error) : status }
+        {
+            status: error instanceof MmInventoryMovementError
+                ? movementErrorStatus(error)
+                : error instanceof MmLotError
+                    ? error.status
+                    : status
+        }
     );
 }
 
@@ -73,7 +79,7 @@ export async function GET(request: Request) {
             return errorResponse("Final QA release was not found.", 404);
         }
 
-        const storedLotId = relationId(release.lot_id, ["lot_id", "id"]);
+        const storedLotId = relationId(release.mm_lot_id, ["lot_id", "id"]);
         const canonicalLotId = await resolveCanonicalLotId(storedLotId);
         if (canonicalLotId <= 0) {
             return errorResponse("The final QA release is not linked to a canonical master lot.", 422);
@@ -81,10 +87,9 @@ export async function GET(request: Request) {
 
         const jobOrderId = relationId(release.job_order_id, ["job_order_id", "id"]);
         const [lotRows, jobOrder, movementRows] = await Promise.all([
-            directusCollection<DirectusLot>(
-                `${DIRECTUS_URL}/items/lots?filter[lot_id][_eq]=${canonicalLotId}&fields=lot_id,lot_name&limit=1`,
-                "Canonical master lot lookup"
-            ),
+            loadMmLots({ onlyActive: false }).then((lots) => lots.filter((candidate) =>
+                relationId(candidate.lot_id, ["lot_id", "id"]) === canonicalLotId
+            )),
             jobOrderId > 0
                 ? directusRecord<DirectusJobOrder>(
                     `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,product_id,branch_id`,
@@ -92,7 +97,7 @@ export async function GET(request: Request) {
                 )
                 : Promise.resolve(null),
             fetchMmInventoryMovements({
-                lot: canonicalLotId,
+                mmLot: canonicalLotId,
                 transactionTypeId: 2,
                 movementDirection: "IN"
             })
@@ -133,7 +138,7 @@ export async function GET(request: Request) {
             final_release_id: releaseId(release),
             stored_lot_id: storedLotId || null,
             canonical_lot_id: canonicalLotId,
-            is_legacy_lot_reference: Boolean(storedLotId > 0 && storedLotId !== canonicalLotId),
+            is_legacy_lot_reference: false,
             job_order_id: jobOrderId || null,
             job_order_no: text(jobOrder?.job_order_no),
             product_id: productId || null,
@@ -142,7 +147,8 @@ export async function GET(request: Request) {
             branch_id: branchId || null,
             branch_name: text(branch?.branch_name, branchId > 0 ? `Branch #${branchId}` : "Unknown branch"),
             branch_code: text(branch?.branch_code),
-            lot_id: canonicalLotId,
+            mm_lot_id: canonicalLotId,
+            lot_id: null,
             lot_number: resolvedLotNumber,
             lot_name: text(lot?.lot_name, resolvedLotNumber),
             quantity: persistedInspectedQuantity || movementQuantity,

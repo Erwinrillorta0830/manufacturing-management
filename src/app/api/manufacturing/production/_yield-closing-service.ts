@@ -13,6 +13,11 @@ import {
     fetchMmInventoryMovements,
     MmInventoryMovementError
 } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import {
+    loadMmLots,
+    resolveProductUnitId,
+    MmLotError
+} from "@/app/api/manufacturing/services/mm-lots.service";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -286,25 +291,24 @@ class MutationJournal {
     }
 }
 
-async function resolveMasterLotId(name: string, inventoryTypeId: number, journal: MutationJournal): Promise<number> {
-    const filter = encodeURIComponent(JSON.stringify({ lot_name: { _eq: name } }));
-    const rows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/lots?filter=${filter}&limit=1`,
-        `Master lot lookup for ${name}`
-    );
-    const existingId = recordId(rows[0]);
+async function resolveMasterLotId(name: string, branchId: number, productId: number, journal: MutationJournal): Promise<number> {
+    const existingLots = await loadMmLots({ branchId, onlyActive: false });
+    const existingLot = existingLots.find(lot => String(lot.lot_name || "").trim().toLowerCase() === name.trim().toLowerCase());
+    const existingId = recordId(existingLot);
     if (Number.isFinite(existingId) && existingId > 0) return existingId;
 
-    const mappedTypeId = inventoryTypeId === 1 ? 390 : 389;
+    const unitOfMeasureId = await resolveProductUnitId(productId);
     const created = await journal.create<any>(
-        "lots",
+        "mm_lots",
         {
-            lot_name: name,
-            inventory_type_id: mappedTypeId,
+            lot_name: name.trim(),
+            branch_id: branchId,
+            unit_id: unitOfMeasureId,
             max_batch_capacity: 100000,
+            status: "ACTIVE",
             created_by: 24
         },
-        `Create master lot ${name}`
+        `Create MM master lot ${name}`
     );
     const createdId = recordId(created);
     if (!Number.isFinite(createdId) || createdId <= 0) {
@@ -340,7 +344,7 @@ async function loadStockLots(productId: number, branchId: number): Promise<Stock
     const stock = new Map<string, StockLot>();
     movements.forEach(movement => {
         const batchNumber = String(movement.batch_no || "LOT-N/A").trim() || "LOT-N/A";
-        const lotId = numericRelationId(movement.lot_id);
+        const lotId = numericRelationId(movement.mmLotId);
         const key = stockLotKey(lotId, batchNumber);
         const existing = stock.get(key);
         const quantity = finiteNumber(movement.quantity ?? 0, "Inventory movement quantity", { nonNegative: false });
@@ -1132,12 +1136,13 @@ async function completeYieldClosingInternal(
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
         const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
-        const finishedLotId = await resolveMasterLotId(lotNumber, 2, journal);
+        const finishedLotId = await resolveMasterLotId(lotNumber, branchId, jobOrder.productId, journal);
         const finishedMovement = await journal.create<any>(
             "inventory_movements",
             {
                 product_id: jobOrder.productId,
-                lot_id: finishedLotId,
+                mm_lot_id: finishedLotId,
+                lot_id: null,
                 branch_id: branchId,
                 transaction_type_id: 2,
                 source_document_id: jobOrder.jobOrderId,
@@ -1192,12 +1197,13 @@ async function completeYieldClosingInternal(
             for (const lot of plan.lots) {
                 const consumedLotId = lot.lotId > 0
                     ? lot.lotId
-                    : await resolveMasterLotId(lot.lotNumber, 1, journal);
+                    : await resolveMasterLotId(lot.lotNumber, branchId, plan.material.productId, journal);
                 const componentMovement = await journal.create<any>(
                     "inventory_movements",
                     {
                         product_id: plan.material.productId,
-                        lot_id: consumedLotId,
+                        mm_lot_id: consumedLotId,
+                        lot_id: null,
                         branch_id: branchId,
                         transaction_type_id: 1,
                         source_document_id: jobOrder.jobOrderId,
@@ -1219,7 +1225,8 @@ async function completeYieldClosingInternal(
                         job_order_id: jobOrder.jobOrderId,
                         batch_no: lotNumber,
                         component_product_id: plan.material.productId,
-                        component_lot_id: consumedLotId,
+                        component_mm_lot_id: consumedLotId,
+                        component_lot_id: null,
                         component_batch_no: lot.lotNumber,
                         consumed_quantity: lot.quantity,
                         created_at: phtMovementTimestamp
@@ -1366,6 +1373,11 @@ async function completeYieldClosingInternal(
             );
             movementError.operationKey = operationKey;
             throw movementError;
+        }
+        if (error instanceof MmLotError) {
+            const lotError = new YieldCompletionError(error.status, error.code, error.message);
+            lotError.operationKey = operationKey;
+            throw lotError;
         }
         const closingError = new YieldCompletionError(502, "YIELD_CLOSING_FAILED", "Yield closing could not be completed.");
         closingError.operationKey = operationKey;
