@@ -33,6 +33,7 @@ import {
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
+const PURCHASE_ORDER_FOREIGN_PRICE_SCALE = 12;
 
 export class PurchaseOrderDraftError extends Error {
     constructor(message: string, public readonly status = 400, public readonly details?: unknown) {
@@ -127,8 +128,9 @@ async function applyCommercialTerms(
     order: PurchaseOrderDraft,
     commercial: Awaited<ReturnType<typeof resolvePurchaseOrderCommercialTerms>>,
     exchangeRate: DecimalInput
-): Promise<PurchaseOrderDraft> {
+): Promise<{ order: PurchaseOrderDraft; baseUnitPricePhpByProductId: Map<number, string> }> {
     const commercialByProductId = new Map(commercial.lines.map(line => [line.productId, line]));
+    const baseUnitPricePhpByProductId = new Map<number, string>();
     const manualDiscountTypeIds = [...new Set(order.lines
         .filter(line => line.discountSource === "manual" && line.discountType !== null)
         .map(line => line.discountType as number))];
@@ -139,61 +141,66 @@ async function applyCommercialTerms(
     const manualDiscountsById = new Map(manualDiscounts);
 
     return {
-        ...order,
-        lines: order.lines.map(line => {
-            const terms = commercialByProductId.get(line.productId);
-            if (!terms) {
-                throw new PurchaseOrderDraftError(`Commercial terms could not be resolved for product ${line.productId}.`, 503, {
-                    productId: line.productId
-                });
-            }
-
-            const unitPrice = terms.pricePhp
-                ? order.currencyCode === "USD"
-                    ? DecimalValue.from(terms.pricePhp).divideRounded(exchangeRate, UNIT_PRICE_DECIMAL_SCALE).toFixed(UNIT_PRICE_DECIMAL_SCALE)
-                    : DecimalValue.from(terms.pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
-                : line.unitPrice;
-
-            if (line.discountSource === "manual") {
-                if (line.discountType === null) {
-                    throw new PurchaseOrderDraftError(`Select a discount preset for product ${line.productId}, or choose No Discount.`, 400, {
+        order: {
+            ...order,
+            lines: order.lines.map(line => {
+                const terms = commercialByProductId.get(line.productId);
+                if (!terms) {
+                    throw new PurchaseOrderDraftError(`Commercial terms could not be resolved for product ${line.productId}.`, 503, {
                         productId: line.productId
                     });
                 }
-                const manualDiscount = manualDiscountsById.get(line.discountType);
-                if (!manualDiscount) {
-                    throw new PurchaseOrderDraftError(`Discount Type ${line.discountType} could not be validated.`, 400, {
-                        productId: line.productId,
-                        discountTypeId: line.discountType
-                    });
+
+                const unitPrice = terms.pricePhp
+                    ? order.currencyCode === "USD"
+                        ? DecimalValue.from(terms.pricePhp).divideRounded(exchangeRate, PURCHASE_ORDER_FOREIGN_PRICE_SCALE).toFixed(PURCHASE_ORDER_FOREIGN_PRICE_SCALE)
+                        : DecimalValue.from(terms.pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                    : line.unitPrice;
+
+                if (terms.pricePhp) baseUnitPricePhpByProductId.set(line.productId, terms.pricePhp);
+
+                if (line.discountSource === "manual") {
+                    if (line.discountType === null) {
+                        throw new PurchaseOrderDraftError(`Select a discount preset for product ${line.productId}, or choose No Discount.`, 400, {
+                            productId: line.productId
+                        });
+                    }
+                    const manualDiscount = manualDiscountsById.get(line.discountType);
+                    if (!manualDiscount) {
+                        throw new PurchaseOrderDraftError(`Discount Type ${line.discountType} could not be validated.`, 400, {
+                            productId: line.productId,
+                            discountTypeId: line.discountType
+                        });
+                    }
+                    return {
+                        ...line,
+                        unitPrice,
+                        discountType: manualDiscount.id,
+                        discountPercent: Number(manualDiscount.percent),
+                        discountAmount: "0"
+                    };
                 }
+
+                if (line.discountSource === "none") {
+                    return {
+                        ...line,
+                        unitPrice,
+                        discountType: null,
+                        discountPercent: 0,
+                        discountAmount: "0"
+                    };
+                }
+
                 return {
                     ...line,
                     unitPrice,
-                    discountType: manualDiscount.id,
-                    discountPercent: Number(manualDiscount.percent),
+                    discountType: terms.discountTypeId,
+                    discountPercent: Number(terms.discountPercent),
                     discountAmount: "0"
                 };
-            }
-
-            if (line.discountSource === "none") {
-                return {
-                    ...line,
-                    unitPrice,
-                    discountType: null,
-                    discountPercent: 0,
-                    discountAmount: "0"
-                };
-            }
-
-            return {
-                ...line,
-                unitPrice,
-                discountType: terms.discountTypeId,
-                discountPercent: Number(terms.discountPercent),
-                discountAmount: "0"
-            };
-        })
+            })
+        },
+        baseUnitPricePhpByProductId
     };
 }
 
@@ -411,17 +418,20 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
     }
     const productCategoryIds = await validateDraft(order);
     let resolvedCommercial;
+    let baseUnitPricePhpByProductId = new Map<number, string>();
     try {
         resolvedCommercial = await resolvePurchaseOrderCommercialTerms(
             order.supplierId,
             order.lines.map(line => line.productId)
         );
-        const effectiveOrder = await applyCommercialTerms(order, resolvedCommercial, exchangeRate);
+        const appliedCommercialTerms = await applyCommercialTerms(order, resolvedCommercial, exchangeRate);
+        const effectiveOrder = appliedCommercialTerms.order;
         assertEnteredPricesForMissingPriceControl(
             effectiveOrder.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
             resolvedCommercial.missingPriceProductIds
         );
         order = effectiveOrder;
+        baseUnitPricePhpByProductId = appliedCommercialTerms.baseUnitPricePhpByProductId;
     } catch (error) {
         if (error instanceof PurchaseOrderPriceTypeError || error instanceof PurchaseOrderCommercialResolutionError) {
             throw new PurchaseOrderDraftError(error.message, error.status, {
@@ -486,6 +496,7 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
                     withholdingPercent: line.withholdingPercent,
                     discountType: line.discountType,
                     exchangeRate: exchangeRate,
+                    baseUnitPricePhp: baseUnitPricePhpByProductId.get(line.productId),
                     branchId: order.branchId,
                     purchaseIntent: line.purchaseIntent,
                     jobOrderId: line.jobOrderId,

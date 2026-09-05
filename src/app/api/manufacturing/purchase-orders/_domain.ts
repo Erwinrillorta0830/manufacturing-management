@@ -145,6 +145,7 @@ export interface PurchaseOrderProductPayloadInput extends PurchaseOrderMoneyLine
     productId: number;
     categoryType: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     exchangeRate: DecimalInput;
+    baseUnitPricePhp?: DecimalInput;
     branchId?: number | null;
     purchaseIntent?: PurchaseIntent;
     jobOrderId?: number | null;
@@ -160,7 +161,9 @@ export function buildPurchaseOrderProductPayload(
     if (!Number.isSafeInteger(quantity) || quantity <= 0) {
         throw new Error("Purchase-order quantity must be a positive whole number.");
     }
-    const unitPricePhp = DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(UNIT_PRICE_DECIMAL_SCALE);
+    const unitPricePhp = input.baseUnitPricePhp === undefined
+        ? DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+        : DecimalValue.from(input.baseUnitPricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE);
     const discountedSubtotalPhp = DecimalValue.from(amount.grossPhp).subtract(amount.discountPhp).toFixed(2);
 
     return {

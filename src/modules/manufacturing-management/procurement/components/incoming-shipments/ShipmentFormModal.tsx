@@ -389,7 +389,6 @@ export function ShipmentFormModal({
                                         <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type</label>
                                         <div className="flex h-8 items-center rounded-lg border bg-muted px-2.5 text-xs font-semibold text-foreground" aria-live="polite">
                                             {priceTypeResolution?.priceTypeName || (priceControlStatus === "loading" ? "Resolving..." : "Pending product")}
-                                            {priceTypeResolution?.priceTypeId ? ` (#${priceTypeResolution.priceTypeId})` : ""}
                                         </div>
                                     </div>
                                 )}
@@ -708,6 +707,7 @@ export function ShipmentFormModal({
                                                                 parentProductId={line.parent_product_id}
                                                                 productName={line.product_name}
                                                                 materialType={materialType}
+                                                                canonicalDrafting={canonicalDrafting}
                                                                 disabled={!isRowEditing || !materialType}
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
@@ -843,7 +843,9 @@ export function ShipmentFormModal({
                                                                 type="number"
                                                                 required
                                                                 step="0.0001"
-                                                                placeholder="19.00"
+                                                                placeholder={canonicalDrafting
+                                                                    ? priceControlStatus === "warning" ? "Enter manually" : "Waiting for matrix"
+                                                                    : "19.00"}
                                                                 value={line.base_unit_cost_php}
                                                                 onChange={e => handleLineFormChange(idx, "base_unit_cost_php", e.target.value)}
                                                                 onKeyDown={(e) => {
@@ -899,11 +901,17 @@ export function ShipmentFormModal({
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     <option value="">No Discount (0%)</option>
-                                                                     {discountTypes?.map(dt => (
-                                                                         <option key={dt.id} value={String(dt.id)}>
-                                                                             {dt.discount_type} — {Number(dt.total_percent).toFixed(2)}%
-                                                                         </option>
-                                                                     ))}
+                                                                     {discountTypes?.map(dt => {
+                                                                         const discountName = dt.discount_type.trim();
+                                                                         const optionLabel = discountName.includes("%")
+                                                                             ? discountName
+                                                                             : `${discountName} (${Number(dt.total_percent).toString()}%)`;
+                                                                         return (
+                                                                             <option key={dt.id} value={String(dt.id)}>
+                                                                                 {optionLabel}
+                                                                             </option>
+                                                                         );
+                                                                     })}
                                                                  </select>
                                                              </div>
                                                          </td>

@@ -58,6 +58,7 @@ interface DirectusPriceMatrixRow {
     product_id?: DirectusRelation;
     price_type_id?: DirectusRelation;
     price?: number | string | null;
+    status?: string | null;
 }
 
 interface DirectusPriceTypeRow {
@@ -269,7 +270,8 @@ export function resolvePurchaseOrderPriceTypeFromRows(
         const rowProductId = relationId(row.product_id, ["product_id", "id"]);
         const rowPriceTypeId = relationId(row.price_type_id, ["price_type_id", "id"]);
         const price = row.price == null ? "" : String(row.price).trim();
-        if (rowProductId && rowPriceTypeId === priceTypeId && price && Number(price) > 0) {
+        const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
+        if (rowProductId && rowPriceTypeId === priceTypeId && (!status || status === "approved") && price && Number(price) > 0) {
             matrixByProductId.set(rowProductId, price);
             priceSourceProductIds.set(rowProductId, rowProductId);
         }
@@ -341,7 +343,7 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
     }
     const matrixProductIds = [...new Set([...uniqueProductIds, ...parentProductIds])];
     const matrixRows = await directusData<DirectusPriceMatrixRow[]>(
-        `/items/product_per_price_type?filter[product_id][_in]=${matrixProductIds.join(",")}&filter[price_type_id][_eq]=${priceTypeIds[0]}&fields=product_id,price_type_id,price&limit=-1`,
+        `/items/product_per_price_type?filter[product_id][_in]=${matrixProductIds.join(",")}&filter[price_type_id][_eq]=${priceTypeIds[0]}&filter[status][_eq]=approved&fields=product_id,price_type_id,price,status&limit=-1`,
         "Unable to load Price Control matrix entries."
     );
     const resolved = resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, matrixRows);
