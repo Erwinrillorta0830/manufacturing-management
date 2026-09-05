@@ -11,7 +11,7 @@ import type {
   MMStockTransferDetail,
 } from "../types/stock-transfer.types";
 import { CreateStockTransferSchema, UpdateStockTransferSchema, UpdateItemValue } from "../types/stock-transfer.schema";
-import { createInventoryLot, fetchLotsByBranch, fetchInventoryLots, ensureLotForBranch } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
+import { fetchInventoryLots, ensureLotForBranch } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
 import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 
@@ -26,8 +26,7 @@ async function resolveDetailLotReferences(
 ): Promise<{ lot_id: number; inventory_lot_id: number; target_lot_id: number | null; target_inventory_lot_id: number | null } | null> {
   const prodId = typeof transfer.product_id === "object" ? transfer.product_id.product_id : transfer.product_id;
   const srcBranch = typeof transfer.source_branch_id === "object" && transfer.source_branch_id !== null ? transfer.source_branch_id.id : (transfer.source_branch_id || transfer.source_branch);
-  const targetBranch = typeof transfer.target_branch_id === "object" && transfer.target_branch_id !== null ? transfer.target_branch_id.id : (transfer.target_branch_id || transfer.target_branch);
-
+  
   let sourceLotId: number | null = transfer.source_lot_id ? Number(transfer.source_lot_id) : null;
   let sourceInvLotId: number | null = transfer.source_inventory_lot_id ? Number(transfer.source_inventory_lot_id) : null;
 
@@ -377,9 +376,9 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
         const mDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date)
           ? (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date
           : d.manufacturing_date;
-        const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { expiration_date?: string }).expiration_date)
-          ? (d.inventory_lot_id as { expiration_date?: string }).expiration_date
-          : d.expiration_date;
+        const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null)
+          ? ((d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiry_date || (d.inventory_lot_id as { expiry_date?: string; expiration_date?: string }).expiration_date)
+          : (d.expiry_date || d.expiration_date);
         const invLotId = typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null
           ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id
           : d.inventory_lot_id;

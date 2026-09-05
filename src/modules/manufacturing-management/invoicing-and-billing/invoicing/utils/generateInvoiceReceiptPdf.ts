@@ -130,7 +130,10 @@ function renderField(doc: jsPDF, key: string, value: string, defaultX: number, d
     }
 }
 
-export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice, _options?: { includeBackground?: boolean }): Promise<jsPDF> {
+export async function generateInvoiceReceiptPdf(invoice: PrintableInvoice, options?: { includeBackground?: boolean }): Promise<jsPDF> {
+    if (options?.includeBackground && invoice.templateConfig) {
+        return generateOfficialReceipt(invoice, invoice.templateConfig, true);
+    }
     return generateTableReceipt(invoice);
 }
 

@@ -195,7 +195,7 @@ export function ReceiptPreview({ invoice, scale = 1 }: { invoice: PrintableInvoi
                 <div className="text-center space-y-1">
                     <div className="w-56 border-b border-black mx-auto"></div>
                     <p className="font-bold uppercase text-[10px]">Cashier / Authorized Representative</p>
-                    <p className="text-[8px] text-gray-600">Printer's Accreditation No. 004MP2024000000033 · Date Issued: 03-14-2024</p>
+                    <p className="text-[8px] text-gray-600">Printer&apos;s Accreditation No. 004MP2024000000033 · Date Issued: 03-14-2024</p>
                 </div>
             </div>
         </div>
