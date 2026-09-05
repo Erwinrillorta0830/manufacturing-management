@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { RECEIVING_QUEUE_INVENTORY_STATUS_IDS } from "../../procurement/_domain";
-import { procurementDirectusFetch } from "../../procurement/_directus";
+import { procurementDirectusFetch, procurementDirectusRead, ProcurementDirectusError } from "../../procurement/_directus";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
     PurchaseOrderAuthorizationError,
@@ -57,11 +57,14 @@ import {
     RECEIVING_ERROR_CODES,
     receivingErrorCodeForStatus,
     type ReceivingErrorCode,
-    type ReceivingValidationDetails
+    type ReceivingErrorDetails,
+    type ReceivingDependencyDetails
 } from "../_receiving-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const RECEIVING_PREVIEW_DEPENDENCY_MESSAGE = "Receiving preview is temporarily unavailable. Please retry.";
 
 class ReceivingPreviewError extends Error {
     readonly code: ReceivingErrorCode;
@@ -70,11 +73,73 @@ class ReceivingPreviewError extends Error {
         message: string,
         readonly status = 422,
         code?: ReceivingErrorCode,
-        readonly details?: ReceivingValidationDetails
+        readonly details?: ReceivingErrorDetails
     ) {
         super(message);
         this.code = code || receivingErrorCodeForStatus(status);
     }
+}
+
+function dependencyDetails(error: ProcurementDirectusError): ReceivingDependencyDetails {
+    return {
+        dependency: error.dependency,
+        upstreamStatus: error.status,
+        method: error.method
+    };
+}
+
+function receivingPreviewDependencyError(error: ProcurementDirectusError): ReceivingPreviewError {
+    if (error.notFoundIsExpected && error.status === 404) {
+        return new ReceivingPreviewError(
+            error.dependency === "purchase_order"
+                ? "Purchase order not found."
+                : "The selected receiving branch does not exist.",
+            404
+        );
+    }
+    return new ReceivingPreviewError(
+        RECEIVING_PREVIEW_DEPENDENCY_MESSAGE,
+        503,
+        RECEIVING_ERROR_CODES.DEPENDENCY,
+        dependencyDetails(error)
+    );
+}
+
+async function readPreviewJson(response: Response, dependency: string): Promise<unknown> {
+    try {
+        return await response.json();
+    } catch {
+        throw new ReceivingPreviewError(
+            RECEIVING_PREVIEW_DEPENDENCY_MESSAGE,
+            503,
+            RECEIVING_ERROR_CODES.DEPENDENCY,
+            { dependency, upstreamStatus: response.status, method: "GET" }
+        );
+    }
+}
+
+function requirePreviewRows(body: unknown, dependency: string): Record<string, unknown>[] {
+    if (body && typeof body === "object" && "data" in body && Array.isArray(body.data)) {
+        return body.data as Record<string, unknown>[];
+    }
+    throw new ReceivingPreviewError(
+        RECEIVING_PREVIEW_DEPENDENCY_MESSAGE,
+        503,
+        RECEIVING_ERROR_CODES.DEPENDENCY,
+        { dependency, upstreamStatus: null, method: "GET" }
+    );
+}
+
+function requirePreviewItem(body: unknown, dependency: string): Record<string, unknown> {
+    if (body && typeof body === "object" && "data" in body && body.data && typeof body.data === "object") {
+        return body.data as Record<string, unknown>;
+    }
+    throw new ReceivingPreviewError(
+        RECEIVING_PREVIEW_DEPENDENCY_MESSAGE,
+        503,
+        RECEIVING_ERROR_CODES.DEPENDENCY,
+        { dependency, upstreamStatus: null, method: "GET" }
+    );
 }
 
 interface DirectusBranch {
@@ -110,12 +175,6 @@ interface DirectusProductAllocationMetadata {
     product_id?: unknown;
     product_type?: unknown;
     unit_of_measurement?: unknown;
-}
-
-function rows(body: unknown): Record<string, unknown>[] {
-    return body && typeof body === "object" && "data" in body && Array.isArray(body.data)
-        ? body.data as Record<string, unknown>[]
-        : [];
 }
 
 function positiveInteger(value: unknown, relationKey?: string): number | null {
@@ -188,14 +247,14 @@ async function loadBranch(branchId: number): Promise<DirectusBranch> {
     const params = new URLSearchParams({
         fields: "id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id"
     });
-    const response = await procurementDirectusFetch(`/items/branches/${branchId}?${params.toString()}`);
-    if (response.status === 404) throw new ReceivingPreviewError("The selected receiving branch does not exist.");
-    if (!response.ok) throw new ReceivingPreviewError("Unable to verify receiving branch configuration.", 503);
-    const body = await response.json();
-    if (!body?.data || typeof body.data !== "object") {
-        throw new ReceivingPreviewError("The selected receiving branch does not exist.");
-    }
-    return body.data as DirectusBranch;
+    const response = await procurementDirectusRead(
+        `/items/branches/${branchId}?${params.toString()}`,
+        "receiving_branch",
+        {},
+        { notFoundIsExpected: true }
+    );
+    const body = await readPreviewJson(response, "receiving_branch");
+    return requirePreviewItem(body, "receiving_branch") as DirectusBranch;
 }
 
 async function loadConfiguredBadStockBranch(source: DirectusBranch): Promise<DirectusBranch | null> {
@@ -205,7 +264,22 @@ async function loadConfiguredBadStockBranch(source: DirectusBranch): Promise<Dir
     return id ? loadBranch(id) : null;
 }
 
+async function loadReceivingHistoryResponse(shipmentId: number): Promise<Response> {
+    const withLinePath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`;
+    const fallbackPath = `/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`;
+
+    try {
+        const response = await procurementDirectusFetch(withLinePath);
+        if (response.ok) return response;
+    } catch {
+        // Retry with the compatibility field set below so transient upstream failures
+        // are surfaced through the typed dependency error if both reads fail.
+    }
+    return procurementDirectusRead(fallbackPath, "purchase_order_receiving");
+}
+
 export async function POST(request: Request) {
+    const correlationId = request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
     try {
         const actor = await requirePurchaseOrderModuleAccess({ modulePath: PURCHASE_ORDER_MODULE_PATHS.receiving });
         const parsed = receivingPreviewRequestSchema.safeParse(await request.json());
@@ -266,22 +340,28 @@ export async function POST(request: Request) {
             ]))];
         const requestedProductIds = [...new Set(lines.map(line => line.productId))];
         const [headerResponse, lineResponse, receivingResponseWithLine, movementTypeResponse, productResponse] = await Promise.all([
-            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`),
-            procurementDirectusFetch(`/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`),
-            procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`),
-            procurementDirectusFetch("/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1"),
-            procurementDirectusFetch(`/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`)
+            procurementDirectusRead(
+                `/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,workflow_revision,force_received_at`,
+                "purchase_order",
+                {},
+                { notFoundIsExpected: true }
+            ),
+            procurementDirectusRead(
+                `/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=purchase_order_product_id,purchase_order_id,product_id,purchase_intent,job_order_id,ordered_quantity&limit=-1`,
+                "purchase_order_lines"
+            ),
+            loadReceivingHistoryResponse(shipmentId),
+            procurementDirectusRead(
+                "/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1",
+                "inventory_transaction_types"
+            ),
+            procurementDirectusRead(
+                `/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`,
+                "products"
+            )
         ]);
-        let receivingResponse = receivingResponseWithLine;
-        if (!receivingResponse.ok) {
-            receivingResponse = await procurementDirectusFetch(`/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,received_quantity,quantity_rejected,is_replacement,receiving_method,isPosted&limit=-1`);
-        }
-        if (headerResponse.status === 404) throw new ReceivingPreviewError("Purchase order not found.", 404);
-        if (!headerResponse.ok || !lineResponse.ok || !receivingResponse.ok || !movementTypeResponse.ok || !productResponse.ok) {
-            throw new ReceivingPreviewError("Unable to validate receiving preview reference data.", 503);
-        }
-
-        const header = (await headerResponse.json()).data as Record<string, unknown>;
+        const receivingResponse = receivingResponseWithLine;
+        const header = requirePreviewItem(await readPreviewJson(headerResponse, "purchase_order"), "purchase_order");
         const purchaseOrderBranchId = resolvePurchaseOrderBranchId(header);
         if (!purchaseOrderBranchId) {
             throw new ReceivingPreviewError("The Purchase Order does not have a valid receiving branch.", 409);
@@ -349,7 +429,7 @@ export async function POST(request: Request) {
             "movement_id,product_id,mm_lot_id,lot_id,quantity,batch_no,manufacturing_date,expiry_date"
         );
 
-        const poLines = rows(await lineResponse.json());
+        const poLines = requirePreviewRows(await readPreviewJson(lineResponse, "purchase_order_lines"), "purchase_order_lines");
         if (poLines.length === 0) throw new ReceivingPreviewError("This purchase order has no purchase-order lines.");
         const poLineIds = poLines
             .map(line => positiveInteger(line.purchase_order_product_id))
@@ -363,7 +443,7 @@ export async function POST(request: Request) {
             const unknown = unknownLineIds.length > 0 ? ` Unknown line(s): ${unknownLineIds.join(", ")}.` : "";
             throw new ReceivingPreviewError(`${replacementFlow ? "The replacement receiving submission contains an invalid line." : "Every purchase-order line must be included in the receiving submission."}${missing}${unknown}`);
         }
-        const receivingHistory = summarizeReceivingHistory(rows(await receivingResponse.json()), poLines);
+        const receivingHistory = summarizeReceivingHistory(requirePreviewRows(await readPreviewJson(receivingResponse, "purchase_order_receiving"), "purchase_order_receiving"), poLines);
         if (receivingHistory.unresolvedRows.length > 0) {
             throw new ReceivingPreviewError("Existing receiving records could not be matched to a purchase-order line. Reconciliation is required before receiving can continue.", 409);
         }
@@ -373,7 +453,7 @@ export async function POST(request: Request) {
             .map(line => positiveInteger(line.product_id, "product_id"))
             .filter((productId): productId is number => productId !== null));
         const productMetadata = new Map<number, DirectusProductAllocationMetadata>();
-        for (const product of rows(await productResponse.json())) {
+        for (const product of requirePreviewRows(await readPreviewJson(productResponse, "products"), "products")) {
             const productId = relationId(product.product_id, ["product_id", "id"]);
             if (productId) productMetadata.set(productId, product);
         }
@@ -536,7 +616,7 @@ export async function POST(request: Request) {
             for (const audit of evaluation.allocations) capacityAuditsByAllocationKey.set(audit.key, audit);
         }
 
-        const movementTypes = rows(await movementTypeResponse.json()) as DirectusMovementType[];
+        const movementTypes = requirePreviewRows(await readPreviewJson(movementTypeResponse, "inventory_transaction_types"), "inventory_transaction_types") as DirectusMovementType[];
         const needsAcceptedRoute = lines.some(line => line.acceptedQuantity > 0);
         const needsRejectedRouteBeforeQa = lines.some(line => line.rejectedQuantity > 0);
         const passedType = needsAcceptedRoute
@@ -621,22 +701,27 @@ export async function POST(request: Request) {
         const mrpProductIds = [...new Set(acceptedMrpEntries.map(({ line }) => line.productId))];
         const [jobOrderResponse, materialResponse] = await Promise.all([
             mrpJobOrderIds.length > 0
-                ? procurementDirectusFetch(`/items/manufacturing_job_orders?filter[job_order_id][_in]=${mrpJobOrderIds.join(",")}&fields=job_order_id,job_order_no&limit=${mrpJobOrderIds.length}`)
+                ? procurementDirectusRead(
+                    `/items/manufacturing_job_orders?filter[job_order_id][_in]=${mrpJobOrderIds.join(",")}&fields=job_order_id,job_order_no&limit=${mrpJobOrderIds.length}`,
+                    "manufacturing_job_orders"
+                )
                 : null,
             mrpJobOrderIds.length > 0 && mrpProductIds.length > 0
-                ? procurementDirectusFetch(`/items/manufacturing_job_order_materials?filter[job_order_id][_in]=${mrpJobOrderIds.join(",")}&filter[product_id][_in]=${mrpProductIds.join(",")}&fields=jo_material_id,job_order_id,product_id,allocated_quantity,reserved_quantity&limit=-1`)
+                ? procurementDirectusRead(
+                    `/items/manufacturing_job_order_materials?filter[job_order_id][_in]=${mrpJobOrderIds.join(",")}&filter[product_id][_in]=${mrpProductIds.join(",")}&fields=jo_material_id,job_order_id,product_id,allocated_quantity,reserved_quantity&limit=-1`,
+                    "manufacturing_job_order_materials"
+                )
                 : null
         ]);
-        if ((jobOrderResponse && !jobOrderResponse.ok) || (materialResponse && !materialResponse.ok)) {
-            throw new ReceivingPreviewError("Unable to validate MRP allocation targets.", 503);
-        }
-        const jobOrders = jobOrderResponse ? rows(await jobOrderResponse.json()) as DirectusJobOrder[] : [];
+        const jobOrders = jobOrderResponse
+            ? requirePreviewRows(await readPreviewJson(jobOrderResponse, "manufacturing_job_orders"), "manufacturing_job_orders") as DirectusJobOrder[]
+            : [];
         const jobOrderById = new Map(jobOrders.map(jobOrder => [positiveInteger(jobOrder.job_order_id), jobOrder]));
         if (mrpJobOrderIds.some(id => !jobOrderById.has(id))) {
             throw new ReceivingPreviewError("One or more MRP-demand job orders no longer exist.");
         }
         const jobOrderMaterials = materialResponse
-            ? rows(await materialResponse.json()) as DirectusJobOrderMaterial[]
+            ? requirePreviewRows(await readPreviewJson(materialResponse, "manufacturing_job_order_materials"), "manufacturing_job_order_materials") as DirectusJobOrderMaterial[]
             : [];
         for (const { line } of acceptedMrpEntries) {
             const jobOrderId = positiveInteger(poLineById.get(line.lineId)!.job_order_id, "job_order_id") as number;
@@ -733,26 +818,48 @@ export async function POST(request: Request) {
             }
         });
     } catch (error) {
-        const status = error instanceof PurchaseOrderAuthorizationError || error instanceof PurchaseQaConfigurationError || error instanceof ProductCategoryTypeValidationError
-            ? error.status
-            : error instanceof MmLotCompatibilityError
-                ? error.status
-            : error instanceof QuarantineDispositionError
-                ? error.statusCode
-            : error instanceof ReceivingDocumentTypeError
-                ? error.statusCode
-            : error instanceof ReceivingPreviewError
-                ? error.status
-                : error instanceof ReceivingQuantityError
+        const normalizedError = error instanceof ProcurementDirectusError
+            ? receivingPreviewDependencyError(error)
+            : error;
+        const status = normalizedError instanceof PurchaseOrderAuthorizationError || normalizedError instanceof PurchaseQaConfigurationError || normalizedError instanceof ProductCategoryTypeValidationError
+            ? normalizedError.status
+            : normalizedError instanceof MmLotCompatibilityError
+                ? normalizedError.status
+            : normalizedError instanceof QuarantineDispositionError
+                ? normalizedError.statusCode
+            : normalizedError instanceof ReceivingDocumentTypeError
+                ? normalizedError.statusCode
+            : normalizedError instanceof ReceivingPreviewError
+                ? normalizedError.status
+                : normalizedError instanceof ReceivingQuantityError
                     ? 422
                     : 500;
+        if (normalizedError instanceof ReceivingPreviewError && normalizedError.code === RECEIVING_ERROR_CODES.DEPENDENCY) {
+            console.error("[QA Receiving Preview Dependency]", {
+                correlationId,
+                details: normalizedError.details
+            });
+        } else if (error instanceof ProcurementDirectusError) {
+            console.error("[QA Receiving Preview Dependency]", {
+                correlationId,
+                dependency: error.dependency,
+                upstreamStatus: error.status,
+                method: error.method
+            });
+        }
         const response: Record<string, unknown> = {
-            error: (error as Error).message || "Failed to generate receiving preview.",
-            code: error instanceof ReceivingPreviewError
-                ? error.code
+            error: normalizedError instanceof Error
+                ? normalizedError.message
+                : "Failed to generate receiving preview.",
+            code: normalizedError instanceof ReceivingPreviewError
+                ? normalizedError.code
                 : receivingErrorCodeForStatus(status)
         };
-        if (error instanceof ReceivingPreviewError && error.details) response.details = error.details;
-        return NextResponse.json(response, { status });
+        if (normalizedError instanceof ReceivingPreviewError && normalizedError.details) response.details = normalizedError.details;
+        response.correlationId = correlationId;
+        return NextResponse.json(response, {
+            status,
+            headers: { "x-correlation-id": correlationId }
+        });
     }
 }

@@ -175,56 +175,57 @@ export default function MovementPayloadModal({
                                 return (
                                     <section
                                         aria-labelledby="receiving-transaction-summary"
-                                        className="overflow-hidden rounded-xl border bg-muted/10 shadow-sm"
+                                        data-testid="receiving-transaction-summary"
+                                        className="overflow-hidden rounded-xl border border-border/80 bg-muted/10 shadow-sm"
                                     >
-                                        <div className="border-b bg-muted/30 px-4 py-3">
-                                            <h3 id="receiving-transaction-summary" className="text-sm font-extrabold uppercase tracking-wider text-foreground">
+                                        <div className="border-b bg-muted/30 px-4 py-3 sm:px-5 sm:py-4">
+                                            <h3 id="receiving-transaction-summary" className="text-base font-extrabold uppercase tracking-wider text-foreground">
                                                 Transaction Summary
                                             </h3>
-                                            <p className="mt-0.5 text-xs text-muted-foreground">Posted receiving metadata</p>
+                                            <p className="mt-1 text-sm text-muted-foreground">Posted receiving metadata</p>
                                         </div>
-                                        <dl className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 lg:col-span-2">
-                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">PO Number</dt>
-                                                <dd className="mt-1 break-words font-mono text-base font-extrabold leading-tight text-foreground sm:text-lg">
+                                        <dl className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:gap-4 sm:p-5 lg:grid-cols-4">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">
+                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">PO Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-lg font-extrabold leading-tight text-foreground sm:text-xl">
                                                     {purchaseOrderReference || "Current purchase order"}
                                                 </dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 lg:col-span-2">
-                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Receipt Number</dt>
-                                                <dd className="mt-1 break-words font-mono text-base font-extrabold leading-tight text-primary sm:text-lg">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">
+                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Receipt Number</dt>
+                                                <dd className="mt-1 break-words font-mono text-lg font-extrabold leading-tight text-primary sm:text-xl">
                                                     {displayReceipt}
                                                 </dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
-                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date of Receipt</dt>
-                                                <dd className="mt-1 text-sm font-semibold tabular-nums text-foreground">{committedResult.receiptDate}</dd>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
+                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Date of Receipt</dt>
+                                                <dd className="mt-1 text-base font-bold tabular-nums text-foreground">{committedResult.receiptDate}</dd>
                                             </div>
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
-                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</dt>
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
+                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Status</dt>
                                                 <dd className="mt-1">
-                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-sm font-bold ${statusClass}`}>
+                                                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-base font-bold ${statusClass}`}>
                                                         {committedResult.status}
                                                     </span>
                                                 </dd>
                                             </div>
                                             {committedResult.status === "Received" && (
                                                 <>
-                                                    <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
-                                                        <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Status</dt>
-                                                        <dd className="mt-1 text-sm font-bold text-blue-700 dark:text-blue-300">{paymentStatus}</dd>
+                                                    <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
+                                                        <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Payment Status</dt>
+                                                        <dd className="mt-1 text-base font-bold text-blue-700 dark:text-blue-300">{paymentStatus}</dd>
                                                     </div>
                                                     {Number(committedResult.paymentStatus) === 2 && (
-                                                        <div className="min-w-0 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-3">
-                                                            <dt className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Finance Queue</dt>
-                                                            <dd className="mt-1 text-sm font-bold text-blue-700 dark:text-blue-300">Purchase Amount Posting</dd>
+                                                        <div className="min-w-0 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-3 sm:px-4 sm:py-4">
+                                                            <dt className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">Finance Queue</dt>
+                                                            <dd className="mt-1 text-base font-bold text-blue-700 dark:text-blue-300">Purchase Amount Posting</dd>
                                                         </div>
                                                     )}
                                                 </>
                                             )}
-                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3">
-                                                <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Submission</dt>
-                                                <dd className="mt-1 text-sm font-semibold text-foreground">
+                                            <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4">
+                                                <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">Submission</dt>
+                                                <dd className="mt-1 text-base font-semibold text-foreground">
                                                     {committedResult.idempotentReplay ? "Idempotent Replay" : "Fresh Posting"}
                                                 </dd>
                                             </div>
