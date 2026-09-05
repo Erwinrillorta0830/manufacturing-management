@@ -59,7 +59,7 @@ export function YieldClosingDialog({
 }: YieldClosingDialogProps) {
     return (
         <Dialog open={isYieldDialogOpen} onOpenChange={setIsYieldDialogOpen}>
-            <DialogContent className="sm:max-w-[480px]">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-[480px] max-h-[calc(100dvh-1rem)] flex flex-col overflow-hidden">
                 <DialogHeader>
                     <DialogTitle className="text-xl flex items-center gap-2">
                         <Forklift className="h-5 w-5 text-primary" />
@@ -71,7 +71,7 @@ export function YieldClosingDialog({
                 </DialogHeader>
 
                 {selectedJO && (
-                    <div className="space-y-4 py-4">
+                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto py-4 pr-1 scrollbar-thin">
                         {/* Summary panel */}
                         <div className="bg-muted/40 border rounded-lg p-3 text-sm grid grid-cols-2 gap-2">
                             <div>
@@ -131,7 +131,7 @@ export function YieldClosingDialog({
                                         size="sm"
                                         onClick={handleRetryYieldMaterials}
                                         disabled={actionLoading}
-                                        className="h-7 shrink-0 text-[11px]"
+                                        className="min-h-11 shrink-0 text-sm"
                                     >
                                         Retry
                                     </Button>
@@ -155,7 +155,7 @@ export function YieldClosingDialog({
                                     placeholder="e.g. 5000"
                                     value={yieldQty}
                                     onChange={e => setYieldQty(e.target.value)}
-                                    className="h-10 text-base font-bold font-mono"
+                                    className="min-h-11 text-base font-bold font-mono"
                                 />
                                 {yieldQty && !isNaN(Number(yieldQty)) && Number(yieldQty) < selectedJO.quantity && (
                                     <p className="text-[10px] text-destructive font-bold flex items-center gap-1 mt-0.5">
@@ -172,7 +172,7 @@ export function YieldClosingDialog({
                                     placeholder={`MFG-${selectedJO.jo_id}`}
                                     value={lotNumber}
                                     onChange={e => setLotNumber(e.target.value)}
-                                    className="h-9 text-xs"
+                                    className="min-h-11 text-sm"
                                 />
                             </div>
 
@@ -185,7 +185,7 @@ export function YieldClosingDialog({
                                     type="date"
                                     value={manufacturingDate}
                                     onChange={e => setManufacturingDate(e.target.value)}
-                                    className="h-9 text-xs"
+                                    className="min-h-11 text-sm"
                                 />
                             </div>
 
@@ -198,7 +198,7 @@ export function YieldClosingDialog({
                                     type="date"
                                     value={expiryDate}
                                     onChange={e => setExpiryDate(e.target.value)}
-                                    className="h-9 text-xs"
+                                    className="min-h-11 text-sm"
                                 />
                             </div>
 
@@ -210,19 +210,19 @@ export function YieldClosingDialog({
                                     placeholder="0.00"
                                     value={unitCost}
                                     onChange={e => setUnitCost(e.target.value)}
-                                    className="h-9 text-xs font-mono"
+                                    className="min-h-11 text-sm font-mono"
                                 />
                             </div>
                         </div>
                     </div>
                 )}
 
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter className="sticky bottom-0 z-10 gap-2 border-t bg-background/95 pt-3 sm:gap-0 backdrop-blur">
                     <Button 
                         variant="outline" 
                         onClick={() => setIsYieldDialogOpen(false)}
                         disabled={actionLoading}
-                        className="h-9 text-xs font-semibold"
+                        className="min-h-11 text-sm font-semibold"
                     >
                         Cancel
                     </Button>
@@ -230,7 +230,7 @@ export function YieldClosingDialog({
                         variant="default"
                         onClick={handleSubmitYieldClosing}
                         disabled={actionLoading || yieldMaterialsLoading || Boolean(yieldMaterialsError)}
-                        className="h-9 text-xs font-semibold gap-1.5"
+                        className="min-h-11 text-sm font-semibold gap-1.5"
                     >
                         {yieldMaterialsLoading ? (
                             <>

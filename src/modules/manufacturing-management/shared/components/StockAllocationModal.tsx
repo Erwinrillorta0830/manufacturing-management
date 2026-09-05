@@ -39,7 +39,7 @@ import {
   AllocationStrategy,
   QAStatus,
 } from '../types/lot-tracking.types';
-import { fetchBatchOnhand } from '../services/lot-tracking.service';
+import { fetchBatchOnhand, fetchLotsByBranch, isBadStockLot } from '../services/lot-tracking.service';
 import { allocateStockSync } from '../services/stock-allocation.engine';
 
 export interface StockAllocationModalProps {
@@ -48,6 +48,9 @@ export interface StockAllocationModalProps {
   productId: number;
   productName?: string;
   branchId: number;
+  targetBranchId?: number | null;
+  targetBranchName?: string;
+  isTargetBadStock?: boolean;
   requestedQuantity: number;
   uomName?: string;
   initialAllocations?: BatchAllocationResult[];
@@ -60,6 +63,8 @@ export function StockAllocationModal({
   productId,
   productName,
   branchId,
+  targetBranchName,
+  isTargetBadStock,
   requestedQuantity,
   uomName = 'units',
   initialAllocations,
@@ -71,6 +76,21 @@ export function StockAllocationModal({
   const [allowExpiredOverride, setAllowExpiredOverride] = useState(false);
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
   const [isManualMode, setIsManualMode] = useState(false);
+  const [prevOpen, setPrevOpen] = useState(open);
+
+  const isTargetBranchBadStock = useMemo(() => {
+    if (isTargetBadStock !== undefined) return isTargetBadStock;
+    if (targetBranchName) return isBadStockLot(undefined, { branch_name: targetBranchName });
+    return false;
+  }, [isTargetBadStock, targetBranchName]);
+
+  // Adjust state during render when modal opens
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open && isTargetBranchBadStock) {
+      setAllowExpiredOverride(true);
+    }
+  }
 
   // Load batches when modal opens
   useEffect(() => {
@@ -82,10 +102,21 @@ export function StockAllocationModal({
       setLoading(true);
       try {
         // Spring Boot /api/mm-batch-onhand is authoritative source for live quantities
-        const onhandData = await fetchBatchOnhand({ branchId, productId });
+        // Also fetch mm_lots from Directus to resolve exact lot names for each lot_id
+        const [onhandData, branchLots] = await Promise.all([
+          fetchBatchOnhand({ branchId, productId }),
+          fetchLotsByBranch(branchId).catch(() => []),
+        ]);
 
         if (isMounted) {
-          // Group and aggregate onhand quantities by batchNo for the selected branch
+          const lotMap = new Map<number, { name: string; unit_id?: number | null; unit_name?: string }>();
+          (branchLots || []).forEach((l) => {
+            if (l.lot_id && l.lot_name) {
+              lotMap.set(l.lot_id, { name: l.lot_name, unit_id: l.unit_id, unit_name: l.unit_name });
+            }
+          });
+
+          // Group onhand quantities distinctly by lotId, inventoryLotId, and batchNo for the selected branch
           const batchMap = new Map<string, {
             inventoryLotId: number;
             lotId: number;
@@ -103,9 +134,19 @@ export function StockAllocationModal({
 
           for (const oh of onhandData) {
             if (Number(oh.branchId) !== Number(branchId)) continue;
-            const key = oh.batchNo || `lot-${oh.inventoryLotId || oh.lotId}`;
+            const lotIdNum = Number(oh.lotId || 0);
+            const invLotIdNum = Number(oh.inventoryLotId || 0);
+            const batchStr = oh.batchNo ? String(oh.batchNo).trim() : `lot-${invLotIdNum || lotIdNum}`;
+            const key = `${lotIdNum}:${invLotIdNum}:${batchStr}`;
+
             const existing = batchMap.get(key);
             const qty = Number(oh.onhandQuantity || 0);
+
+            const lotInfo = lotIdNum > 0 ? lotMap.get(lotIdNum) : undefined;
+            const resolvedLotName = lotInfo?.name || oh.lotName;
+            const cleanLotName = resolvedLotName
+              ? resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, '').trim()
+              : (lotIdNum > 0 ? `${lotIdNum}` : '');
 
             if (existing) {
               existing.netOnhand += qty;
@@ -115,13 +156,13 @@ export function StockAllocationModal({
               if (!existing.manufacturingDate && oh.manufacturingDate) {
                 existing.manufacturingDate = oh.manufacturingDate;
               }
-              if (oh.inventoryLotId && Number(oh.inventoryLotId) > 0) {
-                existing.inventoryLotId = Number(oh.inventoryLotId);
+              if (invLotIdNum > 0) {
+                existing.inventoryLotId = invLotIdNum;
               }
             } else {
               batchMap.set(key, {
-                inventoryLotId: Number(oh.inventoryLotId || oh.lotId || 1),
-                lotId: Number(oh.lotId || 1),
+                inventoryLotId: invLotIdNum || lotIdNum || 1,
+                lotId: lotIdNum,
                 branchId: Number(oh.branchId),
                 productId: Number(oh.productId || productId),
                 batchNo: oh.batchNo,
@@ -129,7 +170,7 @@ export function StockAllocationModal({
                 expirationDate: oh.expirationDate || null,
                 inventoryCondition: (oh.inventoryCondition as QAStatus) || 'GOOD',
                 netOnhand: qty,
-                lotName: oh.lotName || `Lot #${oh.lotId}`,
+                lotName: cleanLotName ? `Lot ${cleanLotName}` : undefined,
                 productName: oh.productName || productName,
                 productCode: oh.productCode,
               });
@@ -209,6 +250,7 @@ export function StockAllocationModal({
     return allocateStockSync(batches, requestedQuantity, {
       strategy,
       includeExpired: allowExpiredOverride,
+      includeNonGoodQA: true, // Show all batches even if bad stock
     });
   }, [batches, requestedQuantity, strategy, allowExpiredOverride]);
 
@@ -319,9 +361,6 @@ export function StockAllocationModal({
   };
 
   const handleConfirm = () => {
-    if (!currentPlan.isFullyAllocated || currentPlan.totalAllocated !== requestedQuantity) {
-      return;
-    }
     onConfirm(currentPlan);
     onOpenChange(false);
   };
@@ -582,7 +621,11 @@ export function StockAllocationModal({
                               </div>
 
                               <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
-                                <span>Lot: <strong className="text-foreground/80">{batch.lot_name || `Lot #${batch.lot_id}`}</strong></span>
+                                <span>Lot: <strong className="text-foreground/80">{(() => {
+                                  const raw = batch.lot_name || (batch.lot_id ? `${batch.lot_id}` : '');
+                                  const clean = raw.replace(/^lot\s*[:#-]?\s*/i, '').trim();
+                                  return clean && clean !== 'null' && clean !== 'undefined' ? `Lot ${clean}` : '—';
+                                })()}</strong></span>
                                 <span>Available: <strong className="text-foreground">{batch.available_quantity}</strong> {uomName}</span>
                                 {batch.expiry_date && (
                                   <span className={`flex items-center gap-1 font-mono ${days !== null && days <= 30 ? (days < 0 ? 'text-destructive font-bold' : 'text-amber-600 font-bold') : ''}`}>
@@ -690,12 +733,7 @@ export function StockAllocationModal({
             <Button
               size="sm"
               onClick={handleConfirm}
-              disabled={loading || !currentPlan.isFullyAllocated || currentPlan.totalAllocated !== requestedQuantity}
-              title={
-                !currentPlan.isFullyAllocated || currentPlan.totalAllocated !== requestedQuantity
-                  ? `Must allocate exactly ${requestedQuantity} ${uomName} (currently ${currentPlan.totalAllocated} ${uomName})`
-                  : undefined
-              }
+              disabled={loading}
               className="text-xs gap-1.5"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />

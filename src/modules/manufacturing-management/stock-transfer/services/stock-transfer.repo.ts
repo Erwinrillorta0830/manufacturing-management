@@ -71,13 +71,101 @@ export async function fetchStockTransfers(status?: string): Promise<StockTransfe
  * Fetches branches for dropdown selection.
  */
 export async function fetchBranches(): Promise<BranchRow[]> {
-  const res = await fetchItems<BranchRow>("items/branches", {
-    fields: "id,branch_name,branch_code,isActive",
-    limit: -1,
-  });
-  return (res.data || []).filter(
-    (b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1"
-  );
+  try {
+    const [branchesRes, salesmenRes] = await Promise.all([
+      fetchItems<BranchRow>("items/branches", {
+        fields: "id,branch_name,branch_code,branch_description,branch_head,isActive",
+        limit: -1,
+      }),
+      fetchItems<{
+        id: number;
+        salesman_name: string;
+        branch_code: unknown;
+        bad_branch_code: unknown;
+        isActive?: boolean | number | string;
+      }>("items/salesman", {
+        fields: "*",
+        limit: -1,
+      }).catch((err) => {
+        console.error("[StockTransferRepo] Directus fetchItems('items/salesman') failed:", err);
+        return { data: [] };
+      }),
+    ]);
+
+    console.log("[StockTransferRepo:fetchBranches] Raw branches count:", branchesRes.data?.length);
+    console.log("[StockTransferRepo:fetchBranches] Raw salesmen count:", salesmenRes.data?.length);
+    console.log("[StockTransferRepo:fetchBranches] All salesmen from DB:", JSON.stringify(salesmenRes.data, null, 2));
+
+    const activeSalesmen = (salesmenRes.data || []).filter(
+      (s) => s.isActive === undefined || s.isActive === true || s.isActive === 1 || s.isActive === "1"
+    );
+    console.log("[StockTransferRepo:fetchBranches] Active salesmen count:", activeSalesmen.length);
+
+    const extractId = (val: unknown): number | null => {
+      if (typeof val === "number") return val;
+      if (typeof val === "string" && !isNaN(Number(val)) && Number(val) > 0) return Number(val);
+      if (typeof val === "object" && val !== null) {
+        const obj = val as Record<string, unknown>;
+        if (obj.id) return Number(obj.id);
+      }
+      return null;
+    };
+
+    const allSalesmen = (salesmenRes.data || [])
+      .map((s) => {
+        const regularBranchId = extractId(s.branch_code);
+        const badBranchId = extractId(s.bad_branch_code);
+        const name = s.salesman_name?.trim() || "";
+        const isActive = s.isActive === undefined || s.isActive === true || s.isActive === 1 || s.isActive === "1";
+        return {
+          id: s.id,
+          salesman_name: name,
+          regularBranchId,
+          badBranchId,
+          isActive,
+        };
+      })
+      .filter((s) => s.salesman_name && s.salesman_name !== "0");
+
+    const processedBranches = (branchesRes.data || [])
+      .filter(
+        (b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1"
+      )
+      .map((b) => {
+        // Priority 1: Active salesman whose regular branch_code matches b.id
+        let match = allSalesmen.find((s) => s.isActive && s.regularBranchId === b.id);
+
+        // Priority 2: Active salesman whose bad_branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.isActive && s.badBranchId === b.id);
+        }
+
+        // Priority 3: Salesman whose regular branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.regularBranchId === b.id);
+        }
+
+        // Priority 4: Salesman whose bad_branch_code matches b.id
+        if (!match) {
+          match = allSalesmen.find((s) => s.badBranchId === b.id);
+        }
+
+        return {
+          ...b,
+          salesman_name: match ? match.salesman_name : undefined,
+        };
+      });
+
+    console.log(
+      "[StockTransferRepo:fetchBranches] Processed branches summary:",
+      processedBranches.map((b) => ({ id: b.id, name: b.branch_name, code: b.branch_code, salesman: b.salesman_name }))
+    );
+
+    return processedBranches;
+  } catch (err) {
+    console.error("[StockTransferRepo] Failed to fetch branches with salesmen:", err);
+    return [];
+  }
 }
 
 /**
@@ -322,6 +410,12 @@ export async function updateTransfersStatus(
     dispatched_quantity?: number;
     scanned_quantity?: number;
     received_quantity?: number;
+    source_lot_id?: number | null;
+    source_inventory_lot_id?: number | null;
+    batch_no?: string | null;
+    manufacturing_date?: string | null;
+    expiration_date?: string | null;
+    expiry_date?: string | null;
     date_received?: string | null; 
     receiver_id?: number | null;
     dispatched_by?: number | null;
@@ -344,6 +438,12 @@ export async function updateTransfersStatus(
       ...(item.dispatched_quantity !== undefined ? { dispatched_quantity: item.dispatched_quantity } : {}),
       ...(item.scanned_quantity !== undefined ? { scanned_quantity: item.scanned_quantity } : {}),
       ...(item.received_quantity !== undefined ? { received_quantity: item.received_quantity } : {}),
+      ...(item.source_lot_id !== undefined ? { source_lot_id: item.source_lot_id } : {}),
+      ...(item.source_inventory_lot_id !== undefined ? { source_inventory_lot_id: item.source_inventory_lot_id } : {}),
+      ...(item.batch_no !== undefined ? { batch_no: item.batch_no } : {}),
+      ...(item.manufacturing_date !== undefined ? { manufacturing_date: item.manufacturing_date } : {}),
+      ...(item.expiration_date !== undefined ? { expiration_date: item.expiration_date, expiry_date: item.expiration_date } : {}),
+      ...(item.expiry_date !== undefined ? { expiry_date: item.expiry_date, expiration_date: item.expiry_date } : {}),
       ...(item.date_received !== undefined ? { date_received: item.date_received } : {}),
       ...(item.receiver_id !== undefined ? { receiver_id: item.receiver_id } : {}),
       ...(item.dispatched_by !== undefined ? { dispatched_by: item.dispatched_by } : {}),
@@ -452,10 +552,29 @@ export async function fetchStockTransferDetails(transferIds: number[]): Promise<
   if (transferIds.length === 0) return [];
   const res = await fetchItems<MMStockTransferDetail>("items/mm_stock_transfer_details", {
     "filter[stock_transfer_id][_in]": transferIds.join(","),
-    fields: "*,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
+    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiration_date,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
     limit: -1,
   });
   return res.data;
+}
+
+/**
+ * Fetches lot master records from mm_lots by lot_ids.
+ */
+export async function fetchMmLotsByIds(lotIds: number[]): Promise<Record<number, { lot_id: number; lot_name: string }>> {
+  if (lotIds.length === 0) return {};
+  const res = await fetchItems<{ lot_id: number; lot_name: string }>("items/mm_lots", {
+    "filter[lot_id][_in]": lotIds.join(","),
+    fields: "lot_id,lot_name",
+    limit: -1,
+  });
+  const map: Record<number, { lot_id: number; lot_name: string }> = {};
+  (res.data || []).forEach(l => {
+    if (l && l.lot_id) {
+      map[l.lot_id] = l;
+    }
+  });
+  return map;
 }
 
 /**

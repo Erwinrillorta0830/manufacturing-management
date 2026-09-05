@@ -22,7 +22,8 @@ import {
 import { useStockTransferSummary, SortConfig } from './hooks/use-stock-transfer-summary';
 import { TransferDetailModal } from './components/TransferDetailModal';
 import { formatPhDateTime } from '../utils/date-utils';
-import { SearchableCombobox } from '../shared/components/searchable-combobox';
+import { formatStatusForUi } from '../services/stock-transfer.helpers';
+import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
 import { motion } from 'framer-motion';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -58,6 +59,60 @@ interface SortableHeaderProps {
   filters: { sort: SortConfig };
   toggleSort: (key: string) => void;
   className?: string;
+}
+
+function formatBranchLabel(nameOrCode: string | undefined): string {
+  if (!nameOrCode) return 'Unknown Branch';
+  if (nameOrCode.includes('_')) {
+    return nameOrCode
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+  return nameOrCode;
+}
+
+function formatStatusOptionLabel(status: string): string {
+  if (!status || status === 'all') return 'All Statuses';
+  const formatted = formatStatusForUi(status);
+  if (formatted && formatted !== status) return formatted;
+  return status
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function getStatusBadgeClass(status?: string | null): string {
+  const normalized = status?.toLowerCase().replace(/[_\s-]+/g, '');
+  switch (normalized) {
+    case 'requested':
+      return 'bg-muted text-muted-foreground border-muted';
+    case 'forapproval':
+    case 'pendingapproval':
+      return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800';
+    case 'forpicking':
+      return 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800';
+    case 'picking':
+      return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800';
+    case 'picked':
+      return 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800';
+    case 'forloading':
+      return 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800';
+    case 'intransit':
+    case 'dispatched':
+      return 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800';
+    case 'received':
+    case 'completed':
+      return 'bg-emerald-600 text-white border-emerald-600';
+    case 'rejected':
+      return 'bg-destructive text-white border-destructive';
+    case 'cancelled':
+      return 'bg-destructive/80 text-white border-destructive/80';
+    default:
+      return 'bg-muted text-muted-foreground border-border';
+  }
 }
 
 const SortableHeader = ({ label, sortKey, filters, toggleSort, className }: SortableHeaderProps) => {
@@ -126,12 +181,21 @@ export default function StockTransferSummaryView() {
     { value: 'all', label: 'All Branches' },
     ...branches
       .filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
-      .map(b => ({ value: String(b.id), label: b.branch_name || b.name || `Branch ${b.id}` }))
+      .map(b => {
+        const rawName = b.branch_name || b.name || (b.branch_code ? formatBranchLabel(b.branch_code) : `Branch ${b.id}`);
+        return {
+          value: String(b.id),
+          label: formatBranchLabel(rawName),
+        };
+      })
   ], [branches]);
 
   const statusOptions = React.useMemo(() => [
     { value: 'all', label: 'All Statuses' },
-    ...availableStatuses.map(s => ({ value: s, label: s }))
+    ...availableStatuses.map(s => ({
+      value: s,
+      label: formatStatusOptionLabel(s),
+    }))
   ], [availableStatuses]);
 
   function buildPageList(current: number, total: number): (number | 'ellipsis')[] {
@@ -173,7 +237,8 @@ export default function StockTransferSummaryView() {
       <Card className="border-border shadow-none bg-card/50">
         <CardContent className="p-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
-            <div className="space-y-1.5">
+            {/* Search Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <Search className="w-3 h-3" /> Search
               </label>
@@ -181,50 +246,57 @@ export default function StockTransferSummaryView() {
                 placeholder="Order No / Product..."
                 value={filters.search}
                 onChange={(e) => updateFilter('search', e.target.value)}
-                className="h-9 text-xs bg-background border-border"
+                className="w-full h-9 text-xs bg-background border-border shadow-none"
               />
             </div>
 
-            <div className="space-y-1.5">
+            {/* Status Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <Layers className="w-3 h-3" /> Status
               </label>
-              <SearchableCombobox
+              <SearchableSelect
                 options={statusOptions}
                 value={filters.status}
                 onValueChange={(val) => updateFilter('status', val || 'all')}
-                placeholder="Select Status"
-                className="h-9"
+                placeholder="All Statuses"
+                searchPlaceholder="Search status..."
+                triggerClassName="w-full h-9 text-xs bg-background border-border shadow-none"
               />
             </div>
 
-            <div className="space-y-1.5">
+            {/* Source Branch Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <MapPin className="w-3 h-3" /> Source
               </label>
-              <SearchableCombobox
+              <SearchableSelect
                 options={branchOptions}
                 value={filters.sourceBranch}
                 onValueChange={(val) => updateFilter('sourceBranch', val || 'all')}
-                placeholder="Select Source"
-                className="h-9"
+                placeholder="All Branches"
+                searchPlaceholder="Search source branch..."
+                triggerClassName="w-full h-9 text-xs bg-background border-border shadow-none"
               />
             </div>
 
-            <div className="space-y-1.5">
+            {/* Target Branch Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <MapPin className="w-3 h-3" /> Target
               </label>
-              <SearchableCombobox
+              <SearchableSelect
                 options={branchOptions}
                 value={filters.targetBranch}
                 onValueChange={(val) => updateFilter('targetBranch', val || 'all')}
-                placeholder="Select Target"
-                className="h-9"
+                placeholder="All Branches"
+                searchPlaceholder="Search target branch..."
+                triggerClassName="w-full h-9 text-xs bg-background border-border shadow-none"
               />
             </div>
 
-            <div className="space-y-1.5">
+            {/* Date Preset Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <Calendar className="w-3 h-3" /> Period
               </label>
@@ -232,7 +304,7 @@ export default function StockTransferSummaryView() {
                 value={filters.datePreset}
                 onValueChange={(val) => updateFilter('datePreset', val)}
               >
-                <SelectTrigger className="h-9 text-xs bg-background border-border shadow-none">
+                <SelectTrigger className="w-full h-9 text-xs bg-background border-border shadow-none">
                   <SelectValue placeholder="Select Period" />
                 </SelectTrigger>
                 <SelectContent>
@@ -245,7 +317,8 @@ export default function StockTransferSummaryView() {
               </Select>
             </div>
 
-            <div className="space-y-1.5">
+            {/* From Date Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <Calendar className="w-3 h-3" /> From
               </label>
@@ -253,20 +326,21 @@ export default function StockTransferSummaryView() {
                 type="date"
                 value={filters.dateFrom}
                 onChange={(e) => updateFilter('dateFrom', e.target.value)}
-                className="h-9 text-xs bg-background border-border shadow-none"
+                className="w-full h-9 text-xs bg-background border-border shadow-none"
               />
             </div>
 
-            <div className="space-y-1.5">
+            {/* To Date Filter */}
+            <div className="space-y-1.5 w-full">
               <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
                 <Calendar className="w-3 h-3" /> To
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full">
                 <Input
                   type="date"
                   value={filters.dateTo}
                   onChange={(e) => updateFilter('dateTo', e.target.value)}
-                  className="h-9 text-xs bg-background border-border flex-1 shadow-none"
+                  className="h-9 text-xs bg-background border-border flex-1 shadow-none min-w-0"
                 />
                 <Button variant="ghost" size="icon" onClick={resetFilters} title="Reset Filters" className="h-9 w-9 shrink-0 hover:bg-destructive/10 hover:text-destructive transition-colors">
                   <RotateCcw className="w-4 h-4" />
@@ -348,10 +422,14 @@ export default function StockTransferSummaryView() {
                           <span className="font-mono font-bold text-primary text-sm tracking-tight">{group.orderNo}</span>
                         </TableCell>
                         <TableCell>
-                          <span className="text-xs font-semibold truncate max-w-[150px] block" title={getBranchName(group.sourceBranch)}>{getBranchName(group.sourceBranch)}</span>
+                          <span className="text-xs font-semibold truncate max-w-[150px] block" title={formatBranchLabel(getBranchName(group.sourceBranch))}>
+                            {formatBranchLabel(getBranchName(group.sourceBranch))}
+                          </span>
                         </TableCell>
                         <TableCell>
-                          <span className="text-xs text-muted-foreground truncate max-w-[150px] block" title={getBranchName(group.targetBranch)}>{getBranchName(group.targetBranch)}</span>
+                          <span className="text-xs text-muted-foreground truncate max-w-[150px] block" title={formatBranchLabel(getBranchName(group.targetBranch))}>
+                            {formatBranchLabel(getBranchName(group.targetBranch))}
+                          </span>
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge variant="outline" className="text-[9px] font-bold border-border bg-background">
@@ -392,16 +470,10 @@ export default function StockTransferSummaryView() {
                             variant="outline"
                             className={cn(
                               "font-black uppercase tracking-widest text-[9px] rounded-[4px] px-2 py-0.5 border shadow-none",
-                              group.status === 'Requested' && "bg-muted text-muted-foreground border-muted",
-                              group.status === 'For Picking' && "bg-amber-100 text-amber-700 border-amber-200",
-                              group.status === 'Picking' && "bg-blue-100 text-blue-700 border-blue-200",
-                              group.status === 'Picked' && "bg-emerald-100 text-emerald-700 border-emerald-200",
-                              group.status === 'For Loading' && "bg-sky-100 text-sky-700 border-sky-200",
-                              group.status === 'Received' && "bg-emerald-600 text-white border-emerald-600",
-                              group.status === 'Rejected' && "bg-destructive text-white border-destructive"
+                              getStatusBadgeClass(group.status)
                             )}
                           >
-                            {group.status}
+                            {formatStatusForUi(group.status)}
                           </Badge>
                         </TableCell>
                         <TableCell className="pr-6">
@@ -429,7 +501,7 @@ export default function StockTransferSummaryView() {
                         value={String(itemsPerPage)}
                         onValueChange={(v) => setItemsPerPage(Number(v))}
                       >
-                        <SelectTrigger className="h-7 w-[65px] text-[10px] font-bold border-border shadow-none bg-background">
+                        <SelectTrigger className="h-7 min-w-[76px] w-auto px-2.5 text-[10px] font-bold border-border shadow-none bg-background">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>

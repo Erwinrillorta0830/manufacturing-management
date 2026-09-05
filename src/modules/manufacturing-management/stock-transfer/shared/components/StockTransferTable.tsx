@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { Trash2, Layers } from 'lucide-react';
+import { Trash2, Layers, ImageOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -35,6 +35,52 @@ import { QuantityStepper } from './QuantityStepper';
 import { getAssetUrl } from '@/lib/assets';
 import { StockAllocationModal } from '@/modules/manufacturing-management/shared/components/StockAllocationModal';
 import type { StockAllocationPlan, BatchAllocationResult } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
+
+function TableItemThumbnail({
+  imgUrl,
+  alt,
+  fallbackText,
+}: {
+  imgUrl?: string | null;
+  alt: string;
+  fallbackText?: string;
+}) {
+  const [prevImgUrl, setPrevImgUrl] = useState(imgUrl);
+  const [loadError, setLoadError] = useState(false);
+
+  if (imgUrl !== prevImgUrl) {
+    setPrevImgUrl(imgUrl);
+    setLoadError(false);
+  }
+
+  if (!imgUrl || loadError) {
+    return (
+      <div 
+        className="h-8 w-8 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60"
+        title={loadError ? 'Image failed to load (not found or unreachable)' : undefined}
+      >
+        {loadError ? (
+          <ImageOff className="w-3.5 h-3.5 text-muted-foreground/40" />
+        ) : (
+          fallbackText?.substring(0, 2).toUpperCase() || 'NA'
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-8 w-8 rounded-lg bg-muted/40 border border-border/60 overflow-hidden shrink-0 relative">
+      <Image
+        src={imgUrl}
+        alt={alt}
+        fill
+        unoptimized
+        onError={() => setLoadError(true)}
+        className="object-cover"
+      />
+    </div>
+  );
+}
 
 interface StockTransferTableProps {
   items: ScannedItem[];
@@ -91,10 +137,13 @@ export default function StockTransferTable({
               No.
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
-              Product Name
+              Brand
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
-              Brand
+              Product Type
+            </TableHead>
+            <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
+              Product Name
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest">
               Unit
@@ -103,7 +152,7 @@ export default function StockTransferTable({
               Order Qty
             </TableHead>
             <TableHead className="font-bold text-foreground text-[10px] uppercase tracking-widest text-right">
-              Line Total
+              Total
             </TableHead>
             <TableHead className="w-10" />
           </TableRow>
@@ -112,6 +161,13 @@ export default function StockTransferTable({
           {paginatedItems.length > 0 ? (
             paginatedItems.map((item, index) => {
               const imgUrl = getAssetUrl(item.productImage);
+              const pType = (item.productType || 'FG').toUpperCase();
+              const typeConfig = pType === 'RM' 
+                ? { label: 'Raw Materials (RM)', badgeClass: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30' }
+                : pType === 'PKG'
+                ? { label: 'Packaging (PKG)', badgeClass: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30' }
+                : { label: 'Finished Goods (FG)', badgeClass: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30' };
+
               return (
               <TableRow
                 key={item.rfid}
@@ -120,23 +176,21 @@ export default function StockTransferTable({
                 <TableCell className="text-[10px] font-medium text-muted-foreground py-2.5">
                   {start + index + 1}
                 </TableCell>
+                <TableCell className="text-[10px] font-bold text-primary/70 uppercase py-2.5">
+                  {item.brandName || '—'}
+                </TableCell>
+                <TableCell className="py-2.5">
+                  <Badge variant="outline" className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${typeConfig.badgeClass}`}>
+                    {typeConfig.label}
+                  </Badge>
+                </TableCell>
                 <TableCell className="text-xs font-semibold text-foreground py-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    {imgUrl ? (
-                      <div className="h-8 w-8 rounded-lg bg-muted/40 border border-border/60 overflow-hidden shrink-0 relative">
-                        <Image
-                          src={imgUrl}
-                          alt={item.productName}
-                          fill
-                          unoptimized
-                          className="object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <div className="h-8 w-8 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
-                        {item.productName?.substring(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    <TableItemThumbnail
+                      imgUrl={imgUrl}
+                      alt={item.productName}
+                      fallbackText={item.productName}
+                    />
                     <div className="flex flex-col">
                       <span className="line-clamp-1">{item.productName}</span>
                       <div className="flex items-center gap-1 mt-0.5">
@@ -147,6 +201,7 @@ export default function StockTransferTable({
                             : item.batch_no 
                             ? item.batch_no.split(',').map((s) => s.trim()).filter(Boolean) 
                             : [];
+                          if (batches.length === 0) return null;
                           const label = batches.length > 1 ? `(${batches.length} Batches)` : batches.length === 1 ? `(${batches[0]})` : '';
                           return (
                             <button
@@ -156,7 +211,7 @@ export default function StockTransferTable({
                                 setAllocationModalOpen(true);
                               }}
                               className="focus:outline-none group/badge"
-                              title={batches.length > 0 ? `Allocated Batches:\n${batches.join('\n')}\n\nClick to view / customize allocation` : 'Click to view / customize FEFO batch allocation'}
+                              title={`Allocated Batches:\n${batches.join('\n')}\n\nClick to view / customize allocation`}
                             >
                               <Badge
                                 variant="outline"
@@ -171,9 +226,6 @@ export default function StockTransferTable({
                       </div>
                     </div>
                   </div>
-                </TableCell>
-                <TableCell className="text-[10px] font-bold text-primary/70 uppercase py-2.5">
-                  {item.brandName || '—'}
                 </TableCell>
                 <TableCell className="text-[10px] text-muted-foreground uppercase py-2.5 font-medium">
                   {item.unit}
@@ -206,7 +258,7 @@ export default function StockTransferTable({
           ) : (
             <TableRow>
               <TableCell
-                colSpan={7}
+                colSpan={8}
                 className="h-32 text-center text-muted-foreground text-xs italic"
               >
                 No products added. Click &apos;Add Products&apos; to begin.
@@ -217,7 +269,7 @@ export default function StockTransferTable({
         {items.length > 0 && (
           <TableFooter className="bg-muted/10">
             <TableRow>
-              <TableCell colSpan={5} className="font-bold text-right text-[10px] uppercase tracking-widest text-muted-foreground">Total Value</TableCell>
+              <TableCell colSpan={6} className="font-bold text-right text-[10px] uppercase tracking-widest text-muted-foreground">Total Value</TableCell>
               <TableCell className="font-bold text-right text-xs text-emerald-600 font-mono">
                 ₱{items.reduce((sum, item) => sum + (item.totalAmount || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
               </TableCell>
@@ -240,7 +292,7 @@ export default function StockTransferTable({
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-7 w-[60px] text-[10px] border-border shadow-none bg-background">
+              <SelectTrigger className="h-7 min-w-[76px] w-auto px-2.5 text-[10px] border-border shadow-none bg-background">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -3,13 +3,15 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Truck, Printer, ScanLine, Loader2, CheckCircle2, Radar, Edit2 } from 'lucide-react';
+import { Truck, ScanLine, Loader2, Radar, Edit2, Layers, FileText } from 'lucide-react';
 import { useStockTransferDispatch } from './hooks/use-stock-transfer-dispatch';
 import { cn } from '@/lib/utils';
 import { ScanHistorySidebar } from '../shared/components/ScanHistorySidebar';
-import type { OrderGroupItem, ProductRow, UnitOfMeasurement, CurrentUser } from '../types/stock-transfer.types';
-import { StockTransferPicklistPreview } from '../shared/components/StockTransferPicklistPreview';
+import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { resolveBranchSalesman } from '../services/stock-transfer.helpers';
+import type { CurrentUser, OrderGroupItem, ProductRow, UnitOfMeasurement, ScannedItem } from '../types/stock-transfer.types';
+import { LotBatchSelectionModal, LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -42,6 +44,7 @@ import {
 
 export default function StockTransferDispatchView({ currentUser }: { currentUser: CurrentUser }) {
   const {
+    branches,
     orderGroups,
     selectedGroup,
     selectedOrderNo,
@@ -58,11 +61,26 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
     isThrottled,
     clearHistory,
     updateManualQty,
+    updateItemLot,
   } = useStockTransferDispatch({ currentUser });
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [showPicklist, setShowPicklist] = useState(false);
+  const [showPrintSlip, setShowPrintSlip] = useState(false);
+  const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
+  const [activePickingItem, setActivePickingItem] = useState<OrderGroupItem | null>(null);
+
+  const handleOpenLotBatchModal = (item: OrderGroupItem) => {
+    setActivePickingItem(item);
+    setLotBatchModalOpen(true);
+  };
+
+  const handleApplyLotBatch = (result: LotBatchSelectionResult) => {
+    if (!activePickingItem) return;
+    updateItemLot(activePickingItem.id, result);
+    setLotBatchModalOpen(false);
+    setActivePickingItem(null);
+  };
 
   // Reset page when group or page size changes
   React.useEffect(() => {
@@ -170,13 +188,16 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
       <div className="flex-1 space-y-4">
         <div className="flex items-center justify-between space-y-2 print:hidden">
           <h2 className="text-3xl font-bold tracking-tight text-foreground">Stock Withdrawal (RFID)</h2>
-          <Button
-            onClick={() => setShowPicklist(true)}
-            disabled={!selectedGroup}
-            className="gap-2 border-border shadow-none"
-          >
-            <Printer className="w-4 h-4" /> Print Picklist
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowPrintSlip(true)}
+              disabled={!selectedGroup}
+              className="gap-2 border-border shadow-none"
+            >
+              <FileText className="w-4 h-4" /> Print Dispatch Slip
+            </Button>
+          </div>
         </div>
 
         <Card className="border-border shadow-none bg-card">
@@ -278,12 +299,13 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                   <Table>
                     <TableHeader>
                       <TableRow className="border-b border-border bg-muted/20">
-                        <TableHead className="text-[10px] uppercase font-bold">Product</TableHead>
-                        <TableHead className="text-[10px] uppercase font-bold text-center">Unit</TableHead>
-                        <TableHead className="text-[10px] uppercase font-bold text-center">Allocated</TableHead>
-                        <TableHead className="text-[10px] uppercase font-bold text-center">Available</TableHead>
-                        <TableHead className="text-[10px] uppercase font-bold text-center">Scanned</TableHead>
-                        <TableHead className="text-[10px] uppercase font-bold text-right print:hidden">Status</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold">Product Name</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold">Lot and Batch</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold text-center">UOM</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold text-center">Allocated Qty</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold text-center">Available Qty</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold text-center">Manual Qty</TableHead>
+                        <TableHead className="text-[10px] uppercase font-bold text-right">Amount</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -292,11 +314,15 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                         const complete = (item.scannedQty || 0) >= targetQty;
                         const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
                         const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
-
                         const productImage = getAssetUrl(product?.product_image);
+                        const unitName = typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null 
+                          ? (product.unit_of_measurement as UnitOfMeasurement).unit_name 
+                          : 'unit';
+                        const itemAmount = Number(item.amount) || (targetQty * Number(product?.cost_per_unit || 0));
 
                         return (
                           <TableRow key={item.id} className="border-b border-border/50">
+                            {/* 1. Product Name */}
                             <TableCell className="py-3">
                               <div className="flex items-center gap-3">
                                 {productImage ? (
@@ -324,12 +350,54 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell className="text-[10px] text-center font-medium uppercase text-muted-foreground">
-                              {typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null 
-                                ? (product.unit_of_measurement as UnitOfMeasurement).unit_name 
-                                : 'unit'}
+
+                            {/* 2. Lot and Batch */}
+                            <TableCell className="py-3">
+                              <div className="flex flex-col gap-1">
+                                {item.batch_no ? (
+                                  <button
+                                    type="button"
+                                    disabled={selectedGroup?.status !== 'For Picking'}
+                                    onClick={() => handleOpenLotBatchModal(item)}
+                                    className={cn(
+                                      "inline-flex items-center gap-1 text-[9px] font-mono font-semibold px-2 py-1 rounded bg-primary/10 border border-primary/20 text-primary transition-all text-left w-fit",
+                                      selectedGroup?.status === 'For Picking' && "hover:bg-primary/20 hover:border-primary/40 cursor-pointer shadow-xs"
+                                    )}
+                                    title={selectedGroup?.status === 'For Picking' ? "Click to change picked lot and batch" : undefined}
+                                  >
+                                    <Layers className="w-2.5 h-2.5 text-primary shrink-0" />
+                                    <span>Batch: {item.batch_no}</span>
+                                    {item.source_lot_id && (
+                                      <span className="text-[9px] text-muted-foreground ml-1">(Lot #{item.source_lot_id})</span>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={selectedGroup?.status !== 'For Picking'}
+                                    onClick={() => handleOpenLotBatchModal(item)}
+                                    className="h-7 text-[10px] font-bold uppercase tracking-wider gap-1.5 border-dashed border-primary/50 text-primary hover:bg-primary/10 hover:border-primary px-2 shadow-none w-fit"
+                                  >
+                                    <Layers className="w-3 h-3" />
+                                    Pick Lot & Batch
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
-                            <TableCell className="text-sm text-center font-bold text-foreground">{targetQty}</TableCell>
+
+                            {/* 3. UOM */}
+                            <TableCell className="text-[10px] text-center font-medium uppercase text-muted-foreground">
+                              {unitName}
+                            </TableCell>
+
+                            {/* 4. Allocated Qty */}
+                            <TableCell className="text-sm text-center font-bold text-foreground font-mono">
+                              {targetQty}
+                            </TableCell>
+
+                            {/* 5. Available Qty */}
                             <TableCell className="text-xs text-center font-medium font-mono text-muted-foreground italic">
                               {fetchingAvailable ? (
                                 <Loader2 className="w-3 h-3 animate-spin mx-auto text-primary" />
@@ -337,6 +405,8 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                                 Math.max(0, item.qtyAvailable ?? 0)
                               )}
                             </TableCell>
+
+                            {/* 6. Manual Qty */}
                             <TableCell className="text-sm text-center">
                               {item.isLoosePack ? (() => {
                                 const pid = Number(product?.product_id || item.product_id);
@@ -354,16 +424,14 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                                 );
                               })() : (
                                 <span className={cn("font-bold font-mono", complete ? 'text-emerald-500' : 'text-amber-500')}>
-                                  {item.scannedQty}
+                                  {item.scannedQty || 0}
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell className="text-right text-sm print:hidden">
-                              {complete ? (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500 ml-auto" />
-                              ) : (
-                                <ScanLine className="w-4 h-4 text-amber-500/50 ml-auto animate-pulse" />
-                              )}
+
+                            {/* 7. Amount */}
+                            <TableCell className="text-right text-xs font-semibold font-mono text-foreground">
+                              ₱{itemAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                             </TableCell>
                           </TableRow>
                         );
@@ -384,7 +452,7 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                             value={String(itemsPerPage)}
                             onValueChange={(v) => setItemsPerPage(Number(v))}
                           >
-                            <SelectTrigger className="h-7 w-[60px] text-[10px] font-bold border-border shadow-none bg-background">
+                            <SelectTrigger className="h-7 min-w-[76px] w-auto px-2.5 text-[10px] font-bold border-border shadow-none bg-background">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -493,18 +561,71 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
         />
       </aside>
 
-      {/* Picklist Preview */}
+      {/* Dispatch Slip Preview */}
       {selectedGroup && (
-        <StockTransferPicklistPreview
-          open={showPicklist}
-          onClose={() => setShowPicklist(false)}
+        <StockTransferPrintPreview
+          open={showPrintSlip}
+          onClose={() => setShowPrintSlip(false)}
+          documentTitle="STOCK TRANSFER DISPATCH SLIP"
           orderNo={selectedGroup.orderNo}
-          pickerName={currentUser.name}
-          items={selectedGroup.items}
-          salesmanName={currentUser.name}
-          sourceBranch={getBranchName(selectedGroup.sourceBranch)}
-          targetBranch={getBranchName(selectedGroup.targetBranch)}
-          requestedDate={new Date(selectedGroup.dateRequested).toLocaleString('en-PH')}
+          status={selectedGroup.status}
+          sourceBranchLabel={getBranchName(selectedGroup.sourceBranch)}
+          targetBranchLabel={getBranchName(selectedGroup.targetBranch)}
+          leadDate={selectedGroup.dateRequested ? new Date(selectedGroup.dateRequested).toLocaleDateString('en-PH') : '—'}
+          salesmanName={resolveBranchSalesman(selectedGroup.targetBranch, branches)}
+          scannedItems={selectedGroup.items.map((i: OrderGroupItem) => {
+            const product = typeof i.product_id === 'object' && i.product_id !== null ? (i.product_id as ProductRow) : null;
+            const uom = typeof product?.unit_of_measurement === 'object' ? product?.unit_of_measurement : null;
+            const brand = typeof product?.product_brand === 'object' ? product?.product_brand?.brand_name : '';
+            const allocs = i.lot_allocations && i.lot_allocations.length > 0 ? i.lot_allocations : undefined;
+            const batchTotal = allocs
+              ? allocs.reduce((sum, g) => sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0)
+              : undefined;
+            const qty = batchTotal !== undefined
+              ? batchTotal
+              : Math.max(0, i.scannedQty ?? i.scanned_quantity ?? i.picked_quantity ?? i.allocated_quantity ?? 0);
+            const unitPrice = Number(product?.cost_per_unit || 0);
+
+            return {
+              rfid: '',
+              productId: Number(product?.product_id || i.product_id),
+              productName: product?.product_name || `Product #${i.product_id}`,
+              description: product?.description || '',
+              brandName: brand || 'N/A',
+              unit: uom?.unit_name || 'unit',
+              qtyAvailable: i.qtyAvailable || 0,
+              unitQty: qty,
+              unitPrice: unitPrice,
+              totalAmount: qty * unitPrice,
+              lot_id: i.source_lot_id,
+              batch_no: i.batch_no,
+              manufacturing_date: i.manufacturing_date,
+              expiry_date: i.expiry_date,
+              lot_allocations: i.lot_allocations,
+            } as ScannedItem;
+          })}
+        />
+      )}
+
+      {/* Lot & Batch Selection Modal for Picking */}
+      {selectedGroup && (
+        <LotBatchSelectionModal
+          open={lotBatchModalOpen}
+          onOpenChange={setLotBatchModalOpen}
+          branchId={selectedGroup.sourceBranch ? Number(selectedGroup.sourceBranch) : undefined}
+          productId={activePickingItem ? (typeof activePickingItem.product_id === 'object' && activePickingItem.product_id !== null ? (activePickingItem.product_id as ProductRow).product_id : Number(activePickingItem.product_id)) : undefined}
+          productName={activePickingItem ? (typeof activePickingItem.product_id === 'object' && activePickingItem.product_id !== null ? (activePickingItem.product_id as ProductRow).product_name : undefined) : undefined}
+          productCode={activePickingItem ? (typeof activePickingItem.product_id === 'object' && activePickingItem.product_id !== null ? (activePickingItem.product_id as ProductRow).product_code : undefined) : undefined}
+          productUomName={activePickingItem ? (typeof activePickingItem.product_id === 'object' && activePickingItem.product_id !== null && (activePickingItem.product_id as ProductRow).unit_of_measurement ? ((activePickingItem.product_id as ProductRow).unit_of_measurement as { unit_name?: string }).unit_name : 'units') : 'units'}
+          requestedQuantity={activePickingItem ? (activePickingItem.allocated_quantity || activePickingItem.ordered_quantity || 1) : 1}
+          adjustmentType="OUT"
+          mode="SELECT_EXISTING"
+          initialValues={activePickingItem ? {
+            batch_no: activePickingItem.batch_no || '',
+            lot_id: activePickingItem.source_lot_id || undefined,
+            inventory_lot_id: activePickingItem.source_inventory_lot_id || undefined,
+          } : undefined}
+          onConfirm={handleApplyLotBatch}
         />
       )}
     </div>

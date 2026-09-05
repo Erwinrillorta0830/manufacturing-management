@@ -1,5 +1,6 @@
 import React from "react";
-import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer } from "lucide-react";
+import Link from "next/link";
+import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer, ArrowLeft, RotateCcw } from "lucide-react";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
@@ -21,13 +22,17 @@ export interface ShipmentDetailViewProps {
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
-    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
+    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     handleStartEdit: () => void;
     onPrintPurchaseOrder?: () => void;
     printLoading?: boolean;
     onCancelRejectedPurchaseOrder?: (shipmentId: number, workflowRevision: number, remarks?: string) => void | Promise<boolean>;
     lines: ShipmentLineItem[];
     hasShipments: boolean;
+    detailError?: string | null;
+    referenceError?: string | null;
+    onRetryDetail?: () => void;
+    backHref?: string;
 }
 
 export function ShipmentDetailView({
@@ -45,7 +50,11 @@ export function ShipmentDetailView({
     printLoading = false,
     onCancelRejectedPurchaseOrder,
     lines,
-    hasShipments
+    hasShipments,
+    detailError = null,
+    referenceError = null,
+    onRetryDetail,
+    backHref
 }: ShipmentDetailViewProps) {
     const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
     const initialWorkflowStatus = canonicalDrafting ? "For Approval" : "Requested";
@@ -66,14 +75,47 @@ export function ShipmentDetailView({
         : "";
 
     return (
-        <div className="flex-1 border rounded-xl bg-card overflow-y-auto p-6 shadow-sm flex flex-col gap-6 relative min-h-[300px]">
+        <div className="w-full min-w-0 flex-1 border rounded-xl bg-card overflow-y-auto p-4 sm:p-6 shadow-sm flex flex-col gap-6 relative min-h-[300px]">
             {loading && (
                 <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px] z-50 flex items-center justify-center rounded-xl">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
             )}
-            {activeShipment ? (
+            {detailError ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 p-8 text-center" role="alert">
+                    <Anchor className="h-12 w-12 text-destructive/50" />
+                    <div>
+                        <h2 className="text-sm font-bold text-destructive">Unable to load purchase-order details</h2>
+                        <p className="mt-1 max-w-xl text-xs text-muted-foreground">{detailError}</p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-2">
+                        {onRetryDetail && (
+                            <button
+                                type="button"
+                                onClick={onRetryDetail}
+                                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                            >
+                                <RotateCcw className="h-3.5 w-3.5" /> Retry
+                            </button>
+                        )}
+                        <Link
+                            href={backHref || "/mm/incoming-shipments"}
+                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
+                        >
+                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                        </Link>
+                    </div>
+                </div>
+            ) : activeShipment ? (
                 <>
+                    {backHref !== undefined && (
+                        <Link
+                            href={backHref || "/mm/incoming-shipments"}
+                            className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                        </Link>
+                    )}
                     {/* Header Details */}
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b pb-5">
                         <div className="space-y-1.5">
@@ -121,7 +163,7 @@ export function ShipmentDetailView({
                                     <span className="mt-1 block whitespace-pre-wrap">{legacyFinanceFeedback}</span>
                                 </div>
                             )}
-                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs mt-2.5 text-muted-foreground bg-muted/40 border p-3 rounded-lg max-w-fit font-sans">
+                            <div className="flex max-w-full flex-wrap gap-x-4 gap-y-1.5 text-xs mt-2.5 text-muted-foreground bg-muted/40 border p-3 rounded-lg font-sans">
                                 <span>
                                     Destination Branch:{" "}
                                     <strong className="text-foreground font-bold">
@@ -218,13 +260,19 @@ export function ShipmentDetailView({
                                     </>
                                 )}
                             </div>
+                            {referenceError && (
+                                <p className="mt-2 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800" role="status">
+                                    Some reference labels are unavailable. Refresh the page or retry before editing this purchase order.
+                                </p>
+                            )}
                             {/* Status Progress Stepper (Read-Only) */}
                             <div className="mt-4 border bg-muted/20 rounded-xl p-4 space-y-3">
                                 <div className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">{canonicalDrafting ? "Purchase Order Workflow Progress" : "Shipment Life Cycle Progress"}</div>
-                                <div className="flex items-center w-full relative">
+                                <div className="w-full overflow-x-auto">
+                                    <div className="relative flex min-w-[760px] items-center overflow-visible py-3">
                                     {(effectiveStatus === "Rejected"
                                         ? [initialWorkflowStatus, "Approved", "Rejected"]
-                                        : [initialWorkflowStatus, "Approved", "Receiving (QA)", "Received"]
+                                        : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
                                         const statuses = arr;
                                         const isInitialWorkflowStatus = effectiveStatus === initialWorkflowStatus
@@ -236,12 +284,15 @@ export function ShipmentDetailView({
                                             ? "Receiving (QA)"
                                             : effectiveStatus === "Awaiting Payment"
                                             ? (Number(activeShipment.inventory_status) === INVENTORY_STATUS.APPROVED ? "Approved" : initialWorkflowStatus)
+                                            : effectiveStatus === "Approved" && statuses.includes("Warehouse Receiving")
+                                            ? "Warehouse Receiving"
                                             : effectiveStatus;
                                         const currentIdx = statuses.indexOf(currentStatus);
                                         const stepIdx = statuses.indexOf(st);
                                         
                                         const isCompleted = stepIdx < currentIdx;
                                         const isActive = stepIdx === currentIdx;
+                                        const showCheck = isCompleted || (isActive && currentStatus === "Received");
                                         
                                         return (
                                             <React.Fragment key={st}>
@@ -253,9 +304,9 @@ export function ShipmentDetailView({
                                                                 ? "bg-primary border-primary text-primary-foreground shadow-md scale-110" 
                                                                 : "bg-background border-muted text-muted-foreground"
                                                     }`}>
-                                                        {isCompleted ? "✓" : idx + 1}
+                                                        {showCheck ? "✓" : idx + 1}
                                                     </div>
-                                                    <span className={`text-[9px] font-bold mt-1.5 truncate max-w-[70px] ${
+                                                    <span className={`min-w-[125px] text-center whitespace-nowrap text-[9px] font-bold mt-1.5 ${
                                                         isActive ? "text-primary animate-pulse" : "text-muted-foreground"
                                                     }`}>{st}</span>
                                                 </div>
@@ -267,6 +318,7 @@ export function ShipmentDetailView({
                                             </React.Fragment>
                                         );
                                     })}
+                                    </div>
                                 </div>
 
                                 {(effectiveStatus === "For Approval" || effectiveStatus === "Requested" || effectiveStatus === "Ordered") && (
@@ -351,7 +403,7 @@ export function ShipmentDetailView({
                     </div>
 
                     {/* Totals Summary */}
-                    <div className="grid gap-4 grid-cols-2 sm:grid-cols-5">
+                    <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-5">
                         <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{canonicalDrafting ? "PHP Total" : "Raw FOB Cost"}</span>
                             <span className="text-xs font-extrabold text-foreground">
@@ -405,8 +457,8 @@ export function ShipmentDetailView({
                             <Layers className="h-4 w-4 text-primary" />
                             {canonicalDrafting ? "Purchase Order Lines" : "Shipment Manifest & Contents"}
                         </h3>
-                        <div className="border rounded-lg overflow-hidden">
-                            <table className="w-full text-left border-collapse text-xs">
+                        <div className="hidden overflow-x-auto rounded-lg border min-[720px]:block">
+                            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
                                 <thead>
                                     <tr className="bg-muted/50 border-b">
                                         <th className="p-3 font-semibold text-muted-foreground">Product Name</th>
@@ -487,6 +539,51 @@ export function ShipmentDetailView({
                                     )}
                                 </tbody>
                             </table>
+                        </div>
+                        <div className="space-y-3 min-[720px]:hidden">
+                            {lines.length === 0 ? (
+                                <div className="rounded-lg border p-8 text-center text-xs text-muted-foreground">
+                                    No items registered in this container.
+                                </div>
+                            ) : (
+                                lines.map(line => {
+                                    const prod = line.product_id && typeof line.product_id === "object"
+                                        ? line.product_id
+                                        : { product_name: `ID: ${line.product_id}`, product_code: "N/A", unit_of_measurement: { unit_shortcut: "PCS" } };
+                                    const currency = activeShipment?.currency_code || "PHP";
+                                    const discountMode = line.discount_mode || "Percentage";
+                                    const transactionUnitPrice = Number(currency === "PHP" ? line.base_unit_cost_php : line.unit_price_foreign);
+                                    const hasUnitPrice = Number.isFinite(transactionUnitPrice) && transactionUnitPrice >= 0;
+                                    const quantity = Number(line.quantity_ordered || 0);
+                                    const percentageDiscount = calculatePercentageDiscount(
+                                        quantity,
+                                        hasUnitPrice ? transactionUnitPrice : 0,
+                                        Number(line.discount_percent || 0)
+                                    );
+                                    const discountAmount = discountMode === "Fixed Amount"
+                                        ? Number(line.discount_amount_foreign || 0)
+                                        : Number(percentageDiscount.discountAmount);
+                                    return (
+                                        <div key={line.line_id} className="rounded-lg border bg-muted/5 p-3 text-xs">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="break-words font-semibold text-foreground">{prod.product_name}</p>
+                                                    <p className="break-all font-mono text-[10px] text-muted-foreground">Code: {prod.product_code}</p>
+                                                </div>
+                                                <span className="shrink-0 font-semibold text-muted-foreground">
+                                                    {prod.unit_of_measurement?.unit_shortcut || "PCS"}
+                                                </span>
+                                            </div>
+                                            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                                                <div><dt className="text-muted-foreground">Quantity</dt><dd className="font-semibold">{line.quantity_received !== null && line.quantity_received !== undefined ? `${Number(line.quantity_received).toLocaleString()} / ${Number(line.quantity_ordered || 0).toLocaleString()}` : `${Number(line.quantity_ordered || 0).toLocaleString()} (Ordered)`}</dd></div>
+                                                <div><dt className="text-muted-foreground">Unit Price</dt><dd className="font-mono font-semibold">{hasUnitPrice ? formatMoney(transactionUnitPrice, currency, UNIT_PRICE_DECIMAL_SCALE) : "Unavailable"}</dd></div>
+                                                <div><dt className="text-muted-foreground">Discount</dt><dd className="font-mono font-semibold">{formatMoney(discountAmount, currency)}{discountMode === "Percentage" ? ` (${Number(line.discount_percent || 0).toFixed(2)}%)` : ""}</dd></div>
+                                                <div><dt className="text-muted-foreground">ImpFreight Cost</dt><dd className="font-mono font-semibold">+{formatMoney(line.allocated_expense_php || 0)}</dd></div>
+                                            </dl>
+                                        </div>
+                                    );
+                                })
+                            )}
                         </div>
                     </div>
 

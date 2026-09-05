@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Search, ClipboardCheck, Loader2, RefreshCcw, ServerCrash } from 'lucide-react';
 import { useStockTransferApproval } from './hooks/use-stock-transfer-approval';
-import type { OrderGroupItem, ProductRow } from '../types/stock-transfer.types';
+import type { OrderGroupItem, ProductRow, EnrichedProduct } from '../types/stock-transfer.types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +18,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { getAssetUrl } from '@/lib/assets';
+import { 
+  getProductClassification, 
+  PRODUCT_CLASSIFICATION_CONFIG 
+} from '../shared/components/ProductSelectionModal';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
@@ -244,14 +248,14 @@ export default function StockTransferApprovalView() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b border-border bg-muted/20">
-                      <TableHead className="text-[10px] uppercase font-bold">Product</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold">Details</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold">Brand</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold">Unit</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center">Ordered</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center">Available</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center">Allocation</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-right">Draft Total</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold">Product Type</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold">Product Name</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center">UOM</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center">Order Qty</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center">Available Qty</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-center">Allocation Qty</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold text-right">Total</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -262,9 +266,26 @@ export default function StockTransferApprovalView() {
                       const brandName = typeof product?.product_brand === 'object' ? product?.product_brand?.brand_name : 'N/A';
                       const unitName = typeof product?.unit_of_measurement === 'object' ? product?.unit_of_measurement?.unit_name : 'unit';
                       const productImage = getAssetUrl(product?.product_image);
+                      const classification = product ? getProductClassification(product as unknown as EnrichedProduct) : 'FG';
+                      const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
+                      const ClassIcon = config.icon;
 
                       return (
                         <TableRow key={item.id} className="hover:bg-muted/5 border-b border-border/50">
+                          {/* 1. Brand */}
+                          <TableCell className="text-xs font-bold text-foreground/80 uppercase">
+                            {brandName}
+                          </TableCell>
+
+                          {/* 2. Product Type */}
+                          <TableCell className="py-3">
+                            <span className={`inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border shadow-2xs ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}>
+                              <ClassIcon className="w-2.5 h-2.5" />
+                              {config.shortLabel}
+                            </span>
+                          </TableCell>
+
+                          {/* 3. Product Name */}
                           <TableCell className="py-3">
                             <div className="flex items-center gap-3">
                               {productImage ? (
@@ -284,20 +305,31 @@ export default function StockTransferApprovalView() {
                               )}
                               <div className="flex flex-col min-w-0">
                                 <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono">{description}</span>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{description}</TableCell>
-                          <TableCell className="text-[10px] font-bold text-primary uppercase">{brandName}</TableCell>
-                          <TableCell className="text-[10px] font-medium uppercase text-muted-foreground">{unitName}</TableCell>
-                          <TableCell className="text-sm text-center font-medium">{Number(item.ordered_quantity || 0)}</TableCell>
+
+                          {/* 4. UOM */}
+                          <TableCell className="text-[10px] font-bold uppercase text-center text-muted-foreground">
+                            {unitName}
+                          </TableCell>
+
+                          {/* 5. Order Qty */}
+                          <TableCell className="text-sm text-center font-bold font-mono text-foreground">
+                            {Number(item.ordered_quantity || 0)}
+                          </TableCell>
+
+                          {/* 6. Available Qty */}
                           <TableCell className="text-sm text-center">
                             {fetchingAvailable ? (
                               <Loader2 className="w-3 h-3 animate-spin mx-auto text-primary" />
                             ) : (
-                              <span className="font-mono text-xs">{availableQtys[item.id] ?? '—'}</span>
+                              <span className="font-mono text-xs font-semibold">{availableQtys[item.id] ?? '—'}</span>
                             )}
                           </TableCell>
+
+                          {/* 7. Allocation Qty */}
                           <TableCell className="text-sm text-center">
                             {fetchingAvailable ? (
                               <span className="text-muted-foreground/30">—</span>
@@ -313,7 +345,9 @@ export default function StockTransferApprovalView() {
                               />
                             )}
                           </TableCell>
-                          <TableCell className="text-right text-sm font-bold text-foreground">
+
+                          {/* 8. Total */}
+                          <TableCell className="text-right text-sm font-bold font-mono text-foreground">
                             ₱{((allocatedQtys[item.id] ?? item.ordered_quantity ?? 0) * (item.ordered_quantity > 0 ? (Number(item.amount || 0) / item.ordered_quantity) : 0)).toLocaleString('en-PH', {minimumFractionDigits: 2})}
                           </TableCell>
                         </TableRow>
@@ -323,7 +357,7 @@ export default function StockTransferApprovalView() {
                   <TableFooter className="bg-muted/10">
                     <TableRow>
                       <TableCell colSpan={7} className="text-right font-bold text-[10px] uppercase tracking-widest text-muted-foreground py-4">Total Value</TableCell>
-                      <TableCell className="text-right text-base font-bold text-emerald-600 py-4">
+                      <TableCell className="text-right text-base font-bold text-emerald-600 py-4 font-mono">
                         ₱{currentTotalAmount.toLocaleString('en-PH', {minimumFractionDigits: 2})}
                       </TableCell>
                     </TableRow>
@@ -343,7 +377,7 @@ export default function StockTransferApprovalView() {
                           value={String(itemsPerPage)}
                           onValueChange={(v) => setItemsPerPage(Number(v))}
                         >
-                          <SelectTrigger className="h-7 w-[60px] text-[10px] font-bold border-border shadow-none bg-background">
+                          <SelectTrigger className="h-7 min-w-[76px] w-auto px-2.5 text-[10px] font-bold border-border shadow-none bg-background">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

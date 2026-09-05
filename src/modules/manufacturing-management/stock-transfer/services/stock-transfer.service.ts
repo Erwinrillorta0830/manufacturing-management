@@ -13,6 +13,7 @@ import type {
 import { CreateStockTransferSchema, UpdateStockTransferSchema, UpdateItemValue } from "../types/stock-transfer.schema";
 import { createInventoryLot, fetchLotsByBranch, fetchInventoryLots, ensureLotForBranch } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
+import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 
 /**
  * Safely resolves valid lot_id and inventory_lot_id foreign keys from existing records
@@ -329,16 +330,19 @@ async function ensureDestinationInventoryLot(params: {
  */
 
 /**
- * Fetches transfers by status and enriches them with dispatched RFID data.
+ * Fetches transfers by status and enriches them with dispatched RFID data and saved batch details.
  */
 export async function getEnrichedTransfers(status?: string): Promise<StockTransferRow[]> {
   const transfers = await repo.fetchStockTransfers(status);
   
   if (transfers.length === 0) return [];
 
-  // Fetch all RFIDs for these transfers to attach 'dispatched_rfids'
+  // Fetch all RFIDs and transfer details for these transfers
   const transferIds = transfers.map(t => t.id);
-  const rfidRecords = await repo.fetchDispatchedRfids(transferIds);
+  const [rfidRecords, details] = await Promise.all([
+    repo.fetchDispatchedRfids(transferIds),
+    repo.fetchStockTransferDetails(transferIds).catch(() => []),
+  ]);
 
   // Group RFIDs by transfer_id
   const rfidMap: Record<number, string[]> = {};
@@ -347,14 +351,31 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
     rfidMap[r.stock_transfer_id].push(r.rfid_tag);
   });
 
-  // Fetch missing product_per_supplier data
+  // Group transfer details by stock_transfer_id
+  const detailsMap: Record<number, MMStockTransferDetail[]> = {};
+  details.forEach(d => {
+    if (!detailsMap[d.stock_transfer_id]) detailsMap[d.stock_transfer_id] = [];
+    detailsMap[d.stock_transfer_id].push(d);
+  });
+
+  // Fetch missing product_per_supplier data and mm_lots in parallel
   const productIds = transfers
     .filter(t => t.product_id && typeof t.product_id === 'object' && t.product_id.product_id)
     .map(t => (t.product_id as ProductRow).product_id as number);
-    
-  const supplierMap = await repo.fetchProductSuppliers(productIds);
 
-  // Attach RFIDs and Suppliers to each row
+  const lotIdsToFetch = Array.from(
+    new Set([
+      ...details.map(d => Number(typeof d.lot_id === 'object' && d.lot_id !== null ? (d.lot_id as { lot_id?: number }).lot_id : d.lot_id)).filter(id => id > 0),
+      ...transfers.map(t => Number(t.source_lot_id || 0)).filter(id => id > 0),
+    ])
+  );
+    
+  const [supplierMap, lotsMap] = await Promise.all([
+    repo.fetchProductSuppliers(productIds),
+    repo.fetchMmLotsByIds(lotIdsToFetch).catch((): Record<number, { lot_id: number; lot_name: string }> => ({})),
+  ]);
+
+  // Attach RFIDs, Suppliers, and Batch Allocations to each row
   return transfers.map(t => {
     let enrichedProduct = t.product_id;
     if (enrichedProduct && typeof enrichedProduct === 'object' && enrichedProduct.product_id) {
@@ -364,10 +385,88 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
       };
     }
 
+    const tDetails = detailsMap[t.id] || [];
+    let lotAllocations: LotAllocationGroup[] | undefined = undefined;
+    let batchNo = t.batch_no;
+    let mfgDate = t.manufacturing_date;
+    let expDate = t.expiry_date;
+    let qaStatus = t.qa_status;
+    let condition = t.inventory_condition;
+
+    if (tDetails.length > 0) {
+      // Group by lot_id
+      const groupMap = new Map<number, LotAllocationGroup>();
+      for (const d of tDetails) {
+        const rawLotId = typeof d.lot_id === 'object' && d.lot_id !== null ? (d.lot_id as { lot_id?: number }).lot_id : d.lot_id;
+        const lotId = Number(rawLotId || 0);
+        const lotRecord = lotsMap[lotId];
+        const lotName = (typeof d.lot_id === 'object' && d.lot_id !== null && (d.lot_id as { lot_name?: string }).lot_name)
+          ? (d.lot_id as { lot_name?: string }).lot_name!
+          : (lotRecord?.lot_name || `Lot #${lotId}`);
+
+        if (!groupMap.has(lotId)) {
+          groupMap.set(lotId, {
+            lot_id: lotId,
+            lot_name: lotName,
+            max_batch_capacity: 100,
+            allocated_quantity: 0,
+            batches: [],
+          });
+        }
+
+        const bNo = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { batch_no?: string }).batch_no)
+          ? (d.inventory_lot_id as { batch_no?: string }).batch_no!
+          : d.batch_no;
+        const mDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date)
+          ? (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date
+          : d.manufacturing_date;
+        const eDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { expiration_date?: string }).expiration_date)
+          ? (d.inventory_lot_id as { expiration_date?: string }).expiration_date
+          : d.expiration_date;
+        const invLotId = typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null
+          ? (d.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id
+          : d.inventory_lot_id;
+
+        const grp = groupMap.get(lotId)!;
+        const qty = Number(d.dispatched_quantity || d.picked_quantity || d.allocated_quantity || 0);
+        grp.allocated_quantity += qty;
+        grp.batches.push({
+          inventory_lot_id: invLotId,
+          batch_no: bNo,
+          manufacturing_date: mDate ? String(mDate).substring(0, 10) : null,
+          expiry_date: eDate ? String(eDate).substring(0, 10) : null,
+          quantity: qty,
+          unit_cost: Number(d.unit_cost || 0),
+          qa_status: (d.inventory_condition as QAStatus) || 'GOOD',
+        });
+      }
+
+      lotAllocations = Array.from(groupMap.values());
+      const allBatches = lotAllocations.flatMap(g => g.batches);
+      const firstBatch = allBatches[0];
+      if (firstBatch) {
+        batchNo = allBatches.length === 1 ? firstBatch.batch_no : allBatches.map(b => b.batch_no).join(', ');
+        mfgDate = firstBatch.manufacturing_date ? String(firstBatch.manufacturing_date).substring(0, 10) : mfgDate;
+        expDate = firstBatch.expiry_date ? String(firstBatch.expiry_date).substring(0, 10) : expDate;
+        qaStatus = firstBatch.qa_status;
+        condition = firstBatch.qa_status;
+      }
+    }
+
+    const srcLotId = Number(t.source_lot_id || 0);
+    const srcLotName = lotsMap[srcLotId]?.lot_name || (srcLotId ? `Lot #${srcLotId}` : null);
+
     return {
       ...t,
       product_id: enrichedProduct,
-      dispatched_rfids: rfidMap[t.id] || []
+      dispatched_rfids: rfidMap[t.id] || [],
+      lot_allocations: lotAllocations || t.lot_allocations,
+      source_lot_name: srcLotName,
+      batch_no: batchNo,
+      manufacturing_date: mfgDate,
+      expiry_date: expDate,
+      qa_status: qaStatus,
+      inventory_condition: condition,
     };
   });
 }
@@ -770,43 +869,167 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
         }
       }
 
-      // B. Picking Stage (PICKED / PICKING)
-      if (u.status === "PICKED" || u.status === "PICKING" || u.picked_quantity !== undefined) {
-        const totalAllocated = detailsForTransfer.reduce((sum, d) => sum + Number(d.allocated_quantity || 0), 0);
-        const headerPicked = u.picked_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
-        const isFull = u.status === "PICKED" || headerPicked >= totalAllocated || totalAllocated === 0;
+      // B. Picking Stage (PICKED / PICKING) & C. Dispatch Stage (FOR_LOADING / DISPATCHED)
+      const isPickingStage = u.status === "PICKED" || u.status === "PICKING" || u.picked_quantity !== undefined;
+      const isDispatchStage = u.status === "DISPATCHED" || u.status === "FOR_LOADING" || u.dispatched_quantity !== undefined;
 
-        for (const d of detailsForTransfer) {
-          if (d.id) {
-            const detailAlloc = Number(d.allocated_quantity || 0);
-            const detailPicked = isFull
-              ? detailAlloc
-              : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerPicked) : headerPicked);
+      if (isPickingStage || isDispatchStage) {
+        const rawLotAllocations = (u as { lot_allocations?: { lot_id: number; batches?: { inventory_lot_id?: number; batch_no: string; quantity: number; manufacturing_date?: string | null; expiry_date?: string | null; qa_status?: string | null; unit_cost?: number }[] }[] }).lot_allocations;
 
-            await repo.updateStockTransferDetail(d.id, {
-              picked_quantity: detailPicked,
-            });
+        if (rawLotAllocations && Array.isArray(rawLotAllocations) && rawLotAllocations.length > 0) {
+          const flattenedSourceBatches: {
+            lot_id: number;
+            inventory_lot_id?: number | null;
+            batch_no: string;
+            quantity: number;
+            manufacturing_date?: string | null;
+            expiry_date?: string | null;
+            qa_status?: string | null;
+            unit_cost?: number;
+          }[] = [];
+
+          for (const g of rawLotAllocations) {
+            const gLotId = Number(g.lot_id);
+            for (const b of (g.batches || [])) {
+              if (Number(b.quantity) > 0 || b.batch_no) {
+                flattenedSourceBatches.push({
+                  lot_id: gLotId,
+                  inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : null,
+                  batch_no: b.batch_no,
+                  quantity: Number(b.quantity) || 0,
+                  manufacturing_date: b.manufacturing_date || u.manufacturing_date || t.manufacturing_date || null,
+                  expiry_date: b.expiry_date || u.expiration_date || t.expiry_date || null,
+                  qa_status: b.qa_status || "GOOD",
+                  unit_cost: b.unit_cost || unitCost,
+                });
+              }
+            }
           }
-        }
-      }
 
-      // C. Dispatch Stage (FOR_LOADING / DISPATCHED)
-      if (u.status === "DISPATCHED" || u.status === "FOR_LOADING" || u.dispatched_quantity !== undefined) {
-        const totalAllocated = detailsForTransfer.reduce((sum, d) => sum + Number(d.allocated_quantity || 0), 0);
-        const headerDispatched = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
-        const isFull = u.status === "DISPATCHED" || u.status === "FOR_LOADING" || headerDispatched >= totalAllocated || totalAllocated === 0;
+          if (flattenedSourceBatches.length > 0) {
+            let detailIdx = 0;
+            for (const batchAlloc of flattenedSourceBatches) {
+              const srcInvLotId = batchAlloc.inventory_lot_id || t.source_inventory_lot_id || null;
+              const srcLotId = batchAlloc.lot_id || t.source_lot_id || null;
 
-        for (const d of detailsForTransfer) {
-          if (d.id) {
-            const detailAlloc = Number(d.allocated_quantity || 0);
-            const detailDispatched = isFull
-              ? (Number(d.picked_quantity) || detailAlloc)
-              : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerDispatched) : headerDispatched);
+              if (detailIdx < detailsForTransfer.length) {
+                const d = detailsForTransfer[detailIdx];
+                await repo.updateStockTransferDetail(d.id!, {
+                  inventory_lot_id: srcInvLotId || d.inventory_lot_id,
+                  lot_id: srcLotId || d.lot_id,
+                  batch_no: batchAlloc.batch_no || d.batch_no,
+                  manufacturing_date: batchAlloc.manufacturing_date || d.manufacturing_date || null,
+                  expiration_date: batchAlloc.expiry_date || d.expiration_date || null,
+                  inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || d.inventory_condition || "GOOD",
+                  unit_cost: batchAlloc.unit_cost || d.unit_cost || unitCost,
+                  allocated_quantity: batchAlloc.quantity,
+                  picked_quantity: batchAlloc.quantity,
+                  dispatched_quantity: isDispatchStage ? batchAlloc.quantity : Number(d.dispatched_quantity || 0),
+                });
+              } else {
+                await repo.createStockTransferDetails([{
+                  stock_transfer_id: t.id,
+                  inventory_lot_id: Number(srcInvLotId || 1),
+                  target_inventory_lot_id: null,
+                  lot_id: Number(srcLotId || 1),
+                  target_lot_id: null,
+                  product_id: Number(prodId),
+                  unit_id: Number(unitId),
+                  batch_no: batchAlloc.batch_no,
+                  manufacturing_date: batchAlloc.manufacturing_date || null,
+                  expiration_date: batchAlloc.expiry_date || null,
+                  inventory_condition: (batchAlloc.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
+                  unit_cost: batchAlloc.unit_cost || unitCost,
+                  allocated_quantity: batchAlloc.quantity,
+                  picked_quantity: batchAlloc.quantity,
+                  dispatched_quantity: isDispatchStage ? batchAlloc.quantity : 0,
+                  received_quantity: 0,
+                  variance_quantity: 0,
+                }]).catch((e) => console.warn("[StockTransfer] Source batch detail creation error:", e));
+              }
+              detailIdx++;
+            }
+          }
+        } else if (detailsForTransfer.length === 0) {
+          // If no details exist yet, create one for this transfer
+          let srcLotId = u.source_lot_id || t.source_lot_id ? Number(u.source_lot_id || t.source_lot_id) : null;
+          let srcInvLotId = u.source_inventory_lot_id || t.source_inventory_lot_id ? Number(u.source_inventory_lot_id || t.source_inventory_lot_id) : null;
+          const batchNo = u.batch_no || t.batch_no || `TRF-SRC-${t.order_no}-${t.id}`;
 
-            await repo.updateStockTransferDetail(d.id, {
-              dispatched_quantity: detailDispatched,
-              picked_quantity: Number(d.picked_quantity || detailDispatched),
-            });
+          if (!srcLotId && srcBranch) {
+            const lot = await ensureLotForBranch(Number(srcBranch));
+            if (lot) srcLotId = lot.lot_id;
+          }
+
+          if (!srcInvLotId && srcLotId && srcBranch && prodId) {
+            const res = await createInventoryLot({
+              lot_id: Number(srcLotId),
+              branch_id: Number(srcBranch),
+              product_id: Number(prodId),
+              batch_no: batchNo,
+              unit_cost: unitCost,
+              qa_status: "GOOD",
+              status: "ACTIVE",
+              source_type: "STOCK_TRANSFER",
+              source_reference: t.order_no,
+              created_by: validated.userId,
+            }).catch(() => null);
+            srcInvLotId = res?.data?.inventory_lot_id ? Number(res.data.inventory_lot_id) : null;
+          }
+
+          if (srcLotId && srcInvLotId) {
+            const dispQty = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+            await repo.createStockTransferDetails([{
+              stock_transfer_id: t.id,
+              inventory_lot_id: Number(srcInvLotId),
+              target_inventory_lot_id: null,
+              lot_id: Number(srcLotId),
+              target_lot_id: null,
+              product_id: Number(prodId),
+              unit_id: Number(unitId),
+              batch_no: batchNo,
+              manufacturing_date: u.manufacturing_date || t.manufacturing_date || null,
+              expiration_date: u.expiration_date || t.expiry_date || null,
+              inventory_condition: "GOOD",
+              unit_cost: unitCost,
+              allocated_quantity: Number(t.allocated_quantity || dispQty),
+              picked_quantity: Number(dispQty),
+              dispatched_quantity: isDispatchStage ? Number(dispQty) : 0,
+              received_quantity: 0,
+              variance_quantity: 0,
+            }]).catch((e) => console.warn("[StockTransfer] Fallback detail creation error:", e));
+          }
+        } else {
+          // Standard proportional update for existing details
+          const totalAllocated = detailsForTransfer.reduce((sum, d) => sum + Number(d.allocated_quantity || 0), 0);
+          const headerPicked = u.picked_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+          const headerDispatched = u.dispatched_quantity ?? u.picked_quantity ?? t.dispatched_quantity ?? t.picked_quantity ?? t.allocated_quantity ?? t.ordered_quantity ?? 0;
+
+          for (const d of detailsForTransfer) {
+            if (d.id) {
+              const detailAlloc = Number(d.allocated_quantity || 0);
+              const detailPicked = isPickingStage
+                ? (headerPicked >= totalAllocated || totalAllocated === 0
+                    ? detailAlloc
+                    : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerPicked) : headerPicked))
+                : Number(d.picked_quantity || 0);
+
+              const detailDispatched = isDispatchStage
+                ? (headerDispatched >= totalAllocated || totalAllocated === 0
+                    ? (Number(d.picked_quantity) || detailAlloc)
+                    : (totalAllocated > 0 ? Math.round((detailAlloc / totalAllocated) * headerDispatched) : headerDispatched))
+                : Number(d.dispatched_quantity || 0);
+
+              await repo.updateStockTransferDetail(d.id, {
+                ...(isPickingStage ? { picked_quantity: detailPicked } : {}),
+                ...(isDispatchStage ? { dispatched_quantity: detailDispatched, picked_quantity: Number(d.picked_quantity || detailDispatched) } : {}),
+                ...(u.batch_no ? { batch_no: u.batch_no } : {}),
+                ...(u.manufacturing_date ? { manufacturing_date: u.manufacturing_date } : {}),
+                ...(u.expiration_date ? { expiration_date: u.expiration_date } : {}),
+                ...(u.source_lot_id ? { lot_id: Number(u.source_lot_id) } : {}),
+                ...(u.source_inventory_lot_id ? { inventory_lot_id: Number(u.source_inventory_lot_id) } : {}),
+              });
+            }
           }
         }
       }

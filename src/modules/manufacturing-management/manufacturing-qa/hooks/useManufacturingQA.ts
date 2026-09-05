@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { 
     QALog, 
@@ -9,7 +9,9 @@ import {
     QARejectionReason, 
     QAJOInspectionLog, 
     TwoPointQAInspectionPayload,
-    YieldJobOrderMaterial
+    YieldJobOrderMaterial,
+    PageMeta,
+    QASummary
 } from "../types";
 import {
     fetchQALogs,
@@ -29,7 +31,13 @@ import {
     fetchInventoryLotsData,
     postDailyQAInspection,
     postFinalQARelease,
-    fetchFinalQACoa
+    fetchFinalQACoa,
+    fetchQAJobOrdersPage,
+    fetchQASummary,
+    fetchQAInspectionLogsPage,
+    fetchDispositionsPage,
+    fetchDailyQAQueuePage,
+    fetchFinalQAQueuePage
 } from "../services/qa-api";
 import type { FinalQACoa } from "../services/qa-api";
 
@@ -67,6 +75,19 @@ function formatAuditDate(value: string | null | undefined): string {
     if (!value) return "—";
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
+
+interface InspectionQueueFilters {
+    search: string;
+    status: string;
+    type: "all" | "standard" | "rework";
+    branch: string;
+}
+
+interface InspectionLogFilters {
+    search: string;
+    status: string;
+    reason: string;
 }
 
 export interface PrintReceiptComponent {
@@ -331,6 +352,8 @@ export function useManufacturingQA() {
 
     // Core Data Lists
     const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
+    const [closingJobOrders, setClosingJobOrders] = useState<JobOrder[]>([]);
+    const [closedJobOrdersData, setClosedJobOrdersData] = useState<JobOrder[]>([]);
     const [rejectionReasons, setRejectionReasons] = useState<QARejectionReason[]>([]);
     const [inspectionLogs, setInspectionLogs] = useState<QAJOInspectionLog[]>([]);
     const [qaLogs, setQaLogs] = useState<QALog[]>([]);
@@ -349,6 +372,47 @@ export function useManufacturingQA() {
     const [logSearch, setLogSearch] = useState("");
     const [logStatusFilter, setLogStatusFilter] = useState("all");
     const [joSearch, setJoSearch] = useState("");
+    const [inspectionFilters, setInspectionFilters] = useState<InspectionQueueFilters>({
+        search: "",
+        status: "all",
+        type: "all",
+        branch: "all"
+    });
+    const [inspectionLogFilters, setInspectionLogFilters] = useState<InspectionLogFilters>({
+        search: "",
+        status: "all",
+        reason: "all"
+    });
+    const [holdsSearch, setHoldsSearch] = useState("");
+    const [dailySearch, setDailySearch] = useState("");
+    const [finalSearch, setFinalSearch] = useState("");
+    const setJobOrderSearch = useCallback((value: string) => {
+        setJoSearch(value);
+        setClosingPage(1);
+        setClosedPage(1);
+    }, []);
+    const handleInspectionFiltersChange = useCallback((filters: InspectionQueueFilters) => {
+        setInspectionFilters(filters);
+        setInspectionPage(1);
+    }, []);
+    const handleInspectionLogFiltersChange = useCallback((filters: InspectionLogFilters) => {
+        setInspectionLogFilters(filters);
+        setLogSearch(filters.search);
+        setLogStatusFilter(filters.status);
+        setLogsPage(1);
+    }, []);
+    const handleHoldsFiltersChange = useCallback((search: string) => {
+        setHoldsSearch(search);
+        setHoldsPage(1);
+    }, []);
+    const handleDailyFiltersChange = useCallback((search: string) => {
+        setDailySearch(search);
+        setDailyPage(1);
+    }, []);
+    const handleFinalFiltersChange = useCallback((search: string) => {
+        setFinalSearch(search);
+        setFinalPage(1);
+    }, []);
 
     // 2-Point QA Inspection Modal State
     const [selectedQAJobOrder, setSelectedQAJobOrder] = useState<JobOrder | null>(null);
@@ -390,6 +454,29 @@ export function useManufacturingQA() {
     const [finishedGoodsReceipts, setFinishedGoodsReceipts] = useState<any[]>([]);
     const [loadingFinishedGoods, setLoadingFinishedGoods] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [qaSummary, setQASummary] = useState<QASummary | null>(null);
+    const [tabErrors, setTabErrors] = useState<Record<string, string | null>>({});
+    const [inspectionPage, setInspectionPage] = useState(1);
+    const [inspectionPageSize, setInspectionPageSize] = useState(25);
+    const [inspectionMeta, setInspectionMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [closingPage, setClosingPage] = useState(1);
+    const [closingPageSize, setClosingPageSize] = useState(25);
+    const [closingMeta, setClosingMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [closedPage, setClosedPage] = useState(1);
+    const [closedPageSize, setClosedPageSize] = useState(25);
+    const [closedMeta, setClosedMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [logsPage, setLogsPage] = useState(1);
+    const [logsPageSize, setLogsPageSize] = useState(25);
+    const [logsMeta, setLogsMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [holdsPage, setHoldsPage] = useState(1);
+    const [holdsPageSize, setHoldsPageSize] = useState(25);
+    const [holdsMeta, setHoldsMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [dailyPage, setDailyPage] = useState(1);
+    const [dailyPageSize, setDailyPageSize] = useState(25);
+    const [dailyMeta, setDailyMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [finalPage, setFinalPage] = useState(1);
+    const [finalPageSize, setFinalPageSize] = useState(25);
+    const [finalMeta, setFinalMeta] = useState<PageMeta>({ page: 1, pageSize: 25, total: 0, totalPages: 0 });
 
     // Daily Audit Dialog states
     const [isDailyAuditOpen, setIsDailyAuditOpen] = useState(false);
@@ -420,6 +507,7 @@ export function useManufacturingQA() {
     const [loadingFinalQAAudit, setLoadingFinalQAAudit] = useState(false);
     const [finalQAAuditError, setFinalQAAuditError] = useState<string | null>(null);
     const [coaPrintLoading, setCoaPrintLoading] = useState(false);
+    const tabControllers = useRef<Record<string, AbortController | undefined>>({});
 
     // Load Job Orders
     const loadJobOrders = async (silent = false) => {
@@ -557,41 +645,189 @@ export function useManufacturingQA() {
         }
     };
 
-    // Refresh all data
+    const loadQASummary = useCallback(async (silent = false) => {
+        try {
+            setQASummary(await fetchQASummary());
+            setTabErrors(current => ({ ...current, summary: null }));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load QA summary.";
+            setTabErrors(current => ({ ...current, summary: message }));
+            if (!silent) console.error("QA summary fetch error:", error);
+            throw error instanceof Error ? error : new Error(message);
+        }
+    }, []);
+
+    const loadTabData = useCallback(async (tab: string, silent = false) => {
+        tabControllers.current[tab]?.abort();
+        const controller = new AbortController();
+        tabControllers.current[tab] = controller;
+        const setTabLoading = (loading: boolean) => {
+            if (tab === "jo-inspection" || tab === "closing" || tab === "closed-qa") setLoadingJobOrders(loading);
+            if (tab === "qa-inspection-logs") setLoadingInspectionLogs(loading);
+            if (tab === "holds") setLoadingDispositions(loading);
+            if (tab === "daily-qa") setLoadingDailyQA(loading);
+            if (tab === "final-qa") setLoadingFinalQA(loading);
+        };
+
+        setTabLoading(true);
+        setTabErrors(current => ({ ...current, [tab]: null }));
+        try {
+            if (tab === "jo-inspection") {
+                const result = await fetchQAJobOrdersPage({
+                    queue: "inspection",
+                    page: inspectionPage,
+                    pageSize: inspectionPageSize,
+                    search: inspectionFilters.search,
+                    status: inspectionFilters.status === "all" ? "" : inspectionFilters.status,
+                    type: inspectionFilters.type === "all" ? undefined : inspectionFilters.type,
+                    branch: inspectionFilters.branch === "all" ? undefined : inspectionFilters.branch,
+                    signal: controller.signal
+                });
+                setJobOrders(result.data);
+                setInspectionMeta(result.meta);
+            } else if (tab === "qa-inspection-logs") {
+                const [logsResult, reasons] = await Promise.all([
+                    fetchQAInspectionLogsPage({
+                        page: logsPage,
+                        pageSize: logsPageSize,
+                        search: inspectionLogFilters.search,
+                        status: inspectionLogFilters.status === "all" ? "" : inspectionLogFilters.status,
+                        reason: inspectionLogFilters.reason === "all" ? "" : inspectionLogFilters.reason,
+                        signal: controller.signal
+                    }),
+                    rejectionReasons.length > 0 ? Promise.resolve(rejectionReasons) : fetchQARejectionReasons()
+                ]);
+                setInspectionLogs(logsResult.data);
+                setLogsMeta(logsResult.meta);
+                setRejectionReasons(reasons);
+            } else if (tab === "closing") {
+                const result = await fetchQAJobOrdersPage({
+                    queue: "closing",
+                    page: closingPage,
+                    pageSize: closingPageSize,
+                    search: joSearch,
+                    signal: controller.signal
+                });
+                setClosingJobOrders(result.data);
+                setClosingMeta(result.meta);
+            } else if (tab === "holds") {
+                const result = await fetchDispositionsPage({
+                    page: holdsPage,
+                    pageSize: holdsPageSize,
+                    search: holdsSearch,
+                    status: "Pending",
+                    signal: controller.signal
+                });
+                setDispositions(result.data);
+                setHoldsMeta(result.meta);
+            } else if (tab === "daily-qa") {
+                const [queue, templatesResponse, logs, details] = await Promise.all([
+                    fetchDailyQAQueuePage(dailyPage, dailyPageSize, dailySearch, "", controller.signal),
+                    fetch("/api/manufacturing/qa?action=templates", { signal: controller.signal }).then(async response => {
+                        if (!response.ok) throw new Error("Failed to load QA templates");
+                        return response.json();
+                    }),
+                    fetchQALogs(),
+                    fetchJobOrders()
+                ]);
+                setYieldLedger(queue.data);
+                setDailyInspections(queue.data.flatMap((entry: any) => Array.isArray(entry.audits) ? entry.audits : []));
+                setDailyMeta(queue.meta);
+                setQaTemplates(templatesResponse);
+                setQaLogs(logs);
+                setJobOrders(details);
+            } else if (tab === "final-qa") {
+                const [releases, lotsData] = await Promise.all([
+                    fetchFinalQAQueuePage(finalPage, finalPageSize, finalSearch, "", controller.signal),
+                    fetchInventoryLotsData()
+                ]);
+                setFinalReleases(releases.data.flatMap((lot: any) => lot.final_release ? [lot.final_release] : []));
+                setFinalMeta(releases.meta);
+                setLots(releases.data);
+                setLotsProducts(lotsData.products);
+            } else if (tab === "closed-qa") {
+                const result = await fetchQAJobOrdersPage({
+                    queue: "closed",
+                    page: closedPage,
+                    pageSize: closedPageSize,
+                    search: joSearch,
+                    signal: controller.signal
+                });
+                setClosedJobOrdersData(result.data);
+                setClosedMeta(result.meta);
+            }
+            setTabErrors(current => ({ ...current, [tab]: null }));
+        } catch (error) {
+            if (controller.signal.aborted) return;
+            const message = error instanceof Error ? error.message : `Failed to load ${tab}.`;
+            setTabErrors(current => ({ ...current, [tab]: message }));
+            if (!silent) console.error(`Manufacturing QA ${tab} fetch error:`, error);
+            throw error instanceof Error ? error : new Error(message);
+        } finally {
+            if (!controller.signal.aborted) setTabLoading(false);
+        }
+    }, [
+        inspectionPage,
+        inspectionPageSize,
+        inspectionFilters,
+        logsPage,
+        logsPageSize,
+        inspectionLogFilters,
+        holdsPage,
+        holdsPageSize,
+        holdsSearch,
+        dailyPage,
+        dailyPageSize,
+        dailySearch,
+        finalPage,
+        finalPageSize,
+        finalSearch,
+        closingPage,
+        closingPageSize,
+        closedPage,
+        closedPageSize,
+        joSearch,
+        rejectionReasons
+    ]);
+
     const refreshAll = useCallback(async (silent: boolean | any = false): Promise<{ failed: string[] }> => {
         const isSilent = silent === true;
         setIsRefreshing(true);
-        const refreshTasks: Array<[string, Promise<void>]> = [
-            ["job orders", loadJobOrders(isSilent)],
-            ["rejection reasons", loadRejectionReasons(isSilent)],
-            ["inspection logs", loadInspectionLogs(isSilent)],
-            ["QA logs", loadQALogs(isSilent)],
-            ["dispositions", loadDispositions(isSilent)],
-            ["daily QA data", loadDailyQAData(isSilent)],
-            ["final QA data", loadFinalQAData(isSilent)],
-            ["finished goods", loadFinishedGoodsData(isSilent)]
+        const tasks: Array<[string, Promise<unknown>]> = [
+            ["QA summary", loadQASummary(isSilent)],
+            [activeTab, loadTabData(activeTab, isSilent)]
         ];
-        const results = await Promise.allSettled(refreshTasks.map(([, task]) => task));
+        const results = await Promise.allSettled(tasks.map(([, task]) => task));
         const failed = results
-            .map((result, index) => result.status === "rejected" ? refreshTasks[index][0] : null)
+            .map((result, index) => result.status === "rejected" ? tasks[index][0] : null)
             .filter((label): label is string => Boolean(label));
         setIsRefreshing(false);
         if (!isSilent && failed.length > 0) {
             toast.warning(`Console refresh incomplete: ${failed.join(", ")}.`);
         }
         return { failed };
-    }, []);
+    }, [activeTab, loadQASummary, loadTabData]);
 
-    // Initial Mount Lifecycle
+    // Initial render loads the lightweight summary, branch references, and only the active queue.
     useEffect(() => {
-        void refreshAll(false);
+        void loadQASummary(false).catch(() => undefined);
         void loadBranches();
-    }, [refreshAll]);
+    }, [loadQASummary]);
+
+    // Each tab owns its request and cached page state. Page/filter changes reload only that tab.
+    useEffect(() => {
+        void loadTabData(activeTab).catch(() => undefined);
+    }, [activeTab, loadTabData]);
+
+    useEffect(() => () => {
+        Object.values(tabControllers.current).forEach((controller) => controller?.abort());
+    }, []);
 
     // Establish Realtime SSE Connection for inventory movements
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+        let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
         let isDisposed = false;
         let reconnectAttempts = 0;
 
@@ -604,7 +840,10 @@ export function useManufacturingQA() {
 
                 eventSource.addEventListener("movement", (event) => {
                     try {
-                        void refreshAll(true);
+                        if (refreshTimeout) clearTimeout(refreshTimeout);
+                        refreshTimeout = setTimeout(() => {
+                            if (!isDisposed) void refreshAll(true);
+                        }, 300);
                     } catch (e) {
                         console.error("[QA Realtime SSE] Error parsing movement event data:", e);
                     }
@@ -638,6 +877,7 @@ export function useManufacturingQA() {
             isDisposed = true;
             if (eventSource) eventSource.close();
             if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            if (refreshTimeout) clearTimeout(refreshTimeout);
         };
     }, [refreshAll]);
 
@@ -679,25 +919,19 @@ export function useManufacturingQA() {
 
     // Filtered Active Job Orders (Awaiting yield closing)
     const activeJobOrders = useMemo(() => {
-        return jobOrders.filter(jo => {
-            const status = (jo.status || "").toLowerCase();
-            const isCompleted = status === "finished" || status === "completed" || status === "cancelled" || status === "closed";
-            const matchesSearch = (jo.job_order_no || jo.jo_id || "").toLowerCase().includes(joSearch.toLowerCase()) || 
-                                  (jo.product_name || "").toLowerCase().includes(joSearch.toLowerCase());
-            return !isCompleted && matchesSearch;
+        return closingJobOrders.filter(jo => {
+            const haystack = `${jo.job_order_no || jo.jo_id || ""} ${jo.product_name || ""}`.toLowerCase();
+            return !joSearch.trim() || haystack.includes(joSearch.toLowerCase().trim());
         });
-    }, [jobOrders, joSearch]);
+    }, [closingJobOrders, joSearch]);
 
     // Filtered Closed Job Orders
     const closedJobOrders = useMemo(() => {
-        return jobOrders.filter(jo => {
-            const status = (jo.status || "").toLowerCase();
-            const isCompleted = status === "finished" || status === "completed" || status === "closed";
-            const matchesSearch = (jo.job_order_no || jo.jo_id || "").toLowerCase().includes(joSearch.toLowerCase()) || 
-                                  (jo.product_name || "").toLowerCase().includes(joSearch.toLowerCase());
-            return isCompleted && matchesSearch;
+        return closedJobOrdersData.filter(jo => {
+            const haystack = `${jo.job_order_no || jo.jo_id || ""} ${jo.product_name || ""}`.toLowerCase();
+            return !joSearch.trim() || haystack.includes(joSearch.toLowerCase().trim());
         });
-    }, [jobOrders, joSearch]);
+    }, [closedJobOrdersData, joSearch]);
 
     // Handlers for 2-Point QA Inspection
     const handleOpenQAInspectionModal = (jo: JobOrder) => {
@@ -1376,6 +1610,8 @@ export function useManufacturingQA() {
         loadingFinishedGoods,
         actionLoading,
         finishedGoodsReceipts,
+        qaSummary,
+        tabErrors,
 
         // Search & Filters
         logSearch,
@@ -1383,11 +1619,51 @@ export function useManufacturingQA() {
         logStatusFilter,
         setLogStatusFilter,
         joSearch,
-        setJoSearch,
+        setJoSearch: setJobOrderSearch,
         filteredQALogs,
         pendingHolds,
         activeJobOrders,
         closedJobOrders,
+        handleInspectionFiltersChange,
+        handleInspectionLogFiltersChange,
+        handleHoldsFiltersChange,
+        handleDailyFiltersChange,
+        handleFinalFiltersChange,
+        inspectionPage,
+        inspectionPageSize,
+        inspectionMeta,
+        setInspectionPage,
+        setInspectionPageSize,
+        closingPage,
+        closingPageSize,
+        closingMeta,
+        setClosingPage,
+        setClosingPageSize,
+        closedPage,
+        closedPageSize,
+        closedMeta,
+        setClosedPage,
+        setClosedPageSize,
+        logsPage,
+        logsPageSize,
+        logsMeta,
+        setLogsPage,
+        setLogsPageSize,
+        holdsPage,
+        holdsPageSize,
+        holdsMeta,
+        setHoldsPage,
+        setHoldsPageSize,
+        dailyPage,
+        dailyPageSize,
+        dailyMeta,
+        setDailyPage,
+        setDailyPageSize,
+        finalPage,
+        finalPageSize,
+        finalMeta,
+        setFinalPage,
+        setFinalPageSize,
 
         // 2-Point QA Inspection Modal
         selectedQAJobOrder,

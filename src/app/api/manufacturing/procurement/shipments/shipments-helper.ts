@@ -202,7 +202,14 @@ interface DirectusReceivingRecord {
     branch_id?: number | { id: number } | null;
     received_date?: string | null;
     isPosted?: boolean | number | null;
+    is_reverted?: boolean | number | null;
     receiving_method?: string | null;
+}
+
+function isUnpostedWarehouseReceiving(row: DirectusReceivingRecord): boolean {
+    return String(row.receiving_method || "").trim().toUpperCase() === "WAREHOUSE"
+        && Number(row.isPosted) !== 1
+        && Number(row.is_reverted) !== 1;
 }
 
 interface DirectusInventoryMovement {
@@ -247,6 +254,14 @@ interface LatestReceivingSnapshot {
     supplier_document_type_id: number | null;
 }
 
+interface WarehouseReceivingSnapshot {
+    receiving_header_id: number | null;
+    receipt_number: string;
+    receipt_date: string | null;
+    receipt_type: string | null;
+    received_quantity: number;
+}
+
 export interface ExtendedShipmentLineItem {
     line_id?: number;
     shipment_id?: number;
@@ -267,6 +282,7 @@ export interface ExtendedShipmentLineItem {
     is_over_received?: boolean;
     over_delivery_quantity?: number;
     latest_receipt?: LatestReceivingSnapshot | null;
+    warehouse_receipt?: WarehouseReceivingSnapshot | null;
     rejection_reason?: string;
     qa_status?: string;
     base_unit_cost_php?: number | string;
@@ -637,6 +653,41 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     clauses.push({ purchase_order_id: { _in: [-1] } });
 }
 
+const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
+
+async function mapPurchaseOrderRows(rows: DirectusPO[]) {
+    const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
+    const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
+    const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
+    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
+        purchaseOrderId: Number(row.purchase_order_id),
+        inventoryStatus: row.inventory_status ?? null,
+        workflowRevision: Number(row.workflow_revision || 0)
+    })));
+
+    return rows.map(row => mapPurchaseOrder(
+        row,
+        suppliers,
+        paymentModes,
+        true,
+        rejectionStages.get(Number(row.purchase_order_id)) || null,
+        revisionCounts.get(Number(row.purchase_order_id)) || 0
+    ));
+}
+
+export async function fetchIncomingShipmentById(shipmentId: number) {
+    const params = new URLSearchParams({
+        fields: PURCHASE_ORDER_LIST_FIELDS,
+        "filter[purchase_order_id][_eq]": String(shipmentId),
+        limit: "1"
+    });
+    const response = await fetchItemsWithDeliveryTermsFallback("purchase_order", params);
+    if (!response.ok) throw new Error(`Failed to load purchase order (${response.status}).`);
+    const body = await response.json();
+    const rows = (body.data || []) as DirectusPO[];
+    return (await mapPurchaseOrderRows(rows))[0] || null;
+}
+
 export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) {
     const filter: Record<string, unknown> = {};
     const clauses: Record<string, unknown>[] = [];
@@ -676,7 +727,7 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (clauses.length > 1) filter._and = clauses;
 
     const params = new URLSearchParams({
-        fields: "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason",
+        fields: PURCHASE_ORDER_LIST_FIELDS,
         limit: String(query.limit),
         offset: String((query.page - 1) * query.limit),
         sort: `${query.direction === "desc" ? "-" : ""}${query.sort}`,
@@ -688,24 +739,10 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
     if (!res.ok) throw new Error(`Failed to load purchase orders (${res.status}).`);
     const body = await res.json();
     const rows = (body.data || []) as DirectusPO[];
-    const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
-    const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
-    const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
-    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
-        purchaseOrderId: Number(row.purchase_order_id),
-        inventoryStatus: row.inventory_status ?? null,
-        workflowRevision: Number(row.workflow_revision || 0)
-    })));
+    const mappedRows = await mapPurchaseOrderRows(rows);
     const total = Number(body.meta?.filter_count || 0);
     return {
-        data: rows.map(row => mapPurchaseOrder(
-            row,
-            suppliers,
-            paymentModes,
-            true,
-            rejectionStages.get(Number(row.purchase_order_id)) || null,
-            revisionCounts.get(Number(row.purchase_order_id)) || 0
-        )),
+        data: mappedRows,
         meta: {
             page: query.page,
             limit: query.limit,
@@ -845,11 +882,11 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
@@ -875,6 +912,7 @@ export async function fetchShipmentLineItems(
         const originalReceivingData = receivingData.filter(row =>
             row.is_replacement !== true
             && Number(row.is_replacement) !== 1
+            && !isUnpostedWarehouseReceiving(row)
             && !preQaRfidReceivingIds.has(receivingRecordId(row.purchase_order_product_id))
         );
         const receivingHistory = summarizeReceivingHistory(originalReceivingData, popData);
@@ -975,6 +1013,27 @@ export async function fetchShipmentLineItems(
                 Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
             );
             const lineId = Number(pop.purchase_order_product_id);
+            const warehouseRowsForLine = receivingData.filter(row =>
+                isUnpostedWarehouseReceiving(row)
+                && resolvePurchaseOrderLineId(row, popData) === lineId
+            );
+            const warehouseRow = warehouseRowsForLine[0];
+            const warehouseHeader = warehouseRow && typeof warehouseRow.receiving_header_id === "object"
+                ? warehouseRow.receiving_header_id
+                : null;
+            const warehouseReceipt: WarehouseReceivingSnapshot | null = warehouseRowsForLine.length > 0
+                ? {
+                    receiving_header_id: warehouseRow ? relationId(warehouseRow.receiving_header_id, "id") : null,
+                    receipt_number: String(warehouseHeader?.receiving_ticket_no || warehouseRow?.receipt_no || ""),
+                    receipt_date: warehouseHeader?.receipt_date
+                        ? String(warehouseHeader.receipt_date).slice(0, 10)
+                        : warehouseRow?.receipt_date
+                            ? String(warehouseRow.receipt_date).slice(0, 10)
+                            : null,
+                    receipt_type: warehouseRow?.receipt_type == null ? null : String(warehouseRow.receipt_type),
+                    received_quantity: warehouseRowsForLine.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0)
+                }
+                : null;
             const latestReceipt = originalReceivingData
                 .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)
                 .sort((left, right) => {
@@ -1077,6 +1136,7 @@ export async function fetchShipmentLineItems(
                  is_over_received: latestSnapshot?.is_over_received || false,
                  over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
                  latest_receipt: latestSnapshot,
+                warehouse_receipt: warehouseReceipt,
                 rejection_reason: latestSnapshot?.rejection_reason || "",
                 qa_status: latestReceipt ? latestReceipt.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;

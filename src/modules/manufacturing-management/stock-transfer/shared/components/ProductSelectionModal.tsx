@@ -20,10 +20,107 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Search, ShoppingCart, Loader2, Package, Trash2, Box, Layers, Archive, Filter } from 'lucide-react';
+import { Search, ShoppingCart, Loader2, Package, Trash2, Box, Layers, Archive, Filter, ImageOff } from 'lucide-react';
 import { EnrichedProduct } from '../../types/stock-transfer.types';
 import { QuantityStepper } from './QuantityStepper';
 import { getAssetUrl } from '@/lib/assets';
+
+function ProductCardImage({
+  imgUrl,
+  alt,
+  fallbackText,
+}: {
+  imgUrl?: string | null;
+  alt: string;
+  fallbackText?: string;
+}) {
+  const [prevImgUrl, setPrevImgUrl] = useState(imgUrl);
+  const [loadError, setLoadError] = useState(false);
+
+  if (imgUrl !== prevImgUrl) {
+    setPrevImgUrl(imgUrl);
+    setLoadError(false);
+  }
+
+  if (!imgUrl) {
+    return (
+      <div className="text-2xl font-black text-muted-foreground/10 group-hover:scale-110 transition-transform duration-500 font-mono">
+        {fallbackText?.substring(0, 2).toUpperCase() || 'NA'}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center p-3 text-center text-muted-foreground bg-muted/30 w-full h-full select-none">
+        <ImageOff className="w-6 h-6 mb-1 text-muted-foreground/40" />
+        <span className="text-[10px] font-bold text-muted-foreground/80 leading-tight">Failed to load</span>
+        <span className="text-[8px] text-muted-foreground/50 leading-tight mt-0.5 max-w-[120px] truncate" title="Image asset not found or unreachable">
+          Not found / unreachable
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <Image
+      src={imgUrl}
+      alt={alt}
+      fill
+      unoptimized
+      onError={() => setLoadError(true)}
+      className="object-cover group-hover:scale-105 transition-transform duration-500"
+    />
+  );
+}
+
+function CartItemThumbnail({
+  imgUrl,
+  alt,
+  fallbackText,
+}: {
+  imgUrl?: string | null;
+  alt: string;
+  fallbackText?: string;
+}) {
+  const [prevImgUrl, setPrevImgUrl] = useState(imgUrl);
+  const [loadError, setLoadError] = useState(false);
+
+  if (imgUrl !== prevImgUrl) {
+    setPrevImgUrl(imgUrl);
+    setLoadError(false);
+  }
+
+  if (!imgUrl || loadError) {
+    return (
+      <div 
+        className="h-8 w-8 rounded-md bg-muted/40 border border-border/50 flex items-center justify-center shrink-0"
+        title={loadError ? 'Image failed to load (not found/unreachable)' : undefined}
+      >
+        {loadError ? (
+          <ImageOff className="w-3.5 h-3.5 text-muted-foreground/40" />
+        ) : (
+          <span className="text-[9px] font-bold font-mono text-muted-foreground/40">
+            {fallbackText?.substring(0, 2).toUpperCase() || 'NA'}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-8 w-8 rounded-md bg-muted/40 border border-border/50 overflow-hidden shrink-0 relative">
+      <Image
+        src={imgUrl}
+        alt={alt}
+        fill
+        unoptimized
+        onError={() => setLoadError(true)}
+        className="object-cover"
+      />
+    </div>
+  );
+}
 
 export type ProductClassification = 'RM' | 'PKG' | 'FG';
 export type ProductTypeFilter = 'ALL' | ProductClassification;
@@ -159,6 +256,143 @@ export function getProductClassification(product: EnrichedProduct): ProductClass
   return 'FG';
 }
 
+const ProductCardItem = React.memo(function ProductCardItem({
+  product,
+  onSelect,
+}: {
+  product: EnrichedProduct & { _classification: ProductClassification };
+  onSelect: (product: EnrichedProduct) => void;
+}) {
+  const imgUrl = getAssetUrl(product.product_image);
+  const classification = product._classification;
+  const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
+  const ClassIcon = config.icon;
+
+  return (
+    <div className="group relative bg-background border border-border/60 rounded-xl overflow-hidden hover:border-primary/30 hover:shadow-sm transition-all duration-300 flex flex-col">
+      <div className="aspect-square bg-muted/30 flex items-center justify-center relative overflow-hidden">
+        <ProductCardImage
+          imgUrl={imgUrl}
+          alt={product.description || product.product_name}
+          fallbackText={product.description || product.product_name}
+        />
+        <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 items-start">
+          <span
+            className={`inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border shadow-sm ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}
+          >
+            <ClassIcon className="w-2.5 h-2.5" />
+            {config.shortLabel}
+          </span>
+        </div>
+        <div className="absolute top-2 right-2 z-10">
+          <Badge
+            variant="outline"
+            className="bg-background/80 backdrop-blur-sm text-[8px] font-black tracking-widest uppercase border-border/50"
+          >
+            {typeof product.product_brand === 'object' && product.product_brand !== null
+              ? (product.product_brand as { brand_name?: string }).brand_name
+              : product.product_brand || 'GENERIC'}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="p-3 flex-1 flex flex-col gap-3">
+        <div className="space-y-1.5 flex-1">
+          <h3 className="font-bold text-xs line-clamp-2 leading-[1.3] text-foreground/90 font-sans group-hover:text-primary transition-colors">
+            {product.description || product.product_name}
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center gap-1 text-[9px] text-muted-foreground/60 font-mono">
+              <span>ID: {product.product_code || product.barcode || product.product_id}</span>
+            </div>
+            <div className="flex items-center gap-1 text-[9px] text-primary/70 font-bold uppercase tracking-tighter">
+              <Package className="w-2.5 h-2.5" />
+              <span>
+                {typeof product.unit_of_measurement === 'object' && product.unit_of_measurement !== null
+                  ? (product.unit_of_measurement as { unit_name?: string }).unit_name
+                  : String(product.unit_of_measurement || 'PCS')}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-border/30">
+          <div className="text-xs font-black text-primary font-mono bg-primary/5 px-2 py-0.5 rounded">
+            ₱{Number((product as { cost_per_unit?: number }).cost_per_unit || 0).toLocaleString()}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[10px] font-black uppercase tracking-widest hover:bg-primary/10 hover:text-primary rounded-md"
+            onClick={() => onSelect(product)}
+          >
+            SELECT
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const CartItemRow = React.memo(function CartItemRow({
+  item,
+  onUpdateQty,
+  onRemoveItem,
+}: {
+  item: EnrichedProduct;
+  onUpdateQty?: (productId: number, qty: number) => void;
+  onRemoveItem?: (productId: number) => void;
+}) {
+  const pid = item.product_id;
+  const uom =
+    typeof item.unit_of_measurement === 'object' && item.unit_of_measurement !== null
+      ? (item.unit_of_measurement as { unit_name?: string }).unit_name
+      : item.unit_of_measurement || 'PCS';
+  const qty = (item as EnrichedProduct & { quantity?: number }).quantity || 1;
+  const cartImgUrl = getAssetUrl(item.product_image);
+
+  return (
+    <div className="bg-background border border-border/40 rounded-lg p-2.5 hover:border-primary/30 transition-all group/item shadow-none">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <CartItemThumbnail
+            imgUrl={cartImgUrl}
+            alt={item.product_name}
+            fallbackText={item.description || item.product_name}
+          />
+          <p className="text-[10px] font-bold line-clamp-2 leading-tight flex-1 text-foreground/80">
+            {item.description || item.product_name}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5 text-muted-foreground/30 hover:text-destructive hover:bg-transparent -mt-1 -mr-1 shrink-0"
+          onClick={() => onRemoveItem?.(Number(pid))}
+        >
+          <Trash2 className="w-3 h-3" />
+        </Button>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <QuantityStepper
+          value={qty}
+          max={9999}
+          onChange={(val) => onUpdateQty?.(Number(pid), val)}
+          className="h-7 w-fit"
+          size="sm"
+        />
+        <div className="flex flex-col items-end">
+          <span className="font-black text-primary text-[11px] font-mono tracking-tighter">
+            ₱{Number((item as { totalAmount?: number }).totalAmount || (item as { cost_per_unit?: number }).cost_per_unit || 0).toLocaleString()}
+          </span>
+          <span className="text-[8px] font-bold text-muted-foreground/50 uppercase tracking-widest">{uom}</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 interface ProductSelectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -169,7 +403,15 @@ interface ProductSelectionModalProps {
   onRemoveItem?: (productId: number) => void;
 }
 
-export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBranch, selectedProducts = [], onUpdateQty, onRemoveItem }: ProductSelectionModalProps) {
+export function ProductSelectionModal({
+  open,
+  onOpenChange,
+  onSelect,
+  sourceBranch,
+  selectedProducts = [],
+  onUpdateQty,
+  onRemoveItem,
+}: ProductSelectionModalProps) {
   const [products, setProducts] = useState<EnrichedProduct[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -244,9 +486,10 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
         const code = (p.product_code || '').toLowerCase();
         const barcode = (p.barcode || '').toLowerCase();
         const id = String(p.product_id || '');
-        const brand = typeof p.product_brand === 'object' && p.product_brand !== null
-          ? (p.product_brand as { brand_name?: string }).brand_name?.toLowerCase() || ''
-          : String(p.product_brand || '').toLowerCase();
+        const brand =
+          typeof p.product_brand === 'object' && p.product_brand !== null
+            ? (p.product_brand as { brand_name?: string }).brand_name?.toLowerCase() || ''
+            : String(p.product_brand || '').toLowerCase();
 
         return (
           name.includes(q) ||
@@ -262,9 +505,25 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
     return result;
   }, [classifiedProducts, productTypeFilter, search]);
 
-  const handleSelect = (product: EnrichedProduct) => {
-    onSelect(product);
-  };
+  const handleSelect = React.useCallback(
+    (product: EnrichedProduct) => {
+      onSelect(product);
+    },
+    [onSelect]
+  );
+
+  const estimatedTotal = React.useMemo(() => {
+    return selectedProducts.reduce(
+      (sum, p) =>
+        sum +
+        Number(
+          (p as { totalAmount?: number }).totalAmount ||
+            (p as { cost_per_unit?: number }).cost_per_unit ||
+            0
+        ),
+      0
+    );
+  }, [selectedProducts]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -311,9 +570,11 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                 }`}
               >
                 ALL
-                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  productTypeFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
-                }`}>
+                <span
+                  className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                    productTypeFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
                   {categoryCounts.ALL}
                 </span>
               </Button>
@@ -329,9 +590,11 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                 }`}
               >
                 Raw Materials (RM)
-                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  productTypeFilter === 'RM' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
-                }`}>
+                <span
+                  className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                    productTypeFilter === 'RM' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
                   {categoryCounts.RM}
                 </span>
               </Button>
@@ -347,9 +610,11 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                 }`}
               >
                 Packaging (PKG)
-                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  productTypeFilter === 'PKG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
-                }`}>
+                <span
+                  className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                    productTypeFilter === 'PKG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
                   {categoryCounts.PKG}
                 </span>
               </Button>
@@ -365,9 +630,11 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                 }`}
               >
                 Finished Goods (FG)
-                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  productTypeFilter === 'FG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
-                }`}>
+                <span
+                  className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                    productTypeFilter === 'FG' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}
+                >
                   {categoryCounts.FG}
                 </span>
               </Button>
@@ -455,79 +722,13 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 pb-8">
-                  {filteredProducts.map((product) => {
-                    const imgUrl = getAssetUrl(product.product_image);
-                    const classification = product._classification;
-                    const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
-                    const ClassIcon = config.icon;
-
-                    return (
-                      <div 
-                        key={product.product_id}
-                        className="group relative bg-background border border-border/60 rounded-xl overflow-hidden hover:border-primary/30 hover:shadow-sm transition-all duration-300 flex flex-col"
-                      >
-                        <div className="aspect-square bg-muted/30 flex items-center justify-center relative overflow-hidden">
-                          {imgUrl ? (
-                            <Image
-                              src={imgUrl}
-                              alt={product.description || product.product_name}
-                              fill
-                              unoptimized
-                              className="object-cover group-hover:scale-105 transition-transform duration-500"
-                            />
-                          ) : (
-                            <div className="text-2xl font-black text-muted-foreground/10 group-hover:scale-110 transition-transform duration-500 font-mono">
-                              {(product.description || product.product_name)?.substring(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 items-start">
-                            <span className={`inline-flex items-center gap-1 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border shadow-sm ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}>
-                              <ClassIcon className="w-2.5 h-2.5" />
-                              {config.shortLabel}
-                            </span>
-                          </div>
-                          <div className="absolute top-2 right-2 z-10">
-                            <Badge variant="outline" className="bg-background/80 backdrop-blur-sm text-[8px] font-black tracking-widest uppercase border-border/50">
-                              {typeof product.product_brand === 'object' && product.product_brand !== null 
-                                ? (product.product_brand as { brand_name?: string }).brand_name 
-                                : product.product_brand || 'GENERIC'}
-                            </Badge>
-                          </div>
-                        </div>
-                        
-                        <div className="p-3 flex-1 flex flex-col gap-3">
-                          <div className="space-y-1.5 flex-1">
-                            <h3 className="font-bold text-xs line-clamp-2 leading-[1.3] text-foreground/90 font-sans group-hover:text-primary transition-colors">
-                              {product.description || product.product_name}
-                            </h3>
-                            <div className="flex flex-wrap gap-2">
-                               <div className="flex items-center gap-1 text-[9px] text-muted-foreground/60 font-mono">
-                                <span>ID: {product.product_id}</span>
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] text-primary/70 font-bold uppercase tracking-tighter">
-                                <Package className="w-2.5 h-2.5" />
-                                <span>{typeof product.unit_of_measurement === 'object' && product.unit_of_measurement !== null ? (product.unit_of_measurement as { unit_name?: string }).unit_name : String(product.unit_of_measurement || 'PCS')}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-border/30">
-                            <div className="text-xs font-black text-primary font-mono bg-primary/5 px-2 py-0.5 rounded">
-                              ₱{Number((product as { cost_per_unit?: number }).cost_per_unit || 0).toLocaleString()}
-                            </div>
-                            <Button 
-                              size="sm" 
-                              variant="ghost" 
-                              className="h-7 text-[10px] font-black uppercase tracking-widest hover:bg-primary/10 hover:text-primary rounded-md"
-                              onClick={() => handleSelect(product)}
-                            >
-                              SELECT
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {filteredProducts.map((product) => (
+                    <ProductCardItem
+                      key={product.product_id}
+                      product={product}
+                      onSelect={handleSelect}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -539,7 +740,9 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
               <h3 className="font-bold text-sm flex items-center gap-2 text-foreground">
                 <ShoppingCart className="w-4 h-4 text-primary" />
                 DRAFT LIST
-                <Badge variant="secondary" className="ml-auto font-mono text-[10px] bg-primary/10 text-primary border-none">{selectedProducts.length}</Badge>
+                <Badge variant="secondary" className="ml-auto font-mono text-[10px] bg-primary/10 text-primary border-none">
+                  {selectedProducts.length}
+                </Badge>
               </h3>
             </div>
             <ScrollArea className="flex-1 min-h-0 bg-card/40">
@@ -550,57 +753,14 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
                     <p className="text-[10px] font-black uppercase tracking-widest">List is empty</p>
                   </div>
                 ) : (
-                  selectedProducts.map((p, idx) => {
-                    const pid = p.product_id;
-                    const uom = typeof p.unit_of_measurement === 'object' && p.unit_of_measurement !== null 
-                      ? (p.unit_of_measurement as { unit_name?: string }).unit_name 
-                      : (p.unit_of_measurement || 'PCS');
-                    const qty = (p as EnrichedProduct & { quantity?: number }).quantity || 1;
-                    const cartImgUrl = getAssetUrl(p.product_image);
-
-                    return (
-                      <div key={idx} className="bg-background border border-border/40 rounded-lg p-2.5 hover:border-primary/30 transition-all group/item shadow-none">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            {cartImgUrl ? (
-                              <div className="h-8 w-8 rounded-md bg-muted/40 border border-border/50 overflow-hidden shrink-0 relative">
-                                <Image
-                                  src={cartImgUrl}
-                                  alt={p.product_name}
-                                  fill
-                                  unoptimized
-                                  className="object-cover"
-                                />
-                              </div>
-                            ) : null}
-                            <p className="text-[10px] font-bold line-clamp-2 leading-tight flex-1 text-foreground/80">{p.description || p.product_name}</p>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5 text-muted-foreground/30 hover:text-destructive hover:bg-transparent -mt-1 -mr-1 shrink-0"
-                            onClick={() => onRemoveItem?.(Number(pid))}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                        
-                        <div className="flex items-center justify-between">
-                           <QuantityStepper 
-                             value={qty}
-                             max={9999}
-                             onChange={(val) => onUpdateQty?.(Number(pid), val)}
-                             className="h-7 w-fit"
-                             size="sm"
-                           />
-                          <div className="flex flex-col items-end">
-                            <span className="font-black text-primary text-[11px] font-mono tracking-tighter">₱{Number((p as { totalAmount?: number }).totalAmount || (p as { cost_per_unit?: number }).cost_per_unit || 0).toLocaleString()}</span>
-                            <span className="text-[8px] font-bold text-muted-foreground/50 uppercase tracking-widest">{uom}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+                  selectedProducts.map((p) => (
+                    <CartItemRow
+                      key={p.product_id}
+                      item={p}
+                      onUpdateQty={onUpdateQty}
+                      onRemoveItem={onRemoveItem}
+                    />
+                  ))
                 )}
               </div>
             </ScrollArea>
@@ -608,9 +768,11 @@ export function ProductSelectionModal({ open, onOpenChange, onSelect, sourceBran
             {selectedProducts.length > 0 && (
               <div className="p-4 border-t border-border bg-card">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] opacity-60">Estimated Total</span>
+                  <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] opacity-60">
+                    Estimated Total
+                  </span>
                   <span className="text-sm font-black text-primary font-mono tracking-tighter">
-                    ₱{selectedProducts.reduce((sum, p) => sum + Number((p as { totalAmount?: number }).totalAmount || (p as { cost_per_unit?: number }).cost_per_unit || 0), 0).toLocaleString()}
+                    ₱{estimatedTotal.toLocaleString()}
                   </span>
                 </div>
               </div>

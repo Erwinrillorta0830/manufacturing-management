@@ -23,6 +23,7 @@ interface StockTransferPrintPreviewProps {
   leadDate: string;
   scannedItems: ScannedItem[];
   salesmanName?: string;
+  documentTitle?: string;
 }
 
 export function StockTransferPrintPreview({
@@ -35,6 +36,7 @@ export function StockTransferPrintPreview({
   leadDate,
   scannedItems,
   salesmanName,
+  documentTitle,
 }: StockTransferPrintPreviewProps) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [generating, setGenerating] = useState(open);
@@ -76,6 +78,7 @@ export function StockTransferPrintPreview({
         scannedItems,
         companyData,
         salesmanName,
+        documentTitle,
       });
 
       const blob = doc.output('blob');
@@ -85,7 +88,7 @@ export function StockTransferPrintPreview({
     }, 50);
 
     return () => clearTimeout(timer);
-  }, [open, orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName]);
+  }, [open, orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName, documentTitle]);
 
   const handleClose = useCallback(() => {
     if (pdfUrl) {
@@ -105,13 +108,14 @@ export function StockTransferPrintPreview({
       scannedItems,
       companyData,
       salesmanName,
+      documentTitle,
     });
     doc.autoPrint();
     const blob = doc.output('blob');
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  }, [orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName]);
+  }, [orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName, documentTitle]);
 
   const handleSave = useCallback(() => {
     const doc = generateStockTransferPDF({
@@ -123,10 +127,12 @@ export function StockTransferPrintPreview({
       scannedItems,
       companyData,
       salesmanName,
+      documentTitle,
     });
-    const filename = `ST-SLIP-${orderNo || 'UNSAVED'}.pdf`;
+    const prefix = documentTitle ? documentTitle.replace(/\s+/g, '-') : 'ST-SLIP';
+    const filename = `${prefix}-${orderNo || 'UNSAVED'}.pdf`;
     doc.save(filename);
-  }, [orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName]);
+  }, [orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName, documentTitle]);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
@@ -136,7 +142,7 @@ export function StockTransferPrintPreview({
         <DialogHeader className="px-6 py-4 border-b border-border bg-muted/20 shrink-0">
           <DialogTitle className="text-sm font-bold tracking-tight text-foreground flex items-center gap-2">
             <FileText className="w-4 h-4 text-primary" />
-            Stock Transfer Document Preview
+            {documentTitle ? `${documentTitle} Preview` : 'Stock Transfer Document Preview'}
             {orderNo && <span className="font-mono text-xs opacity-50 ml-2">#{orderNo}</span>}
           </DialogTitle>
         </DialogHeader>

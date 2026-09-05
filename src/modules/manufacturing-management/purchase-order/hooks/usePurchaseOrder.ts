@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { IncomingShipment, LinkedProduct, RawMaterial, Supplier } from "../../procurement/types";
+import type { IncomingShipment, LinkedProduct, RawMaterial, ShipmentLineItem, Supplier } from "../../procurement/types";
 import type { ManifestLineFormItem, ShipmentFormState } from "../../procurement/components/IncomingShipments";
 import type {
     PurchaseOrderCatalog,
+    PurchaseOrderDraftResponse,
     PurchaseOrderDraftPayload,
     PurchaseOrderListMeta,
     PurchaseOrderListQuery
@@ -14,7 +15,7 @@ import {
 } from "../../procurement/services/procurement-api";
 import {
     createPurchaseOrder,
-    fetchPurchaseOrderLines,
+    fetchPurchaseOrderDetail,
     fetchPurchaseOrders,
     updatePurchaseOrderStatus,
     fetchPurchaseOrderCatalog,
@@ -55,9 +56,23 @@ function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchang
     }, { grossPhp: 0, discountPhp: 0, vatPhp: 0, withholdingPhp: 0, netPhp: 0, netForeign: 0 });
 }
 
-export function usePurchaseOrder() {
+export type PurchaseOrderViewMode = "queue" | "detail" | "create";
+
+interface UsePurchaseOrderOptions {
+    mode?: PurchaseOrderViewMode;
+    shipmentId?: number;
+    onCreated?: (result: PurchaseOrderDraftResponse) => void;
+}
+
+export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UsePurchaseOrderOptions = {}) {
+    const isDetailMode = mode === "detail";
+    const isCreateMode = mode === "create";
     const [loading, setLoading] = useState(false);
     const [listLoading, setListLoading] = useState(false);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [listError, setListError] = useState<string | null>(null);
+    const [detailError, setDetailError] = useState<string | null>(null);
+    const [referenceError, setReferenceError] = useState<string | null>(null);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [shipments, setShipments] = useState<IncomingShipment[]>([]);
     const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
@@ -67,7 +82,7 @@ export function usePurchaseOrder() {
     const [priceTypeRules, setPriceTypeRules] = useState<PurchaseOrderCatalog["priceTypeRules"]>([]);
     const [jobOrders, setJobOrders] = useState<Array<{ job_order_id: number; job_order_no?: string }>>([]);
     const [selectedShipment, setSelectedShipment] = useState<IncomingShipment | null>(null);
-    const [selectedShipmentLines, setSelectedShipmentLines] = useState<Awaited<ReturnType<typeof fetchPurchaseOrderLines>>>([]);
+    const [selectedShipmentLines, setSelectedShipmentLines] = useState<ShipmentLineItem[]>([]);
     const [isShipmentModalOpen, setIsShipmentModalOpen] = useState(false);
     const [shipmentForm, setShipmentForm] = useState<ShipmentFormState>(blankForm);
     const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([blankLine()]);
@@ -75,6 +90,56 @@ export function usePurchaseOrder() {
     const lastQuery = useRef<PurchaseOrderListQuery>({ page: 1, limit: 5 });
     const listController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
+    const catalogLoad = useRef<Promise<void> | null>(null);
+    const rawMaterialsLoad = useRef<Promise<void> | null>(null);
+    const catalogLoaded = useRef(false);
+    const rawMaterialsLoaded = useRef(false);
+
+    const loadCatalog = useCallback(async () => {
+        if (catalogLoaded.current) return;
+        if (catalogLoad.current) return catalogLoad.current;
+
+        const request = fetchPurchaseOrderCatalog()
+            .then(catalog => {
+                setSuppliers(catalog.suppliers);
+                setPaymentModes(catalog.paymentModes);
+                setPaymentTerms(catalog.paymentTerms);
+                setPriceTypeRules(catalog.priceTypeRules);
+                setJobOrders(catalog.jobOrders);
+                catalogLoaded.current = true;
+            })
+            .catch(error => {
+                setReferenceError((error as Error).message || "Failed to load purchase-order reference data.");
+                throw error;
+            })
+            .finally(() => {
+                catalogLoad.current = null;
+            });
+
+        catalogLoad.current = request;
+        return request;
+    }, []);
+
+    const loadRawMaterialCatalog = useCallback(async () => {
+        if (rawMaterialsLoaded.current) return;
+        if (rawMaterialsLoad.current) return rawMaterialsLoad.current;
+
+        const request = fetchRawMaterials()
+            .then(materials => {
+                setRawMaterials(materials);
+                rawMaterialsLoaded.current = true;
+            })
+            .catch(error => {
+                setReferenceError((error as Error).message || "Failed to load material reference data.");
+                throw error;
+            })
+            .finally(() => {
+                rawMaterialsLoad.current = null;
+            });
+
+        rawMaterialsLoad.current = request;
+        return request;
+    }, []);
 
     const loadShipments = useCallback(async (query: PurchaseOrderListQuery = lastQuery.current) => {
         lastQuery.current = query;
@@ -82,64 +147,84 @@ export function usePurchaseOrder() {
         const controller = new AbortController();
         listController.current = controller;
         setListLoading(true);
+        setListError(null);
         try {
             const result = await fetchPurchaseOrders(query, controller.signal);
             if (controller.signal.aborted) return [];
             setShipments(result.data);
             setListMeta(result.meta);
-            setSelectedShipment(current => {
-                const refreshedSelection = current
-                    ? result.data.find(item => item.shipment_id === current.shipment_id)
-                    : null;
-                return refreshedSelection || result.data[0] || null;
-            });
+            setSelectedShipment(null);
+            setSelectedShipmentLines([]);
             return result.data;
         } catch (error) {
-            if ((error as Error).name !== "AbortError") toast.error((error as Error).message || "Failed to load purchase orders.");
+            if ((error as Error).name !== "AbortError") {
+                setShipments([]);
+                setListError((error as Error).message || "Failed to load purchase orders.");
+            }
             return [];
         } finally {
             if (!controller.signal.aborted) setListLoading(false);
         }
     }, []);
 
+    const loadDetail = useCallback(async (id: number = shipmentId || 0) => {
+        if (!id) {
+            setDetailError("The purchase-order ID is invalid.");
+            return null;
+        }
+
+        detailController.current?.abort();
+        const controller = new AbortController();
+        detailController.current = controller;
+        setDetailLoading(true);
+        setDetailError(null);
+        setSelectedShipment(null);
+        setSelectedShipmentLines([]);
+
+        try {
+            const result = await fetchPurchaseOrderDetail(id, controller.signal);
+            if (controller.signal.aborted) return null;
+            setSelectedShipment(result.data.shipment);
+            setSelectedShipmentLines(result.data.lines);
+            return result.data;
+        } catch (error) {
+            if ((error as Error).name !== "AbortError") {
+                setDetailError((error as Error).message || "Failed to load purchase-order details.");
+            }
+            return null;
+        } finally {
+            if (!controller.signal.aborted) setDetailLoading(false);
+        }
+    }, [shipmentId]);
+
     useEffect(() => {
-        void Promise.all([
-            loadShipments(),
-            fetchPurchaseOrderCatalog().then(catalog => {
-                setSuppliers(catalog.suppliers);
-                setPaymentModes(catalog.paymentModes);
-                setPaymentTerms(catalog.paymentTerms);
-                setPriceTypeRules(catalog.priceTypeRules);
-                setJobOrders(catalog.jobOrders);
-            }),
-            fetchRawMaterials().then(setRawMaterials)
-        ]).catch(error => toast.error((error as Error).message || "Failed to load purchase-order data."));
+        if (isDetailMode) {
+            void loadDetail().catch(() => undefined);
+        } else if (!isCreateMode) {
+            void loadShipments();
+        }
         return () => {
             listController.current?.abort();
             detailController.current?.abort();
         };
-    }, [loadShipments]);
+    }, [isCreateMode, isDetailMode, loadDetail, loadShipments]);
 
     useEffect(() => {
-        detailController.current?.abort();
-        if (!selectedShipment) {
-            setSelectedShipmentLines([]);
-            return;
+        if (isDetailMode || isCreateMode) {
+            void loadCatalog().catch(() => undefined);
         }
-        setSelectedShipmentLines([]);
-        const controller = new AbortController();
-        detailController.current = controller;
-        setLoading(true);
-        fetchPurchaseOrderLines(selectedShipment.shipment_id, controller.signal)
-            .then(setSelectedShipmentLines)
-            .catch(error => {
-                if (error.name !== "AbortError") toast.error(error.message || "Failed to load purchase-order details.");
-            })
-            .finally(() => {
-                if (!controller.signal.aborted) setLoading(false);
-            });
-        return () => controller.abort();
-    }, [selectedShipment]);
+    }, [isCreateMode, isDetailMode, loadCatalog]);
+
+    useEffect(() => {
+        if (isCreateMode) {
+            void loadRawMaterialCatalog().catch(() => undefined);
+        }
+    }, [isCreateMode, loadRawMaterialCatalog]);
+
+    useEffect(() => {
+        if (!isShipmentModalOpen) return;
+        void Promise.all([loadCatalog(), loadRawMaterialCatalog()]).catch(() => undefined);
+    }, [isShipmentModalOpen, loadCatalog, loadRawMaterialCatalog]);
 
     useEffect(() => {
         if (!shipmentForm.supplier_id) {
@@ -289,8 +374,12 @@ export function usePurchaseOrder() {
                 lines: lineItems
             });
             toast.success(`Purchase order ${result.purchaseOrderNo || ""} created in For Approval status.`.trim());
-            setIsShipmentModalOpen(false);
-            await loadShipments();
+            if (isCreateMode) {
+                onCreated?.(result);
+            } else {
+                setIsShipmentModalOpen(false);
+                await loadShipments();
+            }
         } catch (error) {
             toast.error((error as Error).message || "Failed to create purchase order.");
         } finally {
@@ -307,8 +396,12 @@ export function usePurchaseOrder() {
         try {
             await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
             toast.success("Finance-rejected purchase order revised and resubmitted for approval.");
-            setSelectedShipment(null);
-            await loadShipments();
+            if (isDetailMode) {
+                await loadDetail(id);
+            } else {
+                setSelectedShipment(null);
+                await loadShipments();
+            }
             return true;
         } catch (error) {
             toast.error((error as Error).message || "Failed to update purchase order.");
@@ -327,8 +420,12 @@ export function usePurchaseOrder() {
         try {
             await cancelRejectedPurchaseOrder(id, workflowRevision, remarks);
             toast.success("Rejected purchase order cancelled.");
-            const updated = await loadShipments();
-            setSelectedShipment(updated.find(item => item.shipment_id === id) || null);
+            if (isDetailMode) {
+                await loadDetail(id);
+            } else {
+                setSelectedShipment(null);
+                await loadShipments();
+            }
             return true;
         } catch (error) {
             toast.error((error as Error).message || "Failed to cancel purchase order.");
@@ -347,8 +444,11 @@ export function usePurchaseOrder() {
         try {
             await updatePurchaseOrderStatus(id, status);
             toast.success(`Purchase-order status updated to ${status}.`);
-            const updated = await loadShipments();
-            setSelectedShipment(updated.find(item => item.shipment_id === id) || null);
+            if (isDetailMode) {
+                await loadDetail(id);
+            } else {
+                await loadShipments();
+            }
         } catch (error) {
             toast.error((error as Error).message || "Failed to update purchase-order status.");
         } finally {
@@ -357,7 +457,9 @@ export function usePurchaseOrder() {
     };
 
     return {
-        loading, listLoading, suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, priceTypeRules, jobOrders, listMeta, loadShipments,
+        loading, listLoading, detailLoading, listError, detailError, referenceError,
+        suppliers, shipments, rawMaterials, supplierLinkedProducts, paymentModes, paymentTerms, priceTypeRules, jobOrders,
+        listMeta, loadShipments, retryList: () => loadShipments(lastQuery.current), retryDetail: () => loadDetail(),
         selectedShipment, setSelectedShipment, selectedShipmentLines,
         isShipmentModalOpen, setIsShipmentModalOpen,
         shipmentForm, setShipmentForm, shipmentLinesForm, setShipmentLinesForm,

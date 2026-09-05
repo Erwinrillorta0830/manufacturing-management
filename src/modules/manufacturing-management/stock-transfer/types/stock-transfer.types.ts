@@ -11,8 +11,10 @@ export interface BranchRow {
   id: number;
   branch_name?: string;
   name?: string;
+  branch_code?: string;
   branch_description?: string;
   branch_head?: number | null;
+  salesman_name?: string;
   isActive?: number | boolean | string;
 }
 
@@ -62,6 +64,14 @@ export interface ProductRow {
   is_serialized?: number;
 }
 
+/** Product enriched with classifications and catalog-selection quantities. */
+export interface EnrichedProduct extends ProductRow {
+  qtyAvailable?: number;
+  quantity?: number;
+  totalAmount?: number;
+  _classification?: 'RM' | 'PKG' | 'FG';
+}
+
 // ─── Stock Transfer Row Shapes ──────────────────────────────
 
 /** Raw row from the `stock_transfer` collection (Directus). */
@@ -93,6 +103,7 @@ export interface StockTransferRow {
   dispatched_rfids?: string[];
   // Lot & Batch Tracking
   source_lot_id?: number | null;
+  source_lot_name?: string | null;
   source_inventory_lot_id?: number | null;
   destination_lot_id?: number | null;
   batch_no?: string | null;
@@ -120,6 +131,7 @@ export interface ScannedItem {
   productName: string;
   description: string;
   brandName: string;
+  productType?: string;
   unit: string;
   unitId?: number;
   qtyAvailable: number;
@@ -187,6 +199,8 @@ export interface OrderGroup {
   items: OrderGroupItem[];
   totalAmount: number;
   status: string;
+  sourceBranchName?: string;
+  targetBranchName?: string;
 }
 
 // ─── API Response Shapes ────────────────────────────────────
@@ -225,11 +239,6 @@ export interface RfidLookupResponse {
 /** Response from the products action. */
 export interface ProductListResponse {
   data: EnrichedProduct[];
-}
-
-/** Product enriched with resolved relations and available quantity. */
-export interface EnrichedProduct extends ProductRow {
-  qtyAvailable: number;
 }
 
 // ─── API Request Payloads ───────────────────────────────────
