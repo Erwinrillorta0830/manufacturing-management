@@ -11,8 +11,12 @@ import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrde
 import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { calculatePercentageDiscount } from "../discount-calculation";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
-import { normalizeProductRelationId, resolveProductParentId } from "../product-relation";
-import { fetchPurchaseOrderFxRate } from "../../purchase-order/services/purchase-order-api";
+import { resolveProductParentId } from "../product-relation";
+import {
+    fetchPurchaseOrderFxRate,
+    resolvePurchaseOrderCommercialTerms
+} from "../../purchase-order/services/purchase-order-api";
+import type { PurchaseOrderCommercialResolution } from "../../purchase-order/types";
 import {
     defaultPurchaseOrderPaymentModeId,
     resolveSupplierPaymentTermId
@@ -56,7 +60,6 @@ export function useIncomingShipmentsForm({
     onCreateShipment,
     onEditShipment,
     canonicalDrafting = false,
-    priceTypeRules = [],
     paymentTerms = [],
     paymentModes = []
 }: UseIncomingShipmentsFormProps) {
@@ -68,6 +71,7 @@ export function useIncomingShipmentsForm({
     const [priceControlStatus, setPriceControlStatus] = useState<"idle" | "loading" | "ready" | "warning" | "error">("idle");
     const [priceControlError, setPriceControlError] = useState<string | null>(null);
     const [priceControlMissingProductIds, setPriceControlMissingProductIds] = useState<number[]>([]);
+    const [commercialResolution, setCommercialResolution] = useState<PurchaseOrderCommercialResolution | null>(null);
     const [dynamicBranches, setDynamicBranches] = useState<Array<{ id: number; branchName: string; branchCode: string }>>([]);
     const modalRef = React.useRef<HTMLDivElement>(null);
     const restoreFocusRef = React.useRef<HTMLElement | null>(null);
@@ -190,6 +194,7 @@ export function useIncomingShipmentsForm({
                 quantity_ordered: "",
                 base_unit_cost_php: "",
                 discount_type_id: "",
+                discount_source: "none",
                 discount_amount: "0",
                 discount_percent: "0"
             })));
@@ -404,7 +409,7 @@ export function useIncomingShipmentsForm({
             priceControlStatus !== "ready" &&
             priceControlStatus !== "warning"
         ) {
-            toast.error(priceControlError || "Wait for the Price Control cost to finish loading before submitting.");
+            toast.error(priceControlError || "Wait for the purchase-order commercial terms to finish loading before submitting.");
             return;
         }
         
@@ -438,7 +443,7 @@ export function useIncomingShipmentsForm({
     const handleAddLineForm = () => {
         setLinesForm([...linesForm, {
             parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
-            purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_amount: "0", discount_percent: "0"
+            purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_type_id: "", discount_source: "none", discount_amount: "0", discount_percent: "0"
         }]);
     };
 
@@ -499,6 +504,7 @@ export function useIncomingShipmentsForm({
 
     useEffect(() => {
         const controller = new AbortController();
+        if (canonicalDrafting) return () => controller.abort();
         if (!shipmentForm.supplier_id) {
             queueMicrotask(() => {
                 if (!controller.signal.aborted) setProductPerSupplierMap({});
@@ -566,98 +572,125 @@ export function useIncomingShipmentsForm({
             });
 
         return () => controller.abort();
-    }, [editingShipmentId, selectedProductIdsKey, shipmentForm.supplier_id, rawMaterials, setLinesForm]);
+    }, [canonicalDrafting, editingShipmentId, selectedProductIdsKey, shipmentForm.supplier_id, rawMaterials, setLinesForm]);
 
     const [priceControlCostsMap, setPriceControlCostsMap] = useState<Record<number, number>>({});
 
-    const priceTypeResolution = React.useMemo(() => {
-        if (!canonicalDrafting) {
-            return { status: "idle" as const, priceTypeId: null, priceTypeName: null, message: null };
-        }
-
-        const selectedLines = linesForm.filter(line => Boolean(line.product_id));
-        if (selectedLines.length === 0) {
-            return {
-                status: "pending" as const,
-                priceTypeId: null,
-                priceTypeName: null,
-                message: "Select a product to determine the Price Control pricing source."
-            };
-        }
-        if (priceTypeRules.length === 0) {
-            return {
-                status: "pending" as const,
-                priceTypeId: null,
-                priceTypeName: null,
-                message: "Loading product classification Price Control rules..."
-            };
-        }
-
-        const resolved = selectedLines.map(line => {
-            const product = rawMaterials.find(material => String(material.product_id) === String(line.product_id));
-            const ownTypeId = Number(product?.product_type) || null;
-            const parentId = normalizeProductRelationId(product?.parent_id);
-            const parent = parentId ? rawMaterials.find(material => Number(material.product_id) === parentId) : null;
-            const parentTypeId = Number(parent?.product_type) || null;
-
-            if (ownTypeId && parentTypeId && ownTypeId !== parentTypeId) {
-                return {
-                    error: `Product ${line.product_name || line.product_id} has conflicting parent and variant classifications.`
-                };
-            }
-
-            const productTypeId = ownTypeId || parentTypeId;
-            const rule = productTypeId
-                ? priceTypeRules.find(candidate => candidate.productTypeId === productTypeId)
-                : undefined;
-            if (!rule?.priceTypeId) {
-                return {
-                    error: `Price Control is not configured for ${line.product_name || `product ${line.product_id}`}.`
-                };
-            }
-            return {
-                productTypeId,
-                priceTypeId: rule.priceTypeId,
-                priceTypeName: rule.priceTypeName || `Price Type #${rule.priceTypeId}`
-            };
+    const selectedProductIdsForCommercialKey = React.useMemo(() => {
+        const ids = new Set<number>();
+        linesForm.forEach(line => {
+            const productId = Number(line.product_id);
+            if (Number.isSafeInteger(productId) && productId > 0) ids.add(productId);
         });
-
-        const firstError = resolved.find(item => "error" in item);
-        if (firstError && "error" in firstError) {
-            return { status: "error" as const, priceTypeId: null, priceTypeName: null, message: firstError.error || "Price Control could not be determined." };
-        }
-
-        const priceTypeIds = [...new Set(resolved
-            .map(item => "priceTypeId" in item ? item.priceTypeId : null)
-            .filter((id): id is number => id !== null))];
-        if (priceTypeIds.length !== 1) {
-            return {
-                status: "error" as const,
-                priceTypeId: null,
-                priceTypeName: null,
-                message: "All purchase-order lines must resolve to the same Price Control pricing source."
-            };
-        }
-
-        const selectedResolution = resolved.find(item => "priceTypeId" in item && item.priceTypeId === priceTypeIds[0]);
-        return {
-            status: "resolved" as const,
-            priceTypeId: priceTypeIds[0],
-            priceTypeName: selectedResolution && "priceTypeName" in selectedResolution ? (selectedResolution.priceTypeName || null) : null,
-            message: null
-        };
-    }, [canonicalDrafting, linesForm, priceTypeRules, rawMaterials]);
-
-    React.useEffect(() => {
-        if (!canonicalDrafting) return;
-        setShipmentForm(previous => {
-            const nextPriceType = priceTypeResolution.status === "resolved" ? (priceTypeResolution.priceTypeName || null) : null;
-            return previous.price_type === nextPriceType ? previous : { ...previous, price_type: nextPriceType };
-        });
-    }, [canonicalDrafting, priceTypeResolution.priceTypeName, priceTypeResolution.status, setShipmentForm]);
+        return [...ids].sort((left, right) => left - right).join(",");
+    }, [linesForm]);
 
     useEffect(() => {
         const controller = new AbortController();
+        if (!canonicalDrafting) return () => controller.abort();
+
+        const productIds = selectedProductIdsForCommercialKey
+            .split(",")
+            .map(value => Number(value))
+            .filter(value => Number.isSafeInteger(value) && value > 0);
+
+        if (!shipmentForm.supplier_id || productIds.length === 0) {
+            queueMicrotask(() => {
+                if (controller.signal.aborted) return;
+                setCommercialResolution(null);
+                setPriceControlCostsMap({});
+                setProductPerSupplierMap({});
+                setPriceControlStatus("idle");
+                setPriceControlError(null);
+                setPriceControlMissingProductIds([]);
+                setShipmentForm(previous => previous.price_type ? { ...previous, price_type: "" } : previous);
+            });
+            return () => controller.abort();
+        }
+
+        queueMicrotask(() => {
+            if (controller.signal.aborted) return;
+            setCommercialResolution(null);
+            setPriceControlStatus("loading");
+            setPriceControlError(null);
+            setPriceControlMissingProductIds([]);
+        });
+
+        resolvePurchaseOrderCommercialTerms(Number(shipmentForm.supplier_id), productIds, controller.signal)
+            .then(resolution => {
+                if (controller.signal.aborted) return;
+                const prices: Record<number, number> = {};
+                const supplierDiscounts: Record<number, { discount_type_id?: number; total_percent?: number }> = {};
+                const linesByProductId = new Map(resolution.lines.map(line => [line.productId, line]));
+
+                resolution.lines.forEach(line => {
+                    const price = Number(line.pricePhp);
+                    if (Number.isFinite(price) && price > 0) prices[line.productId] = price;
+                    supplierDiscounts[line.productId] = {
+                        discount_type_id: line.discountTypeId || undefined,
+                        total_percent: Number(line.discountPercent) || 0
+                    };
+                });
+
+                setCommercialResolution(resolution);
+                setPriceControlCostsMap(prices);
+                setProductPerSupplierMap(supplierDiscounts);
+                setPriceControlMissingProductIds(resolution.missingPriceProductIds);
+                setPriceControlStatus(resolution.missingPriceProductIds.length > 0 ? "warning" : "ready");
+                setShipmentForm(previous => previous.price_type === resolution.priceTypeName
+                    ? previous
+                    : { ...previous, price_type: resolution.priceTypeName });
+                setLinesForm(previous => previous.map(line => {
+                    if (!line.product_id) return line;
+                    const resolved = linesByProductId.get(Number(line.product_id));
+                    if (!resolved) return line;
+
+                    const pricePhp = Number(resolved.pricePhp);
+                    const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
+                    const transactionPrice = Number.isFinite(pricePhp) && pricePhp > 0
+                        ? shipmentForm.currency_code === "USD" ? pricePhp / exchangeRate : pricePhp
+                        : null;
+                    const nextLine = transactionPrice === null
+                        ? line
+                        : { ...line, base_unit_cost_php: String(transactionPrice) };
+                    if (line.discount_source === "manual") return nextLine;
+                    if (resolved.discountTypeId) {
+                        return {
+                            ...nextLine,
+                            discount_source: "supplier",
+                            discount_type_id: String(resolved.discountTypeId),
+                            discount_mode: "Percentage",
+                            discount_amount: "0",
+                            discount_percent: resolved.discountPercent
+                        };
+                    }
+                    return {
+                        ...nextLine,
+                        discount_source: "none",
+                        discount_type_id: "",
+                        discount_mode: "Percentage",
+                        discount_amount: "0",
+                        discount_percent: "0"
+                    };
+                }));
+            })
+            .catch(error => {
+                if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+                console.error("Error resolving purchase-order commercial terms:", error);
+                setCommercialResolution(null);
+                setPriceControlCostsMap({});
+                setProductPerSupplierMap({});
+                setPriceControlStatus("error");
+                setPriceControlError(error instanceof Error ? error.message : "Unable to resolve purchase-order commercial terms.");
+                setPriceControlMissingProductIds([]);
+            });
+
+        return () => controller.abort();
+    }, [canonicalDrafting, selectedProductIdsForCommercialKey, setLinesForm, setShipmentForm, shipmentForm.currency_code, shipmentForm.exchange_rate, shipmentForm.supplier_id]);
+
+    useEffect(() => {
+        const controller = new AbortController();
+        if (canonicalDrafting) return () => controller.abort();
         const productIds = selectedProductIdsKey
             .split(",")
             .map(value => Number(value))
@@ -730,7 +763,29 @@ export function useIncomingShipmentsForm({
         return () => {
             controller.abort();
         };
-    }, [selectedProductIdsKey, shipmentForm.currency_code, shipmentForm.exchange_rate, setLinesForm]);
+    }, [canonicalDrafting, selectedProductIdsKey, shipmentForm.currency_code, shipmentForm.exchange_rate, setLinesForm]);
+
+    const priceTypeResolution = React.useMemo(() => {
+        if (!canonicalDrafting) {
+            return { status: "idle" as const, priceTypeId: null, priceTypeName: null, message: null };
+        }
+        if (commercialResolution) {
+            return {
+                status: "resolved" as const,
+                priceTypeId: commercialResolution.priceTypeId,
+                priceTypeName: commercialResolution.priceTypeName,
+                message: priceControlMissingProductIds.length > 0
+                    ? "One or more products do not have a configured matrix price."
+                    : null
+            };
+        }
+        return {
+            status: priceControlStatus === "error" ? "error" as const : priceControlStatus === "loading" ? "loading" as const : "pending" as const,
+            priceTypeId: null,
+            priceTypeName: null,
+            message: priceControlError
+        };
+    }, [canonicalDrafting, commercialResolution, priceControlError, priceControlMissingProductIds.length, priceControlStatus]);
 
     const isFinanceManager = React.useMemo(() => {
         if (typeof window === "undefined" || !isModalOpen) return false;
@@ -840,11 +895,11 @@ export function useIncomingShipmentsForm({
         priceControlCostsMap,
         discountTypes,
         productPerSupplierMap,
+        priceTypeResolution,
         isFinanceManager,
         totalPhpValue,
         totalUsdValue,
         draftSummary,
-        priceTypeResolution,
         priceControlStatus,
         priceControlError,
         priceControlMissingProductIds,

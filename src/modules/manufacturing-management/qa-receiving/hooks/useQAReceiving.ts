@@ -18,9 +18,11 @@ import {
     fetchQuarantineDispositions,
     createQuarantineDisposition,
     processQuarantineReturn,
-    cancelQuarantineDisposition
+    cancelQuarantineDisposition,
+    ReceivingApiError
 } from "../services/qa-api";
 import { INVENTORY_STATUS, isReceivingQueueShipmentStatus, shipmentStatusMatchesFilter } from "@/app/api/manufacturing/procurement/_domain";
+import { RECEIVING_ERROR_CODES } from "@/app/api/manufacturing/qa-receiving/_receiving-errors";
 import { getTodayReceiptDate, validateReceivingMetadata, validateReceivingReceiptDate, validateReceivingReceiptNumber, type ReceivingValidationIssue } from "../receiving-metadata";
 import { deriveReceivingDisposition, deriveRejectedQuantity, evaluateOverDelivery } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { evaluateQaReading } from "@/app/api/manufacturing/qa/_purchase-specification-domain";
@@ -1174,7 +1176,19 @@ export function useQAReceiving({
             }
             await loadQuarantine();
         } catch (error) {
-            toast.error((error as Error).message || "Failed to post receiving.");
+            if (error instanceof ReceivingApiError && error.code === RECEIVING_ERROR_CODES.VALIDATION) {
+                setPreviewOpen(false);
+                setReceivingCommitContext(null);
+                setPreviewAcknowledged(false);
+                toast.error(error.message);
+            } else if (error instanceof ReceivingApiError && error.code === RECEIVING_ERROR_CODES.RETRY_REQUIRED) {
+                setPreviewOpen(false);
+                setReceivingCommitContext(null);
+                setPreviewAcknowledged(false);
+                toast.error("The receiving preview is no longer valid. Generate a new preview before posting.");
+            } else {
+                toast.error((error as Error).message || "Failed to post receiving.");
+            }
         } finally {
             setPostingInspection(false);
         }

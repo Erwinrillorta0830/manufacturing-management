@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -80,9 +80,11 @@ export async function POST(
             const detailData = {
                 collection_id: id,
                 finding: adj.findingId,
+                type: adj.coaId || null,
                 balance_type_id: adj.balanceTypeId,
                 amount: adj.amount,
-                remarks: adj.remarks
+                remarks: adj.remarks,
+                encoder_id: linkedBy
             };
             const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
             if (res.ok) {
@@ -98,7 +100,8 @@ export async function POST(
                 type: ewtCoaId,
                 amount: ewt.amount,
                 check_no: ewt.referenceNo,
-                remarks: ewt.referenceNo
+                remarks: ewt.referenceNo,
+                encoder_id: linkedBy
             };
             const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
             if (res.ok) {

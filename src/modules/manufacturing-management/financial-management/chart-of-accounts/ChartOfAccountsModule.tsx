@@ -13,8 +13,10 @@ import ChartOfAccountsFilters from "./components/ChartOfAccountsFilters";
 import ChartOfAccountsTable from "./components/ChartOfAccountsTable";
 import COAFormDialog from "./components/COAFormDialog";
 
-export default function ChartOfAccountsModule() {
-  const coa = useChartOfAccounts();
+export default function ChartOfAccountsModule(props: {
+  currentUser?: { id: number | null; name: string };
+}) {
+  const coa = useChartOfAccounts({ currentUser: props.currentUser });
 
 
 
@@ -73,6 +75,7 @@ export default function ChartOfAccountsModule() {
             loading={coa.loading}
             accountTypes={coa.accountTypes}
             balanceTypes={coa.balanceTypes}
+            users={coa.users}
             onEdit={(row) => coa.openEdit(row)}
           />
 
@@ -127,7 +130,6 @@ export default function ChartOfAccountsModule() {
         balanceTypes={coa.balanceTypes}
         bsisTypes={coa.bsisTypes}
         lookupsLoading={coa.lookupsLoading}
-        addedByLabel={coa.currentUser?.name || "Loading..."}
         onCreate={coa.create}
         onUpdate={async () => { }}
       />
@@ -142,11 +144,6 @@ export default function ChartOfAccountsModule() {
         balanceTypes={coa.balanceTypes}
         bsisTypes={coa.bsisTypes}
         lookupsLoading={coa.lookupsLoading}
-        addedByLabel={
-          coa.editState.row?.added_by && typeof coa.editState.row.added_by === "object"
-            ? `${coa.editState.row.added_by.user_fname || ""} ${coa.editState.row.added_by.user_lname || ""}`.trim()
-            : "Unknown"
-        }
         onCreate={async () => { }}
         onUpdate={async (id, payload) => {
           await coa.update(id, payload);

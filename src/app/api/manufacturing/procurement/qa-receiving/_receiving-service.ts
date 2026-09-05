@@ -47,10 +47,25 @@ import {
     type LotCapacityAllocationInput,
     type LotCapacityAudit
 } from "../../qa-receiving/_lot-capacity";
+import {
+    discrepancyRemarkError,
+    RECEIVING_ERROR_CODES,
+    receivingErrorCodeForStatus,
+    type ReceivingErrorCode,
+    type ReceivingValidationDetails
+} from "../../qa-receiving/_receiving-errors";
 
 class ReceivingError extends Error {
-    constructor(message: string, readonly status: number) {
+    readonly code: ReceivingErrorCode;
+
+    constructor(
+        message: string,
+        readonly status: number,
+        code?: ReceivingErrorCode,
+        readonly details?: ReceivingValidationDetails
+    ) {
         super(message);
+        this.code = code || receivingErrorCodeForStatus(status);
     }
 }
 
@@ -390,7 +405,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
     try {
         const parsed = receivingSubmissionSchema.safeParse(await request.json());
         if (!parsed.success) {
-            return NextResponse.json({ error: "Invalid receiving submission.", details: parsed.error.flatten() }, { status: 400 });
+            return NextResponse.json({
+                error: "Invalid receiving submission.",
+                code: RECEIVING_ERROR_CODES.VALIDATION,
+                details: parsed.error.flatten()
+            }, { status: 400 });
         }
         if (!Number.isSafeInteger(options.actorUserId) || options.actorUserId <= 0) {
             throw new ReceivingError("The receiving user could not be verified.", 401);
@@ -431,7 +450,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             : null;
         const lineItemUpdates = submittedLineItemUpdates.map(item => ({
             ...item,
-            quantity_rejected: deriveRejectedQuantity(item.quantity_received, item.quantity_accepted)
+            quantity_rejected: deriveRejectedQuantity(item.quantity_received, item.quantity_accepted),
+            rejection_reason: item.rejection_reason?.trim() || null
         }));
         lockedShipmentId = shipmentId;
         if (activeShipments.has(shipmentId)) throw new ReceivingError("This shipment is already being received.", 409);
@@ -689,8 +709,21 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             if (overDelivery.isOverReceived && !processOverDelivery && !replacementDispositionId) {
                 throw new ReceivingError(`Over-delivery of ${overDelivery.overDeliveryQuantity} unit(s) for product ${productId} requires explicit processing confirmation.`, 422);
             }
-            if ((received < remaining || rejected > 0) && !item.rejection_reason?.trim()) {
-                throw new ReceivingError(`Remarks are required for the quantity discrepancy on product ${productId}.`, 400);
+            const remarkError = discrepancyRemarkError({
+                lineId: item.line_id,
+                productId,
+                receivedQuantity: received,
+                remainingQuantity: remaining,
+                rejectedQuantity: rejected,
+                remarks: item.rejection_reason
+            });
+            if (remarkError) {
+                throw new ReceivingError(
+                    remarkError.message,
+                    400,
+                    RECEIVING_ERROR_CODES.VALIDATION,
+                    remarkError.details
+                );
             }
             // unit_price is the stored PHP base cost. Taxes, discounts, and
             // withholding are line totals and must not be converted back into
@@ -1173,17 +1206,23 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         return NextResponse.json({ success: true, idempotent: false, movements: finalMovements, allocations: finalAllocations });
     } catch (error) {
         console.error("API Error submitting QA Receiving:", error);
-        return NextResponse.json({ error: (error as Error).message || "Failed to process QA receiving" }, {
-            status: error instanceof ReceivingError
-                ? error.status
-                : error instanceof QuarantineDispositionError
-                    ? error.statusCode
-            : error instanceof MmLotCompatibilityError
-                ? error.status
-                : error instanceof QaResultPersistenceError
+        const status = error instanceof ReceivingError
+            ? error.status
+            : error instanceof QuarantineDispositionError
+                ? error.statusCode
+                : error instanceof MmLotCompatibilityError
                     ? error.status
-                    : 500
-        });
+                    : error instanceof QaResultPersistenceError
+                        ? error.status
+                        : 500;
+        const response: Record<string, unknown> = {
+            error: (error as Error).message || "Failed to process QA receiving",
+            code: error instanceof ReceivingError
+                ? error.code
+                : receivingErrorCodeForStatus(status)
+        };
+        if (error instanceof ReceivingError && error.details) response.details = error.details;
+        return NextResponse.json(response, { status });
     } finally {
         if (lockedShipmentId !== null) activeShipments.delete(lockedShipmentId);
     }

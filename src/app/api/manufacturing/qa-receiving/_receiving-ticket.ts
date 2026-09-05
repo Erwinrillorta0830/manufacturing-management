@@ -1,12 +1,20 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
 import type { ReceivingQuantityStatus } from "./_receiving-status";
+import {
+    RECEIVING_ERROR_CODES,
+    receivingErrorCodeForStatus,
+    type ReceivingErrorCode
+} from "./_receiving-errors";
 
 export type ReceivingTicketStatus = "Reserved" | "Posted" | "Failed";
 const RECEIVING_TICKET_MAX_LENGTH = 32;
 
 export class ReceivingTicketError extends Error {
-    constructor(message: string, readonly statusCode: number = 503) {
+    readonly code: ReceivingErrorCode;
+
+    constructor(message: string, readonly statusCode: number = 503, code?: ReceivingErrorCode) {
         super(message);
+        this.code = code || receivingErrorCodeForStatus(statusCode);
     }
 }
 
@@ -189,9 +197,17 @@ export async function allocateReceivingTicket(input: {
             if (existing) {
                 if (existing.posting_status === "Posted" && existing.receiving_ticket_no) return existing;
                 if (existing.posting_status === "Failed") {
-                    throw new ReceivingTicketError("The previous receiving attempt failed. Generate a new preview before posting.", 409);
+                    throw new ReceivingTicketError(
+                        "The previous receiving attempt failed. Generate a new preview before posting.",
+                        409,
+                        RECEIVING_ERROR_CODES.RETRY_REQUIRED
+                    );
                 }
-                throw new ReceivingTicketError("A receiving commit with this idempotency key is already in progress.", 409);
+                throw new ReceivingTicketError(
+                    "A receiving commit with this idempotency key is already in progress.",
+                    409,
+                    RECEIVING_ERROR_CODES.CONFLICT
+                );
             }
 
             const existingNumber = await fetchReceivingTicketByNumber(receiptNumber);

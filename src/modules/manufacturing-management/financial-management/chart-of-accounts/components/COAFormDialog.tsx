@@ -144,8 +144,6 @@ export default function COAFormDialog(props: {
   bsisTypes: BSISTypeRow[];
   lookupsLoading: boolean;
 
-  addedByLabel?: string;
-
   onCreate: (payload: {
     account_title: string;
     bsis_code: number;
@@ -182,7 +180,6 @@ export default function COAFormDialog(props: {
     balanceTypes,
     bsisTypes,
     lookupsLoading,
-    addedByLabel = "Loading...",
     onCreate,
     onUpdate,
   } = props;
@@ -522,11 +519,6 @@ export default function COAFormDialog(props: {
                     </div>
                   </div>
                 ) : null}
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Added By</label>
-                  <Input value={addedByLabel} disabled />
-                </div>
               </div>
             </div>
 
@@ -614,11 +606,6 @@ export default function COAFormDialog(props: {
               >
                 Is Payment
               </label>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Added By</label>
-              <Input value={addedByLabel} disabled />
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">

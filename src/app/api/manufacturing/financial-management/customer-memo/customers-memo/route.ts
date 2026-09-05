@@ -218,6 +218,24 @@ function decodeUserIdFromJwtCookie(req: NextRequest): number | null {
     }
 }
 
+/**
+ * Helper to get Philippine Standard Time (Asia/Manila) timestamps for database operations.
+ * Returns formatted string: "YYYY-MM-DD HH:mm:ss"
+ */
+function getPhTimestamp(date?: Date | string | null): string {
+    const d = date ? (typeof date === "string" ? new Date(date) : date) : new Date();
+    const validDate = isNaN(d.getTime()) ? new Date() : d;
+    return validDate.toLocaleString("sv-SE", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    }).replace("T", " ");
+}
+
 // Helper to normalize data for frontend consumption
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function normalizeMemoData(m: any) {
@@ -228,9 +246,9 @@ function normalizeMemoData(m: any) {
     let created_at = m.created_at;
     if (created_at) {
         if (!created_at.includes('T') && !created_at.includes('Z')) {
-            created_at = created_at.replace(' ', 'T') + 'Z';
-        } else if (created_at.includes('T') && !created_at.endsWith('Z')) {
-            created_at = created_at + 'Z';
+            created_at = created_at.replace(' ', 'T') + '+08:00';
+        } else if (created_at.includes('T') && !created_at.endsWith('Z') && !created_at.includes('+')) {
+            created_at = created_at + '+08:00';
         }
     }
 
@@ -565,7 +583,7 @@ export async function POST(req: NextRequest) {
 
         const { header, history = [] } = body;
 
-        const nowIso = new Date().toISOString();
+        const nowIso = getPhTimestamp();
         
         const memoPayload: CustomersMemoInsertPayload = {
             ...header,
@@ -589,7 +607,7 @@ export async function POST(req: NextRequest) {
 
         // 2. Save Collection Memos (History)
         if (history.length > 0) {
-            const nowIso = new Date().toISOString();
+            const nowIso = getPhTimestamp();
 
             const collectionMemos: CollectionMemoInsertPayload[] = history.map((item) => ({
                 memo_id: memoId,
@@ -671,7 +689,8 @@ export async function PATCH(req: NextRequest) {
                     keys: ids,
                     data: {
                         status,
-                        isPending: false
+                        isPending: false,
+                        updated_at: getPhTimestamp()
                     }
                 }),
             });
@@ -681,7 +700,8 @@ export async function PATCH(req: NextRequest) {
                 method: "PATCH",
                 body: JSON.stringify({ 
                     status,
-                    isPending: false 
+                    isPending: false,
+                    updated_at: getPhTimestamp()
                 }),
             });
         } else {

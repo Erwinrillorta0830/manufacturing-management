@@ -1,4 +1,31 @@
 import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType } from "../types";
+import {
+    isReceivingErrorCode,
+    type ReceivingErrorCode
+} from "@/app/api/manufacturing/qa-receiving/_receiving-errors";
+
+export class ReceivingApiError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly code: ReceivingErrorCode | null,
+        readonly details: unknown
+    ) {
+        super(message);
+    }
+}
+
+function receivingApiError(response: Response, body: unknown, fallback: string): ReceivingApiError {
+    const record = body && typeof body === "object"
+        ? body as Record<string, unknown>
+        : {};
+    return new ReceivingApiError(
+        typeof record.error === "string" && record.error.trim() ? record.error : fallback,
+        response.status,
+        isReceivingErrorCode(record.code) ? record.code : null,
+        record.details
+    );
+}
 
 export interface QuarantineDispositionResponse {
     stock: QuarantineStock[];
@@ -145,7 +172,7 @@ export async function previewReceivingQa(payload: {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(body.error || "Failed to generate receiving preview.");
+        throw receivingApiError(res, body, "Failed to generate receiving preview.");
     }
     if (!body.data || !Array.isArray(body.data.lines) || typeof body.data.postingEnabled !== "boolean") {
         throw new Error("Receiving preview returned an invalid response.");
@@ -163,7 +190,7 @@ export async function commitReceivingQa(payload: ReceivingCommitPayload, idempot
         body: JSON.stringify(payload)
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || "Failed to post receiving.");
+    if (!res.ok) throw receivingApiError(res, body, "Failed to post receiving.");
     if (
         body.data?.mode !== "compatibility"
         || !body.data?.commitReference

@@ -213,7 +213,7 @@ export async function GET(req: NextRequest) {
         if (suppliersOnly) {
             const suppliers = await fetchSuppliers();
             return NextResponse.json({
-                data: { categories: [], brands: [], units: [], suppliers, product_types: [] },
+                data: { categories: [], brands: [], units: [], suppliers, productTypes: [] },
             });
         }
 
@@ -225,7 +225,7 @@ export async function GET(req: NextRequest) {
         if (productTypesOnly) {
             const productTypesResult = await fetchDirectus<{ data: { id: number; name: string }[] }>(`${DIRECTUS_URL}/items/product_type?limit=-1&fields=id,name&sort=name`, { headers: directusHeaders() }).catch(() => ({ data: [] }));
             return NextResponse.json({
-                data: { categories: [], brands: [], units: [], suppliers: [], product_types: productTypesResult.data ?? [] },
+                data: { categories: [], brands: [], units: [], suppliers: [], productTypes: productTypesResult.data ?? [] },
             });
         }
 
@@ -272,7 +272,7 @@ export async function GET(req: NextRequest) {
 
             if (directIds.length === 0) {
                 return NextResponse.json({
-                    data: { categories: [], brands: [], units: [], suppliers, product_types: productTypes },
+                    data: { categories: [], brands: [], units: [], suppliers, productTypes: productTypes },
                 });
             }
 
@@ -302,7 +302,7 @@ export async function GET(req: NextRequest) {
         }
 
         return NextResponse.json({
-            data: { categories, brands, units, suppliers, product_types: productTypes },
+            data: { categories, brands, units, suppliers, productTypes: productTypes },
         });
     } catch (error: unknown) {
         return NextResponse.json(

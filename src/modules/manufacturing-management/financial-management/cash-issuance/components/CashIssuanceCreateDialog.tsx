@@ -49,7 +49,7 @@ const isPaymentCOA = (c: COADto) => {
 };
 
 const isPayableOrExpenseCOA = (c: COADto) => {
-    return [3, 4, 7, 8, 9, 10].includes(Number(c.accountType));
+    return [3, 4, 7, 8, 9, 10].includes(Number(c.accountType)) || [44, 45, 47, 30].includes(Number(c.coaId));
 };
 
 const MEMO_AMOUNT_TOLERANCE = 0.01;
@@ -519,14 +519,44 @@ export function CashIssuanceCreateDialog({
                 const netAmount = po.amountDue / (1 + VAT_RATE);
                 const vatAmount = netAmount * VAT_RATE;
                 const ewtAmount = netAmount * EWT_RATE;
-                newPayables.push({
-                    referenceNo: baseRef,
-                    date: date,
-                    amount: Number(netAmount.toFixed(2)),
-                    coaId: 8,
-                    remarks: `Principal Net of VAT`,
-                    divisionId: undefined
-                });
+                if (po.breakdown && po.breakdown.length > 0) {
+                    po.breakdown.forEach(b => {
+                        let coaId = 8;
+                        let remarks = `Principal Net of VAT`;
+                        
+                        if (b.categoryType === 'FINISHED_GOODS') {
+                            coaId = 47;
+                            remarks = `Principal Net of VAT - Finished Goods`;
+                        } else if (b.categoryType === 'PACKAGING') {
+                            coaId = 45;
+                            remarks = `Principal Net of VAT - Packaging`;
+                        } else if (b.categoryType === 'RAW_MATERIAL') {
+                            coaId = 44;
+                            remarks = `Principal Net of VAT - Ingredients`;
+                        }
+                        
+                        const itemNetAmount = b.amount / (1 + VAT_RATE);
+                        
+                        newPayables.push({
+                            referenceNo: baseRef,
+                            date: date,
+                            amount: Number(itemNetAmount.toFixed(2)),
+                            coaId,
+                            remarks,
+                            divisionId: undefined
+                        });
+                    });
+                } else {
+                    newPayables.push({
+                        referenceNo: baseRef,
+                        date: date,
+                        amount: Number(netAmount.toFixed(2)),
+                        coaId: 8,
+                        remarks: `Principal Net of VAT`,
+                        divisionId: undefined
+                    });
+                }
+
                 newPayables.push({
                     referenceNo: baseRef,
                     date: date,
@@ -539,7 +569,7 @@ export function CashIssuanceCreateDialog({
                     referenceNo: baseRef,
                     date: date,
                     amount: -Number(ewtAmount.toFixed(2)),
-                    coaId: 38,
+                    coaId: 438,
                     remarks: `EWT Deduction (1%)`,
                     divisionId: undefined
                 });
@@ -548,14 +578,13 @@ export function CashIssuanceCreateDialog({
                     po.breakdown.forEach(b => {
                         let coaId = 8;
                         let remarks = `Principal (Non-VAT)`;
-                        
-                        if (b.productType === 4) {
+                        if (b.categoryType === 'FINISHED_GOODS') {
                             coaId = 47;
                             remarks = `Principal (Non-VAT) - Finished Goods`;
-                        } else if (b.productType === 2) {
+                        } else if (b.categoryType === 'PACKAGING') {
                             coaId = 45;
                             remarks = `Principal (Non-VAT) - Packaging`;
-                        } else if (b.productType === 3) {
+                        } else if (b.categoryType === 'RAW_MATERIAL') {
                             coaId = 44;
                             remarks = `Principal (Non-VAT) - Ingredients`;
                         }

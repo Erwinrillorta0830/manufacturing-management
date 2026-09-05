@@ -308,10 +308,6 @@ function claimFilter(row: ApplicationRow, id: number): Record<string, unknown> {
         { application_status: { _eq: status } },
     ];
 
-    if (status === "SCHEDULED") {
-        and.push({ effective_at: { _eq: row.effective_at ?? "" } });
-    }
-
     if (status === "APPLYING") {
         and.push({ application_lock_id: { _eq: row.application_lock_id ?? "" } });
         and.push({ application_started_at: { _eq: row.application_started_at ?? "" } });

@@ -66,6 +66,26 @@ export interface PurchaseOrderCatalog {
     priceTypeRules: PurchaseOrderPriceTypeRule[];
 }
 
+export type PurchaseOrderDiscountSource = "supplier" | "manual" | "none";
+
+export interface PurchaseOrderCommercialResolutionLine {
+    productId: number;
+    parentProductId: number | null;
+    pricePhp: string | null;
+    priceSourceProductId: number | null;
+    discountTypeId: number | null;
+    discountTypeName: string | null;
+    discountPercent: string;
+    discountSourceProductId: number | null;
+}
+
+export interface PurchaseOrderCommercialResolution {
+    priceTypeId: number;
+    priceTypeName: string;
+    missingPriceProductIds: number[];
+    lines: PurchaseOrderCommercialResolutionLine[];
+}
+
 export interface PurchaseOrderDraftPayload {
     externalReference?: string;
     remark?: string;
@@ -94,6 +114,8 @@ export interface PurchaseOrderDraftPayload {
         quantity: number;
         unitPrice: number;
         discountMode: "Percentage";
+        discountType: number | null;
+        discountSource: PurchaseOrderDiscountSource;
         discountPercent: number;
         discountAmount: number;
         vatPercent: number;

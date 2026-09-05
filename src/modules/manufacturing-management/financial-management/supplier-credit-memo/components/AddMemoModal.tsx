@@ -3,10 +3,11 @@
 "use client";
 
 import { useState, useRef, useMemo } from "react";
-import { Button }  from "@/components/ui/button";
-import { Input }   from "@/components/ui/input";
-import { Label }   from "@/components/ui/label";
-import { Badge }   from "@/components/ui/badge";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { X, Loader2, Plus, Search, ChevronDown, Check } from "lucide-react";
 import { useCreateMemo, useSuppliers, useChartOfAccounts } from "../hooks/useSupplierCreditMemo";
 import type { CreateMemoPayload } from "../types";
@@ -14,16 +15,17 @@ import type { CreateMemoPayload } from "../types";
 // ─── Searchable dropdown ───────────────────────────────────────────────────────
 interface SearchableSelectProps {
   placeholder: string;
-  loading:     boolean;
-  options:     { value: string; label: string }[];
-  value:       string;
-  onChange:    (val: string) => void;
+  loading: boolean;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (val: string) => void;
+  hasError?: boolean;
 }
 
-function SearchableSelect({ placeholder, loading, options, value, onChange }: SearchableSelectProps) {
-  const [open,   setOpen]   = useState(false);
+function SearchableSelect({ placeholder, loading, options, value, onChange, hasError }: SearchableSelectProps) {
+  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const inputRef            = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() =>
     search.trim()
@@ -46,7 +48,7 @@ function SearchableSelect({ placeholder, loading, options, value, onChange }: Se
       <button
         type="button"
         onClick={() => { setOpen(v => !v); setTimeout(() => inputRef.current?.focus(), 50); }}
-        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className={`flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 py-2 text-xs ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${hasError ? "border-destructive ring-destructive" : "border-input"}`}
       >
         <span className={selected ? "text-foreground" : "text-muted-foreground"}>
           {loading ? "Loading..." : (selected?.label ?? placeholder)}
@@ -105,17 +107,18 @@ function SearchableSelect({ placeholder, loading, options, value, onChange }: Se
 
 // ─── Modal ─────────────────────────────────────────────────────────────────────
 interface AddMemoModalProps {
-  onClose:   () => void;
+  onClose: () => void;
   onSuccess: (message: string) => void;
 }
 
 export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
-  const { submit, loading, error } = useCreateMemo();
+  const { submit, loading } = useCreateMemo();
   const { suppliers, loading: suppLoading } = useSuppliers();
-  const { accounts,  loading: coaLoading  } = useChartOfAccounts();
+  const { accounts, loading: coaLoading } = useChartOfAccounts();
 
   const [supplierId, setSupplierId] = useState("");
-  const [coaId,      setCoaId]      = useState("");
+  const [coaId, setCoaId] = useState("");
+  const [errors, setErrors] = useState<Record<string, boolean>>({});
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -136,18 +139,42 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
 
+    const dateVal = fd.get("date") as string;
+    const amountVal = fd.get("amount") as string;
+    const amount = parseFloat(amountVal);
+
+    const newErrors: Record<string, boolean> = {};
+    if (!supplierId) newErrors.supplierId = true;
+    if (!coaId) newErrors.coaId = true;
+    if (!dateVal) newErrors.date = true;
+    if (!amountVal || isNaN(amount) || amount <= 0) newErrors.amount = true;
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      const missingFields = [];
+      if (newErrors.supplierId) missingFields.push("Supplier Name");
+      if (newErrors.coaId) missingFields.push("Chart of Account");
+      if (newErrors.date) missingFields.push("Memo Date");
+      if (newErrors.amount) missingFields.push("Amount");
+      toast.error(`Required fields are empty: ${missingFields.join(", ")}`);
+      return;
+    }
+    setErrors({});
+
     const payload: CreateMemoPayload = {
-      supplier_id:      Number(supplierId),
+      supplier_id: Number(supplierId),
       chart_of_account: Number(coaId),
-      date:             fd.get("date") as string,
-      amount:           parseFloat(fd.get("amount") as string),
-      reason:           (fd.get("reason") as string).trim() || undefined,
+      date: dateVal,
+      amount: amount,
+      reason: (fd.get("reason") as string).trim() || undefined,
     };
 
     const result = await submit(payload);
     if (result.success) {
       onSuccess(result.message ?? "Credit memo created successfully.");
       onClose();
+    } else {
+      toast.error(result.message || "Failed to create memo.");
     }
   };
 
@@ -197,6 +224,7 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
                     options={supplierOptions}
                     value={supplierId}
                     onChange={setSupplierId}
+                    hasError={!!errors.supplierId}
                   />
                 </div>
 
@@ -211,6 +239,7 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
                     options={coaOptions}
                     value={coaId}
                     onChange={setCoaId}
+                    hasError={!!errors.coaId}
                   />
                 </div>
 
@@ -219,7 +248,7 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
                   <Label className="text-xs font-medium">
                     Memo Date <span className="text-destructive">*</span>
                   </Label>
-                  <Input type="date" name="date" defaultValue={today} required className="h-9 text-xs" />
+                  <Input type="date" name="date" defaultValue={today} className={`h-9 text-xs ${errors.date ? "border-destructive ring-destructive" : ""}`} />
                 </div>
 
                 {/* Amount */}
@@ -229,7 +258,7 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
                   </Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">₱</span>
-                    <Input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" required className="h-9 text-xs pl-7" />
+                    <Input type="number" name="amount" min="0.01" step="0.01" placeholder="0.00" className={`h-9 text-xs pl-7 ${errors.amount ? "border-destructive ring-destructive" : ""}`} />
                   </div>
                 </div>
 
@@ -246,13 +275,7 @@ export function AddMemoModal({ onClose, onSuccess }: AddMemoModalProps) {
 
               </div>
 
-              {/* Error */}
-              {error && (
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-xs text-destructive">
-                  <X className="h-3.5 w-3.5 shrink-0" />
-                  {error}
-                </div>
-              )}
+
             </div>
 
             {/* Footer */}
