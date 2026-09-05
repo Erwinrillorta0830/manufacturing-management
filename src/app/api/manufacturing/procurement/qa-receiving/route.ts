@@ -130,10 +130,20 @@ export async function GET(request: Request) {
 
         // Action: Fetch branches
         if (action === "branches") {
-            const res = await fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=100`, { headers, cache: "no-store" });
+            const res = await fetch(
+                `${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id`,
+                { headers, cache: "no-store" }
+            );
             if (!res.ok) throw new Error(`Directus error loading branches: ${res.status}`);
             const json = await res.json();
-            return NextResponse.json(json.data);
+            const branches = (json.data || []).map((branch: Record<string, unknown>) => {
+                const badStockBranchId = relationNumber(branch.bad_stock_branch_id, ["id", "branch_id"]);
+                return {
+                    ...branch,
+                    bad_stock_branch_id: badStockBranchId
+                };
+            });
+            return NextResponse.json(branches);
         }
 
         if (action === "lots" || action === "batches") {
@@ -144,6 +154,7 @@ export async function GET(request: Request) {
             if (!Number.isSafeInteger(parsedBranchId) || parsedBranchId <= 0) {
                 return NextResponse.json({ error: "branchId is required for lot and batch lookups." }, { status: 400 });
             }
+            const allowNullCapacity = searchParams.get("disposition") === "rejected";
             const product = await loadAllocationProduct(parsedProductId);
             let requestedLotId: number | undefined;
             if (action === "batches") {
@@ -173,7 +184,11 @@ export async function GET(request: Request) {
                 const capacity = finiteCapacity(lot.max_batch_capacity);
                 const occupied = Math.max(0, occupiedByLot.get(lotId) || 0);
                 const lotUomId = unitId(lot.unit_id);
-                if (lotUomId !== product.uomId || !capacity || capacity - occupied <= 0) {
+                const remaining = capacity === null ? null : capacity - occupied;
+                const capacityCompatible = allowNullCapacity
+                    ? remaining === null || remaining > 0
+                    : remaining !== null && remaining > 0;
+                if (lotUomId !== product.uomId || !capacityCompatible) {
                     return NextResponse.json({ error: "The selected storage lot is not compatible with this product." }, { status: 409 });
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
@@ -200,7 +215,9 @@ export async function GET(request: Request) {
                 const occupiedQuantity = Math.max(0, occupiedByLot.get(lotId) || 0);
                 const remainingCapacity = capacity === null ? null : Math.max(0, capacity - occupiedQuantity);
                 const uomId = unitId(lot.unit_id);
-                if (uomId !== product.uomId || remainingCapacity === null || remainingCapacity <= 0) return [];
+                if (uomId !== product.uomId) return [];
+                if (remainingCapacity !== null && remainingCapacity <= 0) return [];
+                if (!allowNullCapacity && remainingCapacity === null) return [];
                 return [{
                     ...lot,
                     mm_lot_id: lotId,
