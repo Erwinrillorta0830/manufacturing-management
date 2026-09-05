@@ -221,25 +221,43 @@ export function StockConversionModal({
               : null;
             setLiveProductQty(liveQty);
 
+            // Map lot_id to lot_name from lotsData (authoritative database names)
+            const lotNameMap = new Map<number, string>();
+            (lotsData || []).forEach((l) => {
+              if (l.lot_id && l.lot_name) {
+                lotNameMap.set(Number(l.lot_id), l.lot_name);
+              }
+            });
+
             // Build live batches strictly from live on-hand movement balances (Spring Boot)
             const liveBatches: MMInventoryLot[] = (onhandData || [])
               .filter((oh) => Number(oh.onhandQuantity || 0) > 0)
-              .map((oh) => ({
-                inventory_lot_id: Number(oh.inventoryLotId || oh.lotId || 1),
-                lot_id: Number(oh.lotId || 1),
-                branch_id: Number(oh.branchId || branchId),
-                product_id: Number(oh.productId || product.productId),
-                batch_no: String(oh.batchNo || "BATCH"),
-                manufacturing_date: (oh.manufacturingDate as string) || null,
-                expiry_date: (oh.expirationDate as string) || null,
-                unit_cost: product.pricePerUnit || 0,
-                qa_status: (oh.inventoryCondition as QAStatus) || "GOOD",
-                status: "ACTIVE",
-                available_quantity: Number(oh.onhandQuantity || 0),
-                lot_name: oh.lotName || `Lot #${oh.lotId}`,
-                product_name: oh.productName || product.productName,
-                product_code: oh.productCode || product.productCode,
-              }));
+              .map((oh) => {
+                const lId = Number(oh.lotId || 1);
+                const resolvedLotName = lotNameMap.get(lId) || oh.lotName;
+                const cleanLotName = resolvedLotName
+                  ? (resolvedLotName.toLowerCase().startsWith('lot')
+                      ? resolvedLotName
+                      : `Lot ${resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, '').trim()}`)
+                  : `Lot #${lId}`;
+
+                return {
+                  inventory_lot_id: Number(oh.inventoryLotId || oh.lotId || 1),
+                  lot_id: lId,
+                  branch_id: Number(oh.branchId || branchId),
+                  product_id: Number(oh.productId || product.productId),
+                  batch_no: String(oh.batchNo || "BATCH"),
+                  manufacturing_date: (oh.manufacturingDate as string) || null,
+                  expiry_date: (oh.expirationDate as string) || null,
+                  unit_cost: product.pricePerUnit || 0,
+                  qa_status: (oh.inventoryCondition as QAStatus) || "GOOD",
+                  status: "ACTIVE",
+                  available_quantity: Number(oh.onhandQuantity || 0),
+                  lot_name: cleanLotName,
+                  product_name: oh.productName || product.productName,
+                  product_code: oh.productCode || product.productCode,
+                };
+              });
 
             // Fallback if no specific batch onhand exists but product running stock is positive
             const prodQty = liveQty !== null ? liveQty : Math.max(0, Number(product.quantity) || 0);
