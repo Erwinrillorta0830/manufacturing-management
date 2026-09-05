@@ -200,11 +200,6 @@ export default function QAReceivingModule({
                             Review one purchase order at a time without keeping the inspection queue open beside the worksheet.
                         </p>
                     </div>
-                    {selectedShipment && (
-                        <span className="shrink-0 rounded-full border bg-background px-3 py-1.5 text-[10px] font-extrabold text-muted-foreground">
-                            PO ID: {selectedShipment.shipment_id}
-                        </span>
-                    )}
                 </div>
 
                 {detailLoading && (

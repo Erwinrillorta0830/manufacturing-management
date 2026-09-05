@@ -30,6 +30,7 @@ export interface CreatableSelectProps {
     isLoading?: boolean;
     className?: string;
     id?: string;
+    "aria-label"?: string;
     "aria-invalid"?: boolean | "true" | "false";
     "aria-describedby"?: string;
     onCreateOption?: (name: string) => Promise<void> | void;
@@ -49,6 +50,7 @@ export function CreatableSelect({
     isLoading = false,
     className,
     id,
+    "aria-label": ariaLabel,
     "aria-invalid": ariaInvalid,
     "aria-describedby": ariaDescribedBy,
     onCreateOption,
@@ -126,6 +128,7 @@ export function CreatableSelect({
                             "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
                             className
                         )}
+                        aria-label={ariaLabel}
                         aria-invalid={ariaInvalid}
                         aria-describedby={ariaDescribedBy}
                         data-index={dataIndex}
@@ -138,6 +141,7 @@ export function CreatableSelect({
                         variant="outline"
                         role="combobox"
                         aria-expanded={open}
+                        aria-label={ariaLabel}
                         aria-invalid={ariaInvalid}
                         aria-describedby={ariaDescribedBy}
                         className={cn("w-full justify-between", !value && "text-muted-foreground", className)}

@@ -107,6 +107,8 @@ export const purchaseOrderDraftLineSchema = z.object({
     quantity: z.coerce.number().int().positive(),
     unitPrice: nonNegativeMoney,
     discountMode: discountMode.default("Percentage"),
+    discountType: positiveId.nullable().default(null),
+    discountSource: z.enum(["supplier", "manual", "none"]).default("supplier"),
     discountPercent: percentage.default(0),
     discountAmount: nonNegativeMoney.default("0"),
     vatPercent: percentage.default(0),
@@ -118,6 +120,11 @@ export const purchaseOrderDraftLineSchema = z.object({
     if (line.purchaseIntent === "Buffer_Stock" && line.jobOrderId !== null) {
         context.addIssue({ code: "custom", path: ["jobOrderId"], message: "Buffer stock cannot be linked to a job order." });
     }
+});
+
+export const purchaseOrderCommercialResolutionSchema = z.object({
+    supplierId: positiveId,
+    productIds: z.array(positiveId).min(1).max(200)
 });
 
 export const purchaseOrderCreateSchema = z.object({
@@ -177,6 +184,13 @@ export const purchaseOrderListQuerySchema = z.object({
     direction: z.enum(["asc", "desc"]).default("desc"),
     approvalStage: purchaseOrderApprovalStageSchema.optional()
 }).superRefine((query, context) => {
+    if (query.approvalStage === "Finance" && query.status === "Awaiting Payment") {
+        context.addIssue({
+            code: "custom",
+            path: ["status"],
+            message: "Awaiting Payment is a payment lifecycle status and cannot be used in the Finance approval queue."
+        });
+    }
     if (query.queue === "receiving" && query.status && !receivingQueueStatusSchema.safeParse(query.status).success) {
         context.addIssue({
             code: "custom",

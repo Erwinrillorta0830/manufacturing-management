@@ -58,6 +58,13 @@ export interface ShipmentFormModalProps {
         payment_description?: string | null;
     }>;
     priceControlStatus?: "idle" | "loading" | "ready" | "warning" | "error";
+    priceControlError?: string | null;
+    priceTypeResolution?: {
+        status: "idle" | "pending" | "loading" | "resolved" | "error";
+        priceTypeId: number | null;
+        priceTypeName: string | null;
+        message: string | null;
+    };
     hasSubmitted: boolean;
     draftSummary: {
         grossForeign: string;
@@ -118,6 +125,8 @@ export function ShipmentFormModal({
     productPerSupplierMap,
     paymentTerms = [],
     priceControlStatus = "idle",
+    priceControlError = null,
+    priceTypeResolution,
     hasSubmitted,
     draftSummary,
     fxRateStatus,
@@ -197,6 +206,7 @@ export function ShipmentFormModal({
                             purchase_intent: "Buffer_Stock",
                             job_order_id: "",
                             discount_type_id: "",
+                            discount_source: "none",
                             discount_mode: "Percentage",
                             discount_amount: "0",
                             discount_percent: "0"
@@ -374,6 +384,15 @@ export function ShipmentFormModal({
                                     </div>
                                 )}
 
+                                {canonicalDrafting && (
+                                    <div className="space-y-1" data-testid="purchase-order-price-type">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Price Type</label>
+                                        <div className="flex h-8 items-center rounded-lg border bg-muted px-2.5 text-xs font-semibold text-foreground" aria-live="polite">
+                                            {priceTypeResolution?.priceTypeName || (priceControlStatus === "loading" ? "Resolving..." : "Pending product")}
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
                                         <label className="text-[10px] font-bold text-muted-foreground uppercase">FX Rate to PHP</label>
@@ -522,6 +541,21 @@ export function ShipmentFormModal({
                                     />
                                 </div>
                             )}
+                            {canonicalDrafting && priceControlStatus === "loading" && (
+                                <p className="text-[10px] font-medium text-muted-foreground" role="status">
+                                    Resolving the configured purchase price and supplier discount...
+                                </p>
+                            )}
+                            {canonicalDrafting && priceControlStatus === "warning" && (
+                                <p className="text-[10px] font-medium text-amber-700" role="alert">
+                                    {priceTypeResolution?.message || "One or more products require a manually entered price because no matrix value is configured."}
+                                </p>
+                            )}
+                            {canonicalDrafting && priceControlStatus === "error" && (
+                                <p className="text-[10px] font-medium text-destructive" role="alert">
+                                    {priceControlError || "Unable to resolve purchase-order commercial terms."}
+                                </p>
+                            )}
                         </div>
 
                         {/* Excel Spreadsheet Table Container */}
@@ -594,10 +628,10 @@ export function ShipmentFormModal({
                                                     ? Number(line.discount_amount || 0)
                                                     : Number(calculatedDiscount.discountAmount);
                                                 const subtotal = grossForeign - discount;
-                                                const materialType = line.material_type || "";
-                                                const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
-                                                const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
-                                                const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
+                                                 const materialType = line.material_type || "";
+                                                 const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
+                                                 const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
+                                                 const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
 
                                                 return (
                                                     <tr 
@@ -627,6 +661,11 @@ export function ShipmentFormModal({
                                                                         product_code: "",
                                                                         selected_uom: "",
                                                                         base_unit_cost_php: "",
+                                                                        discount_type_id: "",
+                                                                        discount_source: "none",
+                                                                        discount_mode: "Percentage",
+                                                                        discount_amount: "0",
+                                                                        discount_percent: "0",
                                                                         uom_options: []
                                                                     });
                                                                 }}
@@ -668,6 +707,7 @@ export function ShipmentFormModal({
                                                                 parentProductId={line.parent_product_id}
                                                                 productName={line.product_name}
                                                                 materialType={materialType}
+                                                                canonicalDrafting={canonicalDrafting}
                                                                 disabled={!isRowEditing || !materialType}
                                                                 onSelect={(selected) => {
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
@@ -675,7 +715,7 @@ export function ShipmentFormModal({
                                                                     
                                                                     const finalSelected = { ...selected };
                                                                     const priceControlCost = priceControlCostsMap[Number(selected.product_id)];
-                                                                    if (priceControlCost !== undefined && priceControlCost > 0) {
+                                                                    if (!canonicalDrafting && priceControlCost !== undefined && priceControlCost > 0) {
                                                                         finalSelected.base_unit_cost_php = String(priceControlCost);
                                                                     } else if (canonicalDrafting) {
                                                                         finalSelected.base_unit_cost_php = "";
@@ -687,11 +727,12 @@ export function ShipmentFormModal({
                                                                     }
 
                                                                     (finalSelected as ManifestLineFormItem).discount_type_id = "";
+                                                                    (finalSelected as ManifestLineFormItem).discount_source = "none";
                                                                     (finalSelected as ManifestLineFormItem).discount_mode = "Percentage";
                                                                     (finalSelected as ManifestLineFormItem).discount_amount = "0";
                                                                     (finalSelected as ManifestLineFormItem).discount_percent = "0";
 
-                                                                    if (productPerSupplierMap) {
+                                                                    if (productPerSupplierMap && !canonicalDrafting) {
                                                                         const prodId = Number(selected.product_id);
                                                                         const parentId = selected.parent_product_id ? Number(selected.parent_product_id) : null;
                                                                         const pps = productPerSupplierMap[prodId] || (parentId ? productPerSupplierMap[parentId] : undefined);
@@ -700,6 +741,7 @@ export function ShipmentFormModal({
                                                                             (finalSelected as ManifestLineFormItem).discount_mode = "Percentage";
                                                                             (finalSelected as ManifestLineFormItem).discount_amount = "0";
                                                                             (finalSelected as ManifestLineFormItem).discount_percent = pps.total_percent !== undefined ? String(pps.total_percent) : "0";
+                                                                            (finalSelected as ManifestLineFormItem).discount_source = pps.discount_type_id ? "supplier" : "none";
                                                                         }
                                                                     }
 
@@ -745,7 +787,12 @@ export function ShipmentFormModal({
                                                                                     ? String(opt.parent_product_id)
                                                                                     : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
-                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal)
+                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal),
+                                                                                discount_type_id: "",
+                                                                                discount_source: "none",
+                                                                                discount_mode: "Percentage",
+                                                                                discount_amount: "0",
+                                                                                discount_percent: "0"
                                                                             });
                                                                         }
                                                                     }}
@@ -796,7 +843,9 @@ export function ShipmentFormModal({
                                                                 type="number"
                                                                 required
                                                                 step="0.0001"
-                                                                placeholder="19.00"
+                                                                placeholder={canonicalDrafting
+                                                                    ? priceControlStatus === "warning" ? "Enter manually" : "Waiting for matrix"
+                                                                    : "19.00"}
                                                                 value={line.base_unit_cost_php}
                                                                 onChange={e => handleLineFormChange(idx, "base_unit_cost_php", e.target.value)}
                                                                 onKeyDown={(e) => {
@@ -811,7 +860,9 @@ export function ShipmentFormModal({
                                                                     }
                                                                 }}
                                                                 disabled={!isRowEditing}
-                                                                className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
+                                                                readOnly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0}
+                                                                aria-readonly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? true : undefined}
+                                                                className={`w-full text-right rounded-md border px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? "bg-muted text-muted-foreground" : "bg-background"}`}
                                                             />
                                                         </td>
 
@@ -842,6 +893,7 @@ export function ShipmentFormModal({
                                                                         handleLineFormChange(idx, {
                                                                             discount_mode: "Percentage",
                                                                             discount_type_id: dtId,
+                                                                            discount_source: dtId ? "manual" : "none",
                                                                             discount_amount: "0",
                                                                             discount_percent: selectedDt ? String(selectedDt.total_percent) : (dtId === "" ? "0" : line.discount_percent || "0")
                                                                         });
@@ -849,14 +901,20 @@ export function ShipmentFormModal({
                                                                     className="w-full rounded-md border bg-background px-2 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     <option value="">No Discount (0%)</option>
-                                                                    {discountTypes?.map(dt => (
-                                                                        <option key={dt.id} value={String(dt.id)}>
-                                                                            {dt.discount_type} ({Number(dt.total_percent).toFixed(1)}%)
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                            </div>
-                                                        </td>
+                                                                     {discountTypes?.map(dt => {
+                                                                         const discountName = dt.discount_type.trim();
+                                                                         const optionLabel = discountName.includes("%")
+                                                                             ? discountName
+                                                                             : `${discountName} (${Number(dt.total_percent).toString()}%)`;
+                                                                         return (
+                                                                             <option key={dt.id} value={String(dt.id)}>
+                                                                                 {optionLabel}
+                                                                             </option>
+                                                                         );
+                                                                     })}
+                                                                 </select>
+                                                             </div>
+                                                         </td>
 
                                                         {/* Discount Value */}
                                                         <td className="p-1.5 border-r align-middle">
