@@ -11,7 +11,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
-import SalesOrderApprovalModule from "@/modules/manufacturing-management/sales-order-approval/SalesOrderApprovalModule";
+import VersionApprovalModule from "@/modules/manufacturing-management/version-approval/VersionApprovalModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,11 +66,11 @@ function buildHeaderUserFromToken(token: string | null | undefined) {
     return {
         name,
         email: email || "",
-        avatar: "/avatars/shadcn.jpg",
+        avatar: "",
     };
 }
 
-export default async function SalesOrderApprovalPage() {
+export default async function VersionApprovalPage() {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value ?? null;
 
@@ -92,12 +92,16 @@ export default async function SalesOrderApprovalPage() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
+                                    <BreadcrumbLink href="/mm">Manufacturing</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="/mm/approvals-hub">Approvals Hub</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Sales Order Approvals
+                                        Product Version Approval
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
@@ -112,7 +116,7 @@ export default async function SalesOrderApprovalPage() {
 
             {/* Scrollable Content wrapper */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4 bg-background">
-                <SalesOrderApprovalModule />
+                <VersionApprovalModule />
             </main>
         </div>
     );
