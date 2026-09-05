@@ -18,6 +18,24 @@ import {
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { getConfiguredActiveForexRates } from "../forex/_rates";
 
+/**
+ * Helper to get Philippine Standard Time (Asia/Manila) timestamps for database operations.
+ * Returns formatted string: "YYYY-MM-DD HH:mm:ss"
+ */
+function getPhTimestamp(date?: Date | string | null): string {
+    const d = date ? (typeof date === "string" ? new Date(date) : date) : new Date();
+    const validDate = isNaN(d.getTime()) ? new Date() : d;
+    return validDate.toLocaleString("sv-SE", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    }).replace("T", " ");
+}
+
 
 interface DirectusRepresentative {
     id: number;
@@ -42,7 +60,7 @@ interface InputRepresentative {
 export type SupplierStatusFilter = "active" | "inactive" | "all";
 export type SupplierForeignFilter = "all" | "local" | "foreign";
 
-const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency";
+const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency,created_at,updated_at";
 const SUPPLIER_PAGE_SIZE_DEFAULT = 10;
 const SUPPLIER_PAGE_SIZE_MAX = 100;
 const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.unit_of_measurement.*";
@@ -138,6 +156,24 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
     const isForeignNum = (isForeignBool || isNonPH || rawCurrency !== "" && rawCurrency !== "PHP" || Number(supplier.is_foreign) === 1) ? 1 : 0;
     const resolvedCurrency = rawCurrency || (isForeignNum === 1 ? "" : "PHP");
 
+    let created_at = supplier.created_at;
+    if (created_at && typeof created_at === 'string') {
+        if (!created_at.includes('T') && !created_at.includes('Z')) {
+            created_at = created_at.replace(' ', 'T') + '+08:00';
+        } else if (created_at.includes('T') && !created_at.endsWith('Z') && !created_at.includes('+')) {
+            created_at = created_at + '+08:00';
+        }
+    }
+
+    let updated_at = supplier.updated_at;
+    if (updated_at && typeof updated_at === 'string') {
+        if (!updated_at.includes('T') && !updated_at.includes('Z')) {
+            updated_at = updated_at.replace(' ', 'T') + '+08:00';
+        } else if (updated_at.includes('T') && !updated_at.endsWith('Z') && !updated_at.includes('+')) {
+            updated_at = updated_at + '+08:00';
+        }
+    }
+
     return {
         ...supplier,
         isActive: toBoolean(supplier.isActive),
@@ -147,7 +183,9 @@ export function normalizeSupplier(supplier: DirectusSup): Record<string, unknown
         is_foreign: isForeignNum,
         currency: resolvedCurrency || undefined,
         default_currency: resolvedCurrency || undefined,
-        notes_or_comments: cleanNotesText(supplier.notes_or_comments)
+        notes_or_comments: cleanNotesText(supplier.notes_or_comments),
+        created_at,
+        updated_at
     };
 }
 
@@ -328,7 +366,9 @@ export async function createSupplier(supplierData: Record<string, unknown>): Pro
             ...details,
             supplier_type: supplierType,
             date_added: await getTodayDateString(),
-            isActive: hasIsActive && !toBoolean(details.isActive) ? 0 : 1
+            isActive: hasIsActive && !toBoolean(details.isActive) ? 0 : 1,
+            created_at: getPhTimestamp(),
+            updated_at: getPhTimestamp()
         };
 
         const res = await fetch(url, {
@@ -416,6 +456,8 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
         if (Object.prototype.hasOwnProperty.call(details, "notes_or_comments")) {
             details.notes_or_comments = cleanNotesText(details.notes_or_comments);
         }
+
+        details.updated_at = getPhTimestamp();
 
         const res = await fetch(url, {
             method: "PATCH",
