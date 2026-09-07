@@ -534,7 +534,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!isOpen || customers.length === 0) return;
 
-    
+    interface ClearancePayloadItem {
+      product_id?: number | string;
+      product_code?: string;
+      product_name?: string;
+      uom?: string;
+      ordered_quantity?: number | string;
+      received_quantity?: number | string;
+      returned_quantity?: number | string;
+      unit_price?: number | string;
+      concern_notes?: string;
+    }
+
     const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
 
     let data: {
@@ -547,7 +558,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       salesmanName?: string;
       branchName?: string;
       remarks?: string;
-      items?: any[];
+      items?: ClearancePayloadItem[];
     } = {};
     if (storedRaw) {
       try {
@@ -685,8 +696,8 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     // 5. Pre-fill products summary from clearance items
     if (Array.isArray(data.items) && data.items.length > 0) {
       const mappedItems: SalesReturnItem[] = data.items
-        .filter((it: any) => Number(it.returned_quantity || 0) > 0 || Number(it.ordered_quantity || 0) > 0)
-        .map((it: any) => {
+        .filter((it: ClearancePayloadItem) => Number(it.returned_quantity || 0) > 0 || Number(it.ordered_quantity || 0) > 0)
+        .map((it: ClearancePayloadItem) => {
           const qty = Number(it.returned_quantity) > 0 ? Number(it.returned_quantity) : Number(it.ordered_quantity || 1);
           const price = Number(it.unit_price || 0);
           const gross = Math.round(qty * price * 100) / 100;
@@ -725,6 +736,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     salesmen,
     branches,
     priceTypeOptions,
+    searchParams,
   ]);
 
   // --- 6. CLICK OUTSIDE HANDLERS ---
