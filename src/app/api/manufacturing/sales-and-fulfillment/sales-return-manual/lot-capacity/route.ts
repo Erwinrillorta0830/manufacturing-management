@@ -26,15 +26,11 @@ export async function GET(req: Request) {
         lotOnhandMap[item.lot_id] = (lotOnhandMap[item.lot_id] || 0) + (Number(item.quantity) || 0);
       }
     }
-    
-    try {
-      const fs = require('fs');
-      fs.writeFileSync('lot_debug.json', JSON.stringify({ list, lotOnhandMap }, null, 2));
-    } catch(e) {}
-
     return NextResponse.json({ data: lotOnhandMap });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[LotCapacity API] Failed to calculate lot capacity", error);
-    return NextResponse.json({ error: error.message || "Failed to calculate capacity" }, { status: error.status || 500 });
+    const msg = error instanceof Error ? error.message : "Failed to calculate capacity";
+    const status = (error as { status?: number })?.status || 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
