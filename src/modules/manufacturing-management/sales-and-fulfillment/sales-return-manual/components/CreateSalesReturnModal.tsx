@@ -44,19 +44,17 @@ import {
   ProductPerPriceType,
   InvoiceLineItem,
   LotOption,
-} from "../type";
-
-// Import Child Modal
-import { ProductLookupModal } from "./ProductLookupModal";
-// Import Provider & Types
-import {
-  SalesReturnProvider,
   SalesmanOption,
   CustomerOption,
   BranchOption,
   Product,
-} from "../providers/fetchProviders";
-import { resolveFinalDiscount } from "../utils/discount-resolver";
+} from "../types/sales-return.types";
+
+// Import Child Modal
+import { ProductLookupModal } from "./ProductLookupModal";
+// Import API Client & Helpers
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
+import { resolveFinalDiscount } from "../services/sales-return.helpers";
 
 interface Props {
   isOpen: boolean;
@@ -247,6 +245,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   >([]);
   const [priceTypeOptions, setPriceTypeOptions] = useState<PriceTypeOption[]>([]);
   const [lotOptions, setLotOptions] = useState<LotOption[]>([]);
+  const [lotOnhandMap, setLotOnhandMap] = useState<Record<number, number>>({});
 
   // INVOICE DATA LIST & DROPDOWN STATE
   const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
@@ -272,9 +271,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
     if (appliedInvoiceId) {
-      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
-        .then((data) => setInvoiceLineItems(data))
-        .catch((err) => console.error("Failed to load invoice items", err));
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
     } else {
       setInvoiceLineItems([]);
     }
@@ -331,13 +330,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             priceTypesData,
             lotsData,
           ] = await Promise.all([
-            SalesReturnProvider.getFormSalesmen(),
-            SalesReturnProvider.getFormCustomers(),
-            SalesReturnProvider.getFormBranches(),
-            SalesReturnProvider.getLineDiscounts(),
-            SalesReturnProvider.getSalesReturnTypes(),
-            SalesReturnProvider.getPriceTypes(),
-            SalesReturnProvider.getLots(),
+            SalesReturnApiClient.getFormSalesmen(),
+            SalesReturnApiClient.getFormCustomers(),
+            SalesReturnApiClient.getFormBranches(),
+            SalesReturnApiClient.getLineDiscounts(),
+            SalesReturnApiClient.getSalesReturnTypes(),
+            SalesReturnApiClient.getPriceTypes(),
+            SalesReturnApiClient.getLots(),
           ]);
           setSalesmen(salesmenData);
           setCustomers(customersData);
@@ -353,6 +352,40 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       loadData();
     }
   }, [isOpen]);
+
+  // --- NEW: FETCH LOT CAPACITIES ---
+  useEffect(() => {
+    if (!branchId || items.length === 0) {
+      return;
+    }
+    const fetchLotCapacities = async () => {
+      const uniqueUnitIds = Array.from(new Set(items.map(item => item.unit_id).filter(Boolean))) as number[];
+      if (uniqueUnitIds.length === 0) return;
+      
+      const newMap = { ...lotOnhandMap };
+      let updated = false;
+
+      await Promise.all(uniqueUnitIds.map(async (unitId) => {
+        try {
+          const res = await SalesReturnApiClient.getLotOnhandMap(branchId, unitId);
+          for (const [lotId, qty] of Object.entries(res)) {
+            if (newMap[Number(lotId)] !== qty) {
+              newMap[Number(lotId)] = qty as number;
+              updated = true;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch lot capacity", err);
+        }
+      }));
+
+      if (updated) {
+        setLotOnhandMap(newMap);
+      }
+    };
+    fetchLotCapacities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId, items]);
 
   // 🟢 NEW: Effect to automatically update prices when Price Type changes
   useEffect(() => {
@@ -398,7 +431,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (items.length > 0 && customerCode) {
       const updateDiscounts = async () => {
         try {
-          const catalog = await SalesReturnProvider.getFullCatalog(customerCode);
+          const catalog = await SalesReturnApiClient.getFullCatalog(customerCode);
 
           setItems((prevItems) =>
             prevItems.map((item) => {
@@ -500,7 +533,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (selectedSalesmanId && customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             selectedSalesmanId,
             customerCode,
           );
@@ -514,7 +547,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     } else if (customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             undefined,
             customerCode,
           );
@@ -581,7 +614,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
     // 1. Resolve Customer
     const foundCustomer = customers.find(
-      (c) =>
+      (c: CustomerOption) =>
         (targetCustomerCode && c.code === targetCustomerCode) ||
         (targetCustomerName && c.name === targetCustomerName)
     );
@@ -617,14 +650,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     // 3. Fetch Invoices and link matching invoice / salesman
     const fetchAndLinkInvoice = async () => {
       try {
-        const invList = await SalesReturnProvider.getInvoiceReturnList(
+        const invList = await SalesReturnApiClient.getInvoiceReturnList(
           undefined,
           targetCustomerCode || undefined
         );
         setInvoiceOptions(invList);
 
         const matchedInv = invList.find(
-          (inv) =>
+          (inv: InvoiceOption) =>
             (targetInvoiceNo && inv.invoice_no === targetInvoiceNo) ||
             (targetOrderNo && inv.order_id === targetOrderNo)
         );
@@ -877,6 +910,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       return;
     }
 
+    for (const item of items) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot.`
+          });
+          return;
+        }
+      }
+    }
+
     try {
       setIsSubmitting(true);
       const selectedSalesmanObj = salesmen.find(
@@ -909,7 +958,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         appliedInvoiceId: appliedInvoiceId ?? undefined,
       };
 
-      await SalesReturnProvider.submitReturn(payload);
+      await SalesReturnApiClient.submitReturn(payload);
 
       setSuccessOpen(true);
     } catch (err: unknown) {
@@ -998,7 +1047,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             code: item.code || "N/A",
             description: item.description || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined,
+            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: unitPrice,
             agreedPrice: unitPrice,
@@ -1063,6 +1112,38 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       }
 
       item.totalAmount = Math.round(((item.grossAmount || 0) - (item.discountAmount || 0)) * 100) / 100;
+      
+      // Validation check for lot capacity
+      if ((field === "quantity" || field === "lot_id") && item.lot_id) {
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        
+        if (maxCap > 0 && item.quantity > availableCap) {
+          item.quantity = availableCap;
+          
+          // Recalculate based on clamped quantity
+          const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice;
+          item.grossAmount = Math.round(item.quantity * agPrice * 100) / 100;
+          item.priceVariance = Math.round(((item.unitPrice || 0) - agPrice) * item.quantity * 100) / 100;
+          
+          if (item.discountType) {
+            const selectedOption = lineDiscountOptions.find((d) => d.id.toString() === item.discountType?.toString());
+            if (selectedOption) {
+              const percentage = parseFloat(selectedOption.total_percent) || 0;
+              item.discountAmount = Math.round((item.grossAmount || 0) * (percentage / 100) * 100) / 100;
+            }
+          }
+          item.totalAmount = Math.round(((item.grossAmount || 0) - (item.discountAmount || 0)) * 100) / 100;
+          
+          toast.warning("Lot Capacity Reached", {
+            id: `capacity-toast-${index}`,
+            description: `Quantity capped to max available (${availableCap}). Please add a new product line for the remainder.`,
+          });
+        }
+      }
+      
       updated[index] = item;
       return updated;
     });
@@ -1375,6 +1456,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Lot
                     </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
+                      Capacity
+                    </TableHead>
                     <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Batch
                     </TableHead>
@@ -1528,7 +1612,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                   value={item.lot_id ? item.lot_id.toString() : ""}
                                   onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
                                   options={lotOptions
-                                    .filter(l => l.branch_id === branchId && l.unit_id === item.unit_id)
+                                    .filter(l => {
+                                      if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
+                                      const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                      const maxCap = l.max_batch_capacity ?? 0;
+                                      const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                      return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
+                                    })
                                     .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                   placeholder="Select lot"
                                   className="h-9 text-xs"
@@ -1536,6 +1626,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               ) : (
                                 <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                               )}
+                            </TableCell>
+                            {/* Capacity */}
+                            <TableCell className="align-middle p-2 text-center">
+                              {(() => {
+                                if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                const maxCap = lot?.max_batch_capacity ?? 0;
+                                const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                const isFull = maxCap > 0 && item.quantity > availableCap;
+                                return (
+                                  <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                    {item.quantity} / {availableCap}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="align-middle p-2">
                               {true ? (
