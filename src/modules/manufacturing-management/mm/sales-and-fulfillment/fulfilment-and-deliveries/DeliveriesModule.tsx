@@ -7,6 +7,19 @@ import { motion, Variants } from "framer-motion";
 import { useDeliveries } from "./hooks/useDeliveries";
 import DeliveryClearanceModal from "./components/DeliveryClearanceModal";
 import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@/components/ui/command";
+import {
     Select,
     SelectContent,
     SelectItem,
@@ -24,6 +37,10 @@ import {
     Building2,
     ChevronDown,
     ChevronRight,
+    ChevronLeft,
+    ChevronsLeft,
+    ChevronsRight,
+    Check,
     Loader2,
     RefreshCw,
     ClipboardCheck,
@@ -31,6 +48,7 @@ import {
     Receipt,
     AlertTriangle,
     Boxes,
+    ExternalLink,
 } from "lucide-react";
 import { FulfillmentStatus } from "./types";
 
@@ -47,6 +65,12 @@ export default function DeliveriesModule() {
         setStatusFilter,
         searchQuery,
         setSearchQuery,
+        page,
+        setPage,
+        size,
+        setSize,
+        totalPages,
+        totalElements,
         selectedRecordForClearance,
         isClearanceModalOpen,
         submitting,
@@ -58,6 +82,10 @@ export default function DeliveriesModule() {
 
     // Accordion expanded rows state (keyed by consolidator_id)
     const [expandedRowIds, setExpandedRowIds] = useState<Set<number>>(new Set());
+
+    // Popover open states for searchable Combobox filters
+    const [branchPopoverOpen, setBranchPopoverOpen] = useState(false);
+    const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
 
     const toggleRow = (conId: number) => {
         setExpandedRowIds((prev) => {
@@ -71,9 +99,19 @@ export default function DeliveriesModule() {
     const statusBadgeStyles: Record<FulfillmentStatus, string> = {
         Pending: "bg-zinc-500/10 border-zinc-500/20 text-zinc-600 dark:text-zinc-400",
         Fulfilled: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+        "Fulfilled with Concerns": "bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400",
         "Fulfilled with Returns": "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400",
         "Unfulfilled / Returns": "bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400",
     };
+
+    const statusOptions = [
+        { value: "All", label: "All Statuses" },
+        { value: "Pending", label: "Pending Clearance" },
+        { value: "Fulfilled", label: "Fulfilled" },
+        { value: "Fulfilled with Concerns", label: "Fulfilled with Concerns" },
+        { value: "Fulfilled with Returns", label: "Fulfilled with Returns" },
+        { value: "Unfulfilled / Returns", label: "Unfulfilled / Returns" },
+    ];
 
     // Staggered top-to-bottom animation variants
     const containerVariants: Variants = {
@@ -105,9 +143,7 @@ export default function DeliveriesModule() {
                                 <h1 className="text-xl sm:text-2xl font-black text-foreground tracking-tight">
                                     Fulfillment & Deliveries
                                 </h1>
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-primary/10 border border-primary/20 text-primary">
-                                    Consolidated Runs
-                                </span>
+
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 Reconcile delivered manifests, verify sales returns, and record receiving clearance.
@@ -220,54 +256,130 @@ export default function DeliveriesModule() {
                     <input
                         type="text"
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            setPage(0);
+                        }}
                         placeholder="Search consolidator no., order no., invoice no., customer..."
                         className="w-full pl-9 pr-4 py-2 text-xs bg-background border border-input rounded-xl focus:border-primary outline-none text-foreground placeholder:text-muted-foreground shadow-xs"
                     />
                 </div>
 
-                {/* Dropdown Filters */}
+                {/* Searchable Combobox Dropdown Filters */}
                 <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Branch Filter */}
-                    <Select
-                        value={selectedBranchId}
-                        onValueChange={(val) => setSelectedBranchId(val)}
-                    >
-                        <SelectTrigger className="w-[180px] h-9 text-xs rounded-xl bg-background shadow-xs">
-                            <div className="flex items-center gap-2 truncate">
-                                <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                <SelectValue placeholder="All Branches" />
-                            </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="All">All Branches</SelectItem>
-                            {branches.map((b) => (
-                                <SelectItem key={b.id} value={String(b.id)}>
-                                    {b.branch_name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    {/* Branch Searchable Combobox */}
+                    <Popover open={branchPopoverOpen} onOpenChange={setBranchPopoverOpen}>
+                        <PopoverTrigger asChild>
+                            <button
+                                type="button"
+                                className="w-[200px] h-9 px-3 text-xs rounded-xl bg-background border border-input flex items-center justify-between shadow-xs hover:bg-muted/50 transition-colors"
+                            >
+                                <div className="flex items-center gap-2 truncate">
+                                    <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="truncate">
+                                        {selectedBranchId === "All"
+                                            ? "All Branches"
+                                            : branches.find((b) => String(b.id) === selectedBranchId)?.branch_name || "Select Branch"}
+                                    </span>
+                                </div>
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden" align="start">
+                            <Command>
+                                <div className="sticky top-0 z-10 bg-popover border-b">
+                                    <CommandInput placeholder="Search branch..." className="h-9 text-xs" />
+                                </div>
+                                <CommandList className="max-h-56 overflow-y-auto">
+                                    <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
+                                        No branch found.
+                                    </CommandEmpty>
+                                    <CommandGroup>
+                                        <CommandItem
+                                            value="All Branches all"
+                                            onSelect={() => {
+                                                setSelectedBranchId("All");
+                                                setPage(0);
+                                                setBranchPopoverOpen(false);
+                                            }}
+                                            className="text-xs cursor-pointer flex items-center justify-between"
+                                        >
+                                            <span>All Branches</span>
+                                            {selectedBranchId === "All" && <Check className="h-3.5 w-3.5 text-primary" />}
+                                        </CommandItem>
+                                        {branches.map((b) => {
+                                            const isSelected = selectedBranchId === String(b.id);
+                                            return (
+                                                <CommandItem
+                                                    key={b.id}
+                                                    value={`${b.branch_name} ${b.branch_code}`}
+                                                    onSelect={() => {
+                                                        setSelectedBranchId(String(b.id));
+                                                        setPage(0);
+                                                        setBranchPopoverOpen(false);
+                                                    }}
+                                                    className="text-xs cursor-pointer flex items-center justify-between"
+                                                >
+                                                    <span className="truncate">{b.branch_name}</span>
+                                                    {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                                </CommandItem>
+                                            );
+                                        })}
+                                    </CommandGroup>
+                                </CommandList>
+                            </Command>
+                        </PopoverContent>
+                    </Popover>
 
-                    {/* Status Filter */}
-                    <Select
-                        value={statusFilter}
-                        onValueChange={(val) => setStatusFilter(val)}
-                    >
-                        <SelectTrigger className="w-[180px] h-9 text-xs rounded-xl bg-background shadow-xs">
-                            <div className="flex items-center gap-2 truncate">
-                                <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                <SelectValue placeholder="All Statuses" />
-                            </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="All">All Statuses</SelectItem>
-                            <SelectItem value="Pending">Pending Clearance</SelectItem>
-                            <SelectItem value="Fulfilled">Fulfilled</SelectItem>
-                            <SelectItem value="Fulfilled with Returns">Fulfilled with Returns</SelectItem>
-                            <SelectItem value="Unfulfilled / Returns">Unfulfilled / Returns</SelectItem>
-                        </SelectContent>
-                    </Select>
+                    {/* Status Searchable Combobox */}
+                    <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
+                        <PopoverTrigger asChild>
+                            <button
+                                type="button"
+                                className="w-[200px] h-9 px-3 text-xs rounded-xl bg-background border border-input flex items-center justify-between shadow-xs hover:bg-muted/50 transition-colors"
+                            >
+                                <div className="flex items-center gap-2 truncate">
+                                    <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="truncate">
+                                        {statusOptions.find((s) => s.value === statusFilter)?.label || "Select Status"}
+                                    </span>
+                                </div>
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[220px] p-0 shadow-lg rounded-xl overflow-hidden" align="start">
+                            <Command>
+                                <div className="sticky top-0 z-10 bg-popover border-b">
+                                    <CommandInput placeholder="Search status..." className="h-9 text-xs" />
+                                </div>
+                                <CommandList className="max-h-56 overflow-y-auto">
+                                    <CommandEmpty className="py-2.5 text-center text-xs text-muted-foreground">
+                                        No status found.
+                                    </CommandEmpty>
+                                    <CommandGroup>
+                                        {statusOptions.map((st) => {
+                                            const isSelected = statusFilter === st.value;
+                                            return (
+                                                <CommandItem
+                                                    key={st.value}
+                                                    value={st.label}
+                                                    onSelect={() => {
+                                                        setStatusFilter(st.value);
+                                                        setPage(0);
+                                                        setStatusPopoverOpen(false);
+                                                    }}
+                                                    className="text-xs cursor-pointer flex items-center justify-between"
+                                                >
+                                                    <span>{st.label}</span>
+                                                    {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                                </CommandItem>
+                                            );
+                                        })}
+                                    </CommandGroup>
+                                </CommandList>
+                            </Command>
+                        </PopoverContent>
+                    </Popover>
                 </div>
             </div>
 
@@ -447,7 +559,8 @@ export default function DeliveriesModule() {
                                                                                 <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Invoice Date</th>
                                                                                 <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Customer</th>
                                                                                 <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px] text-right">Amount</th>
-                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Remarks / Linked Return</th>
+                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Linked Return</th>
+                                                                                <th className="p-2.5 font-bold text-muted-foreground uppercase text-[9px]">Remarks</th>
                                                                             </tr>
                                                                         </thead>
                                                                         <tbody className="divide-y">
@@ -465,13 +578,21 @@ export default function DeliveriesModule() {
                                                                                     <td className="p-2.5 font-bold text-foreground">
                                                                                         {ord.order_no}
                                                                                     </td>
-                                                                                    <td className="p-2.5 font-mono text-[10px] text-muted-foreground">
-                                                                                        {ord.invoice_no}
+                                                                                    <td className="p-2.5 font-mono text-[10px]">
+                                                                                        {ord.invoice_no && ord.invoice_no !== "---" ? (
+                                                                                            <span className="font-bold text-primary">{ord.invoice_no}</span>
+                                                                                        ) : (
+                                                                                            <span className="text-muted-foreground font-bold">---</span>
+                                                                                        )}
                                                                                     </td>
                                                                                     <td className="p-2.5 text-muted-foreground text-[10px]">
-                                                                                        {new Date(ord.invoice_date).toLocaleDateString(undefined, {
-                                                                                            dateStyle: "medium",
-                                                                                        })}
+                                                                                        {ord.invoice_date && ord.invoice_date !== "---" && !isNaN(new Date(ord.invoice_date).getTime()) ? (
+                                                                                            new Date(ord.invoice_date).toLocaleDateString(undefined, {
+                                                                                                dateStyle: "medium",
+                                                                                            })
+                                                                                        ) : (
+                                                                                            <span className="font-mono">---</span>
+                                                                                        )}
                                                                                     </td>
                                                                                     <td className="p-2.5 text-foreground font-semibold">
                                                                                         {ord.customer_name}
@@ -479,15 +600,48 @@ export default function DeliveriesModule() {
                                                                                     <td className="p-2.5 text-right font-black text-foreground">
                                                                                         ₱{ord.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                                     </td>
-                                                                                    <td className="p-2.5 text-muted-foreground text-[10px]">
+                                                                                    <td className="p-2.5 text-[10px]">
                                                                                         {ord.linked_sales_return ? (
-                                                                                            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
-                                                                                                <CheckCircle2 className="h-3 w-3" />
-                                                                                                Linked: {ord.linked_sales_return.return_number} ({ord.linked_sales_return.status})
-                                                                                            </span>
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={(e) => {
+                                                                                                    e.stopPropagation();
+                                                                                                    const returnNo = ord.linked_sales_return?.return_number;
+                                                                                                    if (returnNo) {
+                                                                                                        if (typeof window !== "undefined") {
+                                                                                                            localStorage.removeItem("scm_dispatch_return_data");
+                                                                                                        }
+                                                                                                        window.open(
+                                                                                                            `/mm/sales-and-fulfillment/sales-return-manual?fromClearance=true&editReturnNo=${encodeURIComponent(returnNo)}`,
+                                                                                                            "_blank"
+                                                                                                        );
+                                                                                                    }
+                                                                                                }}
+                                                                                                title="Click to view/edit Sales Return"
+                                                                                                className={`inline-flex items-center gap-1 font-bold cursor-pointer hover:underline text-[10px] ${
+                                                                                                    ord.linked_sales_return.status === "Received" ||
+                                                                                                    ord.linked_sales_return.status === "Approved" ||
+                                                                                                    ord.linked_sales_return.is_received
+                                                                                                        ? "text-emerald-600 dark:text-emerald-400"
+                                                                                                        : "text-amber-600 dark:text-amber-400"
+                                                                                                }`}
+                                                                                            >
+                                                                                                {ord.linked_sales_return.status === "Received" ||
+                                                                                                ord.linked_sales_return.status === "Approved" ||
+                                                                                                ord.linked_sales_return.is_received ? (
+                                                                                                    <CheckCircle2 className="h-3 w-3" />
+                                                                                                ) : (
+                                                                                                    <AlertCircle className="h-3 w-3" />
+                                                                                                )}
+                                                                                                Linked: {ord.linked_sales_return.return_number} ({ord.linked_sales_return.status || "Pending"})
+                                                                                                <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-70" />
+                                                                                            </button>
                                                                                         ) : (
-                                                                                            ord.remarks || "—"
+                                                                                            <span className="text-muted-foreground font-mono text-[10px]">---</span>
                                                                                         )}
+                                                                                    </td>
+                                                                                    <td className="p-2.5 text-muted-foreground text-[10px]">
+                                                                                        {ord.remarks || "—"}
                                                                                     </td>
                                                                                 </tr>
                                                                             ))}
@@ -506,6 +660,75 @@ export default function DeliveriesModule() {
                         </table>
                     )}
                 </div>
+
+                {/* Data Grid Table Footer Pagination Controls */}
+                <div className="p-3 border-t bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground shrink-0">
+                    <div className="flex items-center gap-2">
+                        <span>Rows per page:</span>
+                        <Select
+                            value={String(size)}
+                            onValueChange={(val) => {
+                                setSize(Number(val));
+                                setPage(0);
+                            }}
+                        >
+                            <SelectTrigger className="w-16 h-8 text-xs rounded-lg bg-background shadow-xs">
+                                <SelectValue placeholder={String(size)} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="25">25</SelectItem>
+                                <SelectItem value="50">50</SelectItem>
+                                <SelectItem value="100">100</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <span className="font-semibold text-foreground ml-2">
+                            Showing {records.length > 0 ? page * size + 1 : 0} - {Math.min((page + 1) * size, totalElements)} of {totalElements} manifests
+                        </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-foreground mr-2">
+                            Page {totalPages > 0 ? page + 1 : 0} of {totalPages}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => setPage(0)}
+                            disabled={page === 0 || loading}
+                            className="p-1.5 rounded-lg border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors shadow-xs"
+                            title="First Page"
+                        >
+                            <ChevronsLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setPage((p) => Math.max(0, p - 1))}
+                            disabled={page === 0 || loading}
+                            className="p-1.5 rounded-lg border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors shadow-xs"
+                            title="Previous Page"
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                            disabled={page >= totalPages - 1 || loading}
+                            className="p-1.5 rounded-lg border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors shadow-xs"
+                            title="Next Page"
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setPage(totalPages - 1)}
+                            disabled={page >= totalPages - 1 || loading}
+                            className="p-1.5 rounded-lg border bg-background hover:bg-muted text-foreground disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors shadow-xs"
+                            title="Last Page"
+                        >
+                            <ChevronsRight className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
             </div>
 
             {/* Modal 1: Consolidated Clearance Modal */}
@@ -517,6 +740,7 @@ export default function DeliveriesModule() {
                     isSubmitting={submitting}
                     onClose={closeClearanceModal}
                     onSubmit={handleClearanceSubmit}
+                    onRefresh={reload}
                 />
             )}
         </div>

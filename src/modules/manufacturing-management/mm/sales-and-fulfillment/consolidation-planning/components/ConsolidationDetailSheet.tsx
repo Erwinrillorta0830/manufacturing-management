@@ -586,45 +586,67 @@ export default function ConsolidationDetailSheet({
                                                         No batch allocations recorded for this SKU.
                                                     </div>
                                                 ) : (
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                        {productLots.map((alloc, aIdx) => {
-                                                            return (
-                                                                <div
-                                                                    key={`alloc-lot-${alloc.productId}-${alloc.lotId}-${alloc.batchNo}-${aIdx}`}
-                                                                    className="flex items-center justify-between gap-2.5 rounded-xl border border-border/50 bg-background/80 p-2.5 text-xs shadow-2xs hover:border-primary/30 transition-colors"
-                                                                >
-                                                                    <div className="min-w-0 flex-1 space-y-0.5">
-                                                                        <div className="flex items-center gap-1.5">
-                                                                            <Badge
-                                                                                variant="secondary"
-                                                                                className="font-mono text-[9px] font-bold px-1.5 py-0"
-                                                                            >
-                                                                                {alloc.lotName}
-                                                                            </Badge>
-                                                                            <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
-                                                                                {alloc.batchNo}
-                                                                            </span>
-                                                                        </div>
-                                                                        <p className="text-[9px] text-muted-foreground flex items-center gap-1 font-medium">
-                                                                            <Clock className="h-2.5 w-2.5 text-muted-foreground/60" />
-                                                                            {alloc.expiryDate
-                                                                                ? `Expiry: ${new Date(
-                                                                                    alloc.expiryDate
-                                                                                ).toLocaleDateString()}`
-                                                                                : "No expiration"}
-                                                                        </p>
-                                                                    </div>
-                                                                    <div className="shrink-0 text-right font-mono bg-primary/5 rounded-lg px-2.5 py-1 border border-primary/10">
-                                                                        <span className="text-sm font-black text-primary">
-                                                                            {alloc.quantity}
+                                                    <div className="space-y-2.5">
+                                                        {(() => {
+                                                            const orderGroupMap = new Map<string, typeof productLots>();
+                                                            productLots.forEach((alloc) => {
+                                                                const key = alloc.orderNo || (alloc.orderId ? `Order #${alloc.orderId}` : "General Allocation");
+                                                                const list = orderGroupMap.get(key) || [];
+                                                                list.push(alloc);
+                                                                orderGroupMap.set(key, list);
+                                                            });
+                                                            return Array.from(orderGroupMap.entries()).map(([orderLabel, lots]) => (
+                                                                <div key={orderLabel} className="space-y-1.5 rounded-xl border border-border/40 bg-muted/10 p-2.5">
+                                                                    <div className="flex items-center justify-between pb-1 border-b border-border/30">
+                                                                        <span className="text-[10px] font-bold text-foreground flex items-center gap-1.5">
+                                                                            <FileText className="h-3 w-3 text-primary" />
+                                                                            {orderLabel}
                                                                         </span>
-                                                                        <p className="text-[7px] font-black uppercase tracking-widest text-muted-foreground/70">
-                                                                            Allocated
-                                                                        </p>
+                                                                        <span className="text-[9px] font-mono text-muted-foreground font-semibold">
+                                                                            {lots.reduce((acc, l) => acc + l.quantity, 0)} units
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                                        {lots.map((alloc, aIdx) => (
+                                                                            <div
+                                                                                key={`alloc-lot-${alloc.productId}-${alloc.lotId}-${alloc.batchNo}-${aIdx}`}
+                                                                                className="flex items-center justify-between gap-2.5 rounded-xl border border-border/50 bg-background/80 p-2.5 text-xs shadow-2xs hover:border-primary/30 transition-colors"
+                                                                            >
+                                                                                <div className="min-w-0 flex-1 space-y-0.5">
+                                                                                    <div className="flex items-center gap-1.5">
+                                                                                        <Badge
+                                                                                            variant="secondary"
+                                                                                            className="font-mono text-[9px] font-bold px-1.5 py-0"
+                                                                                        >
+                                                                                            {alloc.lotName}
+                                                                                        </Badge>
+                                                                                        <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
+                                                                                            {alloc.batchNo}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <p className="text-[9px] text-muted-foreground flex items-center gap-1 font-medium">
+                                                                                        <Clock className="h-2.5 w-2.5 text-muted-foreground/60" />
+                                                                                        {alloc.expiryDate
+                                                                                            ? `Expiry: ${new Date(
+                                                                                                alloc.expiryDate
+                                                                                            ).toLocaleDateString()}`
+                                                                                            : "No expiration"}
+                                                                                    </p>
+                                                                                </div>
+                                                                                <div className="shrink-0 text-right font-mono bg-primary/5 rounded-lg px-2.5 py-1 border border-primary/10">
+                                                                                    <span className="text-sm font-black text-primary">
+                                                                                        {alloc.quantity}
+                                                                                    </span>
+                                                                                    <p className="text-[7px] font-black uppercase tracking-widest text-muted-foreground/70">
+                                                                                        Allocated
+                                                                                    </p>
+                                                                                </div>
+                                                                            </div>
+                                                                        ))}
                                                                     </div>
                                                                 </div>
-                                                            );
-                                                        })}
+                                                            ));
+                                                        })()}
                                                     </div>
                                                 )}
                                             </div>

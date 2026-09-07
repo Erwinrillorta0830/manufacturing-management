@@ -29,6 +29,8 @@ export function computePreviewStatus(
     const totalReceived = items.reduce((sum, i) => sum + Number(i.received_quantity || 0), 0);
     const totalReturned = items.reduce((sum, i) => sum + Number(i.returned_quantity || 0), 0);
 
+    const hasConcerns = items.some((i) => i.has_concern || (i.concern_notes && i.concern_notes.trim().length > 0));
+
     if (totalReceived === 0 && totalReturned === totalOrdered) {
         return "Unfulfilled / Returns";
     }
@@ -36,7 +38,7 @@ export function computePreviewStatus(
         return "Fulfilled with Returns";
     }
     if (totalReceived === totalOrdered && totalReturned === 0) {
-        return "Fulfilled";
+        return hasConcerns ? "Fulfilled with Concerns" : "Fulfilled";
     }
     if (totalReceived === 0 && totalReturned === 0) {
         return "Pending";
@@ -44,7 +46,7 @@ export function computePreviewStatus(
     if (totalReturned > 0) {
         return "Fulfilled with Returns";
     }
-    return "Pending";
+    return hasConcerns ? "Fulfilled with Concerns" : "Pending";
 }
 
 export function useDeliveries() {
@@ -64,10 +66,9 @@ export function useDeliveries() {
     const [statusFilter, setStatusFilter] = useState<string>("All");
     const [searchQuery, setSearchQuery] = useState<string>("");
     const [page, setPage] = useState<number>(0);
-    const [size] = useState<number>(50);
+    const [size, setSize] = useState<number>(10);
     const [totalPages, setTotalPages] = useState<number>(1);
     const [totalElements, setTotalElements] = useState<number>(0);
-    const [reloadTick, setReloadTick] = useState<number>(0);
 
     // Modal state for delivery clearance reconciliation
     const [selectedRecordForClearance, setSelectedRecordForClearance] = useState<DeliveryClearanceRecord | null>(null);
@@ -118,7 +119,7 @@ export function useDeliveries() {
         return () => {
             ignore = true;
         };
-    }, [page, size, searchQuery, statusFilter, selectedBranchId, reloadTick]);
+    }, [page, size, searchQuery, statusFilter, selectedBranchId]);
 
     const openClearanceModal = (record: DeliveryClearanceRecord) => {
         setSelectedRecordForClearance(record);
@@ -130,16 +131,42 @@ export function useDeliveries() {
         setIsClearanceModalOpen(false);
     };
 
-    const reload = useCallback(() => {
-        setReloadTick((prev) => prev + 1);
-    }, []);
+    const reload = useCallback(async () => {
+        try {
+            const data = await fetchDeliveryClearanceList({
+                page,
+                size,
+                search: searchQuery,
+                status: statusFilter,
+                branchId: selectedBranchId,
+            });
+
+            setRecords(data.content || []);
+            setTotalElements(data.totalElements || 0);
+            setTotalPages(data.totalPages || 1);
+            if (data.metrics) setMetrics(data.metrics);
+            if (data.branches && data.branches.length > 0) setBranches(data.branches);
+
+            setSelectedRecordForClearance((prev) => {
+                if (!prev) return null;
+                const fresh = (data.content || []).find((r) => r.consolidator_id === prev.consolidator_id);
+                return fresh || prev;
+            });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : "Failed to load delivery clearance data.";
+            setError(msg);
+            toast.error(msg);
+        }
+    }, [page, size, searchQuery, statusFilter, selectedBranchId]);
 
     const handleClearanceSubmit = async (payload: ClearanceSubmissionPayload): Promise<boolean> => {
         setSubmitting(true);
         try {
             const result = await submitDeliveryClearance(payload);
-            toast.success(result.message || "Clearance posted successfully.");
-            closeClearanceModal();
+            toast.success(result.message || (payload.is_draft ? "Draft progress saved successfully." : "Clearance posted successfully."));
+            if (!payload.is_draft) {
+                closeClearanceModal();
+            }
             reload();
             return true;
         } catch (err) {
@@ -165,6 +192,8 @@ export function useDeliveries() {
         setSearchQuery,
         page,
         setPage,
+        size,
+        setSize,
         totalPages,
         totalElements,
         selectedRecordForClearance,

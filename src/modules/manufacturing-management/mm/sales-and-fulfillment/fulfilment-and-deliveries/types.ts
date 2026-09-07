@@ -3,11 +3,13 @@
 export type FulfillmentStatus =
     | "Pending"
     | "Fulfilled"
+    | "Fulfilled with Concerns"
     | "Fulfilled with Returns"
     | "Unfulfilled / Returns";
 
 export type LineStatus =
     | "Fulfilled"
+    | "Fulfilled with Concerns"
     | "Fulfilled with Returns"
     | "Unfulfilled / Returns";
 
@@ -31,6 +33,7 @@ export interface LinkedSalesReturn {
     return_id: number;
     return_number: string;
     status: string;
+    is_received?: boolean;
     return_date?: string | null;
     total_amount?: number | null;
 }
@@ -44,6 +47,9 @@ export interface ConsolidatedSalesOrderRecord {
     invoice_date: string;
     customer_code: string;
     customer_name: string;
+    salesman_id?: number | string | null;
+    salesman_code?: string | null;
+    salesman_name?: string | null;
     amount: number;
     remarks: string;
     fulfillment_status: FulfillmentStatus;
@@ -66,6 +72,7 @@ export interface ConsolidatedDeliveryRecord {
     total_amount: number;
     fulfillment_status: FulfillmentStatus;
     is_cleared: boolean;
+    is_draft?: boolean;
     cleared_at?: string | null;
     orders: ConsolidatedSalesOrderRecord[];
 }
@@ -85,11 +92,14 @@ export interface Branch {
 
 export interface ConsolidatedClearanceSubmissionPayload {
     consolidator_id: number;
+    is_draft?: boolean;
     clearance_remarks?: string;
     orders: {
         order_id: number;
         invoice_id: number;
         clearance_remarks?: string;
+        linked_return_id?: number | null;
+        linked_return_number?: string | null;
         items: {
             detail_id: number;
             product_id: number;
