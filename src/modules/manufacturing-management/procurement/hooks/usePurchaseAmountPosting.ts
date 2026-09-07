@@ -128,9 +128,11 @@ function normalizeLandingRows(orders: PurchaseOrderOption[]): PurchaseAmountLand
 export function usePurchaseAmountPosting(
     propShipments?: PurchaseOrderOption[],
     propSelectedShipment?: PurchaseOrderOption | null,
-    propSetSelectedShipment?: (shipment: PurchaseOrderOption | null) => void
+    propSetSelectedShipment?: (shipment: PurchaseOrderOption | null) => void,
+    initialPurchaseOrderId?: number | null
 ) {
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [ordersLoaded, setOrdersLoaded] = useState(false);
     const [posting, setPosting] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -147,6 +149,7 @@ export function usePurchaseAmountPosting(
 
     useEffect(() => {
         let active = true;
+        setOrdersLoaded(false);
         setLoading(true);
         fetchEligibleOrders()
             .then(list => {
@@ -156,7 +159,10 @@ export function usePurchaseAmountPosting(
                 if (active) setErrorMessage((error as Error).message || "Failed to fetch purchase orders.");
             })
             .finally(() => {
-                if (active) setLoading(false);
+                if (active) {
+                    setLoading(false);
+                    setOrdersLoaded(true);
+                }
             });
         return () => {
             active = false;
@@ -177,11 +183,19 @@ export function usePurchaseAmountPosting(
         return allOrders.filter(isLandedCostPostingEligible);
     }, [allOrders]);
 
+    const routeSelectedShipment = useMemo(() => {
+        if (!Number.isSafeInteger(initialPurchaseOrderId) || !initialPurchaseOrderId || initialPurchaseOrderId <= 0) return null;
+        return allOrders.find(order =>
+            purchaseOrderId(order) === initialPurchaseOrderId
+            && isLandedCostPostingEligible(order)
+        ) ?? null;
+    }, [allOrders, initialPurchaseOrderId]);
+
     const selectedShipment = useMemo(() => {
         if (propSelectedShipment && isLandedCostPostingEligible(propSelectedShipment)) return propSelectedShipment;
         if (internalSelected && isLandedCostPostingEligible(internalSelected)) return internalSelected;
-        return null;
-    }, [internalSelected, propSelectedShipment]);
+        return routeSelectedShipment;
+    }, [internalSelected, propSelectedShipment, routeSelectedShipment]);
 
     const handleSelectPO = (po: PurchaseOrderOption) => {
         setErrorMessage(null);
@@ -547,6 +561,7 @@ export function usePurchaseAmountPosting(
 
     return {
         loading,
+        ordersLoaded,
         posting,
         successMessage,
         errorMessage,
