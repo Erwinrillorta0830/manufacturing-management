@@ -79,7 +79,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setIsLoading(true);
         try {
             const response = await fetchLotTransfers({
-                status: mode === "request" ? "Draft" : mode === "approval" ? "For Approval" : undefined,
+                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : undefined,
                 branchId: userBranchId || undefined
             });
             const nextRecords = mode === "summary"
