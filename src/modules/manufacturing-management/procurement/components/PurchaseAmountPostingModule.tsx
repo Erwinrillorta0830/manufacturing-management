@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
     AlertTriangle,
     ArrowLeft,
@@ -59,13 +60,19 @@ function LocalExpensesNotice() {
 export default function PurchaseAmountPostingModule({
     shipments,
     selectedShipment: propSelectedShipment,
-    setSelectedShipment: propSetSelectedShipment
+    setSelectedShipment: propSetSelectedShipment,
+    pageMode = "embedded",
+    purchaseOrderId: routePurchaseOrderId
 }: PurchaseAmountPostingModuleProps) {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const postedPurchaseOrder = searchParams.get("posted");
     const [view, setView] = useState<"landing" | "editing" | "audit">("landing");
     const [auditOrder, setAuditOrder] = useState<PurchaseAmountLandingRow | null>(null);
 
     const {
         loading,
+        ordersLoaded,
         posting,
         successMessage,
         errorMessage,
@@ -92,16 +99,30 @@ export default function PurchaseAmountPostingModule({
     } = usePurchaseAmountPosting(
         shipments as unknown as PurchaseOrderOption[],
         propSelectedShipment as unknown as PurchaseOrderOption | null,
-        propSetSelectedShipment as unknown as ((shipment: PurchaseOrderOption | null) => void)
+        propSetSelectedShipment as unknown as ((shipment: PurchaseOrderOption | null) => void),
+        routePurchaseOrderId
     );
 
     const rateReady = !isForeignPO || (Number.isFinite(exchangeRate) && exchangeRate > 0);
     const ruleReady = Boolean(allocationRule);
     const expensesReady = !hasInvalidExpenseRows;
     const stepState = (available: boolean, complete: boolean): StepState => !available ? "Locked" : complete ? "Complete" : "Ready";
-    const activeView = view === "landing" && selectedShipment ? "editing" : view;
+    const activeView = pageMode === "edit"
+        ? "editing"
+        : pageMode === "landing"
+            ? view
+            : view === "landing" && selectedShipment
+                ? "editing"
+                : view;
+    const landingSuccessMessage = postedPurchaseOrder
+        ? `Purchase amounts for ${postedPurchaseOrder} were posted successfully. Costs are now locked.`
+        : null;
 
     const handleEdit = (order: PurchaseAmountLandingRow) => {
+        if (pageMode === "landing") {
+            router.push(`/mm/purchase-amount/${order.purchaseOrderId}/edit`);
+            return;
+        }
         handleSelectPO(order.sourceOrder);
         setView("editing");
     };
@@ -115,6 +136,10 @@ export default function PurchaseAmountPostingModule({
     const handleBackToLanding = () => {
         clearSelectedPO();
         setAuditOrder(null);
+        if (pageMode === "edit") {
+            router.replace("/mm/purchase-amount");
+            return;
+        }
         setView("landing");
     };
 
@@ -125,7 +150,13 @@ export default function PurchaseAmountPostingModule({
 
     const handlePost = async () => {
         const posted = await handleExecutePosting();
-        if (posted) setView("landing");
+        if (!posted) return;
+        if (pageMode === "edit") {
+            const purchaseOrderNumber = String(selectedShipment?.purchase_order_no || selectedShipment?.reference_number || routePurchaseOrderId || "Purchase order");
+            router.replace(`/mm/purchase-amount?posted=${encodeURIComponent(purchaseOrderNumber)}`);
+            return;
+        }
+        setView("landing");
     };
 
     return (
@@ -148,7 +179,7 @@ export default function PurchaseAmountPostingModule({
                 )}
             </div>
 
-            {activeView === "editing" ? (
+            {activeView === "editing" && selectedShipment ? (
                 <div className="space-y-4">
                     {errorMessage && <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-xs font-semibold text-red-600"><AlertTriangle className="h-4 w-4 shrink-0" /><span>{errorMessage}</span></div>}
                     {successMessage && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage}</span></div>}
@@ -182,9 +213,28 @@ export default function PurchaseAmountPostingModule({
                         <LineItemsPostingTable calculationResult={calculationResult} onExecutePosting={() => void handlePost()} posting={posting} canPost={canPost} disabledReason={postDisabledReason} />
                     </WorkflowStep>
                 </div>
+            ) : pageMode === "edit" ? (
+                <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed bg-muted/20 p-12 text-center">
+                    {ordersLoaded ? (
+                        <>
+                            <AlertTriangle className="h-8 w-8 text-amber-600" />
+                            <div>
+                                <p className="text-sm font-bold">Purchase order unavailable for editing</p>
+                                <p className="mt-1 max-w-lg text-xs text-muted-foreground">{errorMessage || `PO ${routePurchaseOrderId} is not currently eligible for purchase amount posting.`}</p>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="w-full max-w-2xl space-y-3" role="status" aria-label="Loading purchase order details">
+                            <div className="mx-auto h-8 w-8 animate-pulse rounded-full bg-muted" aria-hidden="true" />
+                            <div className="mx-auto h-4 w-72 max-w-full animate-pulse rounded bg-muted" aria-hidden="true" />
+                            <div className="mx-auto h-3 w-full max-w-lg animate-pulse rounded bg-muted" aria-hidden="true" />
+                        </div>
+                    )}
+                    <button type="button" onClick={handleBackToLanding} className="inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-[10px] font-bold text-white shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><ArrowLeft className="h-3.5 w-3.5" />Back to Landing Page</button>
+                </div>
             ) : (
                 <>
-                    {successMessage && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage}</span></div>}
+                    {(successMessage || landingSuccessMessage) && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600" role="status" data-testid="purchase-amount-post-success"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage || landingSuccessMessage}</span></div>}
                     <PostedPOLedgerTable orders={landingRows} loading={loading} errorMessage={errorMessage} onEdit={handleEdit} onViewLedger={handleViewLedger} />
                     {activeView === "audit" && auditOrder && <PurchaseAmountAuditDrawer order={auditOrder} onClose={handleCloseAudit} />}
                 </>

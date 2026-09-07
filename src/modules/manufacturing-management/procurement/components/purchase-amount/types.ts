@@ -139,8 +139,12 @@ export interface HybridCalculationResult {
 
 import type { IncomingShipment } from "@/modules/manufacturing-management/procurement/types";
 
+export type PurchaseAmountPageMode = "embedded" | "landing" | "edit";
+
 export interface PurchaseAmountPostingModuleProps {
     shipments?: (IncomingShipment | PurchaseOrderHeader)[];
     selectedShipment?: IncomingShipment | PurchaseOrderHeader | null;
     setSelectedShipment?: (shipment: IncomingShipment | PurchaseOrderHeader | null) => void;
+    pageMode?: PurchaseAmountPageMode;
+    purchaseOrderId?: number | null;
 }

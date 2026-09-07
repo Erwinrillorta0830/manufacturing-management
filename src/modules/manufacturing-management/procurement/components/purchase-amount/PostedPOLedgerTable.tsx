@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import {
     CheckCircle2,
+    ChevronLeft,
+    ChevronRight,
     DollarSign,
     Eye,
     FileText,
@@ -61,8 +63,14 @@ interface PostedPOLedgerTableProps {
     onViewLedger: (order: PurchaseAmountLandingRow) => void;
 }
 
+const PAGE_SIZE = 10;
+
 function formatPhp(value: number): string {
     return `PHP ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function LoadingPlaceholder({ className }: { className: string }) {
+    return <div className={`animate-pulse rounded bg-muted ${className}`} aria-hidden="true" />;
 }
 
 export default function PostedPOLedgerTable({
@@ -73,6 +81,7 @@ export default function PostedPOLedgerTable({
     onViewLedger
 }: PostedPOLedgerTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
     const query = searchQuery.trim().toLowerCase();
     const postedOrders = orders.filter(order => order.isPosted);
     const filteredOrders = orders.filter(order => [
@@ -82,6 +91,10 @@ export default function PostedPOLedgerTable({
         order.currencyCode,
         order.status
     ].some(value => value.toLowerCase().includes(query)));
+    const totalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
+    const page = Math.min(currentPage, totalPages);
+    const pageStart = (page - 1) * PAGE_SIZE;
+    const visibleOrders = filteredOrders.slice(pageStart, pageStart + PAGE_SIZE);
     const totalPostedValue = postedOrders.reduce((sum, order) => sum + order.totalAmountPhp, 0);
     const totalForeignValue = postedOrders.reduce((sum, order) => sum + order.totalForeignCurrency, 0);
 
@@ -90,15 +103,15 @@ export default function PostedPOLedgerTable({
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div className="flex items-center gap-3 rounded-xl border bg-card/60 p-4 backdrop-blur-xs">
                     <div className="rounded-lg bg-emerald-500/10 p-2.5 text-emerald-600"><CheckCircle2 className="h-5 w-5" /></div>
-                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Posted Purchase Orders</div><div className="text-lg font-black">{postedOrders.length}</div></div>
+                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Posted Purchase Orders</div>{loading ? <LoadingPlaceholder className="mt-1 h-6 w-10" /> : <div className="text-lg font-black">{postedOrders.length}</div>}</div>
                 </div>
                 <div className="flex items-center gap-3 rounded-xl border bg-card/60 p-4 backdrop-blur-xs">
                     <div className="rounded-lg bg-primary/10 p-2.5 text-primary"><TrendingUp className="h-5 w-5" /></div>
-                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Total Posted Value (PHP)</div><div className="font-mono text-lg font-black">{formatPhp(totalPostedValue)}</div></div>
+                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Total Posted Value (PHP)</div>{loading ? <LoadingPlaceholder className="mt-1 h-6 w-32" /> : <div className="font-mono text-lg font-black">{formatPhp(totalPostedValue)}</div>}</div>
                 </div>
                 <div className="flex items-center gap-3 rounded-xl border bg-card/60 p-4 backdrop-blur-xs">
                     <div className="rounded-lg bg-amber-500/10 p-2.5 text-amber-600"><DollarSign className="h-5 w-5" /></div>
-                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Total Foreign USD Volume</div><div className="font-mono text-lg font-black">${totalForeignValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                    <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Total Foreign USD Volume</div>{loading ? <LoadingPlaceholder className="mt-1 h-6 w-32" /> : <div className="font-mono text-lg font-black">${totalForeignValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}</div>
                 </div>
             </div>
 
@@ -109,12 +122,15 @@ export default function PostedPOLedgerTable({
                     type="search"
                     placeholder="Search PO no., supplier, type, or status..."
                     value={searchQuery}
-                    onChange={event => setSearchQuery(event.target.value)}
+                    onChange={event => {
+                        setSearchQuery(event.target.value);
+                        setCurrentPage(1);
+                    }}
                     className="w-full rounded-lg border bg-background py-2 pl-9 pr-4 text-xs focus:outline-hidden focus:ring-2 focus:ring-primary/20"
                 />
             </div>
 
-            <div className="overflow-hidden rounded-xl border bg-background">
+            <div className="overflow-hidden rounded-xl border bg-background" aria-busy={loading}>
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[760px] text-left text-xs" aria-label="Purchase amount landing ledger">
                         <thead className="border-b bg-muted/50 text-[11px] font-bold uppercase text-muted-foreground">
@@ -122,12 +138,25 @@ export default function PostedPOLedgerTable({
                         </thead>
                         <tbody className="divide-y">
                             {loading ? (
-                                <tr><td colSpan={6} className="p-10 text-center text-muted-foreground"><span className="inline-flex items-center gap-2 text-xs"><Loader2 className="h-4 w-4 animate-spin" /> Loading purchase amount ledger...</span></td></tr>
+                                Array.from({ length: 5 }, (_, index) => (
+                                    <tr key={`purchase-amount-skeleton-${index}`} aria-hidden="true">
+                                        <td colSpan={6} className="p-3">
+                                            <div className="grid grid-cols-6 items-center gap-3">
+                                                <LoadingPlaceholder className="h-4 w-28" />
+                                                <LoadingPlaceholder className="h-4 w-36" />
+                                                <LoadingPlaceholder className="h-5 w-24" />
+                                                <LoadingPlaceholder className="ml-auto h-4 w-28" />
+                                                <LoadingPlaceholder className="mx-auto h-5 w-24" />
+                                                <LoadingPlaceholder className="ml-auto h-8 w-32" />
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
                             ) : errorMessage ? (
                                 <tr><td colSpan={6} className="p-10 text-center font-semibold text-red-600">{errorMessage}</td></tr>
                             ) : filteredOrders.length === 0 ? (
                                 <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">No purchase orders found.</td></tr>
-                            ) : filteredOrders.map(order => (
+                            ) : visibleOrders.map(order => (
                                 <tr key={`${order.purchaseOrderId}-${order.status}`} className="transition-colors hover:bg-muted/30">
                                     <td className="p-3 font-bold text-foreground"><span className="inline-flex items-center gap-1.5"><FileText className="h-3.5 w-3.5 text-primary" />{order.purchaseOrderNo}</span></td>
                                     <td className="p-3 font-medium">{order.supplierName}</td>
@@ -147,6 +176,35 @@ export default function PostedPOLedgerTable({
                     </table>
                 </div>
             </div>
+
+            {filteredOrders.length > PAGE_SIZE && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2" data-testid="purchase-amount-pagination" aria-label="Purchase amount ledger pagination">
+                    <span className="text-[11px] font-medium text-muted-foreground">
+                        Showing {pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                        <button
+                            type="button"
+                            aria-label="Previous purchase amount ledger page"
+                            onClick={() => setCurrentPage(previous => Math.max(1, previous - 1))}
+                            disabled={page === 1}
+                            className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-bold transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <ChevronLeft className="h-3.5 w-3.5" />Previous
+                        </button>
+                        <span className="min-w-16 text-center text-[11px] font-bold text-foreground">Page {page} of {totalPages}</span>
+                        <button
+                            type="button"
+                            aria-label="Next purchase amount ledger page"
+                            onClick={() => setCurrentPage(previous => Math.min(totalPages, previous + 1))}
+                            disabled={page === totalPages}
+                            className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-bold transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Next<ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
