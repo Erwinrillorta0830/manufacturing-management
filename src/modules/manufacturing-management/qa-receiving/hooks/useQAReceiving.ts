@@ -14,6 +14,7 @@ import {
     fetchFifoInventory,
     fetchStorageLots,
     fetchStorageLotBatches,
+    configuredBadStockBranchId,
     fetchProductQaSpecifications,
     fetchQuarantineDispositions,
     createQuarantineDisposition,
@@ -34,9 +35,22 @@ interface ReceivingCommitContext {
     idempotencyKey: string;
 }
 
+function emptyLotAllocation(): ReceivingLotAllocationInput {
+    return {
+        clientId: uuidv4(),
+        allocationGroupId: uuidv4(),
+        storageLotId: "",
+        batchNumber: "",
+        manufacturingDate: "",
+        expirationDate: "",
+        quantity: ""
+    };
+}
+
 function resizeLotAllocations(
     allocations: ReceivingLotAllocationInput[],
-    targetQuantity: number
+    targetQuantity: number,
+    seedEmptyGroup = false
 ): ReceivingLotAllocationInput[] {
     const target = Math.max(0, Number(targetQuantity) || 0);
     if (target <= 0) return [];
@@ -56,6 +70,9 @@ function resizeLotAllocations(
         const last = resized[resized.length - 1];
         last.quantity = Number(last.quantity) + remaining;
         remaining = 0;
+    }
+    if (resized.length === 0 && seedEmptyGroup) {
+        return allocations.length > 0 ? allocations : [emptyLotAllocation()];
     }
     return resized;
 }
@@ -437,15 +454,20 @@ export function useQAReceiving({
         }
     };
 
-    const loadStorageLotBatches = useCallback(async (productId: number, lotId: number, lotBranchId?: number): Promise<StorageLotBatch[]> => {
+    const loadStorageLotBatches = useCallback(async (
+        productId: number,
+        lotId: number,
+        lotBranchId?: number,
+        disposition: "accepted" | "rejected" = "accepted"
+    ): Promise<StorageLotBatch[]> => {
         const branchId = lotBranchId || Number(selectedBranchId);
         if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new Error("A receiving branch is required before loading lot batches.");
-        const cacheKey = `${productId}:${branchId}:${lotId}`;
+        const cacheKey = `${productId}:${branchId}:${lotId}:${disposition}`;
         const cached = storageLotBatchCache.current[cacheKey];
         if (cached) return cached;
         const pending = storageLotBatchRequestCache.current[cacheKey];
         if (pending) return pending;
-        const request = fetchStorageLotBatches(productId, branchId, lotId)
+        const request = fetchStorageLotBatches(productId, branchId, lotId, undefined, disposition)
             .then(batches => {
                 storageLotBatchCache.current[cacheKey] = batches;
                 return batches;
@@ -608,15 +630,13 @@ export function useQAReceiving({
 
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             const selectedBranch = branchCatalog.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
-            const badStockBranchId = selectedBranch?.bad_stock_branch_id && typeof selectedBranch.bad_stock_branch_id === "object"
-                ? Number(selectedBranch.bad_stock_branch_id.id)
-                : Number(selectedBranch?.bad_stock_branch_id || 0);
+            const badStockBranchId = configuredBadStockBranchId(selectedBranch);
             void Promise.all(productIds.map(async productId => {
                 try {
                     const [acceptedLots, rejectedLots] = await Promise.all([
                         fetchStorageLots(productId, Number(normalizedPurchaseOrderBranchId), controller.signal),
                         badStockBranchId > 0
-                            ? fetchStorageLots(productId, badStockBranchId, controller.signal)
+                            ? fetchStorageLots(productId, badStockBranchId, controller.signal, "rejected")
                             : Promise.resolve([] as StorageLot[])
                     ]);
                     return [productId, acceptedLots, rejectedLots] as const;
@@ -766,7 +786,7 @@ export function useQAReceiving({
                 updatedRow.acceptedLotAllocations = resizeLotAllocations(updatedRow.acceptedLotAllocations, accepted);
             }
             if (field === "acceptedQty" || field === "receivedQty") {
-                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejected);
+                updatedRow.rejectedLotAllocations = resizeLotAllocations(updatedRow.rejectedLotAllocations, rejected, true);
             }
             return {
                 ...prev,
