@@ -1957,7 +1957,7 @@ export function UpdateSalesReturnModal({
                   <span className="text-muted-foreground font-medium">
                     Discount Amount
                   </span>
-                  <div className="font-semibold text-foreground">
+                  <div className={`font-semibold font-mono ${totalDiscount > 0 ? "text-amber-600 dark:text-amber-500" : "text-foreground"}`}>
                     {loading ? (
                       <Skeleton className="h-5 w-24" />
                     ) : (
@@ -1971,7 +1971,7 @@ export function UpdateSalesReturnModal({
                   <span className="text-muted-foreground font-medium">
                     Price Variance Logged
                   </span>
-                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-green-600" : totalVariance < 0 ? "text-destructive" : "text-foreground"}`}>
+                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500" : "text-slate-500"}`}>
                     {loading ? (
                       <Skeleton className="h-5 w-24" />
                     ) : (

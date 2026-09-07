@@ -2353,9 +2353,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     })}
                   </span>
                 </div>
-                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-green-600" : totalVariance < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500 font-semibold" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500 font-semibold" : "text-muted-foreground"}`}>
                   <span>Price Variance</span>
-                  <span className="font-medium tabular-nums">
+                  <span className="font-medium tabular-nums font-mono">
                     {totalVariance > 0 ? "+" : ""}
                     ₱
                     {totalVariance.toLocaleString(undefined, {
@@ -2363,9 +2363,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     })}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm text-destructive">
+                <div className={`flex justify-between items-center text-sm ${totalDiscount > 0 ? "text-amber-600 dark:text-amber-500 font-semibold" : "text-muted-foreground"}`}>
                   <span>Total Discount</span>
-                  <span className="font-medium tabular-nums">
+                  <span className="font-medium tabular-nums font-mono">
                     - ₱
                     {totalDiscount.toLocaleString(undefined, {
                       minimumFractionDigits: 2,
