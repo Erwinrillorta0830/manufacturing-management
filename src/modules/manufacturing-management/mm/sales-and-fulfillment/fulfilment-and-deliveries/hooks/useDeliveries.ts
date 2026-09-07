@@ -69,7 +69,6 @@ export function useDeliveries() {
     const [size, setSize] = useState<number>(10);
     const [totalPages, setTotalPages] = useState<number>(1);
     const [totalElements, setTotalElements] = useState<number>(0);
-    const [reloadTick, setReloadTick] = useState<number>(0);
 
     // Modal state for delivery clearance reconciliation
     const [selectedRecordForClearance, setSelectedRecordForClearance] = useState<DeliveryClearanceRecord | null>(null);
@@ -120,7 +119,7 @@ export function useDeliveries() {
         return () => {
             ignore = true;
         };
-    }, [page, size, searchQuery, statusFilter, selectedBranchId, reloadTick]);
+    }, [page, size, searchQuery, statusFilter, selectedBranchId]);
 
     const openClearanceModal = (record: DeliveryClearanceRecord) => {
         setSelectedRecordForClearance(record);

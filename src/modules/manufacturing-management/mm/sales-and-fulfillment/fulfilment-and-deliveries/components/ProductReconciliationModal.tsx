@@ -59,12 +59,12 @@ export default function ProductReconciliationModal({
 }: ProductReconciliationModalProps) {
     const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
     const [orderRemarks, setOrderRemarks] = useState<string>(() => order?.remarks || "");
+    const [prevOrder, setPrevOrder] = useState<typeof order>(order);
 
-    useEffect(() => {
-        if (order) {
-            setOrderRemarks(order.remarks || "");
-        }
-    }, [order]);
+    if (order !== prevOrder) {
+        setPrevOrder(order);
+        setOrderRemarks(order?.remarks || "");
+    }
 
     const [lineItems, setLineItems] = useState<ClearanceLineItem[]>(() => {
         const initial = (order?.items || []).map((item) => ({ ...item }));
@@ -106,45 +106,66 @@ export default function ProductReconciliationModal({
             }
         >
     >([]);
-    const [isLoadingReturns, setIsLoadingReturns] = useState<boolean>(false);
 
-    // Fetch candidate sales returns from backend
+    // Fetch candidate sales returns from backend on modal open
+    useEffect(() => {
+        let isMounted = true;
+        if (isOpen) {
+            fetch("/api/manufacturing/sales-return", { cache: "no-store" })
+                .then((res) => (res.ok ? res.json() : []))
+                .then((data: unknown) => {
+                    if (!isMounted) return;
+                    if (Array.isArray(data)) {
+                        const mapped = data.map((r: Record<string, unknown>) => ({
+                            return_id: Number(r.return_id || r.id),
+                            return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
+                            status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
+                            is_received: Boolean(
+                                r.isReceived || r.is_received || r.status === "Received" || r.status === "Approved"
+                            ),
+                            return_date: (r.return_date as string) || null,
+                            total_amount: typeof r.total_amount === "number" ? r.total_amount : null,
+                            customer_name: (r.customer_name as string) || "",
+                            customer_code: (r.customer_code as string) || "",
+                            order_id: (r.order_id as string | number) || null,
+                            invoice_no: (r.invoice_no as string | number) || null,
+                        }));
+                        setAvailableReturns(mapped);
+                    }
+                })
+                .catch((err: unknown) => console.warn("[ProductReconciliationModal] Error fetching returns:", err));
+        }
+        return () => {
+            isMounted = false;
+        };
+    }, [isOpen]);
+
+    // Manual refresh handler for sales returns
     const fetchAvailableReturns = useCallback(async () => {
-        setIsLoadingReturns(true);
         try {
             const res = await fetch("/api/manufacturing/sales-return", { cache: "no-store" });
-            if (res.ok) {
-                const data = await res.json();
-                if (Array.isArray(data)) {
-                    const mapped = data.map((r: any) => ({
-                        return_id: Number(r.return_id || r.id),
-                        return_number: r.return_number || `RET-${r.return_id}`,
-                        status: r.status || (r.isReceived || r.is_received ? "Received" : "Pending"),
-                        is_received: Boolean(
-                            r.isReceived || r.is_received || r.status === "Received" || r.status === "Approved"
-                        ),
-                        return_date: r.return_date || null,
-                        total_amount: typeof r.total_amount === "number" ? r.total_amount : null,
-                        customer_name: r.customer_name || "",
-                        customer_code: r.customer_code || "",
-                        order_id: r.order_id || null,
-                        invoice_no: r.invoice_no || null,
-                    }));
-                    setAvailableReturns(mapped);
-                }
+            const data = res.ok ? await res.json() : [];
+            if (Array.isArray(data)) {
+                const mapped = data.map((r: Record<string, unknown>) => ({
+                    return_id: Number(r.return_id || r.id),
+                    return_number: (r.return_number as string) || `RET-${r.return_id || r.id}`,
+                    status: (r.status as string) || (r.isReceived || r.is_received ? "Received" : "Pending"),
+                    is_received: Boolean(
+                        r.isReceived || r.is_received || r.status === "Received" || r.status === "Approved"
+                    ),
+                    return_date: (r.return_date as string) || null,
+                    total_amount: typeof r.total_amount === "number" ? r.total_amount : null,
+                    customer_name: (r.customer_name as string) || "",
+                    customer_code: (r.customer_code as string) || "",
+                    order_id: (r.order_id as string | number) || null,
+                    invoice_no: (r.invoice_no as string | number) || null,
+                }));
+                setAvailableReturns(mapped);
             }
-        } catch (err) {
+        } catch (err: unknown) {
             console.warn("[ProductReconciliationModal] Error fetching sales returns:", err);
-        } finally {
-            setIsLoadingReturns(false);
         }
     }, []);
-
-    useEffect(() => {
-        if (isOpen) {
-            fetchAvailableReturns();
-        }
-    }, [isOpen, fetchAvailableReturns]);
 
     // Format options for SearchableSelect combobox with SO & Invoice matching
     const returnOptions: SearchableSelectOption[] = useMemo(() => {
@@ -397,14 +418,12 @@ export default function ProductReconciliationModal({
 
     // Sales return status indicators
     const sr = selectedLinkedReturn;
-    const isPendingSr = Boolean(sr && !sr.is_received && sr.status !== "Received" && sr.status !== "Approved");
     const isUnfulfilled = dynamicStatus === "Unfulfilled / Returns" || order?.fulfillment_status === "Unfulfilled / Returns";
     const hasReturns =
         !isUnfulfilled &&
         ((lineItems || []).some((i) => i.returned_quantity > 0) ||
             order?.fulfillment_status === "Fulfilled with Returns" ||
             Boolean(sr));
-    const isMissingRequiredReturn = hasReturns && (!sr || isPendingSr);
 
     // Helper to redirect to Sales Return module for this order
     const handleRedirectToSalesReturn = () => {
@@ -715,16 +734,16 @@ export default function ProductReconciliationModal({
                                         <button
                                             type="button"
                                             onClick={handleRefresh}
-                                            disabled={isRefreshing || isLoadingReturns}
+                                            disabled={isRefreshing}
                                             className="px-3 py-1.5 rounded-lg border bg-background hover:bg-muted text-foreground text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
                                             title="Refresh available Sales Returns"
                                         >
                                             <RefreshCw
                                                 className={`h-3.5 w-3.5 ${
-                                                    isRefreshing || isLoadingReturns ? "animate-spin text-primary" : ""
+                                                    isRefreshing ? "animate-spin text-primary" : ""
                                                 }`}
                                             />
-                                            <span>{isRefreshing || isLoadingReturns ? "Refreshing..." : "Refresh"}</span>
+                                            <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
                                         </button>
                                         <button
                                             type="button"
@@ -744,7 +763,7 @@ export default function ProductReconciliationModal({
                                             options={returnOptions}
                                             value={selectedLinkedReturn ? String(selectedLinkedReturn.return_id) : "none"}
                                             onValueChange={handleSelectReturn}
-                                            disabled={isReadOnly || isLoadingReturns}
+                                            disabled={isReadOnly || isRefreshing}
                                             placeholder="Select a matching Sales Return to link..."
                                             searchPlaceholder="Search return number, SO, invoice, or date..."
                                             emptyMessage="No Sales Return matching this SO or Invoice."
@@ -846,7 +865,7 @@ export default function ProductReconciliationModal({
                                                         colSpan={5}
                                                         className="p-8 text-center text-muted-foreground text-xs font-semibold"
                                                     >
-                                                        No products matching "{searchQuery}" found.
+                                                        No products matching &quot;{searchQuery}&quot; found.
                                                     </td>
                                                 </tr>
                                             ) : (

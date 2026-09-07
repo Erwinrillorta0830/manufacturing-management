@@ -36,8 +36,9 @@ interface DirectusConsolidatorDetail {
 }
 
 interface DirectusInvoice {
+    id?: number;
     invoice_id: number;
-    order_id: string | number;
+    order_id: string | number | Record<string, unknown>;
     customer_code?: string;
     invoice_no?: string;
     invoice_date?: string;
@@ -47,6 +48,9 @@ interface DirectusInvoice {
     total_amount?: number;
     net_amount?: number;
     branch_id?: number;
+    salesman_id?: number | Record<string, unknown>;
+    salesman_code?: string;
+    salesman_name?: string;
     isDispatched?: number | boolean;
     isDelivered?: number | boolean;
     remarks?: string;
@@ -54,6 +58,7 @@ interface DirectusInvoice {
 }
 
 interface DirectusSalesOrder {
+    id?: number;
     order_id: number;
     order_no: string;
     customer_code: string;
@@ -67,6 +72,11 @@ interface DirectusSalesOrder {
     isDelivered?: number | boolean;
     delivered_at?: string | null;
     not_fulfilled_at?: string | null;
+    invoice_id?: number;
+    invoice_no?: string;
+    salesman_id?: number | Record<string, unknown>;
+    salesman_code?: string;
+    salesman_name?: string;
     remarks?: string;
 }
 
@@ -389,7 +399,7 @@ export async function GET(req: NextRequest) {
         }
 
         // Fetch any missing invoices referenced in sales_invoice_details
-        const existingInvIds = new Set(allInvoices.map((i) => Number(i.invoice_id || (i as any).id)));
+        const existingInvIds = new Set(allInvoices.map((i) => Number(i.invoice_id || i.id)));
         const missingInvIds = [...new Set(additionalInvoiceIdsToFetch)].filter((id) => !existingInvIds.has(id));
         if (missingInvIds.length > 0) {
             try {
@@ -412,7 +422,7 @@ export async function GET(req: NextRequest) {
         const invoiceMapByInvoiceNo = new Map<string, DirectusInvoice>();
 
         for (const rawInv of allInvoices) {
-            const invId = Number(rawInv.invoice_id || (rawInv as any).id);
+            const invId = Number(rawInv.invoice_id || rawInv.id);
             if (invId) {
                 invoiceMapById.set(invId, rawInv);
             }
@@ -423,7 +433,7 @@ export async function GET(req: NextRequest) {
             let ordNoFromRel: string | null = null;
 
             if (typeof rawInv.order_id === "object" && rawInv.order_id !== null) {
-                const rel = rawInv.order_id as any;
+                const rel = rawInv.order_id as Record<string, unknown>;
                 ordIdNum = Number(rel.order_id || rel.id || null);
                 if (ordIdNum) ordIdStr = String(ordIdNum);
                 if (rel.order_no) ordNoFromRel = String(rel.order_no).trim().toLowerCase();
@@ -499,10 +509,18 @@ export async function GET(req: NextRequest) {
         }
 
         // 8.5 Fetch salesman metadata
+        const extractSalesmanId = (sm: unknown): number | null => {
+            if (typeof sm === "object" && sm !== null) {
+                const rec = sm as Record<string, unknown>;
+                return Number(rec.id || rec.salesman_id) || null;
+            }
+            return Number(sm) || null;
+        };
+
         const salesmanIds = [
             ...new Set([
-                ...allInvoices.map((i) => Number((i as any).salesman_id)).filter(Boolean),
-                ...salesOrders.map((s) => Number((s as any).salesman_id)).filter(Boolean),
+                ...allInvoices.map((i) => extractSalesmanId(i.salesman_id)).filter((id): id is number => Boolean(id)),
+                ...salesOrders.map((s) => extractSalesmanId(s.salesman_id)).filter((id): id is number => Boolean(id)),
             ]),
         ];
         const salesmanMap = new Map<number, DirectusSalesman>();
@@ -871,8 +889,8 @@ export async function GET(req: NextRequest) {
 
                                 if (!so && !inv) return null;
 
-                                const invoiceNo = inv?.invoice_no || (so as any)?.invoice_no || "---";
-                                const invoiceId = inv?.invoice_id || (so as any)?.invoice_id || null;
+                                const invoiceNo = inv?.invoice_no || so?.invoice_no || "---";
+                                const invoiceId = inv?.invoice_id || so?.invoice_id || null;
                                 const invoiceDate = inv?.invoice_date || null;
 
                                 const linkedSr =
@@ -982,21 +1000,21 @@ export async function GET(req: NextRequest) {
                                 const custCode = so?.customer_code || inv?.customer_code || "";
                                 const custName = customerCodeMap.get(custCode) || custCode || "Direct Customer";
 
-                                const rawSm = (so as any)?.salesman_id || (inv as any)?.salesman_id;
+                                const rawSm = so?.salesman_id || inv?.salesman_id;
                                 const salesmanId =
                                     typeof rawSm === "object" && rawSm !== null
-                                        ? Number((rawSm as any).id || (rawSm as any).salesman_id)
+                                        ? Number((rawSm as Record<string, unknown>).id || (rawSm as Record<string, unknown>).salesman_id)
                                         : Number(rawSm) || null;
                                 const salesmanObj = salesmanId ? salesmanMap.get(salesmanId) : null;
                                 const salesmanCode =
                                     salesmanObj?.salesman_code ||
-                                    (typeof (so as any)?.salesman_code === "string" ? (so as any).salesman_code : null) ||
-                                    (typeof (inv as any)?.salesman_code === "string" ? (inv as any).salesman_code : null) ||
+                                    (typeof so?.salesman_code === "string" ? so.salesman_code : null) ||
+                                    (typeof inv?.salesman_code === "string" ? inv.salesman_code : null) ||
                                     null;
                                 const salesmanName =
                                     salesmanObj?.salesman_name ||
-                                    (typeof (so as any)?.salesman_name === "string" ? (so as any).salesman_name : null) ||
-                                    (typeof (inv as any)?.salesman_name === "string" ? (inv as any).salesman_name : null) ||
+                                    (typeof so?.salesman_name === "string" ? so.salesman_name : null) ||
+                                    (typeof inv?.salesman_name === "string" ? inv.salesman_name : null) ||
                                     null;
 
                                 return {
@@ -1171,7 +1189,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { consolidator_id, clearance_remarks, orders, is_draft } = body;
+        const { consolidator_id, orders, is_draft } = body;
 
         if (!consolidator_id || !Array.isArray(orders) || orders.length === 0) {
             return NextResponse.json(

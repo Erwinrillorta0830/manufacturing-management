@@ -2,7 +2,7 @@
 
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -35,7 +35,6 @@ import {
     CircleDollarSign,
     ExternalLink,
     Truck,
-    Edit3,
     Search,
     RefreshCw,
     Save,
@@ -183,83 +182,88 @@ export default function DeliveryClearanceModal({
     const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
 
     // Sync orders / linked_sales_return when record prop updates (e.g. after background or manual refresh)
-    useEffect(() => {
-        if (!record?.orders) return;
-        const localDraft = !isReadOnly && record?.consolidator_id ? loadLocalDraft(record.consolidator_id) : null;
-        if (localDraft) {
-            setHasActiveDraft(true);
-        }
+    const [prevRecord, setPrevRecord] = useState(record);
 
-        setOrders((prevOrders) => {
-            return (record.orders || []).map((freshOrd) => {
-                const existing = prevOrders.find((o) => o.invoice_id === freshOrd.invoice_id);
-                const savedOrder = localDraft?.orders?.find(
-                    (so) => so.order_id === freshOrd.order_id || (freshOrd.invoice_id && so.invoice_id === freshOrd.invoice_id)
-                );
+    if (record !== prevRecord) {
+        setPrevRecord(record);
+        if (record?.orders) {
+            const localDraft = !isReadOnly && record?.consolidator_id ? loadLocalDraft(record.consolidator_id) : null;
+            setHasActiveDraft(Boolean(localDraft));
+            if (localDraft?.clearanceRemarks !== undefined) {
+                setClearanceRemarks(localDraft.clearanceRemarks);
+            }
 
-                const hasReturnItems = (freshOrd.items || []).some((i) => i.returned_quantity > 0);
-                const isAllUnfulfilled =
-                    (freshOrd.items || []).length > 0 &&
-                    (freshOrd.items || []).every((i) => i.received_quantity === 0 && i.returned_quantity === i.ordered_quantity);
+            setOrders((prevOrders) => {
+                return (record.orders || []).map((freshOrd) => {
+                    const existing = prevOrders.find((o) => o.invoice_id === freshOrd.invoice_id);
+                    const savedOrder = localDraft?.orders?.find(
+                        (so) => so.order_id === freshOrd.order_id || (freshOrd.invoice_id && so.invoice_id === freshOrd.invoice_id)
+                    );
 
-                let derivedStatus = freshOrd.fulfillment_status;
-                if (savedOrder?.fulfillment_status) {
-                    derivedStatus = savedOrder.fulfillment_status;
-                } else if (freshOrd.fulfillment_status && freshOrd.fulfillment_status !== "Pending") {
-                    derivedStatus = freshOrd.fulfillment_status;
-                } else if (isAllUnfulfilled) {
-                    derivedStatus = "Unfulfilled / Returns";
-                } else if (freshOrd.linked_sales_return || hasReturnItems) {
-                    derivedStatus = "Fulfilled with Returns";
-                } else {
-                    derivedStatus = computePreviewStatus(freshOrd.items || []);
-                }
+                    const hasReturnItems = (freshOrd.items || []).some((i) => i.returned_quantity > 0);
+                    const isAllUnfulfilled =
+                        (freshOrd.items || []).length > 0 &&
+                        (freshOrd.items || []).every((i) => i.received_quantity === 0 && i.returned_quantity === i.ordered_quantity);
 
-                const savedLinkedReturn =
-                    savedOrder?.linked_sales_return !== undefined
-                        ? savedOrder.linked_sales_return
-                        : freshOrd.linked_sales_return;
+                    let derivedStatus = freshOrd.fulfillment_status;
+                    if (savedOrder?.fulfillment_status) {
+                        derivedStatus = savedOrder.fulfillment_status;
+                    } else if (freshOrd.fulfillment_status && freshOrd.fulfillment_status !== "Pending") {
+                        derivedStatus = freshOrd.fulfillment_status;
+                    } else if (isAllUnfulfilled) {
+                        derivedStatus = "Unfulfilled / Returns";
+                    } else if (freshOrd.linked_sales_return || hasReturnItems) {
+                        derivedStatus = "Fulfilled with Returns";
+                    } else {
+                        derivedStatus = computePreviewStatus(freshOrd.items || []);
+                    }
 
-                if (!existing) {
-                    const items = (freshOrd.items || []).map((item) => {
-                        const savedItem = savedOrder?.items?.find(
-                            (si) => si.detail_id === item.detail_id || (si.product_id === item.product_id && !si.detail_id)
-                        );
-                        if (savedItem) {
-                            return {
-                                ...item,
-                                received_quantity:
-                                    typeof savedItem.received_quantity === "number"
-                                        ? savedItem.received_quantity
-                                        : item.received_quantity,
-                                returned_quantity:
-                                    typeof savedItem.returned_quantity === "number"
-                                        ? savedItem.returned_quantity
-                                        : item.returned_quantity,
-                                has_concern: Boolean(savedItem.has_concern),
-                                concern_notes: savedItem.concern_notes || "",
-                                line_status: savedItem.line_status || item.line_status,
-                            };
-                        }
-                        return { ...item };
-                    });
+                    const savedLinkedReturn =
+                        savedOrder?.linked_sales_return !== undefined
+                            ? savedOrder.linked_sales_return
+                            : freshOrd.linked_sales_return;
 
+                    if (!existing) {
+                        const items = (freshOrd.items || []).map((item) => {
+                            const savedItem = savedOrder?.items?.find(
+                                (si) => si.detail_id === item.detail_id || (si.product_id === item.product_id && !si.detail_id)
+                            );
+                            if (savedItem) {
+                                return {
+                                    ...item,
+                                    received_quantity:
+                                        typeof savedItem.received_quantity === "number"
+                                            ? savedItem.received_quantity
+                                            : item.received_quantity,
+                                    returned_quantity:
+                                        typeof savedItem.returned_quantity === "number"
+                                            ? savedItem.returned_quantity
+                                            : item.returned_quantity,
+                                    has_concern: Boolean(savedItem.has_concern),
+                                    concern_notes: savedItem.concern_notes || "",
+                                    line_status: savedItem.line_status || item.line_status,
+                                };
+                            }
+                            return { ...item };
+                        });
+
+                        return {
+                            ...freshOrd,
+                            remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : freshOrd.remarks,
+                            fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
+                            linked_sales_return: savedLinkedReturn,
+                            items,
+                        };
+                    }
                     return {
-                        ...freshOrd,
-                        remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : freshOrd.remarks,
-                        fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
-                        linked_sales_return: savedLinkedReturn,
-                        items,
+                        ...existing,
+                        linked_sales_return: existing.fulfillment_status === "Fulfilled with Returns" ? (existing.linked_sales_return || savedLinkedReturn || freshOrd.linked_sales_return) : null,
+                        fulfillment_status: existing.fulfillment_status || derivedStatus,
                     };
-                }
-                return {
-                    ...existing,
-                    linked_sales_return: existing.fulfillment_status === "Fulfilled with Returns" ? (existing.linked_sales_return || savedLinkedReturn || freshOrd.linked_sales_return) : null,
-                    fulfillment_status: existing.fulfillment_status || derivedStatus,
-                };
+                });
             });
-        });
-    }, [record, isReadOnly]);
+        }
+    }
 
     const handleRefresh = async () => {
         if (!onRefresh) return;
@@ -436,18 +440,6 @@ export default function DeliveryClearanceModal({
                 fulfillment_status: preset as FulfillmentStatus,
                 linked_sales_return: preset === "Fulfilled with Returns" ? ord.linked_sales_return : null,
                 items: updatedItems,
-            };
-            return next;
-        });
-    };
-
-    // Update order remarks
-    const updateOrderRemarks = (orderIndex: number, remarks: string) => {
-        setOrders((prev) => {
-            const next = [...prev];
-            next[orderIndex] = {
-                ...next[orderIndex],
-                remarks,
             };
             return next;
         });
@@ -931,7 +923,7 @@ export default function DeliveryClearanceModal({
                                                 {filteredOrdersWithIndex.length === 0 ? (
                                                     <tr>
                                                         <td colSpan={7} className="p-8 text-center text-muted-foreground text-xs font-semibold">
-                                                            No sales orders matching "{orderSearch}" found.
+                                                            No sales orders matching &quot;{orderSearch}&quot; found.
                                                         </td>
                                                     </tr>
                                                 ) : (
