@@ -1093,7 +1093,6 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       
       const price = Number(original.unitPrice || 0);
       const gross = Math.round(1 * price * 100) / 100;
-      const discountVal = Number(original.discountAmount || 0);
       // We calculate a proportional discount if needed, but for simplicity
       // since the user modifies it, we can reset discountAmount to 0 or re-calculate it based on discountType.
       // Resetting discountAmount is safer when quantity is 1 unless it's a fixed % type.
