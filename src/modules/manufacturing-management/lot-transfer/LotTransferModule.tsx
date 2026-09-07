@@ -176,6 +176,10 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         const branchMatches = !form.branchId || lot.branchId === 0 || lot.branchId === Number(form.branchId);
         return branchMatches && lot.status.toUpperCase() === "ACTIVE";
     }), [controller.lots, form.branchId]);
+    const targetLots = useMemo(
+        () => activeLots.filter((lot) => String(lot.lotId) !== form.sourceLotId),
+        [activeLots, form.sourceLotId]
+    );
     const sourceBatches = controller.sourceBatches;
     const targetBatches = controller.targetBatches;
 
@@ -242,7 +246,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 </div>
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /></label>
+                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={targetLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /><p className="mt-1 text-xs text-muted-foreground">Choose a destination lot different from the source lot.</p></label>
                     <label className="mt-3 block"><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetBatches} value={form.targetInventoryLotId} onChange={(value) => controller.handleBatchChange("target", value)} disabled={!form.targetLotId} source={false} /></label>
                     {targetBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Current on hand<br /><strong>{formatQuantity(targetBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(targetBatch.expirationDate)}</strong></span><span>QA<br /><strong>{targetBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{targetBatch.batchId}</strong></span></div>}
                 </div>
