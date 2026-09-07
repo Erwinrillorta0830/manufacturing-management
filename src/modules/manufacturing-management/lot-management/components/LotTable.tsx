@@ -184,7 +184,7 @@ export default function LotTable({
                                 setPageSize(Number(val));
                             }}
                         >
-                            <SelectTrigger className="w-[70px] h-8 bg-background border border-border">
+                            <SelectTrigger className="min-w-[76px] w-auto h-8 px-2.5 bg-background border border-border">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent position="popper" sideOffset={4} className="bg-popover border border-border">

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp, Building2 } from "lucide-react";
+import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp, Building2, AlertTriangle } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
-import { getFefoPriorityMap, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
+import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -152,6 +152,7 @@ export default function WarehouseRackView({
                 {sortedLots.map((lot) => {
                     const rawLotBatches = batches.filter((b) => {
                         if (Number(b.lotId) !== Number(lot.lotId)) return false;
+                        if (Number(b.quantity || 0) === 0) return false;
                         if (selectedProductType !== "ALL") {
                             const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                             if (cls.code !== selectedProductType) return false;
@@ -177,23 +178,31 @@ export default function WarehouseRackView({
                         }
                         return true;
                     });
-                    const fefoSortedBatches = sortBatchesByFefo(rawLotBatches);
+                    const groupedLotBatches = groupAndSumLotBatches(rawLotBatches);
+                    const fefoSortedBatches = sortBatchesByFefo(groupedLotBatches);
                     const isExpanded = !!expandedLots[lot.lotId];
                     const visibleBatches = isExpanded ? fefoSortedBatches : fefoSortedBatches.slice(0, 5);
                     const hasMoreThan5 = fefoSortedBatches.length > 5;
 
                     // Physical rack occupancy and capacity reflect all inventory stored in this rack (unaffected by active product/batch filters)
-                    const allLotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+                    const allLotBatches = groupAndSumLotBatches(batches.filter((b) => Number(b.lotId) === Number(lot.lotId)));
                     const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
-                    const capacityPercent = Math.min(
-                        100,
-                        lot.maxBatchCapacity > 0 ? Math.round((totalRackOccupancy / lot.maxBatchCapacity) * 100) : 0
+                    const isRackNegative = totalRackOccupancy < 0;
+                    const capacityPercent = Math.max(
+                        0,
+                        Math.min(
+                            100,
+                            lot.maxBatchCapacity > 0 ? Math.round((totalRackOccupancy / lot.maxBatchCapacity) * 100) : 0
+                        )
                     );
 
                     // Capacity status color
                     let progressColorClass = "bg-emerald-500";
                     let progressBadgeClass = "text-emerald-600 bg-emerald-500/10 border-emerald-500/20";
-                    if (capacityPercent >= 90) {
+                    if (isRackNegative) {
+                        progressColorClass = "bg-rose-500 animate-pulse";
+                        progressBadgeClass = "text-rose-600 bg-rose-500/15 border-rose-500/30 font-bold";
+                    } else if (capacityPercent >= 90) {
                         progressColorClass = "bg-rose-500";
                         progressBadgeClass = "text-rose-600 bg-rose-500/10 border-rose-500/20";
                     } else if (capacityPercent >= 70) {
@@ -316,17 +325,22 @@ export default function WarehouseRackView({
                                 {/* Capacity Fill Indicator */}
                                 <div className="mt-3 space-y-1.5">
                                     <div className="flex items-center justify-between text-[11px]">
-                                        <span className="font-semibold text-muted-foreground">
-                                            Occupancy: {totalRackOccupancy.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
+                                        <span className={`font-semibold ${isRackNegative ? "text-rose-600 dark:text-rose-400 font-bold" : "text-muted-foreground"}`}>
+                                            {isRackNegative ? (
+                                                <>Occupancy: <span className="font-mono">{totalRackOccupancy.toLocaleString()}</span> / {lot.maxBatchCapacity.toLocaleString()} {uomLabel} (Deficit)</>
+                                            ) : (
+                                                <>Occupancy: {totalRackOccupancy.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}</>
+                                            )}
                                         </span>
                                         <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] border ${progressBadgeClass}`}>
-                                            {capacityPercent}%
+                                            {isRackNegative ? "Deficit" : `${capacityPercent}%`}
                                         </span>
                                     </div>
                                     <div className="h-2 w-full bg-muted/60 rounded-full overflow-hidden">
                                         <div
                                             className={`h-full transition-all duration-300 ${progressColorClass}`}
-                                            style={{ width: `${capacityPercent}%` }}
+                                            style={{ width: isRackNegative ? "100%" : `${capacityPercent}%` }}
+                                            title={isRackNegative ? `Stock Deficit: ${totalRackOccupancy.toLocaleString()} ${uomLabel}` : `${capacityPercent}% Occupied`}
                                         />
                                     </div>
                                 </div>
@@ -356,6 +370,10 @@ export default function WarehouseRackView({
                                             {visibleBatches.map((batch) => {
                                                 const statusConfig = getStatusConfig(batch.status);
                                                 const fefoInfo = fefoMap.get(batch.batchId);
+                                                const isNegative = batch.quantity < 0;
+                                                const isExpired = batch.expirationDate
+                                                    ? new Date(batch.expirationDate).getTime() <= new Date().setHours(23, 59, 59, 999)
+                                                    : (batch.qaStatus === "EXPIRED" || batch.status === "EXPIRED");
 
                                                 return (
                                                     <div
@@ -363,16 +381,34 @@ export default function WarehouseRackView({
                                                         onClick={() => onViewBatchMovements?.(batch)}
                                                         title="Click to view batch movement history & audit trail"
                                                         className={`group/box relative flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${
-                                                            fefoInfo?.isFefoNext
-                                                                ? "bg-amber-500/10 border-amber-500/40 shadow-xs hover:border-amber-500"
-                                                                : "border-border/80 bg-card hover:border-primary/50 hover:shadow-xs"
+                                                            isNegative
+                                                                ? "bg-rose-500/10 border-rose-500/40 hover:border-rose-500 hover:bg-rose-500/15 dark:bg-rose-950/25 border-l-4 border-l-rose-500 shadow-xs"
+                                                                : isExpired
+                                                                    ? "bg-rose-500/10 border-rose-500/40 hover:border-rose-500 hover:bg-rose-500/15 dark:bg-rose-950/25 border-l-4 border-l-rose-500 shadow-xs"
+                                                                    : fefoInfo?.isFefoNext
+                                                                      ? "bg-amber-500/10 border-amber-500/40 shadow-xs hover:border-amber-500"
+                                                                      : "border-border/80 bg-card hover:border-primary/50 hover:shadow-xs"
                                                         }`}
                                                     >
                                                         <div className="min-w-0 flex-1">
                                                             <div className="flex items-center gap-2 flex-wrap">
-                                                                <span className="font-bold text-xs text-foreground group-hover/box:text-primary transition-colors truncate">
+                                                                <span className="font-bold text-xs text-foreground group-hover/box:text-primary transition-colors truncate font-mono">
                                                                     {batch.batchNumber}
                                                                 </span>
+
+                                                                {isNegative && (
+                                                                    <span className="px-1.5 py-0.2 text-[9px] font-black uppercase rounded-full bg-rose-500 text-white flex items-center gap-0.5 shadow-2xs">
+                                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                                        NEGATIVE
+                                                                    </span>
+                                                                )}
+
+                                                                {isExpired && !isNegative && (
+                                                                    <span className="px-1.5 py-0.2 text-[9px] font-extrabold uppercase rounded-full bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/40 shadow-2xs flex items-center gap-0.5">
+                                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                                        EXPIRED
+                                                                    </span>
+                                                                )}
                                                                 
                                                                 {fefoInfo?.isFefoNext ? (
                                                                     <span className="px-1.5 py-0.2 text-[9px] font-black rounded-full bg-amber-500 text-amber-950 flex items-center gap-0.5 shadow-2xs animate-pulse">
@@ -384,9 +420,11 @@ export default function WarehouseRackView({
                                                                     </span>
                                                                 ) : null}
 
-                                                                <span className={`px-1.5 py-0.2 text-[9px] font-bold rounded-full border ${statusConfig.badgeClass}`}>
-                                                                    {statusConfig.label}
-                                                                </span>
+                                                                {!isExpired && statusConfig.label !== "ACTIVE" && (
+                                                                    <span className={`px-1.5 py-0.2 text-[9px] font-bold rounded-full border ${statusConfig.badgeClass}`}>
+                                                                        {statusConfig.label}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                                                                 <span className="truncate max-w-[130px] font-semibold text-foreground">
@@ -398,7 +436,7 @@ export default function WarehouseRackView({
                                                                     </span>
                                                                 )}
                                                                 <span>
-                                                                    Qty: <strong className="text-foreground">{batch.quantity.toLocaleString()}</strong> {batch.uomShortcut || uomLabel}
+                                                                    Qty: <strong className={isNegative ? "text-rose-600 dark:text-rose-400 font-black font-mono" : "text-foreground"}>{batch.quantity.toLocaleString()}</strong> {batch.uomShortcut || uomLabel}
                                                                 </span>
                                                             </div>
                                                         </div>

@@ -132,6 +132,7 @@ export interface Batch {
     createdBy: string;
     updatedBy: string;
     displayNumber?: number;
+    rawBatchNumber?: string;
 }
 
 export interface CreateBatchPayload {
@@ -229,7 +230,11 @@ export interface FefoAllocationResult {
 // ─── Inventory Movement Types (/api/mm-inventory-movements/all) ─────
 
 export interface InventoryMovement {
+    [key: string]: unknown;
     movementKey?: string;
+    movementId?: number | null;
+    transactionTypeId?: number | null;
+    versionId?: number | null;
     transactionType: string;
     movementDirection: "IN" | "OUT" | string;
     sourceModule: string;
@@ -240,9 +245,10 @@ export interface InventoryMovement {
     postedAt?: string;
     postedBy?: number;
     branchId?: number;
-    inventoryLotId?: number;
-    batchId?: number;
-    lotId?: number;
+    inventoryLotId?: number | null;
+    mmLotId?: number | null;
+    batchId?: number | null;
+    lotId?: number | null; // legacy lotId is null in backend view, use mmLotId
     lotName?: string;
     productId: number;
     productCode: string;
@@ -256,6 +262,7 @@ export interface InventoryMovement {
     batchNo: string;
     manufacturingDate?: string | null;
     expirationDate?: string | null;
+    expiryDate?: string | null;
     inventoryCondition: string;
     quantityIn: number;
     quantityOut: number;
