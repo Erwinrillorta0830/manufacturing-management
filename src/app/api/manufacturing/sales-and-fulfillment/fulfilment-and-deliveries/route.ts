@@ -36,8 +36,9 @@ interface DirectusConsolidatorDetail {
 }
 
 interface DirectusInvoice {
+    id?: number;
     invoice_id: number;
-    order_id: string | number;
+    order_id: string | number | Record<string, unknown>;
     customer_code?: string;
     invoice_no?: string;
     invoice_date?: string;
@@ -47,6 +48,9 @@ interface DirectusInvoice {
     total_amount?: number;
     net_amount?: number;
     branch_id?: number;
+    salesman_id?: number | Record<string, unknown>;
+    salesman_code?: string;
+    salesman_name?: string;
     isDispatched?: number | boolean;
     isDelivered?: number | boolean;
     remarks?: string;
@@ -54,6 +58,7 @@ interface DirectusInvoice {
 }
 
 interface DirectusSalesOrder {
+    id?: number;
     order_id: number;
     order_no: string;
     customer_code: string;
@@ -62,10 +67,16 @@ interface DirectusSalesOrder {
     total_amount?: number;
     net_amount?: number;
     order_date?: string;
+    delivery_date?: string;
     created_date?: string;
     isDelivered?: number | boolean;
     delivered_at?: string | null;
     not_fulfilled_at?: string | null;
+    invoice_id?: number;
+    invoice_no?: string;
+    salesman_id?: number | Record<string, unknown>;
+    salesman_code?: string;
+    salesman_name?: string;
     remarks?: string;
 }
 
@@ -102,6 +113,12 @@ interface DirectusBranch {
     branch_name: string;
     branch_code: string;
     isActive?: number | boolean;
+}
+
+interface DirectusSalesman {
+    id: number;
+    salesman_code: string;
+    salesman_name: string;
 }
 
 // ─── GET: Fetch Consolidated Delivery Manifests ───────────────────────────────
@@ -233,7 +250,7 @@ export async function GET(req: NextRequest) {
                 const chunk = candidateOrderIds.slice(i, i + chunkSize);
                 const [soRes, sodByOrderRes] = await Promise.all([
                     fetch(
-                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${chunk.join(",")}&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${chunk.join(",")}&fields=*&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     ),
                     fetch(
@@ -261,43 +278,214 @@ export async function GET(req: NextRequest) {
             salesOrders.map((so) => [Number(so.order_id), so])
         );
 
-        // 7. Fetch sales_invoice matching either invoice_id or order_id
-        const allInvoices: DirectusInvoice[] = [];
-        if (candidateOrderIds.length > 0) {
-            const chunkSize = 100;
-            for (let i = 0; i < candidateOrderIds.length; i += chunkSize) {
-                const chunk = candidateOrderIds.slice(i, i + chunkSize);
-                const [invByIdRes, invByOrderRes] = await Promise.all([
-                    fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${chunk.join(",")}&limit=-1`,
-                        { headers: directusHeaders, cache: "no-store" }
-                    ),
-                    fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${chunk.join(",")}&limit=-1`,
-                        { headers: directusHeaders, cache: "no-store" }
-                    ),
-                ]);
+        const soOrderIds = salesOrders.map((s) => Number(s.order_id)).filter(Boolean);
+        const soOrderNos = salesOrders.map((s) => (s.order_no ? s.order_no.toString().trim() : "")).filter(Boolean);
+        const allNumericInvOrOrderIds = [...new Set([...sodOrderIds, ...rawInvIds, ...soOrderIds])];
+        const allStringOrderIdentifiers = [...new Set([...soOrderNos, ...allNumericInvOrOrderIds.map(String)])];
 
-                if (invByIdRes.ok) {
-                    const d = (await invByIdRes.json()).data || [];
-                    allInvoices.push(...d);
+        // 7. Fetch sales_invoice matching invoice_id, order_id (numeric & string order_no), invoice_no, and sales_invoice_details
+        const allInvoices: DirectusInvoice[] = [];
+        const candidateNumericIds = [...new Set([...allNumericInvOrOrderIds])];
+        const candidateStringKeys = [...new Set([...allStringOrderIdentifiers])];
+
+        const chunkSize = 100;
+        const fetchPromises: Promise<void>[] = [];
+        const rawSidList: Array<{ detail_id: number; order_id: string | number; invoice_no: number | string }> = [];
+
+        // 7a. Unconditional fetch of all invoices (no status filter so NULL transaction_status is never dropped)
+        fetchPromises.push(
+            fetch(
+                `${DIRECTUS_URL}/items/sales_invoice?limit=-1&sort=-invoice_id&fields=*`,
+                { headers: directusHeaders, cache: "no-store" }
+            )
+                .then((res) => (res.ok ? res.json() : { data: [] }))
+                .then((json) => {
+                    if (json.data && Array.isArray(json.data)) {
+                        allInvoices.push(...json.data);
+                    }
+                })
+                .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching all invoices:", err))
+        );
+
+        // 7b. Fetch sales_invoice_details to bridge order_id -> invoice_id (stored in detail.invoice_no)
+        for (let i = 0; i < candidateNumericIds.length; i += chunkSize) {
+            const chunk = candidateNumericIds.slice(i, i + chunkSize);
+            fetchPromises.push(
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[order_id][_in]=${chunk.join(",")}&fields=detail_id,order_id,invoice_no&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            rawSidList.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching sales_invoice_details:", err))
+            );
+            fetchPromises.push(
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${chunk.join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            allInvoices.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching invoices by invoice_id:", err))
+            );
+            fetchPromises.push(
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${chunk.join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            allInvoices.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching invoices by order_id:", err))
+            );
+        }
+
+        // 7c. Fetch by string order_no and invoice_no with fields=*
+        for (let i = 0; i < candidateStringKeys.length; i += chunkSize) {
+            const chunk = candidateStringKeys.slice(i, i + chunkSize);
+            fetchPromises.push(
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${chunk.map((x) => encodeURIComponent(x)).join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            allInvoices.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching invoices by order_no:", err))
+            );
+            fetchPromises.push(
+                fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_no][_in]=${chunk.map((x) => encodeURIComponent(x)).join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                )
+                    .then((res) => (res.ok ? res.json() : { data: [] }))
+                    .then((json) => {
+                        if (json.data && Array.isArray(json.data)) {
+                            allInvoices.push(...json.data);
+                        }
+                    })
+                    .catch((err) => console.warn("[fulfilment-and-deliveries API] Error fetching invoices by invoice_no:", err))
+            );
+        }
+
+        await Promise.all(fetchPromises);
+
+        // Map order_id -> invoice_id from sales_invoice_details
+        const orderIdToInvoiceIdMap = new Map<string, number>();
+        const additionalInvoiceIdsToFetch: number[] = [];
+        for (const sid of rawSidList) {
+            const ordStr = sid.order_id ? String(sid.order_id).trim() : "";
+            const invId = Number(sid.invoice_no);
+            if (ordStr && invId) {
+                orderIdToInvoiceIdMap.set(ordStr.toLowerCase(), invId);
+                const pNum = Number(ordStr);
+                if (!isNaN(pNum)) orderIdToInvoiceIdMap.set(String(pNum), invId);
+                additionalInvoiceIdsToFetch.push(invId);
+            }
+        }
+
+        // Fetch any missing invoices referenced in sales_invoice_details
+        const existingInvIds = new Set(allInvoices.map((i) => Number(i.invoice_id || i.id)));
+        const missingInvIds = [...new Set(additionalInvoiceIdsToFetch)].filter((id) => !existingInvIds.has(id));
+        if (missingInvIds.length > 0) {
+            try {
+                const missingRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${missingInvIds.slice(0, 200).join(",")}&fields=*&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (missingRes.ok) {
+                    const mData = (await missingRes.json()).data || [];
+                    allInvoices.push(...mData);
                 }
-                if (invByOrderRes.ok) {
-                    const d = (await invByOrderRes.json()).data || [];
-                    allInvoices.push(...d);
+            } catch (mErr) {
+                console.warn("[fulfilment-and-deliveries API] Error fetching missing invoices by SID:", mErr);
+            }
+        }
+
+        // Deduplicate and index invoices with relational unwrap
+        const invoiceMapById = new Map<number, DirectusInvoice>();
+        const invoiceMapByOrderKey = new Map<string, DirectusInvoice>();
+        const invoiceMapByInvoiceNo = new Map<string, DirectusInvoice>();
+
+        for (const rawInv of allInvoices) {
+            const invId = Number(rawInv.invoice_id || rawInv.id);
+            if (invId) {
+                invoiceMapById.set(invId, rawInv);
+            }
+
+            // Extract order_id whether primitive or expanded relational object
+            let ordIdStr: string | null = null;
+            let ordIdNum: number | null = null;
+            let ordNoFromRel: string | null = null;
+
+            if (typeof rawInv.order_id === "object" && rawInv.order_id !== null) {
+                const rel = rawInv.order_id as Record<string, unknown>;
+                ordIdNum = Number(rel.order_id || rel.id || null);
+                if (ordIdNum) ordIdStr = String(ordIdNum);
+                if (rel.order_no) ordNoFromRel = String(rel.order_no).trim().toLowerCase();
+            } else if (rawInv.order_id !== undefined && rawInv.order_id !== null) {
+                const rawStr = String(rawInv.order_id).trim();
+                if (rawStr.length > 0 && rawStr !== "[object Object]") {
+                    ordIdStr = rawStr.toLowerCase();
+                    const parsedNum = Number(rawStr);
+                    if (!isNaN(parsedNum)) ordIdNum = parsedNum;
+                }
+            }
+
+            if (ordIdStr) {
+                invoiceMapByOrderKey.set(ordIdStr, rawInv);
+            }
+            if (ordIdNum) {
+                invoiceMapByOrderKey.set(String(ordIdNum), rawInv);
+                invoiceMapById.set(ordIdNum, rawInv);
+            }
+            if (ordNoFromRel) {
+                invoiceMapByOrderKey.set(ordNoFromRel, rawInv);
+            }
+
+            // Extract invoice_no
+            if (rawInv.invoice_no && typeof rawInv.invoice_no === "string") {
+                const invNoLower = rawInv.invoice_no.trim().toLowerCase();
+                if (invNoLower.length > 0) {
+                    invoiceMapByInvoiceNo.set(invNoLower, rawInv);
                 }
             }
         }
 
-        // Deduplicate invoices
-        const invoiceMapById = new Map<number, DirectusInvoice>();
-        const invoiceMapByOrderId = new Map<number, DirectusInvoice>();
-        for (const inv of allInvoices) {
-            const invId = Number(inv.invoice_id);
-            const ordId = Number(inv.order_id);
-            if (invId) invoiceMapById.set(invId, inv);
-            if (ordId) invoiceMapByOrderId.set(ordId, inv);
+        // Cross-index invoices linked through sales_invoice_details
+        for (const [orderKey, invId] of orderIdToInvoiceIdMap.entries()) {
+            const targetInv = invoiceMapById.get(invId);
+            if (targetInv && !invoiceMapByOrderKey.has(orderKey)) {
+                invoiceMapByOrderKey.set(orderKey, targetInv);
+            }
         }
+
+        console.log("[fulfilment-and-deliveries API] 🧾 Fetched Invoices Summary:", {
+            total_invoices_fetched: allInvoices.length,
+            indexed_by_id_count: invoiceMapById.size,
+            indexed_by_order_key_count: invoiceMapByOrderKey.size,
+            sid_mapped_count: orderIdToInvoiceIdMap.size,
+            sample_invoices: allInvoices.slice(0, 5).map((i) => ({
+                invoice_id: i.invoice_id,
+                order_id: i.order_id,
+                invoice_no: i.invoice_no,
+                invoice_date: i.invoice_date,
+            })),
+        });
 
         // 8. Fetch customer names
         const customerCodes = [
@@ -316,6 +504,36 @@ export async function GET(req: NextRequest) {
                 const custList: DirectusCustomer[] = (await custRes.json()).data || [];
                 for (const c of custList) {
                     if (c.customer_code) customerCodeMap.set(c.customer_code, c.customer_name);
+                }
+            }
+        }
+
+        // 8.5 Fetch salesman metadata
+        const extractSalesmanId = (sm: unknown): number | null => {
+            if (typeof sm === "object" && sm !== null) {
+                const rec = sm as Record<string, unknown>;
+                return Number(rec.id || rec.salesman_id) || null;
+            }
+            return Number(sm) || null;
+        };
+
+        const salesmanIds = [
+            ...new Set([
+                ...allInvoices.map((i) => extractSalesmanId(i.salesman_id)).filter((id): id is number => Boolean(id)),
+                ...salesOrders.map((s) => extractSalesmanId(s.salesman_id)).filter((id): id is number => Boolean(id)),
+            ]),
+        ];
+        const salesmanMap = new Map<number, DirectusSalesman>();
+        if (salesmanIds.length > 0) {
+            const smRes = await fetch(
+                `${DIRECTUS_URL}/items/salesman?filter[id][_in]=${salesmanIds.slice(0, 300).join(",")}&fields=id,salesman_code,salesman_name&limit=-1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (smRes.ok) {
+                const smList: DirectusSalesman[] = (await smRes.json()).data || [];
+                for (const sm of smList) {
+                    const smId = Number(sm.id);
+                    if (smId) salesmanMap.set(smId, sm);
                 }
             }
         }
@@ -353,10 +571,20 @@ export async function GET(req: NextRequest) {
         const allInvoiceNos = Array.from(invoiceMapById.values())
             .map((inv) => (inv.invoice_no ? inv.invoice_no.toString().trim() : ""))
             .filter(Boolean);
+        const allInvoiceIds = Array.from(invoiceMapById.keys());
         const allOrderNos = Array.from(salesOrderMap.values())
             .map((so) => (so.order_no ? so.order_no.toString().trim() : ""))
             .filter(Boolean);
-        const allCandidateNos = [...new Set([...allInvoiceNos, ...allOrderNos])];
+        const allOrderIds = Array.from(salesOrderMap.keys());
+        const allCandidateNos = [
+            ...new Set([
+                ...allInvoiceNos,
+                ...allOrderNos,
+                ...allInvoiceIds.map(String),
+                ...allOrderIds.map(String),
+                ...candidateOrderIds.map(String),
+            ]),
+        ];
 
         const salesReturnMap = new Map<
             string,
@@ -365,8 +593,9 @@ export async function GET(req: NextRequest) {
                 return_number: string;
                 invoice_no?: string;
                 invoice_id?: number;
-                order_id?: number;
+                order_id?: string | number;
                 status: string;
+                is_received?: boolean;
                 return_date?: string | null;
                 total_amount?: number | null;
             }
@@ -374,26 +603,61 @@ export async function GET(req: NextRequest) {
         const returnItemQtyMap = new Map<string, number>();
 
         try {
-            const [srByNoRes, srByOrderIdRes, srRecentRes] = await Promise.all([
+            // Check junction sales_invoice_sales_return
+            const junctionReturnIds: number[] = [];
+            const invoiceIdToReturnIdMap = new Map<number, number>();
+            if (allInvoiceIds.length > 0) {
+                try {
+                    const jRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice_sales_return?filter[invoice_no][_in]=${allInvoiceIds.slice(0, 300).join(",")}&limit=-1&fields=id,invoice_no,return_no`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (jRes.ok) {
+                        const jData: Array<{ id: number; invoice_no: number | string; return_no: number | string }> =
+                            (await jRes.json()).data || [];
+                        for (const j of jData) {
+                            const invId = Number(j.invoice_no);
+                            const retId = Number(j.return_no);
+                            if (invId && retId) {
+                                junctionReturnIds.push(retId);
+                                invoiceIdToReturnIdMap.set(invId, retId);
+                            }
+                        }
+                    }
+                } catch (jErr) {
+                    console.warn("[fulfilment-and-deliveries GET] Error fetching junction links:", jErr);
+                }
+            }
+
+            const [srByNoRes, srByOrderIdRes, srByJunctionRes, srRecentRes] = await Promise.all([
                 allCandidateNos.length > 0
                     ? fetch(
                           `${DIRECTUS_URL}/items/sales_return?filter[invoice_no][_in]=${allCandidateNos
                               .slice(0, 300)
                               .map((no) => encodeURIComponent(no))
-                              .join(",")}&fields=return_id,return_number,invoice_no,order_id,status,return_date,total_amount&limit=-1`,
+                              .join(",")}&fields=return_id,return_number,customer_code,salesman_id,branch_id,return_date,total_amount,remarks,created_by,order_id,invoice_no,status,isPosted,isApplied,isReceived&limit=-1`,
                           { headers: directusHeaders, cache: "no-store" }
                       )
                     : Promise.resolve(null),
-                candidateOrderIds.length > 0
+                allCandidateNos.length > 0
                     ? fetch(
-                          `${DIRECTUS_URL}/items/sales_return?filter[order_id][_in]=${candidateOrderIds
+                          `${DIRECTUS_URL}/items/sales_return?filter[order_id][_in]=${allCandidateNos
                               .slice(0, 300)
-                              .join(",")}&fields=return_id,return_number,invoice_no,order_id,status,return_date,total_amount&limit=-1`,
+                              .map((no) => encodeURIComponent(no))
+                              .join(",")}&fields=return_id,return_number,customer_code,salesman_id,branch_id,return_date,total_amount,remarks,created_by,order_id,invoice_no,status,isPosted,isApplied,isReceived&limit=-1`,
+                          { headers: directusHeaders, cache: "no-store" }
+                      )
+                    : Promise.resolve(null),
+                junctionReturnIds.length > 0
+                    ? fetch(
+                          `${DIRECTUS_URL}/items/sales_return?filter[return_id][_in]=${junctionReturnIds
+                              .slice(0, 300)
+                              .join(",")}&fields=return_id,return_number,customer_code,salesman_id,branch_id,return_date,total_amount,remarks,created_by,order_id,invoice_no,status,isPosted,isApplied,isReceived&limit=-1`,
                           { headers: directusHeaders, cache: "no-store" }
                       )
                     : Promise.resolve(null),
                 fetch(
-                    `${DIRECTUS_URL}/items/sales_return?limit=150&sort=-return_id&fields=return_id,return_number,invoice_no,order_id,status,return_date,total_amount`,
+                    `${DIRECTUS_URL}/items/sales_return?limit=250&sort=-return_id&fields=return_id,return_number,customer_code,salesman_id,branch_id,return_date,total_amount,remarks,created_by,order_id,invoice_no,status,isPosted,isApplied,isReceived`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
             ]);
@@ -404,6 +668,8 @@ export async function GET(req: NextRequest) {
                 invoice_no?: string;
                 order_id?: string | number;
                 status: string;
+                isReceived?: number | boolean;
+                is_received?: number | boolean;
                 return_date?: string | null;
                 total_amount?: number | null;
             }> = [];
@@ -414,6 +680,10 @@ export async function GET(req: NextRequest) {
             }
             if (srByOrderIdRes && srByOrderIdRes.ok) {
                 const d = (await srByOrderIdRes.json()).data || [];
+                rawSrList.push(...d);
+            }
+            if (srByJunctionRes && srByJunctionRes.ok) {
+                const d = (await srByJunctionRes.json()).data || [];
                 rawSrList.push(...d);
             }
             if (srRecentRes && srRecentRes.ok) {
@@ -429,23 +699,44 @@ export async function GET(req: NextRequest) {
             const allSrData = Array.from(uniqueSrMap.values());
 
             for (const sr of allSrData) {
+                const isReceived =
+                    sr.status === "Received" ||
+                    sr.status === "Approved" ||
+                    sr.isReceived === 1 ||
+                    sr.isReceived === true ||
+                    sr.is_received === 1 ||
+                    sr.is_received === true;
+
                 const returnInfo = {
                     return_id: Number(sr.return_id),
                     return_number: sr.return_number || `SR-${sr.return_id}`,
                     invoice_no: sr.invoice_no ? sr.invoice_no.toString().trim() : undefined,
-                    order_id: sr.order_id ? Number(sr.order_id) : undefined,
+                    order_id: sr.order_id ? sr.order_id.toString().trim() : undefined,
                     status: sr.status || "Pending",
+                    is_received: isReceived,
                     return_date: sr.return_date || null,
                     total_amount: sr.total_amount ? Number(sr.total_amount) : null,
                 };
+                if (sr.return_id) {
+                    salesReturnMap.set(String(sr.return_id), returnInfo);
+                }
+                if (sr.return_number) {
+                    salesReturnMap.set(sr.return_number.toString().trim().toLowerCase(), returnInfo);
+                }
                 if (sr.invoice_no) {
                     salesReturnMap.set(sr.invoice_no.toString().trim().toLowerCase(), returnInfo);
                 }
                 if (sr.order_id) {
                     salesReturnMap.set(sr.order_id.toString().trim().toLowerCase(), returnInfo);
                 }
-                if (sr.return_number) {
-                    salesReturnMap.set(sr.return_number.toString().trim().toLowerCase(), returnInfo);
+            }
+
+            // Map junction links to returnInfo
+            for (const [invId, retId] of invoiceIdToReturnIdMap.entries()) {
+                const retInfo = salesReturnMap.get(String(retId));
+                if (retInfo) {
+                    salesReturnMap.set(`inv_id:${invId}`, retInfo);
+                    salesReturnMap.set(String(invId), retInfo);
                 }
             }
 
@@ -513,209 +804,323 @@ export async function GET(req: NextRequest) {
             console.warn("[fulfilment-and-deliveries GET] Error fetching sales_return links:", err);
         }
 
-        // 11. Transform each Consolidator into a ConsolidatedDeliveryRecord
-        const records = allConsolidators
-            .map((con) => {
-                const conId = Number(con.id);
-                const branchId = Number(con.branch_id || 1);
-                const branchName = branchMap.get(branchId)?.branch_name || `Branch #${branchId}`;
+                // 11. Transform each Consolidator into a ConsolidatedDeliveryRecord with strict Gatekeeping
+                const records = allConsolidators
+                    .map((con) => {
+                        const conId = Number(con.id);
+                        const branchId = Number(con.branch_id || 1);
+                        const branchName = branchMap.get(branchId)?.branch_name || `Branch #${branchId}`;
 
-                // Gather all order IDs associated with this consolidator:
-                // From consolidator_details (via sales_order_details)
-                const conSodList = conSodMap.get(conId) || [];
-                const conOrderIdsFromDetails = conSodList
-                    .map((sodId) => sodDetailMap.get(sodId)?.order_id)
-                    .filter((id): id is number => id !== undefined && id > 0);
+                        // Gather all order IDs associated with this consolidator
+                        const conSodList = conSodMap.get(conId) || [];
+                        const conOrderIdsFromDetails = conSodList
+                            .map((sodId) => sodDetailMap.get(sodId)?.order_id)
+                            .filter((id): id is number => id !== undefined && id > 0);
 
-                // From consolidator_invoices
-                const conInvList = conInvMap.get(conId) || [];
-                const conOrderIdsFromInvoices = conInvList.map((invId) => {
-                    const inv = invoiceMapById.get(invId);
-                    return inv ? Number(inv.order_id) : invId;
-                });
-
-                const distinctOrderIds = [...new Set([...conOrderIdsFromDetails, ...conOrderIdsFromInvoices])];
-
-                const childOrders = distinctOrderIds
-                    .map((orderId) => {
-                        const so = salesOrderMap.get(orderId);
-                        const inv = invoiceMapByOrderId.get(orderId) || invoiceMapById.get(orderId);
-
-                        if (!so && !inv) return null;
-
-                        const invoiceNo = inv?.invoice_no || so?.order_no || `SO-${orderId}`;
-                        const invoiceId = inv?.invoice_id || orderId;
-
-                        const linkedSr =
-                            salesReturnMap.get(invoiceNo.toLowerCase()) ||
-                            (so?.order_no ? salesReturnMap.get(so.order_no.toLowerCase()) : null) ||
-                            salesReturnMap.get(String(orderId)) ||
-                            (inv?.invoice_id ? salesReturnMap.get(String(inv.invoice_id)) : null) ||
-                            null;
-
-                        const isCleared =
-                            so?.order_status === "Delivered" ||
-                            so?.order_status === "Partially Delivered" ||
-                            so?.order_status === "Not Fulfilled" ||
-                            so?.isDelivered === 1 ||
-                            inv?.isDelivered === 1 ||
-                            inv?.isDelivered === true;
-
-                        // Build line items for this order in this consolidator
-                        const relevantSodDetails = salesOrderDetails.filter(
-                            (sod) => Number(sod.order_id) === orderId
-                        );
-
-                        const items = relevantSodDetails.map((sod) => {
-                            const prod = productMap.get(Number(sod.product_id));
-                            const prodName = prod?.description || prod?.product_name || `Product #${sod.product_id}`;
-                            const prodCode = prod?.product_code || `SKU-${sod.product_id}`;
-                            const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
-                            const uom = "";
-
-                            const ordered = Number(sod.ordered_quantity || 0);
-
-                            // Check if quantity returned from linked Sales Return
-                            const srReturned = linkedSr
-                                ? returnItemQtyMap.get(`${linkedSr.return_number.toLowerCase()}:${sod.product_id}`) ||
-                                  returnItemQtyMap.get(`${linkedSr.return_number}:${sod.product_id}`) ||
-                                  returnItemQtyMap.get(`${String(linkedSr.return_id)}:${sod.product_id}`) ||
-                                  returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
-                                  returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
-                                  0
-                                : returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
-                                  returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
-                                  0;
-
-                            let received = ordered;
-                            let returned = 0;
-
-                            if (srReturned > 0) {
-                                returned = Math.min(ordered, srReturned);
-                                received = Math.max(0, ordered - returned);
-                            } else if (isCleared) {
-                                received = so?.order_status === "Not Fulfilled" ? 0 : ordered;
-                                returned = so?.order_status === "Not Fulfilled" ? ordered : 0;
-                            } else {
-                                received = ordered;
-                                returned = 0;
-                            }
-
-                            let lineStatus: "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Fulfilled";
-                            if (received === 0 && returned === ordered) {
-                                lineStatus = "Unfulfilled / Returns";
-                            } else if (returned > 0) {
-                                lineStatus = "Fulfilled with Returns";
-                            } else {
-                                lineStatus = "Fulfilled";
-                            }
-
-                            return {
-                                detail_id: Number(sod.detail_id),
-                                product_id: Number(sod.product_id),
-                                product_code: prodCode,
-                                product_name: prodName,
-                                product_description: prodDesc,
-                                uom: uom,
-                                ordered_quantity: ordered,
-                                received_quantity: received,
-                                returned_quantity: returned,
-                                unit_price: Number(sod.unit_price || 0),
-                                has_concern: false,
-                                concern_notes: "",
-                                line_status: lineStatus,
-                            };
+                        const conInvList = conInvMap.get(conId) || [];
+                        const conOrderIdsFromInvoices = conInvList.map((invId) => {
+                            const inv = invoiceMapById.get(invId);
+                            return inv ? Number(inv.order_id) : invId;
                         });
 
-                        const hasAnyReturns = items.some((it) => it.returned_quantity > 0);
-                        const isAllUnfulfilled = items.length > 0 && items.every((it) => it.received_quantity === 0 && it.returned_quantity === it.ordered_quantity);
+                        const distinctOrderIds = [...new Set([...conOrderIdsFromDetails, ...conOrderIdsFromInvoices])];
 
-                        let orderFulfillmentStatus:
-                            | "Pending"
-                            | "Fulfilled"
-                            | "Fulfilled with Returns"
-                            | "Unfulfilled / Returns" = "Pending";
+                        if (distinctOrderIds.length === 0) return null;
 
-                        if (so?.order_status === "Delivered") {
-                            orderFulfillmentStatus = hasAnyReturns ? "Fulfilled with Returns" : "Fulfilled";
-                        } else if (so?.order_status === "Partially Delivered") {
-                            orderFulfillmentStatus = "Fulfilled with Returns";
-                        } else if (so?.order_status === "Not Fulfilled") {
-                            orderFulfillmentStatus = "Unfulfilled / Returns";
-                        } else if (linkedSr || hasAnyReturns) {
-                            if (isAllUnfulfilled) {
-                                orderFulfillmentStatus = "Unfulfilled / Returns";
-                            } else if (hasAnyReturns) {
-                                orderFulfillmentStatus = "Fulfilled with Returns";
-                            } else {
-                                orderFulfillmentStatus = "Fulfilled";
+                        // ─── GATEKEEPING RULE 3: Invoicing Status Check ───────────────────
+                        // A consolidation batch MUST NOT contain any Sales Order that is still pending invoicing ("For Invoicing" or uninvoiced)
+                        let hasUninvoicedOrder = false;
+                        for (const orderId of distinctOrderIds) {
+                            const so = salesOrderMap.get(orderId);
+                            const sidInvId =
+                                orderIdToInvoiceIdMap.get(String(orderId)) ||
+                                (so?.order_id ? orderIdToInvoiceIdMap.get(String(so.order_id)) : null) ||
+                                (so?.order_no ? orderIdToInvoiceIdMap.get(so.order_no.trim().toLowerCase()) : null) ||
+                                null;
+
+                            const inv =
+                                (sidInvId ? invoiceMapById.get(sidInvId) : null) ||
+                                (so?.order_id ? invoiceMapByOrderKey.get(String(so.order_id).toLowerCase()) : null) ||
+                                (so?.order_no ? invoiceMapByOrderKey.get(so.order_no.trim().toLowerCase()) : null) ||
+                                (so?.order_no ? invoiceMapByInvoiceNo.get(so.order_no.trim().toLowerCase()) : null) ||
+                                invoiceMapByOrderKey.get(String(orderId).toLowerCase()) ||
+                                invoiceMapById.get(orderId) ||
+                                null;
+
+                            const isInvoicedStatus =
+                                so &&
+                                so.order_status !== "For Invoicing" &&
+                                so.order_status !== "Draft" &&
+                                so.order_status !== "Pending" &&
+                                so.order_status !== "For Approval" &&
+                                so.order_status !== "For Picking" &&
+                                so.order_status !== "For Production";
+
+                            const hasValidInvoice = inv && inv.invoice_id;
+
+                            if (!isInvoicedStatus && !hasValidInvoice) {
+                                hasUninvoicedOrder = true;
+                                break;
                             }
-                        } else if (isCleared) {
-                            orderFulfillmentStatus = "Fulfilled";
-                        } else {
-                            orderFulfillmentStatus = "Pending";
                         }
 
-                        const custCode = so?.customer_code || inv?.customer_code || "";
-                        const custName = customerCodeMap.get(custCode) || custCode || "Direct Customer";
+                        if (hasUninvoicedOrder) {
+                            return null; // Suppress consolidation batch if any SO is still pending invoicing
+                        }
+
+                        // Build child orders list
+                        const childOrders = distinctOrderIds
+                            .map((orderId) => {
+                                const so = salesOrderMap.get(orderId);
+                                const sidInvId =
+                                    orderIdToInvoiceIdMap.get(String(orderId)) ||
+                                    (so?.order_id ? orderIdToInvoiceIdMap.get(String(so.order_id)) : null) ||
+                                    (so?.order_no ? orderIdToInvoiceIdMap.get(so.order_no.trim().toLowerCase()) : null) ||
+                                    null;
+
+                                const inv =
+                                    (sidInvId ? invoiceMapById.get(sidInvId) : null) ||
+                                    (so?.order_id ? invoiceMapByOrderKey.get(String(so.order_id).toLowerCase()) : null) ||
+                                    (so?.order_no ? invoiceMapByOrderKey.get(so.order_no.trim().toLowerCase()) : null) ||
+                                    (so?.order_no ? invoiceMapByInvoiceNo.get(so.order_no.trim().toLowerCase()) : null) ||
+                                    invoiceMapByOrderKey.get(String(orderId).toLowerCase()) ||
+                                    invoiceMapById.get(orderId) ||
+                                    null;
+
+                                if (!so && !inv) return null;
+
+                                const invoiceNo = inv?.invoice_no || so?.invoice_no || "---";
+                                const invoiceId = inv?.invoice_id || so?.invoice_id || null;
+                                const invoiceDate = inv?.invoice_date || null;
+
+                                const linkedSr =
+                                    (invoiceNo && invoiceNo !== "---" ? salesReturnMap.get(invoiceNo.toLowerCase()) : null) ||
+                                    (so?.order_no ? salesReturnMap.get(so.order_no.toLowerCase()) : null) ||
+                                    salesReturnMap.get(String(orderId)) ||
+                                    (inv?.invoice_id ? salesReturnMap.get(String(inv.invoice_id)) : null) ||
+                                    (inv?.invoice_id ? salesReturnMap.get(`inv_id:${inv.invoice_id}`) : null) ||
+                                    (so?.order_id ? salesReturnMap.get(String(so.order_id)) : null) ||
+                                    null;
+
+                                const isCleared =
+                                    so?.order_status === "Delivered" ||
+                                    so?.order_status === "Partially Delivered" ||
+                                    so?.order_status === "Not Fulfilled" ||
+                                    so?.isDelivered === 1 ||
+                                    inv?.isDelivered === 1 ||
+                                    inv?.isDelivered === true;
+
+                                // Build line items for this order in this consolidator
+                                const relevantSodDetails = salesOrderDetails.filter(
+                                    (sod) => Number(sod.order_id) === orderId
+                                );
+
+                                const items = relevantSodDetails.map((sod) => {
+                                    const prod = productMap.get(Number(sod.product_id));
+                                    const prodName = prod?.description || prod?.product_name || `Product #${sod.product_id}`;
+                                    const prodCode = prod?.product_code || `SKU-${sod.product_id}`;
+                                    const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
+                                    const uom = "";
+
+                                    const ordered = Number(sod.ordered_quantity || 0);
+
+                                    // Check if quantity returned from linked Sales Return
+                                    const srReturned = linkedSr
+                                        ? returnItemQtyMap.get(`${linkedSr.return_number.toLowerCase()}:${sod.product_id}`) ||
+                                          returnItemQtyMap.get(`${linkedSr.return_number}:${sod.product_id}`) ||
+                                          returnItemQtyMap.get(`${String(linkedSr.return_id)}:${sod.product_id}`) ||
+                                          returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
+                                          returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
+                                          0
+                                        : returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
+                                          returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
+                                          0;
+
+                                    let received = ordered;
+                                    let returned = 0;
+
+                                    if (srReturned > 0) {
+                                        returned = Math.min(ordered, srReturned);
+                                        received = Math.max(0, ordered - returned);
+                                    } else if (isCleared) {
+                                        received = so?.order_status === "Not Fulfilled" ? 0 : ordered;
+                                        returned = so?.order_status === "Not Fulfilled" ? ordered : 0;
+                                    } else {
+                                        received = ordered;
+                                        returned = 0;
+                                    }
+
+                                    let lineStatus: "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Fulfilled";
+                                    if (received === 0 && returned === ordered) {
+                                        lineStatus = "Unfulfilled / Returns";
+                                    } else if (returned > 0) {
+                                        lineStatus = "Fulfilled with Returns";
+                                    } else {
+                                        lineStatus = "Fulfilled";
+                                    }
+
+                                    return {
+                                        detail_id: Number(sod.detail_id),
+                                        product_id: Number(sod.product_id),
+                                        product_code: prodCode,
+                                        product_name: prodName,
+                                        product_description: prodDesc,
+                                        uom: uom,
+                                        ordered_quantity: ordered,
+                                        received_quantity: received,
+                                        returned_quantity: returned,
+                                        unit_price: Number(sod.unit_price || 0),
+                                        has_concern: false,
+                                        concern_notes: "",
+                                        line_status: lineStatus,
+                                    };
+                                });
+
+                                const hasAnyReturns = items.some((it) => it.returned_quantity > 0) || Boolean(linkedSr);
+                                const hasAnyConcerns = items.some((it) => it.has_concern || (it.concern_notes && it.concern_notes.trim().length > 0));
+                                const isAllUnfulfilled = items.length > 0 && items.every((it) => it.received_quantity === 0 && it.returned_quantity === it.ordered_quantity);
+
+                                let orderFulfillmentStatus:
+                                    | "Pending"
+                                    | "Fulfilled"
+                                    | "Fulfilled with Concerns"
+                                    | "Fulfilled with Returns"
+                                    | "Unfulfilled / Returns" = "Pending";
+
+                                if (isAllUnfulfilled || so?.order_status === "Not Fulfilled") {
+                                    orderFulfillmentStatus = "Unfulfilled / Returns";
+                                } else if (hasAnyReturns || linkedSr || so?.order_status === "Partially Delivered") {
+                                    orderFulfillmentStatus = "Fulfilled with Returns";
+                                } else if (so?.order_status === "Delivered" || isCleared) {
+                                    orderFulfillmentStatus = hasAnyConcerns ? "Fulfilled with Concerns" : "Fulfilled";
+                                } else {
+                                    orderFulfillmentStatus = "Pending";
+                                }
+
+                                const custCode = so?.customer_code || inv?.customer_code || "";
+                                const custName = customerCodeMap.get(custCode) || custCode || "Direct Customer";
+
+                                const rawSm = so?.salesman_id || inv?.salesman_id;
+                                const salesmanId =
+                                    typeof rawSm === "object" && rawSm !== null
+                                        ? Number((rawSm as Record<string, unknown>).id || (rawSm as Record<string, unknown>).salesman_id)
+                                        : Number(rawSm) || null;
+                                const salesmanObj = salesmanId ? salesmanMap.get(salesmanId) : null;
+                                const salesmanCode =
+                                    salesmanObj?.salesman_code ||
+                                    (typeof so?.salesman_code === "string" ? so.salesman_code : null) ||
+                                    (typeof inv?.salesman_code === "string" ? inv.salesman_code : null) ||
+                                    null;
+                                const salesmanName =
+                                    salesmanObj?.salesman_name ||
+                                    (typeof so?.salesman_name === "string" ? so.salesman_name : null) ||
+                                    (typeof inv?.salesman_name === "string" ? inv.salesman_name : null) ||
+                                    null;
+
+                                return {
+                                    order_id: orderId,
+                                    order_no: so?.order_no || `SO-${orderId}`,
+                                    order_status: so?.order_status || con.status || "Dispatched",
+                                    invoice_id: invoiceId,
+                                    invoice_no: invoiceNo,
+                                    invoice_date: invoiceDate,
+                                    customer_code: custCode,
+                                    customer_name: custName,
+                                    salesman_id: salesmanId,
+                                    salesman_code: salesmanCode,
+                                    salesman_name: salesmanName,
+                                    amount: Number(so?.net_amount || so?.total_amount || inv?.net_amount || inv?.total_amount || 0),
+                                    remarks: so?.remarks || inv?.remarks || "",
+                                    fulfillment_status: orderFulfillmentStatus,
+                                    is_cleared: isCleared,
+                                    linked_sales_return: linkedSr,
+                                    items,
+                                };
+                            })
+                            .filter((o): o is NonNullable<typeof o> => o !== null);
+
+                        if (childOrders.length === 0) return null;
+
+                        console.log("[fulfilment-and-deliveries API] 📦 Manifest Child Orders Resolved:", {
+                            consolidator_id: conId,
+                            consolidator_no: con.consolidator_no,
+                            childOrders: childOrders.map((co) => ({
+                                order_id: co.order_id,
+                                order_no: co.order_no,
+                                invoice_id: co.invoice_id,
+                                invoice_no: co.invoice_no,
+                                invoice_date: co.invoice_date,
+                                customer_name: co.customer_name,
+                                salesman_name: co.salesman_name,
+                                salesman_code: co.salesman_code,
+                                fulfillment_status: co.fulfillment_status,
+                            })),
+                        });
+
+                        // ─── GATEKEEPING RULE 4: Quantity Variance Check ─────────────────
+                        // Sum total picked quantity in consolidator_details vs total invoiced allocation across member Sales Orders
+                        const conDetailsForThisCon = consolidatorDetails.filter(
+                            (cd) => Number(cd.consolidator_id) === conId
+                        );
+
+                        const totalPickedQty = conDetailsForThisCon.reduce((sum, cd) => {
+                            const picked = Number(cd.picked_quantity || 0);
+                            const applied = Number(cd.applied_quantity || 0);
+                            const ordered = Number(cd.ordered_quantity || 0);
+                            return sum + (picked > 0 ? picked : applied > 0 ? applied : ordered);
+                        }, 0);
+
+                        const totalInvoicedAllocationQty = childOrders.reduce(
+                            (sum, o) => sum + o.items.reduce((itemSum, item) => itemSum + item.ordered_quantity, 0),
+                            0
+                        );
+
+                        // If picked quantity in consolidator does not match invoiced allocation (unassigned variance), suppress batch
+                        if (totalPickedQty > 0 && totalInvoicedAllocationQty > 0 && totalPickedQty !== totalInvoicedAllocationQty) {
+                            return null;
+                        }
+
+                        // Calculate consolidator level aggregations
+                        const totalOrdersCount = childOrders.length;
+                        const totalItemsCount = childOrders.reduce((sum, o) => sum + o.items.length, 0);
+                        const totalAmount = childOrders.reduce((sum, o) => sum + o.amount, 0);
+
+                        const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
+                        const hasAnyReturns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Returns" || Boolean(o.linked_sales_return));
+                        const hasAnyConcerns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Concerns");
+                        const isAllUnfulfilled = childOrders.length > 0 && childOrders.every((o) => o.fulfillment_status === "Unfulfilled / Returns");
+
+                        let conFulfillmentStatus: "Pending" | "Fulfilled" | "Fulfilled with Concerns" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Pending";
+                        if (isAllUnfulfilled) {
+                            conFulfillmentStatus = "Unfulfilled / Returns";
+                        } else if (hasAnyReturns) {
+                            conFulfillmentStatus = "Fulfilled with Returns";
+                        } else if (con.status === "Delivered" || isAllDelivered) {
+                            if (hasAnyConcerns) {
+                                conFulfillmentStatus = "Fulfilled with Concerns";
+                            } else {
+                                conFulfillmentStatus = "Fulfilled";
+                            }
+                        } else {
+                            conFulfillmentStatus = "Pending";
+                        }
 
                         return {
-                            order_id: orderId,
-                            order_no: so?.order_no || `SO-${orderId}`,
-                            order_status: so?.order_status || con.status || "Dispatched",
-                            invoice_id: invoiceId,
-                            invoice_no: invoiceNo,
-                            invoice_date: inv?.invoice_date || so?.order_date || so?.created_date || con.created_at,
-                            customer_code: custCode,
-                            customer_name: custName,
-                            amount: Number(so?.net_amount || so?.total_amount || inv?.net_amount || inv?.total_amount || 0),
-                            remarks: so?.remarks || inv?.remarks || "",
-                            fulfillment_status: orderFulfillmentStatus,
-                            is_cleared: isCleared,
-                            linked_sales_return: linkedSr,
-                            items,
+                            consolidator_id: conId,
+                            consolidator_no: con.consolidator_no || `CON-${conId}`,
+                            status: con.status || "Dispatched",
+                            branch_id: branchId,
+                            branch_name: branchName,
+                            dispatch_date: con.created_at || new Date().toISOString(),
+                            total_orders: totalOrdersCount,
+                            total_items: totalItemsCount,
+                            total_amount: totalAmount,
+                            fulfillment_status: conFulfillmentStatus,
+                            is_cleared: con.status === "Delivered" || isAllDelivered,
+                            orders: childOrders,
                         };
                     })
-                    .filter((o): o is NonNullable<typeof o> => o !== null);
-
-                // Calculate consolidator level aggregations
-                const totalOrdersCount = childOrders.length;
-                const totalItemsCount = childOrders.reduce((sum, o) => sum + o.items.length, 0);
-                const totalAmount = childOrders.reduce((sum, o) => sum + o.amount, 0);
-
-                const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
-                const hasAnyReturns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Returns");
-                const isAllUnfulfilled = childOrders.length > 0 && childOrders.every((o) => o.fulfillment_status === "Unfulfilled / Returns");
-
-                let conFulfillmentStatus: "Pending" | "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Pending";
-                if (con.status === "Delivered" || isAllDelivered) {
-                    if (isAllUnfulfilled) {
-                        conFulfillmentStatus = "Unfulfilled / Returns";
-                    } else if (hasAnyReturns) {
-                        conFulfillmentStatus = "Fulfilled with Returns";
-                    } else {
-                        conFulfillmentStatus = "Fulfilled";
-                    }
-                } else {
-                    conFulfillmentStatus = "Pending";
-                }
-
-                return {
-                    consolidator_id: conId,
-                    consolidator_no: con.consolidator_no || `CON-${conId}`,
-                    status: con.status || "Dispatched",
-                    branch_id: branchId,
-                    branch_name: branchName,
-                    dispatch_date: con.created_at || new Date().toISOString(),
-                    total_orders: totalOrdersCount,
-                    total_items: totalItemsCount,
-                    total_amount: totalAmount,
-                    fulfillment_status: conFulfillmentStatus,
-                    is_cleared: con.status === "Delivered" || isAllDelivered,
-                    orders: childOrders,
-                };
-            })
-            .filter((r) => r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Audited");
+                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Audited"));
 
         // 12. Compute Overall Metrics across entire consolidations dataset
         const totalDispatched = records.length;
@@ -723,6 +1128,7 @@ export async function GET(req: NextRequest) {
         const fulfilledCount = records.filter((r) => r.fulfillment_status === "Fulfilled").length;
         const concernsAndReturnsCount = records.filter(
             (r) =>
+                r.fulfillment_status === "Fulfilled with Concerns" ||
                 r.fulfillment_status === "Fulfilled with Returns" ||
                 r.fulfillment_status === "Unfulfilled / Returns"
         ).length;
@@ -744,6 +1150,7 @@ export async function GET(req: NextRequest) {
                 statusFilter === "All" ||
                 (statusFilter === "Pending" && r.fulfillment_status === "Pending") ||
                 (statusFilter === "Fulfilled" && r.fulfillment_status === "Fulfilled") ||
+                (statusFilter === "Fulfilled with Concerns" && r.fulfillment_status === "Fulfilled with Concerns") ||
                 (statusFilter === "Fulfilled with Returns" && r.fulfillment_status === "Fulfilled with Returns") ||
                 (statusFilter === "Unfulfilled / Returns" && r.fulfillment_status === "Unfulfilled / Returns") ||
                 (statusFilter === "Unfulfilled" && r.fulfillment_status === "Unfulfilled / Returns");
@@ -782,7 +1189,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { consolidator_id, clearance_remarks, orders } = body;
+        const { consolidator_id, orders, is_draft } = body;
 
         if (!consolidator_id || !Array.isArray(orders) || orders.length === 0) {
             return NextResponse.json(
@@ -794,12 +1201,125 @@ export async function POST(req: NextRequest) {
         const userId = await getUserIdFromToken();
         const phNow = getPhTimestamp();
 
+        // ─── DRAFT PATHWAY (Save Progress) ──────────────────────────────────────────
+        if (is_draft) {
+            for (const orderData of orders) {
+                const { order_id, invoice_id, clearance_remarks: orderRemarks } = orderData;
+                const targetOrderId = Number(order_id || invoice_id);
+
+                if (targetOrderId && typeof orderRemarks === "string") {
+                    await fetch(`${DIRECTUS_URL}/items/sales_order/${targetOrderId}`, {
+                        method: "PATCH",
+                        headers: directusHeaders,
+                        body: JSON.stringify({
+                            remarks: orderRemarks.trim(),
+                            modified_by: userId,
+                            modified_date: phNow,
+                        }),
+                    }).catch((err) => console.warn(`[POST Draft] Failed to update sales_order #${targetOrderId}:`, err));
+                }
+
+                if (invoice_id && typeof orderRemarks === "string") {
+                    await fetch(`${DIRECTUS_URL}/items/sales_invoice/${invoice_id}`, {
+                        method: "PATCH",
+                        headers: directusHeaders,
+                        body: JSON.stringify({
+                            remarks: orderRemarks.trim(),
+                            modified_by: userId,
+                            modified_date: phNow,
+                        }),
+                    }).catch((err) => console.warn(`[POST Draft] Failed to update sales_invoice #${invoice_id}:`, err));
+                }
+
+                // If explicit linked_return_id is passed in draft, link sales_return
+                if (orderData.linked_return_id) {
+                    await fetch(`${DIRECTUS_URL}/items/sales_return/${orderData.linked_return_id}`, {
+                        method: "PATCH",
+                        headers: directusHeaders,
+                        body: JSON.stringify({
+                            order_id: targetOrderId,
+                            modified_by: userId,
+                            modified_date: phNow,
+                        }),
+                    }).catch((err) => console.warn(`[POST Draft] Failed to link sales_return #${orderData.linked_return_id}:`, err));
+
+                    if (invoice_id) {
+                        try {
+                            const checkJunc = await fetch(
+                                `${DIRECTUS_URL}/items/sales_invoice_sales_return?filter[invoice_no][_eq]=${invoice_id}&filter[return_no][_eq]=${orderData.linked_return_id}&limit=1`,
+                                { headers: directusHeaders, cache: "no-store" }
+                            );
+                            if (checkJunc.ok) {
+                                const jData = (await checkJunc.json()).data;
+                                if (!jData || jData.length === 0) {
+                                    await fetch(`${DIRECTUS_URL}/items/sales_invoice_sales_return`, {
+                                        method: "POST",
+                                        headers: directusHeaders,
+                                        body: JSON.stringify({
+                                            invoice_no: invoice_id,
+                                            return_no: orderData.linked_return_id,
+                                        }),
+                                    }).catch(() => null);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("[POST Draft] Junction link error:", e);
+                        }
+                    }
+                }
+            }
+
+            return NextResponse.json({
+                success: true,
+                is_draft: true,
+                message: "Draft progress saved successfully. You can return to complete the clearance later.",
+            });
+        }
+
+        // ─── FINAL COMMIT PATHWAY (Confirm Clearance & Post) ───────────────────────
         // Process each order in the consolidation
         for (const orderData of orders) {
-            const { order_id, invoice_id, items, clearance_remarks: orderRemarks } = orderData;
+            const { order_id, invoice_id, items, clearance_remarks: orderRemarks, linked_return_id } = orderData;
             if (!items || !Array.isArray(items)) continue;
 
             const targetOrderId = Number(order_id || invoice_id);
+
+            // If explicit linked_return_id is passed, link sales_return
+            if (linked_return_id) {
+                await fetch(`${DIRECTUS_URL}/items/sales_return/${linked_return_id}`, {
+                    method: "PATCH",
+                    headers: directusHeaders,
+                    body: JSON.stringify({
+                        order_id: targetOrderId,
+                        modified_by: userId,
+                        modified_date: phNow,
+                    }),
+                }).catch((err) => console.warn(`[POST] Failed to link sales_return #${linked_return_id}:`, err));
+
+                if (invoice_id) {
+                    try {
+                        const checkJunc = await fetch(
+                            `${DIRECTUS_URL}/items/sales_invoice_sales_return?filter[invoice_no][_eq]=${invoice_id}&filter[return_no][_eq]=${linked_return_id}&limit=1`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        );
+                        if (checkJunc.ok) {
+                            const jData = (await checkJunc.json()).data;
+                            if (!jData || jData.length === 0) {
+                                await fetch(`${DIRECTUS_URL}/items/sales_invoice_sales_return`, {
+                                    method: "POST",
+                                    headers: directusHeaders,
+                                    body: JSON.stringify({
+                                        invoice_no: invoice_id,
+                                        return_no: linked_return_id,
+                                    }),
+                                }).catch(() => null);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("[POST] Junction link error:", e);
+                    }
+                }
+            }
 
             // Fetch DB details from sales_order_details
             let dbDetails: DirectusSalesOrderDetail[] = [];
@@ -850,7 +1370,11 @@ export async function POST(req: NextRequest) {
             }
 
             // Derive order status
-            let derivedStatus: "Unfulfilled / Returns" | "Fulfilled with Returns" | "Fulfilled";
+            const hasOrderConcerns = items.some(
+                (it) => it.has_concern || (it.concern_notes && String(it.concern_notes).trim().length > 0)
+            );
+
+            let derivedStatus: "Unfulfilled / Returns" | "Fulfilled with Returns" | "Fulfilled with Concerns" | "Fulfilled";
             let targetSoStatus: "Delivered" | "Partially Delivered" | "Not Fulfilled";
 
             if (totalReceived === 0 && totalReturned === totalOrdered) {
@@ -859,47 +1383,99 @@ export async function POST(req: NextRequest) {
             } else if (totalReceived > 0 && totalReturned > 0) {
                 derivedStatus = "Fulfilled with Returns";
                 targetSoStatus = "Partially Delivered";
-            } else if (totalReceived === totalOrdered && totalReturned === 0) {
-                derivedStatus = "Fulfilled";
+            } else if (totalReceived === totalOrdered && totalReturned === 0 && hasOrderConcerns) {
+                derivedStatus = "Fulfilled with Concerns";
                 targetSoStatus = "Delivered";
             } else {
                 derivedStatus = "Fulfilled";
                 targetSoStatus = "Delivered";
             }
 
-            // Verification Guard: Check for linked Sales Return if status is 'Fulfilled with Returns' or 'Unfulfilled / Returns'
-            if (derivedStatus === "Fulfilled with Returns" || derivedStatus === "Unfulfilled / Returns") {
+            // Verification Guard: Check for linked Sales Return if status is 'Fulfilled with Returns'
+            // Unfulfilled / Returns (failed delivery / undelivered return to hub) does NOT require a Sales Return
+            if (derivedStatus === "Fulfilled with Returns") {
                 let invoiceNo = "";
+                let orderNo = "";
                 if (invoice_id) {
                     const invRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_invoice/${invoice_id}?fields=invoice_no`,
+                        `${DIRECTUS_URL}/items/sales_invoice/${invoice_id}?fields=invoice_no,order_id`,
                         { headers: directusHeaders, cache: "no-store" }
                     );
                     if (invRes.ok) {
                         const invData = (await invRes.json()).data;
                         invoiceNo = invData?.invoice_no ? String(invData.invoice_no).trim() : "";
+                        orderNo = invData?.order_id ? String(invData.order_id).trim() : "";
+                    }
+                }
+                if (!orderNo && targetOrderId) {
+                    const soRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order/${targetOrderId}?fields=order_no`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (soRes.ok) {
+                        const soData = (await soRes.json()).data;
+                        orderNo = soData?.order_no ? String(soData.order_no).trim() : "";
                     }
                 }
 
                 let hasLinkedReturn = false;
 
+                // 1. Check by invoice_no
                 if (invoiceNo) {
                     try {
                         const checkReturnRes = await fetch(
-                            `${DIRECTUS_URL}/items/sales_return?filter[invoice_no][_eq]=${encodeURIComponent(invoiceNo)}&limit=1&fields=return_id,return_number,status`,
+                            `${DIRECTUS_URL}/items/sales_return?filter[invoice_no][_eq]=${encodeURIComponent(invoiceNo)}&limit=1&fields=return_id,return_number,status,isReceived`,
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (checkReturnRes.ok) {
                             const returnData = (await checkReturnRes.json()).data;
                             if (returnData && returnData.length > 0) {
-                                hasLinkedReturn = true;
+                                const srObj = returnData[0];
+                                const isReceived =
+                                    srObj.status === "Received" ||
+                                    srObj.status === "Approved" ||
+                                    srObj.isReceived === 1 ||
+                                    srObj.isReceived === true ||
+                                    srObj.isReceived === "1";
+                                if (isReceived) {
+                                    hasLinkedReturn = true;
+                                }
                             }
                         }
                     } catch (e) {
-                        console.warn("[fulfilment-and-deliveries POST] Error checking sales_return:", e);
+                        console.warn("[fulfilment-and-deliveries POST] Error checking sales_return by invoice_no:", e);
                     }
                 }
 
+                // 2. Check by order_id or order_no
+                if (!hasLinkedReturn && (orderNo || targetOrderId)) {
+                    try {
+                        const candidateOrderFilter = orderNo || String(targetOrderId);
+                        const checkReturnRes = await fetch(
+                            `${DIRECTUS_URL}/items/sales_return?filter[order_id][_eq]=${encodeURIComponent(candidateOrderFilter)}&limit=1&fields=return_id,return_number,status,isReceived`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        );
+                        if (checkReturnRes.ok) {
+                            const returnData = (await checkReturnRes.json()).data;
+                            if (returnData && returnData.length > 0) {
+                                const srObj = returnData[0];
+                                const isReceived =
+                                    srObj.status === "Received" ||
+                                    srObj.status === "Approved" ||
+                                    srObj.isReceived === 1 ||
+                                    srObj.isReceived === true ||
+                                    srObj.isReceived === "1";
+                                if (isReceived) {
+                                    hasLinkedReturn = true;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("[fulfilment-and-deliveries POST] Error checking sales_return by order_id:", e);
+                    }
+                }
+
+                // 3. Check junction sales_invoice_sales_return
                 if (!hasLinkedReturn && invoice_id) {
                     try {
                         const checkJunctionRes = await fetch(
@@ -920,9 +1496,9 @@ export async function POST(req: NextRequest) {
                 if (!hasLinkedReturn) {
                     return NextResponse.json(
                         {
-                            message: `Delivery clearance for "${derivedStatus}" requires a registered Sales Return for invoice/order "${invoiceNo || targetOrderId}". Please create the Sales Return before confirming clearance.`,
+                            message: `Delivery clearance for "${derivedStatus}" requires a registered and received Sales Return for invoice/order "${invoiceNo || orderNo || targetOrderId}". Please ensure the Sales Return is received before confirming clearance.`,
                             requiresSalesReturn: true,
-                            invoice_no: invoiceNo,
+                            invoice_no: invoiceNo || orderNo,
                         },
                         { status: 422 }
                     );
@@ -947,8 +1523,8 @@ export async function POST(req: NextRequest) {
                 } else if (isOrderUnfulfilled) {
                     soPayload.not_fulfilled_at = phNow;
                 }
-                if (orderRemarks || clearance_remarks) {
-                    soPayload.remarks = (orderRemarks || clearance_remarks).trim();
+                if (typeof orderRemarks === "string") {
+                    soPayload.remarks = orderRemarks.trim();
                 }
 
                 await fetch(`${DIRECTUS_URL}/items/sales_order/${targetOrderId}`, {
@@ -960,19 +1536,30 @@ export async function POST(req: NextRequest) {
 
             // Update sales invoice if present
             if (invoice_id) {
-                const combinedRemarks = orderRemarks || clearance_remarks || "";
+                const invoicePayload: Record<string, unknown> = {
+                    isDelivered: isOrderDelivered ? 1 : 0,
+                    isDispatched: isOrderUnfulfilled ? 0 : 1,
+                    posted_by: userId,
+                    posted_date: phNow,
+                    modified_by: userId,
+                    modified_date: phNow,
+                    delivered_at: isOrderDelivered ? phNow : null,
+                };
+
+                if (typeof orderRemarks === "string") {
+                    invoicePayload.remarks = orderRemarks.trim();
+                }
+
+                if (isOrderUnfulfilled) {
+                    invoicePayload.transaction_status = "Not Delivered";
+                } else if (derivedStatus === "Fulfilled with Returns") {
+                    invoicePayload.transaction_status = "Completed with Returns";
+                }
+
                 await fetch(`${DIRECTUS_URL}/items/sales_invoice/${invoice_id}`, {
                     method: "PATCH",
                     headers: directusHeaders,
-                    body: JSON.stringify({
-                        isDelivered: isOrderDelivered ? 1 : 0,
-                        posted_by: userId,
-                        posted_date: phNow,
-                        modified_by: userId,
-                        modified_date: phNow,
-                        delivered_at: isOrderDelivered ? phNow : null,
-                        remarks: combinedRemarks,
-                    }),
+                    body: JSON.stringify(invoicePayload),
                 }).catch((err) => console.warn(`[POST] Failed to update sales_invoice #${invoice_id}:`, err));
             }
 
@@ -984,7 +1571,7 @@ export async function POST(req: NextRequest) {
                         headers: directusHeaders,
                         body: JSON.stringify({
                             sales_invoice_id: Number(invoice_id || targetOrderId),
-                            nte: orderRemarks || clearance_remarks || `Delivery clearance resolved as: ${derivedStatus}`,
+                            nte: typeof orderRemarks === "string" ? orderRemarks.trim() : "",
                             isCleared: 1,
                             checked_by: userId,
                             date_acknowledged: phNow,

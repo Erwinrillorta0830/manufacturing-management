@@ -511,6 +511,17 @@ export default function CreateConsolidationModal({
     ) => {
         const parsed = Math.max(0, Number(val) || 0);
         const key = getManualKey(invoiceId, productId, inventoryLotId, lotId, batchNo);
+        console.log("[ManualAlloc] QTY SET", {
+            invoiceId,
+            productId,
+            inventoryLotId,
+            lotId,
+            batchNo,
+            maxAvail,
+            rawVal: val,
+            parsed,
+            key,
+        });
         setManualAllocations((prev) => ({
             ...prev,
             [key]: parsed,
@@ -856,11 +867,12 @@ export default function CreateConsolidationModal({
             const aggMap = new Map<string, CustomAllocationItem>();
             for (const [key, qty] of Object.entries(manualAllocations)) {
                 if (qty > 0) {
-                    const [, pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                    const [invIdStr, pIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                    const invoiceId = Number(invIdStr || 0);
                     const productId = Number(pIdStr);
                     const inventoryLotId = Number(invLotIdStr || 0);
                     const lotId = Number(lotIdStr || 0);
-                    const batchKey = `${productId}:${inventoryLotId}:${batchNo}:${lotId}`;
+                    const batchKey = `${invoiceId}:${productId}:${inventoryLotId}:${batchNo}:${lotId}`;
                     const existing = aggMap.get(batchKey);
                     if (existing) {
                         existing.quantity += qty;
@@ -872,6 +884,7 @@ export default function CreateConsolidationModal({
                                     (b.batchNo === batchNo && b.lotId === lotId))
                         );
                         aggMap.set(batchKey, {
+                            invoiceId: invoiceId || undefined,
                             productId,
                             inventoryLotId: batch?.inventoryLotId || inventoryLotId,
                             lotId: batch?.lotId || lotId,
@@ -888,12 +901,14 @@ export default function CreateConsolidationModal({
                 for (const line of inv.lines || []) {
                     for (const a of line.allocations || []) {
                         if (a.quantity > 0) {
-                            const batchKey = `${line.productId}:${a.inventoryLotId}:${a.batchNo}:${a.lotId}`;
+                            const batchKey = `${line.detailId}:${line.productId}:${a.inventoryLotId}:${a.batchNo}:${a.lotId}`;
                             const existing = aggMap.get(batchKey);
                             if (existing) {
                                 existing.quantity += a.quantity;
                             } else {
                                 aggMap.set(batchKey, {
+                                    invoiceDetailId: line.detailId,
+                                    invoiceId: inv.invoiceId,
                                     productId: line.productId,
                                     inventoryLotId: a.inventoryLotId,
                                     lotId: a.lotId,
@@ -929,11 +944,20 @@ export default function CreateConsolidationModal({
         }
 
         setSubmitting(true);
-        await onSubmit({
+
+        const submitPayload = {
             branchId: branch.id,
             invoiceIds: Array.from(selectedIds),
             customAllocations,
-        });
+        };
+
+        console.log("[CreateConsolidation] SUBMIT CLICKED");
+        console.log("[CreateConsolidation] allocationMode:", allocationMode);
+        console.log("[CreateConsolidation] manualAllocations state:", JSON.parse(JSON.stringify(manualAllocations)));
+        console.log("[CreateConsolidation] customAllocations built:", JSON.stringify(customAllocations, null, 2));
+        console.log("[CreateConsolidation] FULL PAYLOAD to POST:", JSON.stringify(submitPayload, null, 2));
+
+        await onSubmit(submitPayload);
         setSubmitting(false);
     };
 
@@ -2114,7 +2138,7 @@ export default function CreateConsolidationModal({
                                                                                                             <th className="p-2.5">Batch No</th>
                                                                                                             <th className="p-2.5">Expiry Date</th>
                                                                                                             <th className="p-2.5">Condition</th>
-                                                                                                            <th className="p-2.5 text-right">Available</th>
+                                                                                                        
                                                                                                             <th className="p-2.5 text-right w-44">Allocate Quantity</th>
                                                                                                         </tr>
                                                                                                     </thead>
@@ -2193,11 +2217,6 @@ export default function CreateConsolidationModal({
                                                                                                                     <td className="p-2.5">
                                                                                                                         <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase">
                                                                                                                             {b.inventoryCondition}
-                                                                                                                        </span>
-                                                                                                                    </td>
-                                                                                                                    <td className="p-2.5 text-right font-black">
-                                                                                                                        <span className={b.availableQuantity < 0 ? "text-rose-600 dark:text-rose-400 font-mono font-black" : b.availableQuantity === 0 ? "text-muted-foreground font-mono" : "text-foreground font-mono font-black"}>
-                                                                                                                            {b.availableQuantity}
                                                                                                                         </span>
                                                                                                                     </td>
                                                                                                                     <td className="p-2.5 text-right">
@@ -2429,13 +2448,34 @@ export default function CreateConsolidationModal({
                                         <tbody className="divide-y divide-border/40">
                                             {aggregatedProducts.map((p, pIdx) => {
                                                 let productAllocatedQty = 0;
-                                                const assignedBatches: Array<{ batchNo: string; lotName: string; quantity: number }> = [];
+                                                const assignedByOrderMap = new Map<number, {
+                                                    invoiceId: number;
+                                                    orderNo: string;
+                                                    customerName: string;
+                                                    batches: Array<{ batchNo: string; lotName: string; quantity: number }>;
+                                                }>();
+
+                                                const getOrCreateOrderEntry = (invId: number) => {
+                                                    let entry = assignedByOrderMap.get(invId);
+                                                    if (!entry) {
+                                                        const candidate = selectedInvoices.find((c) => c.invoiceId === invId);
+                                                        entry = {
+                                                            invoiceId: invId,
+                                                            orderNo: candidate?.orderNo || candidate?.invoiceNo || (invId ? `#${invId}` : "Unspecified Order"),
+                                                            customerName: candidate?.customerName || "",
+                                                            batches: [],
+                                                        };
+                                                        assignedByOrderMap.set(invId, entry);
+                                                    }
+                                                    return entry;
+                                                };
 
                                                 if (allocationMode === "manual") {
                                                     for (const [key, qty] of Object.entries(manualAllocations)) {
                                                         if (Number(qty) > 0) {
-                                                            const [, prodIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
+                                                            const [invIdStr, prodIdStr, invLotIdStr, batchNo, lotIdStr] = key.split(":");
                                                             if (Number(prodIdStr) === p.productId) {
+                                                                const invId = Number(invIdStr || 0);
                                                                 productAllocatedQty += Number(qty);
                                                                 const invLotId = Number(invLotIdStr || 0);
                                                                 const lotId = Number(lotIdStr || 0);
@@ -2446,13 +2486,14 @@ export default function CreateConsolidationModal({
                                                                             (batch.batchNo === batchNo && batch.lotId === lotId))
                                                                 );
                                                                 if (b) {
-                                                                    const existingAssigned = assignedBatches.find(
+                                                                    const entry = getOrCreateOrderEntry(invId);
+                                                                    const existingAssigned = entry.batches.find(
                                                                         (ab) => ab.batchNo === b.batchNo && ab.lotName === b.lotName
                                                                     );
                                                                     if (existingAssigned) {
                                                                         existingAssigned.quantity += Number(qty);
                                                                     } else {
-                                                                        assignedBatches.push({
+                                                                        entry.batches.push({
                                                                             batchNo: b.batchNo,
                                                                             lotName: b.lotName,
                                                                             quantity: Number(qty),
@@ -2462,11 +2503,37 @@ export default function CreateConsolidationModal({
                                                             }
                                                         }
                                                     }
+                                                } else if (allocationPreview?.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
+                                                    for (const inv of allocationPreview.invoiceBreakdown) {
+                                                        for (const line of inv.lines || []) {
+                                                            if (line.productId === p.productId) {
+                                                                for (const a of line.allocations || []) {
+                                                                    if (a.quantity > 0) {
+                                                                        productAllocatedQty += a.quantity;
+                                                                        const entry = getOrCreateOrderEntry(inv.invoiceId);
+                                                                        const existingAssigned = entry.batches.find(
+                                                                            (ab) => ab.batchNo === a.batchNo && ab.lotName === a.lotName
+                                                                        );
+                                                                        if (existingAssigned) {
+                                                                            existingAssigned.quantity += a.quantity;
+                                                                        } else {
+                                                                            entry.batches.push({
+                                                                                batchNo: a.batchNo,
+                                                                                lotName: a.lotName,
+                                                                                quantity: a.quantity,
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 } else {
                                                     const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === p.productId);
                                                     productAllocatedQty = allocs.reduce((sum, a) => sum + a.quantity, 0);
+                                                    const entry = getOrCreateOrderEntry(0);
                                                     for (const a of allocs) {
-                                                        assignedBatches.push({
+                                                        entry.batches.push({
                                                             batchNo: a.batchNo,
                                                             lotName: a.lotName,
                                                             quantity: a.quantity,
@@ -2474,6 +2541,7 @@ export default function CreateConsolidationModal({
                                                     }
                                                 }
 
+                                                const assignedOrders = Array.from(assignedByOrderMap.values()).filter((o) => o.batches.length > 0);
                                                 const isFullyCovered = productAllocatedQty >= p.totalQuantity;
                                                 const diff = p.totalQuantity - productAllocatedQty;
 
@@ -2508,34 +2576,49 @@ export default function CreateConsolidationModal({
                                                             </span>
                                                         </td>
                                                         <td className="p-3.5">
-                                                            {assignedBatches.length > 0 ? (
-                                                                <div className="flex flex-wrap gap-1.5 max-w-md">
-                                                                    {assignedBatches.map((b, bIdx) => {
-                                                                        const batchInfo = (allocationPreview?.availableBatches || []).find(
-                                                                            (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
-                                                                        );
-                                                                        const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
+                                                            {assignedOrders.length > 0 ? (
+                                                                <div className="flex flex-col gap-2 max-w-lg">
+                                                                    {assignedOrders.map((orderGroup) => (
+                                                                        <div key={`order-group-${p.productId}-${orderGroup.invoiceId}`} className="rounded-lg border border-border/50 bg-muted/20 p-2">
+                                                                            {orderGroup.orderNo !== "Unspecified Order" && (
+                                                                                <div className="flex items-center gap-1.5 mb-1 text-[10px] font-bold text-foreground">
+                                                                                    <FileText className="h-3 w-3 text-primary shrink-0" />
+                                                                                    <span>{orderGroup.orderNo}</span>
+                                                                                    {orderGroup.customerName && (
+                                                                                        <span className="text-[9px] font-normal text-muted-foreground">({orderGroup.customerName})</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="flex flex-wrap gap-1.5">
+                                                                                {orderGroup.batches.map((b, bIdx) => {
+                                                                                    const batchInfo = (allocationPreview?.availableBatches || []).find(
+                                                                                        (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
+                                                                                    );
+                                                                                    const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
 
-                                                                        return (
-                                                                            <span
-                                                                                key={`assigned-batch-${p.productId}-${b.batchNo}-${bIdx}`}
-                                                                                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-medium shadow-xs ${
-                                                                                    isNegative
-                                                                                        ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300"
-                                                                                        : "border-border/70 bg-card"
-                                                                                }`}
-                                                                            >
-                                                                                <span className="font-bold text-foreground">{b.lotName}</span>
-                                                                                <span className="font-mono text-muted-foreground">({b.batchNo})</span>
-                                                                                <span className="font-black text-primary ml-0.5">· {b.quantity} qty</span>
-                                                                                {isNegative && (
-                                                                                    <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1 py-0.2 text-[8px] font-black uppercase">
-                                                                                        <AlertTriangle className="h-2 w-2" /> Negative Balance
-                                                                                    </span>
-                                                                                )}
-                                                                            </span>
-                                                                        );
-                                                                    })}
+                                                                                    return (
+                                                                                        <span
+                                                                                            key={`assigned-batch-${p.productId}-${orderGroup.invoiceId}-${b.batchNo}-${bIdx}`}
+                                                                                            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-medium shadow-xs ${
+                                                                                                isNegative
+                                                                                                    ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300"
+                                                                                                    : "border-border/70 bg-card"
+                                                                                            }`}
+                                                                                        >
+                                                                                            <span className="font-bold text-foreground">{b.lotName}</span>
+                                                                                            <span className="font-mono text-muted-foreground">({b.batchNo})</span>
+                                                                                            <span className="font-black text-primary ml-0.5">· {b.quantity} qty</span>
+                                                                                            {isNegative && (
+                                                                                                <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1 py-0.2 text-[8px] font-black uppercase">
+                                                                                                    <AlertTriangle className="h-2 w-2" /> Negative Balance
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
                                                                 </div>
                                                             ) : (
                                                                 <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>

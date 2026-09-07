@@ -12,7 +12,7 @@ import { DirectusShipment } from "@/modules/manufacturing-management/procurement
 import type { PurchaseOrderListQuery } from "../../purchase-orders/_schemas";
 import { buildPurchaseOrderProductPayload, calculatePurchaseOrderTotals } from "../../purchase-orders/_domain";
 import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-receiving/_receiving-history";
-import { movementLegacyLotId, movementMmLotId } from "../../qa-receiving/_mm-lot-compat";
+import { movementMmLotId } from "../../services/mm-lots.service";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
@@ -379,8 +379,7 @@ function sumMovementAllocations(
         if (!Number.isSafeInteger(movementBranchId) || branchId === null) continue;
         if (mode === "match" && movementBranchId !== branchId) continue;
         if (mode === "exclude" && movementBranchId === branchId) continue;
-        const storageLotId = movementMmLotId(movement as unknown as Record<string, unknown>)
-            || movementLegacyLotId(movement as unknown as Record<string, unknown>);
+        const storageLotId = movementMmLotId(movement as unknown as Record<string, unknown>);
         const quantity = Number(movement.quantity || 0);
         if (storageLotId === null || !Number.isSafeInteger(storageLotId) || storageLotId <= 0 || !Number.isFinite(quantity) || quantity <= 0) continue;
         const batchNumber = String(movement.batch_no || "").trim();

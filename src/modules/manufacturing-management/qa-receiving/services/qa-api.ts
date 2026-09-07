@@ -69,19 +69,54 @@ export async function fetchSupplierDocumentTypes(signal?: AbortSignal): Promise<
     return data as SupplierDocumentType[];
 }
 
-export async function fetchStorageLots(productId: number, branchId: number, signal?: AbortSignal): Promise<StorageLot[]> {
-    const res = await fetch(`/api/manufacturing/qa-receiving?action=lots&productId=${encodeURIComponent(productId)}&branchId=${encodeURIComponent(branchId)}`, { signal });
-    if (!res.ok) throw new Error("Failed to load storage lots");
-    return res.json();
+export function configuredBadStockBranchId(branch: Branch | undefined | null): number {
+    const raw = branch?.bad_stock_branch_id;
+    if (raw && typeof raw === "object") {
+        const id = Number((raw as Branch).id);
+        return Number.isSafeInteger(id) && id > 0 ? id : 0;
+    }
+    const id = Number(raw || 0);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-export async function fetchStorageLotBatches(productId: number, branchId: number, lotId: number, signal?: AbortSignal): Promise<StorageLotBatch[]> {
+export async function fetchStorageLots(
+    productId: number,
+    branchId: number,
+    signal?: AbortSignal,
+    disposition: "accepted" | "rejected" = "accepted"
+): Promise<StorageLot[]> {
+    const params = new URLSearchParams({
+        action: "lots",
+        productId: String(productId),
+        branchId: String(branchId)
+    });
+    if (disposition === "rejected") params.set("disposition", "rejected");
+    const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+        const message = body && typeof body === "object" && "error" in body
+            ? String((body as Record<string, unknown>).error || "")
+            : "";
+        throw new Error(message || "Failed to load storage lots");
+    }
+    if (!Array.isArray(body)) throw new Error("Storage lots lookup returned an invalid response");
+    return body as StorageLot[];
+}
+
+export async function fetchStorageLotBatches(
+    productId: number,
+    branchId: number,
+    lotId: number,
+    signal?: AbortSignal,
+    disposition: "accepted" | "rejected" = "accepted"
+): Promise<StorageLotBatch[]> {
     const params = new URLSearchParams({
         action: "batches",
         productId: String(productId),
         branchId: String(branchId),
         lotId: String(lotId)
     });
+    if (disposition === "rejected") params.set("disposition", "rejected");
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || "Failed to load storage-lot batches");

@@ -5,20 +5,19 @@ import { canonicalBatchNumber } from "../_domain";
 import { handleQaReceivingPost } from "./_receiving-service";
 import { movementStockKey, sumMovementQuantitiesByStorageLot, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import {
-    legacyToMmLotMap,
-    loadMmLotMappings,
     loadMmLots,
-    loadMovementRowsForLotRefs,
-    MmLotCompatibilityError,
+    loadMovementRowsForMmLots,
+    MmLotError,
     unitId,
     type MmLotRecord
-} from "../../qa-receiving/_mm-lot-compat";
+} from "../../services/mm-lots.service";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
     PurchaseOrderAuthorizationError,
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
+import { evaluateStorageLotEligibility } from "../../qa-receiving/_lot-eligibility";
 
 interface DirectusLotLog {
     id: number;
@@ -28,6 +27,7 @@ interface DirectusLotLog {
     source_reference?: string;
     lot_number?: string;
     batch_no?: string;
+    mm_lot_id?: number | { lot_id: number; lot_name?: string } | null;
     lot_id?: number | { lot_id: number; lot_name?: string } | null;
     expiry_date?: string;
     created_on?: string;
@@ -57,6 +57,7 @@ interface AllocationProductContext {
     productId: number;
     productTypeId: number;
     categoryType: PurchaseOrderCategoryType;
+    productFamilyIds: number[];
     uomId: number;
 }
 
@@ -76,7 +77,7 @@ function relationNumber(value: unknown, keys: string[]): number | null {
 
 async function loadAllocationProduct(productId: number): Promise<AllocationProductContext> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id,parent_id`,
         { headers, cache: "no-store" }
     );
     if (!response.ok) throw new Error(`Directus error loading product allocation metadata: ${response.status}`);
@@ -87,7 +88,14 @@ async function loadAllocationProduct(productId: number): Promise<AllocationProdu
     const categoryTypes = await resolveProductCategoryTypes([productId]);
     const categoryType = categoryTypes.get(productId);
     if (!categoryType) throw new Error("The selected product has no valid Product Type classification.");
-    return { productId, productTypeId, categoryType, uomId };
+    const parentId = relationNumber(product?.parent_id, ["product_id", "id"]);
+    return {
+        productId,
+        productTypeId,
+        categoryType,
+        productFamilyIds: [productId, parentId].filter((id): id is number => id !== null),
+        uomId
+    };
 }
 
 function lotNumber(value: unknown): number | null {
@@ -96,16 +104,6 @@ function lotNumber(value: unknown): number | null {
 
 function unitNumber(value: unknown): number | null {
     return relationNumber(value, ["unit_id", "id"]);
-}
-
-function productTypeNumber(value: unknown): number | null {
-    return relationNumber(value, ["inventory_type_id", "product_type_id", "type_id", "id"]);
-}
-
-function finiteCapacity(value: unknown): number | null {
-    if (value === null || value === undefined || value === "") return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function dateOnly(value: unknown): string | null {
@@ -131,10 +129,20 @@ export async function GET(request: Request) {
 
         // Action: Fetch branches
         if (action === "branches") {
-            const res = await fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=100`, { headers, cache: "no-store" });
+            const res = await fetch(
+                `${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id`,
+                { headers, cache: "no-store" }
+            );
             if (!res.ok) throw new Error(`Directus error loading branches: ${res.status}`);
             const json = await res.json();
-            return NextResponse.json(json.data);
+            const branches = (json.data || []).map((branch: Record<string, unknown>) => {
+                const badStockBranchId = relationNumber(branch.bad_stock_branch_id, ["id", "branch_id"]);
+                return {
+                    ...branch,
+                    bad_stock_branch_id: badStockBranchId
+                };
+            });
+            return NextResponse.json(branches);
         }
 
         if (action === "lots" || action === "batches") {
@@ -161,31 +169,23 @@ export async function GET(request: Request) {
                 onlyActive: true
             });
             const lotIds = lots.map(lot => lotNumber(lot.lot_id)).filter((id): id is number => id !== null);
-            const mappings = await loadMmLotMappings(lotIds, parsedBranchId);
-            const mappingByMmLot = new Map(mappings.map(mapping => [mapping.mm_lot_id, mapping]));
-            const movementRows = await loadMovementRowsForLotRefs(
+            const movementRows = await loadMovementRowsForMmLots(
                 lotIds,
-                mappings.map(mapping => mapping.legacy_lot_id),
                 "movement_id,product_id,mm_lot_id,lot_id,batch_no,quantity,manufacturing_date,expiry_date"
             );
-            const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows, legacyToMmLotMap(mappings));
+            const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows);
 
             if (action === "batches") {
                 const lot = lots[0] as MmLotRecord | undefined;
                 if (!lot) return NextResponse.json({ error: "The selected storage lot does not exist." }, { status: 404 });
                 const lotId = lotNumber(lot.lot_id) as number;
-                const mapping = mappingByMmLot.get(lotId);
-                if (!mapping) return NextResponse.json({ error: "The selected storage lot is not mapped to a legacy inbound lot." }, { status: 409 });
-                const capacity = finiteCapacity(lot.max_batch_capacity);
-                const occupied = Math.max(0, occupiedByLot.get(lotId) || 0);
-                const lotUomId = unitId(lot.unit_id);
-                if (lotUomId !== product.uomId || !capacity || capacity - occupied <= 0) {
+                const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
+                if (!eligibility.eligible) {
                     return NextResponse.json({ error: "The selected storage lot is not compatible with this product." }, { status: 409 });
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
                 for (const movement of movementRows.filter(row =>
-                    (relationNumber(row.mm_lot_id, ["lot_id", "id"]) === lotId
-                        || relationNumber(row.lot_id, ["lot_id", "id"]) === mapping.legacy_lot_id)
+                    relationNumber(row.mm_lot_id, ["lot_id", "id"]) === lotId
                     && relationNumber(row.product_id, ["product_id", "id"]) === product.productId
                 )) {
                     const batchNumber = String(movement.batch_no ?? "").trim();
@@ -203,28 +203,27 @@ export async function GET(request: Request) {
             const eligibleLots = lots.flatMap(lot => {
                 const lotId = lotNumber(lot.lot_id);
                 if (!lotId) return [];
-                const capacity = finiteCapacity(lot.max_batch_capacity);
-                const occupiedQuantity = Math.max(0, occupiedByLot.get(lotId) || 0);
-                const remainingCapacity = capacity === null ? null : Math.max(0, capacity - occupiedQuantity);
+                const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
+                if (!eligibility.eligible) return [];
                 const uomId = unitId(lot.unit_id);
-                if (uomId !== product.uomId || remainingCapacity === null || remainingCapacity <= 0) return [];
-                const mapping = mappingByMmLot.get(lotId);
+                const lotProductTypeId = relationNumber(lot.product_type_id, ["product_type_id", "type_id", "id"])
+                    || relationNumber(lot.product_type, ["product_type_id", "type_id", "id"]);
                 return [{
                     ...lot,
                     mm_lot_id: lotId,
-                    legacy_lot_id: mapping?.legacy_lot_id || null,
                     branch_id: parsedBranchId,
                     inventory_type_id: null,
                     unit_id: uomId,
-                    product_type_id: product.productTypeId,
+                    product_type_id: lotProductTypeId || product.productTypeId,
                     product_category_type: product.categoryType,
-                    occupiedQuantity,
-                    availableQuantity: remainingCapacity,
-                    remainingCapacity,
-                    mapping_status: mapping ? "MAPPED" : "UNMAPPED",
-                    is_selectable: Boolean(mapping),
+                    capacity_status: eligibility.capacityStatus,
+                    occupiedQuantity: eligibility.occupiedQuantity,
+                    availableQuantity: eligibility.remainingCapacity,
+                    remainingCapacity: eligibility.remainingCapacity,
+                    mapping_status: "CANONICAL",
+                    is_selectable: true,
                     is_legacy_only: false,
-                    read_only: !mapping
+                    read_only: false
                 }];
             });
             return NextResponse.json(eligibleLots);
@@ -232,7 +231,7 @@ export async function GET(request: Request) {
 
         const getMovementsAndResolveMetadata = async (filterKey: "product_id" | "branch_id", filterVal: number) => {
             const movementRes = await fetch(
-                `${DIRECTUS_URL}/items/inventory_movements?filter[${filterKey}][_eq]=${filterVal}&fields=*,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`,
+                `${DIRECTUS_URL}/items/inventory_movements?filter[${filterKey}][_eq]=${filterVal}&fields=*,mm_lot_id.lot_id,mm_lot_id.lot_name,lot_id.lot_id,lot_id.lot_name,version_id.version_id,transaction_type_id.type_name&limit=-1`,
                 { headers, cache: "no-store" }
             );
             if (!movementRes.ok) throw new Error(`Directus error loading movement stock: ${movementRes.status}`);
@@ -271,7 +270,8 @@ export async function GET(request: Request) {
                 if (totalQty <= 0) continue;
 
                 const firstM = list.find((m: any) => Number(m.quantity) > 0) || list[0];
-                const lotIdObj = firstM.lot_id;
+                const mmLotIdObj = firstM.mm_lot_id;
+                const historicalLotIdObj = firstM.lot_id;
                 const productId = Number(firstM.product_id);
                 const batchNo = String(firstM.batch_no || "LOT-N/A").trim() || "LOT-N/A";
 
@@ -296,7 +296,11 @@ export async function GET(request: Request) {
                     branch_id: Number(firstM.branch_id),
                     lot_number: batchNo,
                     batch_no: batchNo,
-                    lot_id: lotIdObj,
+                    mm_lot_id: mmLotIdObj || null,
+                    lot_id: mmLotIdObj || historicalLotIdObj || null,
+                    lot_name: typeof mmLotIdObj === "object"
+                        ? mmLotIdObj?.lot_name || null
+                        : null,
                     expiry_date: expiryDate,
                     created_on: firstM.created_at,
                     qa_status: qaStatus,
@@ -377,9 +381,14 @@ export async function GET(request: Request) {
                     quantity_received: Number(r.quantity || 0),
                     batch_no: canonicalBatchNumber(r.batch_no, r.lot_number),
                     lot_number: canonicalBatchNumber(r.batch_no, r.lot_number) || "LOT-N/A",
-                    lot_id: typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null,
-                    lot_name: typeof r.lot_id === "object" ? r.lot_id?.lot_name || null : null,
-                    storage_assignment_state: r.lot_id ? "assigned" : "legacy_unassigned",
+                    mm_lot_id: typeof r.mm_lot_id === "object" ? r.mm_lot_id?.lot_id : r.mm_lot_id || null,
+                    lot_id: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_id
+                        : r.mm_lot_id || (typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null),
+                    lot_name: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_name || null
+                        : null,
+                    storage_assignment_state: r.mm_lot_id ? "assigned" : "legacy_unassigned",
                     expiration_date: r.expiry_date,
                     branch_id: branchMap[Number(r.branch_id)] || { branch_name: `Branch ID ${r.branch_id}`, branch_code: `BR-${r.branch_id}` },
                     rejection_reason: "",
@@ -448,9 +457,14 @@ export async function GET(request: Request) {
                     quantity_received: Number(r.quantity || 0),
                     batch_no: canonicalBatchNumber(r.batch_no, r.lot_number),
                     lot_number: canonicalBatchNumber(r.batch_no, r.lot_number) || "LOT-N/A",
-                    lot_id: typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null,
-                    lot_name: typeof r.lot_id === "object" ? r.lot_id?.lot_name || null : null,
-                    storage_assignment_state: r.lot_id ? "assigned" : "legacy_unassigned",
+                    mm_lot_id: typeof r.mm_lot_id === "object" ? r.mm_lot_id?.lot_id : r.mm_lot_id || null,
+                    lot_id: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_id
+                        : r.mm_lot_id || (typeof r.lot_id === "object" ? r.lot_id?.lot_id : r.lot_id || null),
+                    lot_name: typeof r.mm_lot_id === "object"
+                        ? r.mm_lot_id?.lot_name || null
+                        : null,
+                    storage_assignment_state: r.mm_lot_id ? "assigned" : "legacy_unassigned",
                     expiration_date: r.expiry_date,
                     branch_id: r.branch_id,
                     rejection_reason: "",
@@ -470,7 +484,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: (e as { message?: string }).message || "Internal server error" }, {
         status: e instanceof PurchaseOrderAuthorizationError || e instanceof ProductCategoryTypeValidationError
             ? e.status
-            : e instanceof MmLotCompatibilityError
+            : e instanceof MmLotError
                 ? e.status
                 : 500
         });

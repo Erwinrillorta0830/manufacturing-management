@@ -1,12 +1,10 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
 import {
-    legacyLotId as compatLegacyLotId,
     loadMmLots,
-    loadMovementRowsForLotRefs,
-    mmLotId as compatMmLotId,
-    movementLegacyLotId,
+    loadMovementRowsForMmLots,
+    mmLotId,
     movementMmLotId
-} from "./_mm-lot-compat";
+} from "../services/mm-lots.service";
 
 export type QuarantineDispositionType = "VENDOR_RETURN" | "REPLACEMENT";
 export type QuarantineDispositionStatus =
@@ -163,9 +161,9 @@ function mapDisposition(row: Record<string, unknown>): QuarantineDisposition {
         productId: relationId(row.product_id, "product_id"),
         supplierId: relationId(row.supplier_id, "id") || null,
         branchId: relationId(row.branch_id, "id"),
-        lotId: compatMmLotId(row.mm_lot_id) || compatLegacyLotId(row.lot_id) || 0,
-        mmLotId: compatMmLotId(row.mm_lot_id),
-        legacyLotId: compatLegacyLotId(row.lot_id),
+        lotId: mmLotId(row.mm_lot_id) || 0,
+        mmLotId: mmLotId(row.mm_lot_id),
+        legacyLotId: null,
         batchNo: String(row.batch_no || ""),
         expiryDate: row.expiry_date ? String(row.expiry_date) : null,
         dispositionType: String(row.disposition_type) as QuarantineDispositionType,
@@ -239,8 +237,7 @@ async function fetchQuarantineRejectMovements(sourceReceivingId: number): Promis
     for (const row of movementRows) {
         const branchId = relationId(row.branch_id, "id");
         const mmLotId = movementMmLotId(row);
-        const legacyLotId = movementLegacyLotId(row);
-        const lotId = mmLotId || legacyLotId;
+        const lotId = mmLotId;
         const quantity = finiteQuantity(row.quantity);
         if (!branchId || !lotId || quantity <= 0) continue;
         const batchNo = String(row.batch_no || "LOT-N/A");
@@ -253,7 +250,7 @@ async function fetchQuarantineRejectMovements(sourceReceivingId: number): Promis
                 branchId,
                 lotId,
                 mmLotId,
-                legacyLotId,
+                legacyLotId: null,
                 batchNo,
                 expiryDate: row.expiry_date ? String(row.expiry_date) : null,
                 quantity
@@ -341,16 +338,13 @@ async function fetchSourceReceivingVariants(id: number): Promise<SourceReceiving
     }
 
     return Promise.all(rejectionMovements.map(async movement => {
-        const [branch, mmLotRows, legacyLot] = await Promise.all([
+        const [branch, mmLotRows] = await Promise.all([
             directusItem(`/items/branches/${movement.branchId}?fields=id,branch_name,branch_code,isBadStock`, "The source quarantine branch could not be found."),
             movement.mmLotId
                 ? loadMmLots({ ids: [movement.mmLotId], onlyActive: false })
-                : Promise.resolve([]),
-            movement.legacyLotId
-                ? directusItem(`/items/lots/${movement.legacyLotId}?fields=lot_id,lot_name`, "The source storage lot could not be found.")
-                : Promise.resolve(null)
+                : Promise.resolve([])
         ]);
-        const lot = mmLotRows[0] || legacyLot;
+        const lot = mmLotRows[0];
         if (!lot) throw new QuarantineDispositionError(404, "The source storage lot could not be found.");
         return {
             sourceReceivingId,
@@ -420,15 +414,14 @@ function availableFromDispositionLedger(source: SourceReceiving, all: Quarantine
 }
 
 async function currentStockOnHand(source: SourceReceiving): Promise<number> {
-    const movementRows = await loadMovementRowsForLotRefs(
+    const movementRows = await loadMovementRowsForMmLots(
         source.mmLotId ? [source.mmLotId] : [],
-        source.legacyLotId ? [source.legacyLotId] : [],
         "movement_id,mm_lot_id,lot_id,product_id,branch_id,batch_no,quantity"
     );
     return Math.max(0, movementRows
         .filter(row => relationId(row.product_id, "product_id") === source.productId
             && relationId(row.branch_id, "id") === source.branchId
-            && (movementMmLotId(row) || movementLegacyLotId(row)) === source.lotId
+            && movementMmLotId(row) === source.lotId
             && String(row.batch_no || "") === source.batchNo)
         .reduce((total, row) => total + finiteQuantity(row.quantity), 0));
 }
@@ -516,7 +509,7 @@ export async function createQuarantineDisposition(input: {
         supplier_id: source.supplierId,
         branch_id: source.branchId,
         mm_lot_id: source.mmLotId,
-        lot_id: source.legacyLotId || source.lotId,
+        lot_id: null,
         batch_no: source.batchNo,
         expiry_date: source.expiryDate,
         disposition_type: input.dispositionType,
@@ -600,7 +593,7 @@ export async function processQuarantineDisposition(input: {
         const movement = await mutate("/items/inventory_movements", "POST", {
             product_id: source.productId,
             mm_lot_id: source.mmLotId,
-            lot_id: source.legacyLotId || source.lotId,
+            lot_id: null,
             branch_id: source.branchId,
             transaction_type_id: transactionTypeId,
             source_document_id: disposition.id,

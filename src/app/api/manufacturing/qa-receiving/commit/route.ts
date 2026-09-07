@@ -38,7 +38,8 @@ import {
     ReceivingTicketError
 } from "../_receiving-ticket";
 import { LOT_CAPACITY_EPSILON, readLotCapacityAudit } from "../_lot-capacity";
-import { movementLegacyLotId, movementMmLotId } from "../_mm-lot-compat";
+import { movementMmLotId } from "../../services/mm-lots.service";
+import { loadMmInventoryLots } from "../../services/mm-lots.service";
 import {
     discrepancyRemarkError,
     isReceivingErrorCode,
@@ -102,20 +103,15 @@ async function inventoryRowsForMovements(shipmentId: number, movementRows: Recor
     if (movementRows.length === 0) return [];
 
     const storageLotIds = [...new Set(movementRows
-        .map(row => movementLegacyLotId(row))
+        .map(row => movementMmLotId(row))
         .filter((id): id is number => id !== null && Number.isSafeInteger(id) && id > 0))];
 
     if (storageLotIds.length === 0) return [];
-
-    const lotParams = new URLSearchParams({
-        "filter[lot_id][_in]": storageLotIds.join(","),
-        fields: "lot_id,lot_name",
-        limit: "-1"
-    });
-    return directusRows(
-        `/items/lots?${lotParams.toString()}`,
-        `Unable to verify the created inventory records for purchase order ${shipmentId}.`
-    );
+    try {
+        return await loadMmInventoryLots({ mmLotIds: storageLotIds, onlyActive: true });
+    } catch {
+        throw new CommitError(503, `Unable to verify the created inventory records for purchase order ${shipmentId}.`);
+    }
 }
 
 async function movementRowsForCommit(
@@ -349,7 +345,7 @@ async function persistedResult(
                 const branchId = relationId(row.branch_id, "id");
                 return (route.passed ? branchId === input.destinationBranchId : branchId !== input.destinationBranchId)
                     && Number(row.quantity) === route.quantity
-                    && (movementMmLotId(row) || movementLegacyLotId(row)) === route.storageLotId
+                    && movementMmLotId(row) === route.storageLotId
                     && String(row.batch_no || "").trim().toLowerCase() === route.batchNumber.trim().toLowerCase()
                     && String(row.source_document_no || "") === receiptNo;
             });
@@ -373,13 +369,15 @@ async function persistedResult(
             const branchId = relationId(movement.branch_id, "id");
             const productId = relationId(movement.product_id, "product_id");
             const mmLotId = movementMmLotId(movement);
-            const legacyLotId = movementLegacyLotId(movement);
-            const storageLotId = mmLotId || legacyLotId;
-            if (!storageLotId || !legacyLotId) {
-                throw new CommitError(409, `${route.kind} movement for line ${line.lineId} is missing its lot references. Reconciliation is required.`);
+            const storageLotId = mmLotId;
+            if (!storageLotId) {
+                throw new CommitError(409, `${route.kind} movement for line ${line.lineId} is missing its canonical MM lot reference. Reconciliation is required.`);
             }
             const inventoryMatches = inventoryRows.filter(row =>
-                relationId(row.lot_id || row.id, "lot_id") === legacyLotId
+                relationId(row.lot_id, "lot_id") === storageLotId
+                && relationId(row.product_id, "product_id") === productId
+                && relationId(row.branch_id, "id") === branchId
+                && String(row.batch_no || "").trim().toLowerCase() === route.batchNumber.trim().toLowerCase()
             );
             if (inventoryMatches.length !== 1) {
                 throw new CommitError(409, `${route.kind} inventory lot for line ${line.lineId} could not be correlated uniquely.`);
@@ -389,11 +387,11 @@ async function persistedResult(
                 lineId: line.lineId,
                 kind: route.kind,
                 receivingLineId,
-                inventoryLotId: Number(inventoryMatches[0].lot_id || inventoryMatches[0].id),
+                inventoryLotId: Number(inventoryMatches[0].inventory_lot_id || inventoryMatches[0].id),
                 productId,
                 storageLotId,
                 mmLotId,
-                legacyLotId,
+                legacyLotId: null,
                 branchId,
                 transactionTypeId: relationId(movement.transaction_type_id, "transaction_type_id"),
                 sourceDocumentNo: receiptNo,
@@ -443,9 +441,9 @@ async function persistedResult(
             productId: relationId(receiving.product_id, "product_id"),
             receiptNumber: String(receiving.receipt_no),
             branchId: relationId(receiving.branch_id, "id"),
-            storageLotId: relationId(receiving.mm_lot_id, "lot_id") || relationId(receiving.lot_id, "lot_id"),
+            storageLotId: relationId(receiving.mm_lot_id, "lot_id"),
             mmLotId: relationId(receiving.mm_lot_id, "lot_id") || null,
-            legacyLotId: relationId(receiving.lot_id, "lot_id") || null,
+            legacyLotId: null,
             batchNumber: String(receiving.batch_no || primaryAllocation?.batchNumber || ""),
             receivedQuantity: Number(receiving.received_quantity || 0),
             rejectedQuantity: Number(receiving.quantity_rejected || 0),

@@ -51,7 +51,10 @@ const transferPayloadSchema = z.object({
     job_order_no: z.string().min(1),
     jo_material_id: z.number().int().positive(),
     product_id: z.number().int().positive(),
-    lot_id: z.number().int().nonnegative().default(1),
+    // `lot_id` remains a compatibility alias; both names carry the canonical
+    // mm_lots identifier at this boundary.
+    lot_id: z.number().int().nonnegative().optional(),
+    mm_lot_id: z.number().int().nonnegative().optional(),
     allocation_id: z.number().int().positive().optional(),
     batch_no: z.string().min(1),
     transfer_quantity: z.number().positive("Transfer quantity must be greater than 0"),
@@ -63,7 +66,11 @@ const transferPayloadSchema = z.object({
 }).refine(
     (payload) => !payload.override_negative || Boolean(payload.remarks?.trim()),
     { path: ["remarks"], message: "Authorization remarks are required for a negative stock override." }
-);
+).transform((payload) => ({
+    ...payload,
+    lot_id: payload.mm_lot_id ?? payload.lot_id ?? 0,
+    mm_lot_id: payload.mm_lot_id ?? payload.lot_id ?? 0
+}));
 
 function relationId(value: unknown, preferredKeys: string[] = []): number {
     if (typeof value === "number" || typeof value === "string") {
@@ -390,7 +397,7 @@ export async function POST(request: Request) {
             if (Number(movement.branch_id) !== branchId) return;
 
             const quantity = Number(movement.quantity || 0);
-            const lotId = Number(movement.lot_id || 0);
+            const lotId = Number(movement.mm_lot_id || 0);
             if (lotId > 0) {
                 const batchKey = branchProductBatchKey(branchId, data.product_id, movement.batch_no);
                 stockByBatch.set(batchKey, (stockByBatch.get(batchKey) || 0) + quantity);
@@ -430,7 +437,8 @@ export async function POST(request: Request) {
                         ? "The selected batch maps to multiple inventory lots; select a specific lot before staging."
                         : `Insufficient stock in the selected lot. Available: ${nonNegativeAvailableStock.toFixed(2)}, Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQty.toFixed(2)}`,
                     product_id: data.product_id,
-                    lot_id: data.lot_id,
+                    lot_id: data.mm_lot_id,
+                    mm_lot_id: data.mm_lot_id,
                     batch_no: data.batch_no,
                     available_quantity: nonNegativeAvailableStock,
                     required_quantity: data.transfer_quantity,
@@ -443,28 +451,28 @@ export async function POST(request: Request) {
         }
 
         const branchMovements = movements.filter((movement) =>
-            Number(movement.branch_id) === branchId && Number(movement.lot_id) > 0
+            Number(movement.branch_id) === branchId && Number(movement.mm_lot_id) > 0
         );
         // A negative override may intentionally stage stock that is not currently
         // present in the Job Order branch. The movement still needs a valid lot
         // foreign key, so use an existing product lot only for that authorized path.
         const lotMovements = data.override_negative
-            ? movements.filter((movement) => Number(movement.lot_id) > 0)
+            ? movements.filter((movement) => Number(movement.mm_lot_id) > 0)
             : branchMovements;
         const exactBatchMovements = lotMovements
             .filter((movement) => normalizeBatchNo(movement.batch_no) === requestedBatch)
             .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0));
         const exactBatchMovement = exactBatchMovements[0];
-        const requestedLotMovement = lotMovements.find((movement) => Number(movement.lot_id) === data.lot_id);
+        const requestedLotMovement = lotMovements.find((movement) => Number(movement.mm_lot_id) === data.mm_lot_id);
         const fallbackLotMovement = [...lotMovements]
             .sort((left, right) => Number(right.quantity || 0) - Number(left.quantity || 0))[0];
         const resolvedLotId = data.override_negative
-            ? Number(exactBatchMovement?.lot_id || requestedLotMovement?.lot_id || fallbackLotMovement?.lot_id || 0)
+            ? Number(exactBatchMovement?.mm_lot_id || requestedLotMovement?.mm_lot_id || fallbackLotMovement?.mm_lot_id || 0)
             : Number(
-                (data.lot_id > 0
-                    ? exactBatchMovements.find((movement) => Number(movement.lot_id) === data.lot_id)
+                (data.mm_lot_id > 0
+                    ? exactBatchMovements.find((movement) => Number(movement.mm_lot_id) === data.mm_lot_id)
                     : exactBatchMovement
-                )?.lot_id || 0
+                )?.mm_lot_id || 0
             );
         if (!resolvedLotId) {
             throw new TransferError(
@@ -554,7 +562,8 @@ export async function POST(request: Request) {
                     failure_code: "INSUFFICIENT_ALLOCATION_CAPACITY",
                     message: `${data.allocation_id ? "The selected allocation" : "The selected allocation group"} has ${Math.max(0, allocationCapacity).toFixed(2)} available to stage. Required: ${data.transfer_quantity.toFixed(2)}, Shortage: ${shortageQuantity.toFixed(2)}`,
                     product_id: data.product_id,
-                    lot_id: data.lot_id,
+                    lot_id: data.mm_lot_id,
+                    mm_lot_id: data.mm_lot_id,
                     allocation_id: data.allocation_id,
                     batch_no: data.batch_no,
                     available_quantity: availableQuantity,
@@ -596,6 +605,8 @@ export async function POST(request: Request) {
                     body: JSON.stringify({
                         product_id: data.product_id,
                         branch_id: branchId,
+                        mm_lot_id: resolvedLotId,
+                        lot_id: null,
                         batch_no: data.batch_no,
                         jo_material_id: data.jo_material_id,
                         reserved_quantity: data.transfer_quantity,
@@ -618,7 +629,8 @@ export async function POST(request: Request) {
         const movementPayloads = [
             {
                 product_id: data.product_id,
-                lot_id: resolvedLotId,
+                        mm_lot_id: resolvedLotId,
+                        lot_id: null,
                 branch_id: branchId,
                 transaction_type_id: 3,
                 source_document_id: data.job_order_id,
@@ -630,7 +642,8 @@ export async function POST(request: Request) {
             },
             {
                 product_id: data.product_id,
-                lot_id: resolvedLotId,
+                        mm_lot_id: resolvedLotId,
+                        lot_id: null,
                 branch_id: branchId,
                 transaction_type_id: 4,
                 source_document_id: data.job_order_id,
@@ -670,7 +683,7 @@ export async function POST(request: Request) {
             const expectedMovement = movementPayloads[index];
             if (
                 relationId(verifiedMovement.product_id, ["product_id"]) !== data.product_id ||
-                Number(verifiedMovement.lot_id) !== resolvedLotId ||
+                Number(verifiedMovement.mm_lot_id) !== resolvedLotId ||
                 Number(verifiedMovement.branch_id) !== branchId ||
                 Number(verifiedMovement.transaction_type_id) !== expectedMovement.transaction_type_id ||
                 Number(verifiedMovement.source_document_id) !== data.job_order_id ||
@@ -809,7 +822,8 @@ export async function POST(request: Request) {
                 jo_material_id: data.jo_material_id,
                 product_id: data.product_id,
                 branch_id: branchId,
-                lot_id: resolvedLotId,
+                mm_lot_id: resolvedLotId,
+                lot_id: null,
                 batch_no: data.batch_no,
                 target_bin: targetBin,
                 work_center_id: data.work_center_id,
