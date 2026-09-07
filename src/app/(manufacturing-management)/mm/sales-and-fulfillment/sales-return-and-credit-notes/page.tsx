@@ -14,7 +14,7 @@ import { cookies } from "next/headers";
 
 // ✅ Wire the module you asked for
 // import ComingSoon from "../../_components/ComingSoon";
-import SalesReturn from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/SalesReturnModule";
+import SalesReturn from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/SalesReturnModule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,12 +97,16 @@ export default async function Page() {
                         <Breadcrumb>
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden md:block shrink-0">
-                                    <BreadcrumbLink href="#">Inventories</BreadcrumbLink>
+                                    <BreadcrumbLink href="#">Manufacturing</BreadcrumbLink>
+                                </BreadcrumbItem>
+                                <BreadcrumbSeparator className="hidden md:block shrink-0" />
+                                <BreadcrumbItem className="hidden md:block shrink-0">
+                                    <BreadcrumbLink href="#">Sales and Fulfillment</BreadcrumbLink>
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block shrink-0" />
                                 <BreadcrumbItem className="min-w-0 overflow-hidden">
                                     <BreadcrumbPage className="truncate max-w-[56vw] sm:max-w-[60vw] md:max-w-none">
-                                        Sales Return
+                                        Sales Return & Credit Notes
                                     </BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
