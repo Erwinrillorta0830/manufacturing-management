@@ -95,7 +95,6 @@ export async function POST(request: NextRequest, context: RouteParams) {
                             batch_no: draftData.batch_no,
                             manufacturing_date: draftData.manufacturing_date || null,
                             expiry_date: draftData.expiry_date || draftData.expiration_date || null,
-                            expiration_date: draftData.expiry_date || draftData.expiration_date || null,
                             unit_cost: draftData.unit_cost || 0,
                             qa_status: draftData.qa_status || "GOOD",
                             status: "ACTIVE",

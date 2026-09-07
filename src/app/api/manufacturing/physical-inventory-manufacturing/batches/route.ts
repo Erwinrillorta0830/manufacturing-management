@@ -180,7 +180,6 @@ export async function POST(request: NextRequest) {
             batch_no: batchNoClean,
             manufacturing_date: mfgDateVal,
             expiry_date: expDateVal,
-            expiration_date: expDateVal,
             unit_cost: costVal,
             qa_status: "GOOD",
             status: "ACTIVE",
