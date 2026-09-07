@@ -366,7 +366,7 @@ export default function BatchTable({
     );
 }
 
-function getBatchStatusBadge(status: BatchStatus) {
+export function getBatchStatusBadge(status: BatchStatus) {
     switch (status) {
         case "ACTIVE":
             return { label: "ACTIVE", badgeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" };
