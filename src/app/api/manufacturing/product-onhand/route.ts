@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL  ;
 
 export interface MMProductOnhand {
   branchId: number;

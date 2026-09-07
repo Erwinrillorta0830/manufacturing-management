@@ -18,6 +18,9 @@ export interface LotAllocationDetail {
     inventoryLotId?: number;
     reservationIds?: number[];
     status?: string;
+    salesOrderDetailId?: number;
+    orderId?: number;
+    orderNo?: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -62,12 +65,12 @@ export async function GET(req: NextRequest) {
             console.warn("[allocations] Warning fetching batch metadata:", err);
         }
 
-        const details: { detail_id: number; product_id: number }[] = [];
+        const details: { detail_id: number; order_id?: number; product_id: number }[] = [];
 
         if (invoiceIds.length > 0) {
             try {
                 const sodRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_in]=${invoiceIds.join(",")}&fields=detail_id,order_id,product_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
                 if (sodRes.ok) {
@@ -82,7 +85,7 @@ export async function GET(req: NextRequest) {
         if (explicitDetailIds.length > 0) {
             try {
                 const sodRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${explicitDetailIds.join(",")}&fields=detail_id,product_id&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${explicitDetailIds.join(",")}&fields=detail_id,order_id,product_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
                 if (sodRes.ok) {
@@ -94,10 +97,32 @@ export async function GET(req: NextRequest) {
             }
         }
 
+        const allOrderIds = [...new Set([
+            ...invoiceIds,
+            ...details.map((d) => Number(d.order_id)),
+        ].filter(Boolean))];
+
+        const orderNoMap = new Map<number, string>();
+        if (allOrderIds.length > 0) {
+            try {
+                const soRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allOrderIds.join(",")}&fields=order_id,order_no&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                if (soRes.ok) {
+                    const soData: { order_id: number; order_no: string }[] = (await soRes.json()).data || [];
+                    for (const s of soData) orderNoMap.set(Number(s.order_id), String(s.order_no));
+                }
+            } catch (err) {
+                console.warn("[allocations] Warning fetching sales orders:", err);
+            }
+        }
+
         const detailIds = [...new Set([
             ...details.map((detail) => Number(detail.detail_id)),
             ...explicitDetailIds,
         ].filter(Boolean))];
+        const orderByDetail = new Map(details.map((detail) => [Number(detail.detail_id), Number(detail.order_id || 0)]));
         const productByDetail = new Map(details.map((detail) => [Number(detail.detail_id), Number(detail.product_id)]));
 
         const reservations: Array<{
@@ -283,7 +308,7 @@ export async function GET(req: NextRequest) {
                     const sbList: Array<Record<string, unknown>> = Array.isArray(sbData) ? sbData : sbData?.data || [];
                     for (const sb of sbList) {
                         const sbInvId = Number(sb.inventoryLotId ?? sb.inventory_lot_id ?? sb.id ?? 0);
-                        const sbLotId = Number(sb.lotId ?? sb.lot_id ?? 0);
+                        const sbLotId = Number(sb.lotId ?? sb.mmLotId ?? sb.lot_id ?? sb.mm_lot_id ?? 0);
                         const sbPId = Number(sb.productId ?? sb.product_id ?? 0);
                         const sbBatchNo = String(sb.batchNo ?? sb.batch_no ?? "LOT-N/A");
                         const sbExp = (sb.expirationDate || sb.expiration_date || sb.expiryDate || sb.expiry_date || null) as string | null;
@@ -314,12 +339,16 @@ export async function GET(req: NextRequest) {
 
             const allocationMap = new Map<string, LotAllocationDetail>();
             for (const reservation of reservations) {
-                const rawDetailId = typeof reservation.sales_invoice_detail_id === "object" && reservation.sales_invoice_detail_id !== null
-                    ? reservation.sales_invoice_detail_id.detail_id
-                    : reservation.sales_invoice_detail_id;
+                const rawDetailObj = reservation.sales_order_detail_id ?? reservation.sales_invoice_detail_id;
+                const rawDetailId = typeof rawDetailObj === "object" && rawDetailObj !== null
+                    ? (rawDetailObj as { detail_id?: number }).detail_id
+                    : rawDetailObj;
                 const detailId = Number(rawDetailId || 0);
                 const productId = Number(reservation.product_id || productByDetail.get(detailId) || 0);
                 if (!productId) continue;
+
+                const orderId = detailId ? orderByDetail.get(detailId) : undefined;
+                const orderNo = orderId ? orderNoMap.get(orderId) : undefined;
 
                 const rawInvId = typeof reservation.inventory_lot_id === "object" && reservation.inventory_lot_id !== null
                     ? (reservation.inventory_lot_id.inventory_lot_id || reservation.inventory_lot_id.id || 0)
@@ -343,7 +372,7 @@ export async function GET(req: NextRequest) {
                 const expiryDate = batchInfo?.expiryDate || (resLotObj?.expiry_date as string | null) || (resLotObj?.expiration_date as string | null) || null;
                 const manufacturingDate = batchInfo?.manufacturingDate || (resLotObj?.manufacturing_date as string | null) || null;
 
-                const key = `${productId}:${lotId}:${batchNo}:${expiryDate || ""}`;
+                const key = `${productId}:${detailId}:${lotId}:${batchNo}:${expiryDate || ""}`;
                 const existing = allocationMap.get(key);
                 const qty = Number(reservation.quantity || 0);
                 const isResPicked = reservation.status === "Picked";
@@ -376,6 +405,9 @@ export async function GET(req: NextRequest) {
                         inventoryLotId: invLotId,
                         reservationIds: resId ? [resId] : [],
                         status: isResPicked ? "Picked" : (resPickedQty > 0 ? "Partial" : "Reserved"),
+                        salesOrderDetailId: detailId || undefined,
+                        orderId: orderId || undefined,
+                        orderNo: orderNo || undefined,
                     });
                 }
             }

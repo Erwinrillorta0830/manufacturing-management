@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers as directusHeaders } from "@/app/api/manufacturing/directus-api";
 import { roundQty, roundMoney } from "./helper";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL  ;
 
 export interface SpringMovement {
     movementKey?: string;
@@ -17,7 +17,7 @@ export interface SpringMovement {
     postedBy?: number;
     branchId?: number;
     inventoryLotId?: number;
-    lotId?: number;
+    mmLotId?: number;
     productId?: number;
     productCode?: string;
     productName?: string;
@@ -57,7 +57,7 @@ export interface AggregatedMovementItem {
 
 /**
  * Fetches raw inventory movement items from the Spring Boot API.
- * GET http://100.95.246.18:8188/api/mm-inventory-movements/filter?branch={branchId}&productType={productTypeId}
+ * GET  /api/mm-inventory-movements/filter?branch={branchId}&productType={productTypeId}
  */
 export async function fetchSpringMovements(branchId: number, productTypeId?: number | null, explicitToken?: string): Promise<SpringMovement[]> {
     try {
@@ -142,7 +142,7 @@ export function aggregateMovementsToItems(movements: SpringMovement[]): Aggregat
     for (const m of movements) {
         const bId = Number(m.branchId || 0);
         const invLotId = Number(m.inventoryLotId || 0);
-        const lId = Number(m.lotId || 0);
+        const lId = Number(m.mmLotId || (m as Record<string, unknown>).mm_lot_id || (m as Record<string, unknown>).lotId || (m as Record<string, unknown>).lot_id || 0);
         const pId = Number(m.productId || 0);
         const batchNo = (m.batchNo || "").trim();
         const cond = (m.inventoryCondition || "GOOD").trim().toUpperCase();
@@ -220,7 +220,7 @@ export async function getSingleItemSystemOnhand(
             const mProd = Number(m.productId || 0);
             if (prodIdNum > 0 && mProd !== prodIdNum) continue;
 
-            const mLot = Number(m.lotId || 0);
+            const mLot = Number(m.mmLotId || 0);
             if (lotIdNum > 0 && mLot > 0 && mLot !== lotIdNum) continue;
 
             const mCond = (m.inventoryCondition || "GOOD").trim().toUpperCase();

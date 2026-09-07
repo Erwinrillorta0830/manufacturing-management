@@ -6,7 +6,7 @@ import { getUserIdFromToken } from "@/app/api/manufacturing/invoice-consolidatio
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL?.replace(/\/$/, "") || "http://100.95.246.18:8188";
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL?.replace(/\/$/, "")  ;
 
 import { BatchItem, LineAvailability, RawSalesOrderReservation, SalesOrderAvailability, SiblingConsolidatedOrder } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/types";
 
@@ -230,7 +230,7 @@ export async function GET(request: Request) {
             if (Number(b.branchId) === branchId && Number(b.onhandQuantity || 0) > 0) {
                 const pId = Number(b.productId);
                 const list = batchesByProduct.get(pId) || [];
-                const lotId = Number(b.lotId);
+                const lotId = Number(b.lotId || (b as unknown as Record<string, unknown>).mmLotId || (b as unknown as Record<string, unknown>).lot_id || 0);
                 const batchNo = b.batchNo || `LOT-${lotId}`;
                 const matchedDil = directusBatchLookup.get(`${pId}:${batchNo}`);
 
