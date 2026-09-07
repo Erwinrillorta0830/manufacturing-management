@@ -17,6 +17,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
+import { evaluateStorageLotEligibility } from "../../qa-receiving/_lot-eligibility";
 
 interface DirectusLotLog {
     id: number;
@@ -56,6 +57,7 @@ interface AllocationProductContext {
     productId: number;
     productTypeId: number;
     categoryType: PurchaseOrderCategoryType;
+    productFamilyIds: number[];
     uomId: number;
 }
 
@@ -75,7 +77,7 @@ function relationNumber(value: unknown, keys: string[]): number | null {
 
 async function loadAllocationProduct(productId: number): Promise<AllocationProductContext> {
     const response = await fetch(
-        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id`,
+        `${DIRECTUS_URL}/items/products/${productId}?fields=product_id,product_type,unit_of_measurement.unit_id,parent_id`,
         { headers, cache: "no-store" }
     );
     if (!response.ok) throw new Error(`Directus error loading product allocation metadata: ${response.status}`);
@@ -86,7 +88,14 @@ async function loadAllocationProduct(productId: number): Promise<AllocationProdu
     const categoryTypes = await resolveProductCategoryTypes([productId]);
     const categoryType = categoryTypes.get(productId);
     if (!categoryType) throw new Error("The selected product has no valid Product Type classification.");
-    return { productId, productTypeId, categoryType, uomId };
+    const parentId = relationNumber(product?.parent_id, ["product_id", "id"]);
+    return {
+        productId,
+        productTypeId,
+        categoryType,
+        productFamilyIds: [productId, parentId].filter((id): id is number => id !== null),
+        uomId
+    };
 }
 
 function lotNumber(value: unknown): number | null {
@@ -95,16 +104,6 @@ function lotNumber(value: unknown): number | null {
 
 function unitNumber(value: unknown): number | null {
     return relationNumber(value, ["unit_id", "id"]);
-}
-
-function productTypeNumber(value: unknown): number | null {
-    return relationNumber(value, ["inventory_type_id", "product_type_id", "type_id", "id"]);
-}
-
-function finiteCapacity(value: unknown): number | null {
-    if (value === null || value === undefined || value === "") return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function dateOnly(value: unknown): string | null {
@@ -130,10 +129,20 @@ export async function GET(request: Request) {
 
         // Action: Fetch branches
         if (action === "branches") {
-            const res = await fetch(`${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=100`, { headers, cache: "no-store" });
+            const res = await fetch(
+                `${DIRECTUS_URL}/items/branches?filter[isActive][_eq]=1&sort=branch_name&limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id`,
+                { headers, cache: "no-store" }
+            );
             if (!res.ok) throw new Error(`Directus error loading branches: ${res.status}`);
             const json = await res.json();
-            return NextResponse.json(json.data);
+            const branches = (json.data || []).map((branch: Record<string, unknown>) => {
+                const badStockBranchId = relationNumber(branch.bad_stock_branch_id, ["id", "branch_id"]);
+                return {
+                    ...branch,
+                    bad_stock_branch_id: badStockBranchId
+                };
+            });
+            return NextResponse.json(branches);
         }
 
         if (action === "lots" || action === "batches") {
@@ -170,10 +179,8 @@ export async function GET(request: Request) {
                 const lot = lots[0] as MmLotRecord | undefined;
                 if (!lot) return NextResponse.json({ error: "The selected storage lot does not exist." }, { status: 404 });
                 const lotId = lotNumber(lot.lot_id) as number;
-                const capacity = finiteCapacity(lot.max_batch_capacity);
-                const occupied = Math.max(0, occupiedByLot.get(lotId) || 0);
-                const lotUomId = unitId(lot.unit_id);
-                if (lotUomId !== product.uomId || !capacity || capacity - occupied <= 0) {
+                const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
+                if (!eligibility.eligible) {
                     return NextResponse.json({ error: "The selected storage lot is not compatible with this product." }, { status: 409 });
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
@@ -196,22 +203,23 @@ export async function GET(request: Request) {
             const eligibleLots = lots.flatMap(lot => {
                 const lotId = lotNumber(lot.lot_id);
                 if (!lotId) return [];
-                const capacity = finiteCapacity(lot.max_batch_capacity);
-                const occupiedQuantity = Math.max(0, occupiedByLot.get(lotId) || 0);
-                const remainingCapacity = capacity === null ? null : Math.max(0, capacity - occupiedQuantity);
+                const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
+                if (!eligibility.eligible) return [];
                 const uomId = unitId(lot.unit_id);
-                if (uomId !== product.uomId || remainingCapacity === null || remainingCapacity <= 0) return [];
+                const lotProductTypeId = relationNumber(lot.product_type_id, ["product_type_id", "type_id", "id"])
+                    || relationNumber(lot.product_type, ["product_type_id", "type_id", "id"]);
                 return [{
                     ...lot,
                     mm_lot_id: lotId,
                     branch_id: parsedBranchId,
                     inventory_type_id: null,
                     unit_id: uomId,
-                    product_type_id: product.productTypeId,
+                    product_type_id: lotProductTypeId || product.productTypeId,
                     product_category_type: product.categoryType,
-                    occupiedQuantity,
-                    availableQuantity: remainingCapacity,
-                    remainingCapacity,
+                    capacity_status: eligibility.capacityStatus,
+                    occupiedQuantity: eligibility.occupiedQuantity,
+                    availableQuantity: eligibility.remainingCapacity,
+                    remainingCapacity: eligibility.remainingCapacity,
                     mapping_status: "CANONICAL",
                     is_selectable: true,
                     is_legacy_only: false,

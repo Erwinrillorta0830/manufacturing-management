@@ -40,12 +40,13 @@ import {
     allocationCapacityKey,
     capacityAuditsEqual,
     evaluateLotCapacities,
-    normalizeLotCapacity,
+    inspectLotCapacity,
     readLotCapacityAudit,
     type LotCapacityAllocationAudit,
     type LotCapacityAllocationInput,
     type LotCapacityAudit
 } from "../../qa-receiving/_lot-capacity";
+import { isStorageLotProductCompatible } from "../../qa-receiving/_lot-eligibility";
 import {
     discrepancyRemarkError,
     RECEIVING_ERROR_CODES,
@@ -643,7 +644,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         const productIds = [...new Set(poLines
             .map(line => relationId(line.product_id, "product_id"))
             .filter((id): id is number => id !== null))];
-        const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id,product_shelf_life,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*,cbm_height,cbm_width,cbm_length,cost_per_unit,estimated_unit_cost&limit=-1`, { headers, cache: "no-store" });
+        const productsRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_type,parent_id,unit_of_measurement.unit_id,product_shelf_life,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*,cbm_height,cbm_width,cbm_length,cost_per_unit,estimated_unit_cost&limit=-1`, { headers, cache: "no-store" });
         if (!productsRes.ok) throw new Error("Failed to validate received products.");
         const products = ((await productsRes.json()).data || []) as Record<string, unknown>[];
         const productMap = new Map(products.map(product => [Number(product.product_id), product]));
@@ -774,8 +775,17 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (lotUomId !== productUomId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`, 409);
                 }
-                if (normalizeLotCapacity(lot.max_batch_capacity) === null) {
-                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} has no valid maximum capacity.`, 409);
+                const parentProductId = relationValueId(product.parent_id, ["product_id", "id"]);
+                if (!isStorageLotProductCompatible(lot, {
+                    productTypeId,
+                    productFamilyIds: [productId, parentProductId].filter((id): id is number => id !== null),
+                    uomId: productUomId
+                })) {
+                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} Product Type or family does not match product ${productId}.`, 409);
+                }
+                const capacityInspection = inspectLotCapacity(lot.max_batch_capacity);
+                if (capacityInspection.status === "INVALID") {
+                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} has an invalid maximum capacity.`, 409);
                 }
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
                 typeSet.add(productTypeId);
@@ -913,11 +923,11 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (relationValueId(lot.unit_id, ["unit_id", "id"]) !== uomByLot.get(lotId)) {
                     throw new ReceivingError(`Storage lot ${lotId} UOM changed while receiving was being prepared.`, 409);
                 }
-                const normalizedCapacity = normalizeLotCapacity(lot.max_batch_capacity);
-                if (normalizedCapacity === null) {
-                    throw new ReceivingError(`Storage lot ${lotId} has no valid maximum capacity.`, 409);
+                const capacityInspection = inspectLotCapacity(lot.max_batch_capacity);
+                if (capacityInspection.status === "INVALID") {
+                    throw new ReceivingError(`Storage lot ${lotId} has an invalid maximum capacity.`, 409);
                 }
-                freshCapacityByLot.set(lotId, normalizedCapacity);
+                freshCapacityByLot.set(lotId, capacityInspection.capacity);
             }
             const capacityInputs: LotCapacityAllocationInput[] = prepared.flatMap(line => [
                 ...line.acceptedLotAllocations.map((allocation, index) => ({
