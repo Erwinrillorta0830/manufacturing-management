@@ -11,7 +11,7 @@ const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
 const MM_LOT_CANONICAL_REFERENCE_CODE = "MM_LOT_CANONICAL_REFERENCE_REQUIRED";
 const LOT_TRANSFER_SAME_LOT_CODE = "LOT_TRANSFER_SAME_LOT_NOT_ALLOWED";
 
-export const LOT_TRANSFER_STATUSES = ["Draft", "For Approval", "Approved", "Rejected"] as const;
+export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"] as const;
 export type LotTransferStatus = (typeof LOT_TRANSFER_STATUSES)[number];
 
 type RecordValue = Record<string, unknown>;
@@ -1060,7 +1060,7 @@ export async function submitLotTransfer(id: number): Promise<LotTransferRecord> 
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
         "PATCH",
-        { status: "For Approval", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        { status: "Submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() },
         "Lot-transfer submission"
     );
     return row ? mapTransferRow(row) : getLotTransfer(id);
@@ -1227,8 +1227,8 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
     if (record.status === "Approved") {
         return { record, preview: storedApprovedPreview(record), idempotent: true };
     }
-    if (record.status !== "For Approval") {
-        throw new LotTransferError(409, `Only For Approval requests can be approved. Current status: ${record.status}.`);
+    if (record.status !== "Submitted") {
+        throw new LotTransferError(409, `Only Submitted requests can be approved. Current status: ${record.status}.`);
     }
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
     if (record.postingStartedAt && record.idempotencyKey && record.idempotencyKey !== idempotencyKey) {
@@ -1444,8 +1444,8 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
 
 export async function rejectLotTransfer(id: number, rejectionReason: string, qaEvidence: string | undefined, actorUserId: number | null): Promise<LotTransferRecord> {
     const record = await getLotTransfer(id);
-    if (record.status !== "For Approval") {
-        throw new LotTransferError(409, `Only For Approval requests can be rejected. Current status: ${record.status}.`);
+    if (record.status !== "Submitted") {
+        throw new LotTransferError(409, `Only Submitted requests can be rejected. Current status: ${record.status}.`);
     }
     const rejectedAt = new Date().toISOString();
     const row = await mutateDirectus(

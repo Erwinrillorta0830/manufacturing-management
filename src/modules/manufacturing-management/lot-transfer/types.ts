@@ -1,4 +1,4 @@
-export type LotTransferStatus = "Draft" | "For Approval" | "Approved" | "Rejected";
+export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Rejected";
 
 export type LotTransferMode = "request" | "approval" | "summary";
 
