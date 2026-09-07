@@ -215,12 +215,15 @@ export function ReviewSheet({
             }
         });
 
-        const invoiceRows = Array.from(invoiceRowsById.values()).map((row) => ({
-            ...row,
-            remainingOpenBalance: row.prePouchRemainingBalance == null
-                ? null
-                : Math.max(row.prePouchRemainingBalance - row.appliedAmount, 0),
-        }));
+        const invoiceRows = Array.from(invoiceRowsById.values()).map((row) => {
+            const prePouchBal = row.prePouchRemainingBalance ?? row.originalAmount ?? row.grossAmount;
+            return {
+                ...row,
+                remainingOpenBalance: prePouchBal == null
+                    ? null
+                    : Math.max(prePouchBal - row.appliedAmount, 0),
+            };
+        });
         const totalRemainingOpenBalance = invoiceRows.reduce(
             (sum, row) => sum + (row.remainingOpenBalance ?? 0),
             0
