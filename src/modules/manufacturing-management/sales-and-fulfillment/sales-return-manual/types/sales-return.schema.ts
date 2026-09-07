@@ -44,7 +44,14 @@ export const SubmitReturnSchema = z.object({
   isThirdParty: z.boolean().optional(),
 });
 
-export const UpdateReturnSchema = SubmitReturnSchema.extend({
+export const UpdateReturnSchema = SubmitReturnSchema.omit({
+  salesmanId: true,
+  totalAmount: true,
+  customer: true,
+  customerCode: true,
+  returnDate: true,
+  priceType: true,
+}).extend({
   returnId: z.number(),
   returnNo: z.string(),
 });
