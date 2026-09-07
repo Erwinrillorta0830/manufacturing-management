@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
     AlertTriangle,
     ArrowLeft,
@@ -16,7 +16,7 @@ import type { PurchaseAmountLandingRow, PurchaseAmountPostingModuleProps, Purcha
 import ForexSubPoolHeader from "./purchase-amount/ForexSubPoolHeader";
 import LandedExpensesTable from "./purchase-amount/LandedExpensesTable";
 import LineItemsPostingTable from "./purchase-amount/LineItemsPostingTable";
-import PostedPOLedgerTable, { PurchaseAmountAuditDrawer } from "./purchase-amount/PostedPOLedgerTable";
+import PostedPOLedgerTable from "./purchase-amount/PostedPOLedgerTable";
 import LandedCostAttachments from "./LandedCostAttachments";
 import { LANDED_COST_METHOD_OPTIONS, landedCostMethodLabel } from "../landed-cost-methods";
 
@@ -53,10 +53,6 @@ function WorkflowStep({ number, title, state, children, lockedMessage }: Workflo
     );
 }
 
-function LocalExpensesNotice() {
-    return <div className="rounded-lg border border-dashed bg-muted/20 p-5 text-center text-xs text-muted-foreground">PHP purchase orders do not require import landed expenses. Continue to the supporting documents and allocation preview steps.</div>;
-}
-
 export default function PurchaseAmountPostingModule({
     shipments,
     selectedShipment: propSelectedShipment,
@@ -65,10 +61,7 @@ export default function PurchaseAmountPostingModule({
     purchaseOrderId: routePurchaseOrderId
 }: PurchaseAmountPostingModuleProps) {
     const router = useRouter();
-    const searchParams = useSearchParams();
-    const postedPurchaseOrder = searchParams.get("posted");
-    const [view, setView] = useState<"landing" | "editing" | "audit">("landing");
-    const [auditOrder, setAuditOrder] = useState<PurchaseAmountLandingRow | null>(null);
+    const [view, setView] = useState<"landing" | "editing">("landing");
 
     const {
         loading,
@@ -114,9 +107,6 @@ export default function PurchaseAmountPostingModule({
             : view === "landing" && selectedShipment
                 ? "editing"
                 : view;
-    const landingSuccessMessage = postedPurchaseOrder
-        ? `Purchase amounts for ${postedPurchaseOrder} were posted successfully. Costs are now locked.`
-        : null;
 
     const handleEdit = (order: PurchaseAmountLandingRow) => {
         if (pageMode === "landing") {
@@ -129,13 +119,11 @@ export default function PurchaseAmountPostingModule({
 
     const handleViewLedger = (order: PurchaseAmountLandingRow) => {
         if (!order.canViewLedger) return;
-        setAuditOrder(order);
-        setView("audit");
+        router.push(`/mm/purchase-amount/${order.purchaseOrderId}`);
     };
 
     const handleBackToLanding = () => {
         clearSelectedPO();
-        setAuditOrder(null);
         if (pageMode === "edit") {
             router.replace("/mm/purchase-amount");
             return;
@@ -143,17 +131,17 @@ export default function PurchaseAmountPostingModule({
         setView("landing");
     };
 
-    const handleCloseAudit = () => {
-        setAuditOrder(null);
-        setView("landing");
-    };
-
     const handlePost = async () => {
+        const postedPurchaseOrderId = routePurchaseOrderId || Number(selectedShipment?.purchase_order_id || selectedShipment?.shipment_id || selectedShipment?.id);
+        const purchaseOrderNumber = String(selectedShipment?.purchase_order_no || selectedShipment?.reference_number || routePurchaseOrderId || "Purchase order");
         const posted = await handleExecutePosting();
         if (!posted) return;
         if (pageMode === "edit") {
-            const purchaseOrderNumber = String(selectedShipment?.purchase_order_no || selectedShipment?.reference_number || routePurchaseOrderId || "Purchase order");
-            router.replace(`/mm/purchase-amount?posted=${encodeURIComponent(purchaseOrderNumber)}`);
+            if (Number.isSafeInteger(postedPurchaseOrderId) && postedPurchaseOrderId > 0) {
+                router.replace(`/mm/purchase-amount/${postedPurchaseOrderId}?posted=${encodeURIComponent(purchaseOrderNumber)}`);
+            } else {
+                router.replace("/mm/purchase-amount");
+            }
             return;
         }
         setView("landing");
@@ -201,8 +189,8 @@ export default function PurchaseAmountPostingModule({
                         </div>
                     </WorkflowStep>
 
-                    <WorkflowStep number={3} title="Import Landed Expenses" state={stepState(rateReady && ruleReady, expensesReady)} lockedMessage="Select an allocation rule before entering landed expenses.">
-                        {isForeignPO ? <LandedExpensesTable landedExpenses={landedExpenses} expenseTypes={expenseTypes} onAddExpenseRow={handleAddExpenseRow} onRemoveExpenseRow={handleRemoveExpenseRow} onUpdateExpenseRow={handleUpdateExpenseRow} disabled={posting || !rateReady || !ruleReady} /> : <LocalExpensesNotice />}
+                    <WorkflowStep number={3} title="Landed Expenses" state={stepState(rateReady && ruleReady, expensesReady)} lockedMessage="Select an allocation rule before entering landed expenses.">
+                        <LandedExpensesTable landedExpenses={landedExpenses} expenseTypes={expenseTypes} onAddExpenseRow={handleAddExpenseRow} onRemoveExpenseRow={handleRemoveExpenseRow} onUpdateExpenseRow={handleUpdateExpenseRow} disabled={posting || !rateReady || !ruleReady} />
                     </WorkflowStep>
 
                     <WorkflowStep number={4} title="Additional Documents" state={stepState(rateReady && ruleReady, false)} lockedMessage="Select an allocation rule before uploading supporting documents.">
@@ -234,9 +222,8 @@ export default function PurchaseAmountPostingModule({
                 </div>
             ) : (
                 <>
-                    {(successMessage || landingSuccessMessage) && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600" role="status" data-testid="purchase-amount-post-success"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage || landingSuccessMessage}</span></div>}
+                    {successMessage && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs font-semibold text-emerald-600" role="status" data-testid="purchase-amount-post-success"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{successMessage}</span></div>}
                     <PostedPOLedgerTable orders={landingRows} loading={loading} errorMessage={errorMessage} onEdit={handleEdit} onViewLedger={handleViewLedger} />
-                    {activeView === "audit" && auditOrder && <PurchaseAmountAuditDrawer order={auditOrder} onClose={handleCloseAudit} />}
                 </>
             )}
         </div>

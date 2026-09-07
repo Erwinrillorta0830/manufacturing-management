@@ -26,7 +26,7 @@ export default function LandedExpensesTable({
             <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <Layers className="h-4 w-4 text-primary" />
-                    Import Landed Expenses
+                    Landed Expenses
                 </h3>
                 <button
                     type="button"
@@ -34,7 +34,7 @@ export default function LandedExpensesTable({
                     className="h-8 px-3 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
                 >
                     <Plus className="h-3.5 w-3.5" />
-                    Add Landed Fee
+                    Add Expense
                 </button>
             </div>
 
