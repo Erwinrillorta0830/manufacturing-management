@@ -46,10 +46,11 @@ import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../_s
 import {
     allocationCapacityKey,
     evaluateLotCapacities,
-    normalizeLotCapacity,
+    inspectLotCapacity,
     type LotCapacityAllocationInput,
     type LotCapacityAllocationAudit
 } from "../_lot-capacity";
+import { evaluateStorageLotEligibility } from "../_lot-eligibility";
 import {
     discrepancyRemarkError,
     RECEIVING_ERROR_CODES,
@@ -173,6 +174,7 @@ interface DirectusProductAllocationMetadata {
     product_id?: unknown;
     product_type?: unknown;
     unit_of_measurement?: unknown;
+    parent_id?: unknown;
 }
 
 function positiveInteger(value: unknown, relationKey?: string): number | null {
@@ -354,7 +356,7 @@ export async function POST(request: Request) {
                 "inventory_transaction_types"
             ),
             procurementDirectusRead(
-                `/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,unit_of_measurement.unit_id&limit=-1`,
+                `/items/products?filter[product_id][_in]=${requestedProductIds.join(",")}&fields=product_id,product_type,parent_id,unit_of_measurement.unit_id&limit=-1`,
                 "products"
             )
         ]);
@@ -442,12 +444,20 @@ export async function POST(request: Request) {
             const productId = relationId(product.product_id, ["product_id", "id"]);
             if (productId) productMetadata.set(productId, product);
         }
-        const productAllocationMetadata = new Map<number, { productTypeId: number; uomId: number; categoryType: PurchaseOrderCategoryType }>();
+        const productAllocationMetadata = new Map<number, { productTypeId: number; uomId: number; categoryType: PurchaseOrderCategoryType; productFamilyIds: number[] }>();
         for (const [productId, product] of productMetadata) {
             const productTypeId = relationId(product.product_type, ["product_type_id", "type_id", "id"]);
             const uomId = relationId(product.unit_of_measurement, ["unit_id", "id"]);
             const categoryType = categoryTypes.get(productId);
-            if (productTypeId && uomId && categoryType) productAllocationMetadata.set(productId, { productTypeId, uomId, categoryType });
+            const parentId = relationId(product.parent_id, ["product_id", "id"]);
+            if (productTypeId && uomId && categoryType) {
+                productAllocationMetadata.set(productId, {
+                    productTypeId,
+                    uomId,
+                    categoryType,
+                    productFamilyIds: [productId, parentId].filter((id): id is number => id !== null)
+                });
+            }
         }
         const remainingByLine = new Map<number, number>();
         const remainingAcceptedByLine = new Map<number, number>();
@@ -569,13 +579,16 @@ export async function POST(request: Request) {
                 if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
                     throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required receiving branch.`, 409);
                 }
-                const lotUomId = relationId(lot.unit_id, ["unit_id", "id"]);
-                const capacity = normalizeLotCapacity(lot.max_batch_capacity);
-                if (!lotUomId || lotUomId !== productAllocation.uomId) {
-                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${line.productId}.`);
-                }
-                if (capacity === null || !Number.isFinite(capacity) || capacity <= 0) {
-                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} has no valid maximum capacity.`);
+                const eligibility = evaluateStorageLotEligibility(lot, {
+                    productTypeId: productAllocation.productTypeId,
+                    productFamilyIds: productAllocation.productFamilyIds,
+                    uomId: productAllocation.uomId
+                }, occupiedByLot.get(allocation.storageLotId) || 0);
+                // A full lot may have become full after the selector loaded. Keep
+                // the existing capacity-override workflow available, but reject
+                // status, scope, UOM, and invalid-capacity mismatches.
+                if (!eligibility.eligible && eligibility.reason !== "FULL") {
+                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not an eligible target for this product.`, 409);
                 }
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
                 typeSet.add(productAllocation.productTypeId);
@@ -590,7 +603,7 @@ export async function POST(request: Request) {
         const capacityByLot = new Map<number, number | null>();
         for (const lot of storageLots) {
             const lotId = positiveInteger(lot.lot_id);
-            if (lotId) capacityByLot.set(lotId, normalizeLotCapacity(lot.max_batch_capacity));
+            if (lotId) capacityByLot.set(lotId, inspectLotCapacity(lot.max_batch_capacity).capacity);
         }
         const capacityEvaluations = evaluateLotCapacities(capacityByLot, occupiedByLot, lotCapacityInputs);
         const capacityAuditsByAllocationKey = new Map<string, LotCapacityAllocationAudit>();
