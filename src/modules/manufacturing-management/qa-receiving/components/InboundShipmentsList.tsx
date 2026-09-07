@@ -18,6 +18,26 @@ function formatShipmentCreatedAt(value: string | null | undefined): string {
     }).format(date);
 }
 
+function ShipmentListSkeleton() {
+    return (
+        <div className="space-y-2.5" role="status" aria-label="Loading inbound shipments">
+            <span className="sr-only">Loading inbound shipments...</span>
+            {Array.from({ length: 4 }, (_, index) => (
+                <div key={`shipment-skeleton-${index}`} className="space-y-3 rounded-xl border border-border bg-background p-3.5" aria-hidden="true">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="h-3 w-40 animate-pulse rounded bg-muted" />
+                        <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="h-2.5 w-24 animate-pulse rounded bg-muted" />
+                        <div className="h-2.5 w-32 animate-pulse rounded bg-muted" />
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 interface InboundShipmentsListProps {
     loadingShipments: boolean;
     filteredShipments: Shipment[];
@@ -148,7 +168,7 @@ export default function InboundShipmentsList({
             {/* List */}
             <div className="space-y-2.5 p-3 sm:p-4">
                 {loadingShipments ? (
-                    <div className="p-8 text-center text-xs text-muted-foreground">Loading shipments...</div>
+                    <ShipmentListSkeleton />
                 ) : filteredShipments.length === 0 ? (
                     <div className="p-8 text-center text-xs text-muted-foreground italic">No matching shipments found</div>
                 ) : (

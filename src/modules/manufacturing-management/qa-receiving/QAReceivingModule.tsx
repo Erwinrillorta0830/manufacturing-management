@@ -11,6 +11,30 @@ import MovementPayloadModal from "./components/MovementPayloadModal";
 import QuarantineDispositions from "./components/QuarantineDispositions";
 import type { QuarantineDisposition, Shipment } from "./types";
 
+function DetailLoadingSkeleton() {
+    return (
+        <div className="space-y-5 rounded-xl border bg-card p-4" role="status" aria-label="Loading purchase order details">
+            <span className="sr-only">Loading purchase order details...</span>
+            <div className="grid gap-3 sm:grid-cols-2" aria-hidden="true">
+                <div className="h-10 animate-pulse rounded-lg bg-muted" />
+                <div className="h-10 animate-pulse rounded-lg bg-muted" />
+            </div>
+            <div className="space-y-3" aria-hidden="true">
+                <div className="h-4 w-48 animate-pulse rounded bg-muted" />
+                <div className="h-3 w-72 max-w-full animate-pulse rounded bg-muted" />
+            </div>
+            <div className="grid gap-3 md:grid-cols-3" aria-hidden="true">
+                {Array.from({ length: 6 }, (_, index) => <div key={`detail-skeleton-${index}`} className="h-16 animate-pulse rounded-lg border bg-muted/60" />)}
+            </div>
+            <div className="space-y-3 rounded-lg border p-4" aria-hidden="true">
+                <div className="h-4 w-40 animate-pulse rounded bg-muted" />
+                <div className="h-10 w-full animate-pulse rounded bg-muted" />
+                <div className="h-24 w-full animate-pulse rounded bg-muted" />
+            </div>
+        </div>
+    );
+}
+
 type QAReceivingModuleProps = {
     mode?: "queue" | "detail";
     shipmentId?: number;
@@ -211,9 +235,7 @@ export default function QAReceivingModule({
                 </div>
 
                 {detailLoading && (
-                    <div className="rounded-xl border bg-card p-10 text-center text-xs text-muted-foreground">
-                        Loading purchase order details...
-                    </div>
+                    <DetailLoadingSkeleton />
                 )}
 
                 {!detailLoading && detailError && (
