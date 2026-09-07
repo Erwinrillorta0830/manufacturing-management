@@ -1,6 +1,12 @@
 export const LOT_CAPACITY_EPSILON = 1e-9;
 
 export type LotCapacityAllocationKind = "Passed" | "Rejected";
+export type LotCapacityStatus = "CONFIGURED" | "UNCONFIGURED" | "INVALID";
+
+export interface LotCapacityInspection {
+    capacity: number | null;
+    status: LotCapacityStatus;
+}
 
 export interface LotCapacityAllocationInput {
     key: string;
@@ -37,10 +43,26 @@ export function allocationCapacityKey(
     return `${lineId}:${kind}:${allocationIndex}`;
 }
 
-export function normalizeLotCapacity(value: unknown): number | null {
-    if (value === null || value === undefined || value === "") return null;
+/**
+ * A missing capacity is different from an invalid zero/negative capacity.
+ * The former is an unconfigured lot that can still be selected; the latter
+ * is a data-quality error and must not become a receiving target.
+ */
+export function inspectLotCapacity(value: unknown): LotCapacityInspection {
+    if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+        return { capacity: null, status: "UNCONFIGURED" };
+    }
+
     const capacity = Number(value);
-    return Number.isFinite(capacity) && capacity > 0 ? capacity : null;
+    if (!Number.isFinite(capacity) || capacity <= 0) {
+        return { capacity: null, status: "INVALID" };
+    }
+
+    return { capacity, status: "CONFIGURED" };
+}
+
+export function normalizeLotCapacity(value: unknown): number | null {
+    return inspectLotCapacity(value).capacity;
 }
 
 export function evaluateLotCapacities(

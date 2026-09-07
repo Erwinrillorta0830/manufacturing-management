@@ -92,8 +92,15 @@ export async function fetchStorageLots(
     });
     if (disposition === "rejected") params.set("disposition", "rejected");
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
-    if (!res.ok) throw new Error("Failed to load storage lots");
-    return res.json();
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+        const message = body && typeof body === "object" && "error" in body
+            ? String((body as Record<string, unknown>).error || "")
+            : "";
+        throw new Error(message || "Failed to load storage lots");
+    }
+    if (!Array.isArray(body)) throw new Error("Storage lots lookup returned an invalid response");
+    return body as StorageLot[];
 }
 
 export async function fetchStorageLotBatches(

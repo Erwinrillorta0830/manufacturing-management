@@ -2,7 +2,7 @@ import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
+import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
@@ -20,6 +20,9 @@ interface ShipmentInspectionFormProps {
     branches: Branch[];
     storageLotsByProductId: Record<number, StorageLot[]>;
     rejectedStorageLotsByProductId: Record<number, StorageLot[]>;
+    storageLotLookupStateByProductId: Record<number, StorageLotLookupState>;
+    rejectedStorageLotLookupStateByProductId: Record<number, StorageLotLookupState>;
+    onRetryStorageLots: (productId: number, disposition: "accepted" | "rejected") => void;
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
     receivingTicketNumber: string;
     onReceiptNumberChange: (value: string) => void;
@@ -88,13 +91,18 @@ function SearchableStorageLotSelect({
             .map(lot => {
                 const lotId = String(lot.lot_id);
                 const lotName = String(lot.lot_name || lot.lot_code || `Lot ${lotId}`);
-                const available = lot.availableQuantity ?? lot.max_batch_capacity ?? "historical";
+                const available = lot.availableQuantity ?? lot.max_batch_capacity;
                 const isCurrent = lotId === String(value);
                 const isFull = typeof lot.availableQuantity === "number" && lot.availableQuantity <= 0;
+                const availabilityLabel = lot.capacity_status === "UNCONFIGURED"
+                    ? "capacity not configured"
+                    : typeof available === "number"
+                        ? `${available.toLocaleString()} available`
+                        : "availability unavailable";
 
                 return {
                     value: lotId,
-                    label: `${lotName} (${available} available)`,
+                    label: `${lotName} (${availabilityLabel})`,
                     disabled: isFull && !isCurrent
                 };
             });
@@ -583,6 +591,9 @@ export default function ShipmentInspectionForm({
     branches,
     storageLotsByProductId,
     rejectedStorageLotsByProductId,
+    storageLotLookupStateByProductId,
+    rejectedStorageLotLookupStateByProductId,
+    onRetryStorageLots,
     loadStorageLotBatches,
     receivingTicketNumber,
     onReceiptNumberChange,
@@ -1045,8 +1056,14 @@ export default function ShipmentInspectionForm({
                         };
 
                         const prod = line.product_id;
-                        const lineStorageLots = storageLotsByProductId[Number(prod.product_id)] || [];
-                        const lineRejectedStorageLots = rejectedStorageLotsByProductId[Number(prod.product_id)] || [];
+                        const productId = Number(prod.product_id);
+                        const lineStorageLots = storageLotsByProductId[productId] || [];
+                        const lineRejectedStorageLots = rejectedStorageLotsByProductId[productId] || [];
+                        const lineStorageLotLookup = storageLotLookupStateByProductId[productId] || { status: "loading" as const, error: null };
+                        const lineRejectedStorageLotLookup = rejectedStorageLotLookupStateByProductId[productId] || { status: "loading" as const, error: null };
+                        const lotBranchLabel = branches.find(branch => Number(branch.id) === Number(selectedBranchId || selectedShipment.branch_id))?.branch_name
+                            || originalBranchName;
+                        const lotUomLabel = prod.unit_of_measurement?.unit_shortcut || prod.unit_of_measurement?.unit_name || "selected UOM";
                         const isHighlighted = highlightedLineId === line.line_id;
 
                         const receivedVal = row.receivedQty !== "" ? Number(row.receivedQty) : 0;
@@ -1291,9 +1308,26 @@ export default function ShipmentInspectionForm({
                                                 )}
                                             </div>
                                         </div>
-                                        {lineStorageLots.length === 0 && (
+                                        {acceptedVal > 0 && lineStorageLotLookup.status === "loading" && (
+                                            <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
+                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active storage lots for {lotBranchLabel}...
+                                            </p>
+                                        )}
+                                        {acceptedVal > 0 && lineStorageLotLookup.status === "error" && (
+                                            <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
+                                                <span>Unable to load active storage lots for {lotBranchLabel} ({lotUomLabel}). This is a lookup failure, not an empty lot list.</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onRetryStorageLots(productId, "accepted")}
+                                                    className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/40 bg-background px-2 font-extrabold hover:bg-red-500/10"
+                                                >
+                                                    <RefreshCw className="h-3 w-3" /> Retry
+                                                </button>
+                                            </div>
+                                        )}
+                                        {acceptedVal > 0 && lineStorageLotLookup.status === "loaded" && lineStorageLots.length === 0 && (
                                             <p className="text-[9px] font-semibold text-amber-700" role="alert">
-                                                No compatible storage lots are available. A lot must match this product&apos;s Product Type and UOM and have remaining capacity.
+                                                No active storage lots match {lotBranchLabel} / {lotUomLabel}. Empty or vacant locations remain valid targets; shelf/bay and FEFO shelf assignments are not required by the receiving lookup.
                                             </p>
                                         )}
                                         {acceptedVal > 0 && (
@@ -1306,7 +1340,7 @@ export default function ShipmentInspectionForm({
                                                 otherAllocations={row.rejectedLotAllocations}
                                                 expectedQuantity={acceptedVal}
                                                 storageLots={lineStorageLots}
-                                                readOnly={readOnly}
+                                                readOnly={readOnly || lineStorageLotLookup.status !== "loaded"}
                                                 loadStorageLotBatches={loadStorageLotBatches}
                                                 onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
                                                 onAddLot={() => addAcceptedLot(line.line_id, row)}
@@ -1320,7 +1354,24 @@ export default function ShipmentInspectionForm({
                                                         <p className="text-[10px] text-muted-foreground">Rejected stock follows the same Lot → Batch → Dates → Quantity sequence.</p>
                                                     </div>
                                                 </div>
-                                        {lineRejectedStorageLots.length === 0 && (
+                                        {lineRejectedStorageLotLookup.status === "loading" && (
+                                            <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
+                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active quarantine storage lots...
+                                            </p>
+                                        )}
+                                        {lineRejectedStorageLotLookup.status === "error" && (
+                                            <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
+                                                <span>Unable to load quarantine storage lots. This is a lookup failure, not an empty lot list.</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onRetryStorageLots(productId, "rejected")}
+                                                    className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/40 bg-background px-2 font-extrabold hover:bg-red-500/10"
+                                                >
+                                                    <RefreshCw className="h-3 w-3" /> Retry
+                                                </button>
+                                            </div>
+                                        )}
+                                        {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
                                             <p className="text-[9px] font-semibold text-amber-700" role="alert">
                                                 {hasConfiguredBadOrderBranch
                                                     ? "No compatible quarantine / Bad Order storage lots are available. A lot must match this product's UOM and be active on the configured Bad Order branch."
@@ -1329,14 +1380,14 @@ export default function ShipmentInspectionForm({
                                         )}
                                                 <LotAllocationEditor
                                                     lineId={line.line_id}
-                                                    productId={Number(prod.product_id)}
+                                                    productId={productId}
                                                     isPackaging={row.isPackaging}
                                                     disposition="rejected"
                                                     allocations={row.rejectedLotAllocations}
                                                     otherAllocations={row.acceptedLotAllocations}
                                                     expectedQuantity={rejectedVal}
                                                     storageLots={lineRejectedStorageLots}
-                                                    readOnly={readOnly}
+                                                    readOnly={readOnly || lineRejectedStorageLotLookup.status !== "loaded"}
                                                     loadStorageLotBatches={loadStorageLotBatches}
                                                     onChange={allocations => handleUpdateRejectedAllocations(line.line_id, allocations)}
                                                     onAddLot={() => addRejectedLot(line.line_id, row)}

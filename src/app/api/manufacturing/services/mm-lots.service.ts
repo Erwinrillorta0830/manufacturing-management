@@ -19,6 +19,11 @@ export interface MmLotRecord extends Record<string, unknown> {
     lot_name?: string | null;
     branch_id?: number | Record<string, unknown> | null;
     unit_id?: number | Record<string, unknown> | null;
+    product_type_id?: number | Record<string, unknown> | null;
+    product_type?: number | Record<string, unknown> | null;
+    product_family_id?: number | Record<string, unknown> | null;
+    family_id?: number | Record<string, unknown> | null;
+    product_family?: number | Record<string, unknown> | null;
     max_batch_capacity?: number | string | null;
     status?: string | null;
 }
@@ -146,7 +151,10 @@ export async function loadMmLots(options: {
     const ids = [...new Set((options.ids || []).filter(id => Number.isSafeInteger(id) && id > 0))];
     if (ids.length > 0) params.set("filter[lot_id][_in]", ids.join(","));
     if (options.branchId !== undefined) params.set("filter[branch_id][_eq]", String(options.branchId));
-    if (options.onlyActive !== false) params.set("filter[status][_eq]", "ACTIVE");
+    // Empty/Vacant are valid occupancy states for an active storage target.
+    // Shelf/bay occupancy is not stored on mm_lots, so it must not remove a
+    // lot from the receiving selector.
+    if (options.onlyActive !== false) params.set("filter[status][_in]", "ACTIVE,EMPTY,VACANT");
     return readRows<MmLotRecord>(`/items/${MM_LOT_COLLECTION}?${params.toString()}`, "Manufacturing Management lot lookup");
 }
 

@@ -25,6 +25,7 @@ export interface StorageLot {
     legacy_lot_id?: number | null;
     branch_id?: number | null;
     status?: "ACTIVE" | "CLOSED" | "INACTIVE" | string | null;
+    capacity_status?: "CONFIGURED" | "UNCONFIGURED" | string;
     mapping_status?: "MAPPED" | "UNMAPPED" | string;
     is_selectable?: boolean;
     is_legacy_only?: boolean;
@@ -37,6 +38,13 @@ export interface StorageLot {
     occupiedQuantity?: number;
     availableQuantity?: number | null;
     remainingCapacity?: number | null;
+}
+
+export type StorageLotLookupStatus = "loading" | "loaded" | "error";
+
+export interface StorageLotLookupState {
+    status: StorageLotLookupStatus;
+    error: string | null;
 }
 
 export interface StorageLotBatch {

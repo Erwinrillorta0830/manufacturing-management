@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, StorageLotBatch, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
+import { Shipment, Branch, ShipmentLineItem, Product, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingCommitPayload, ReceivingQaEvaluation, ReceivingPreview, ReceivingCommitResult, ReceivingLotAllocationInput, OverDeliveryLine, QuarantineDisposition, QuarantineStock, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
 import {
     fetchActiveShipments, 
     fetchBranches, 
@@ -136,6 +136,38 @@ interface ShipmentSelectionOptions {
     preserveCommitState?: boolean;
 }
 
+type StorageLotDisposition = "accepted" | "rejected";
+
+interface StorageLotLookupResult {
+    lots: StorageLot[];
+    state: StorageLotLookupState;
+}
+
+function storageLotLookupError(error: unknown): string {
+    return error instanceof Error && error.message.trim()
+        ? error.message
+        : "Active storage lots could not be loaded.";
+}
+
+async function loadStorageLotLookup(
+    productId: number,
+    branchId: number | null,
+    disposition: StorageLotDisposition,
+    signal?: AbortSignal
+): Promise<StorageLotLookupResult> {
+    if (!branchId || branchId <= 0) {
+        return { lots: [], state: { status: "loaded", error: null } };
+    }
+
+    try {
+        const lots = await fetchStorageLots(productId, branchId, signal, disposition);
+        return { lots, state: { status: "loaded", error: null } };
+    } catch (error) {
+        if (signal?.aborted || (error as Error).name === "AbortError") throw error;
+        return { lots: [], state: { status: "error", error: storageLotLookupError(error) } };
+    }
+}
+
 export function useQAReceiving({
     mode = "queue",
     shipmentId: detailShipmentId,
@@ -156,6 +188,8 @@ export function useQAReceiving({
     const [supplierDocumentTypes, setSupplierDocumentTypes] = useState<SupplierDocumentType[]>([]);
     const [storageLotsByProductId, setStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
     const [rejectedStorageLotsByProductId, setRejectedStorageLotsByProductId] = useState<Record<number, StorageLot[]>>({});
+    const [storageLotLookupStateByProductId, setStorageLotLookupStateByProductId] = useState<Record<number, StorageLotLookupState>>({});
+    const [rejectedStorageLotLookupStateByProductId, setRejectedStorageLotLookupStateByProductId] = useState<Record<number, StorageLotLookupState>>({});
     const storageLotBatchCache = useRef<Record<string, StorageLotBatch[]>>({});
     const storageLotBatchRequestCache = useRef<Record<string, Promise<StorageLotBatch[]>>>({});
     const [loadingShipments, setLoadingShipments] = useState(false);
@@ -526,6 +560,8 @@ export function useQAReceiving({
         setLoadingLines(true);
         setStorageLotsByProductId({});
         setRejectedStorageLotsByProductId({});
+        setStorageLotLookupStateByProductId({});
+        setRejectedStorageLotLookupStateByProductId({});
         storageLotBatchCache.current = {};
         storageLotBatchRequestCache.current = {};
         try {
@@ -631,26 +667,42 @@ export function useQAReceiving({
             const productIds = [...new Set(lines.map(line => Number(line.product_id?.product_id)).filter(productId => Number.isSafeInteger(productId) && productId > 0))];
             const selectedBranch = branchCatalog.find(branch => Number(branch.id) === Number(normalizedPurchaseOrderBranchId));
             const badStockBranchId = configuredBadStockBranchId(selectedBranch);
+            setStorageLotLookupStateByProductId(Object.fromEntries(productIds.map(productId => [productId, {
+                status: "loading" as const,
+                error: null
+            }])));
+            setRejectedStorageLotLookupStateByProductId(Object.fromEntries(productIds.map(productId => [productId, {
+                status: badStockBranchId > 0 ? "loading" as const : "loaded" as const,
+                error: null
+            }])));
             void Promise.all(productIds.map(async productId => {
-                try {
-                    const [acceptedLots, rejectedLots] = await Promise.all([
-                        fetchStorageLots(productId, Number(normalizedPurchaseOrderBranchId), controller.signal),
-                        badStockBranchId > 0
-                            ? fetchStorageLots(productId, badStockBranchId, controller.signal, "rejected")
-                            : Promise.resolve([] as StorageLot[])
-                    ]);
-                    return [productId, acceptedLots, rejectedLots] as const;
-                } catch (error) {
-                    if (controller.signal.aborted || (error as Error).name === "AbortError") return null;
-                    console.error(error);
-                    toast.error(`Failed to load compatible storage lots for product ${productId}.`);
-                    return [productId, [] as StorageLot[], [] as StorageLot[]] as const;
-                }
+                const [accepted, rejected] = await Promise.all([
+                    loadStorageLotLookup(productId, Number(normalizedPurchaseOrderBranchId), "accepted", controller.signal),
+                    badStockBranchId > 0
+                        ? loadStorageLotLookup(productId, badStockBranchId, "rejected", controller.signal)
+                        : Promise.resolve({ lots: [], state: { status: "loaded", error: null } } satisfies StorageLotLookupResult)
+                ]);
+                return { productId, accepted, rejected };
             })).then(results => {
                 if (controller.signal.aborted) return;
-                const validResults = results.filter((result): result is readonly [number, StorageLot[], StorageLot[]] => Boolean(result));
-                setStorageLotsByProductId(Object.fromEntries(validResults.map(([id, lots]) => [id, lots])));
-                setRejectedStorageLotsByProductId(Object.fromEntries(validResults.map(([id, , lots]) => [id, lots])));
+                for (const result of results) {
+                    if (result.accepted.state.status === "error") {
+                        console.error(result.accepted.state.error);
+                        toast.error(`Failed to load compatible storage lots for product ${result.productId}.`);
+                    }
+                    if (result.rejected.state.status === "error") {
+                        console.error(result.rejected.state.error);
+                        toast.error(`Failed to load quarantine storage lots for product ${result.productId}.`);
+                    }
+                }
+                setStorageLotsByProductId(Object.fromEntries(results.map(({ productId, accepted }) => [productId, accepted.lots])));
+                setRejectedStorageLotsByProductId(Object.fromEntries(results.map(({ productId, rejected }) => [productId, rejected.lots])));
+                setStorageLotLookupStateByProductId(Object.fromEntries(results.map(({ productId, accepted }) => [productId, accepted.state])));
+                setRejectedStorageLotLookupStateByProductId(Object.fromEntries(results.map(({ productId, rejected }) => [productId, rejected.state])));
+            }).catch(error => {
+                if (controller.signal.aborted || (error as Error).name === "AbortError") return;
+                console.error(error);
+                toast.error("Failed to load compatible storage lots.");
             });
             setQaSpecificationStates(Object.fromEntries(productIds.map(productId => [productId, {
                 status: "loading" as const,
@@ -690,6 +742,49 @@ export function useQAReceiving({
             if (!controller.signal.aborted) setLoadingLines(false);
         }
     }, [branches, clearInspection]);
+
+    const retryStorageLots = useCallback(async (productId: number, disposition: StorageLotDisposition) => {
+        if (!selectedShipment) return;
+
+        const receivingBranchId = Number(selectedBranchId || selectedShipment.branch_id);
+        const receivingBranch = branches.find(branch => Number(branch.id) === receivingBranchId);
+        const branchId = disposition === "accepted"
+            ? receivingBranchId
+            : configuredBadStockBranchId(receivingBranch);
+        const setLookupState = disposition === "accepted"
+            ? setStorageLotLookupStateByProductId
+            : setRejectedStorageLotLookupStateByProductId;
+        const setLots = disposition === "accepted"
+            ? setStorageLotsByProductId
+            : setRejectedStorageLotsByProductId;
+
+        if (!Number.isSafeInteger(branchId) || branchId <= 0) {
+            setLots(previous => ({ ...previous, [productId]: [] }));
+            setLookupState(previous => ({
+                ...previous,
+                [productId]: {
+                    status: "error",
+                    error: disposition === "accepted"
+                        ? "A receiving branch is required before storage lots can be loaded."
+                        : "No active Bad Order / quarantine branch is configured."
+                }
+            }));
+            return;
+        }
+
+        setLots(previous => ({ ...previous, [productId]: [] }));
+        setLookupState(previous => ({
+            ...previous,
+            [productId]: { status: "loading", error: null }
+        }));
+
+        const result = await loadStorageLotLookup(productId, branchId, disposition);
+        setLots(previous => ({ ...previous, [productId]: result.lots }));
+        setLookupState(previous => ({ ...previous, [productId]: result.state }));
+        if (result.state.status === "error") {
+            toast.error(`Failed to load ${disposition === "accepted" ? "compatible" : "quarantine"} storage lots for product ${productId}.`);
+        }
+    }, [branches, selectedBranchId, selectedShipment]);
 
     const loadDetail = useCallback(async (preserveCommitState = false) => {
         if (!isDetailMode || !detailShipmentId) return;
@@ -1402,6 +1497,9 @@ export function useQAReceiving({
         branches,
         storageLotsByProductId,
         rejectedStorageLotsByProductId,
+        storageLotLookupStateByProductId,
+        rejectedStorageLotLookupStateByProductId,
+        retryStorageLots,
         loadStorageLotBatches,
         loadingShipments,
         loadingBranches,
