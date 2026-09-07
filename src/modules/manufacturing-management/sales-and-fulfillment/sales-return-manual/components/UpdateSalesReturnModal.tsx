@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Copy,
   Printer,
   Save,
   AlertTriangle,
@@ -565,6 +566,32 @@ export function UpdateSalesReturnModal({
     setDetails((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleDuplicateRow = (index: number) => {
+    setDetails((prev) => {
+      const original = prev[index];
+      if (!original) return prev;
+      
+      const price = Number(original.unitPrice || 0);
+      const gross = Math.round(1 * price * 100) / 100;
+      
+      const duplicate: SalesReturnItem = {
+        ...original,
+        id: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Required for backend to treat as new (matches service logic)
+        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Keep tempId for React keys if needed
+        rfidTags: [], // Clear out RFIDs
+        quantity: 1, // Start with quantity 1
+        grossAmount: gross,
+        totalAmount: gross,
+        discountAmount: 0,
+        discountType: null // Reset discount to ensure accuracy
+      };
+
+      const updated = [...prev];
+      updated.splice(index + 1, 0, duplicate);
+      return updated;
+    });
+  };
+
   const handleAddProductsToEdit = (newItems: (Partial<SalesReturnItem> & { price?: number, product_name?: string })[]) => {
     if (!newItems || newItems.length === 0) return;
 
@@ -684,6 +711,16 @@ export function UpdateSalesReturnModal({
       setReturnTypeError(true);
       return;
     }
+
+    const missingLotDetails = details.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      setLotDetailsError(true);
+      return;
+    }
+
     setIsUpdateConfirmOpen(true);
   };
 
@@ -810,6 +847,7 @@ export function UpdateSalesReturnModal({
         returnNo: headerData.returnNo,
         items: details.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -851,6 +889,7 @@ export function UpdateSalesReturnModal({
         returnNo: headerData.returnNo,
         items: details.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -1117,7 +1156,7 @@ export function UpdateSalesReturnModal({
                       </TableHead>
                       {/* 🟢 REVISED: Delete Column hidden if not Pending */}
                       {canEditAll && (
-                        <TableHead className="text-white font-semibold h-11 w-[50px]"></TableHead>
+                        <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
                       )}
                     </TableRow>
                   </TableHeader>
@@ -1394,11 +1433,14 @@ export function UpdateSalesReturnModal({
                                 )}
                               </TableCell>
                               {canEditAll && (
-                                <TableCell className="align-middle p-2 text-center">
-                                  <button onClick={() => handleDeleteRow(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </TableCell>
+                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <button onClick={() => handleDuplicateRow(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                                <button onClick={() => handleDeleteRow(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </TableCell>
                               )}
                             </TableRow>
                           );
@@ -1519,7 +1561,7 @@ export function UpdateSalesReturnModal({
                                   <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
                                 )}
                               </TableCell>
-                              <TableCell />
+                              <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
                             </TableRow>
 
                             {/* Child Rows (Individual Scans/Additions) */}
@@ -1724,12 +1766,22 @@ export function UpdateSalesReturnModal({
                                   )}
                                 </TableCell>
                                 {canEditAll && (
-                                  <TableCell className="text-center align-middle">
+                                  <TableCell className="text-center align-middle whitespace-nowrap">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
+                                      onClick={() => handleDuplicateRow(idx)}
+                                      title="Duplicate row"
+                                    >
+                                      <Copy className="h-4 w-4" />
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="icon"
                                       className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
                                       onClick={() => handleDeleteRow(idx)}
+                                      title="Remove row"
                                     >
                                       <Trash2 className="h-4 w-4" />
                                     </Button>

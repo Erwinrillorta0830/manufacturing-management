@@ -765,16 +765,24 @@ export async function updateReturn(
       updated_at: nowPH(),
     };
 
-    if (typeof item.id === "string" && item.id.startsWith("added-")) {
-      await repo.createReturnDetail({
-        ...detailPayload,
-        return_no: payload.returnNo,
-        product_id: Number(item.productId || item.product_id),
-        created_at: nowPH(),
-        status: "Draft",
-      });
+    if (!item.id || typeof item.id === "string" || String(item.id).startsWith("added-")) {
+      try {
+        await repo.createReturnDetail({
+          ...detailPayload,
+          return_no: payload.returnNo,
+          product_id: Number(item.productId || item.product_id),
+          created_at: nowPH(),
+          status: "Draft",
+        });
+      } catch (err: any) {
+        throw new Error(`Failed to create duplicate item (product ${item.productId}): ${err.message}`);
+      }
     } else {
-      await repo.updateReturnDetail(item.id, detailPayload);
+      try {
+        await repo.updateReturnDetail(item.id, detailPayload);
+      } catch (err: any) {
+        throw new Error(`Failed to update item ID ${item.id}: ${err.message}`);
+      }
     }
   }
 

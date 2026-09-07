@@ -5,6 +5,7 @@ import {
   X,
   Plus,
   Trash2,
+  Copy,
   Save,
   ChevronDown,
   FileText,
@@ -223,6 +224,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   // UI State for Validation
   const [returnTypeError, setReturnTypeError] = useState(false);
+  const [lotDetailsError, setLotDetailsError] = useState(false);
 
   // Bottom Form Fields
   const [orderNo, setOrderNo] = useState("");
@@ -877,6 +879,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   const handleCreateReturn = async () => {
     setReturnTypeError(false);
+    setLotDetailsError(false);
     setOrderError(false);
     setInvoiceError(false);
 
@@ -907,6 +910,15 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (invalidItems) {
       toast.error("Please select a Return Type for all items.");
       setReturnTypeError(true);
+      return;
+    }
+
+    const missingLotDetails = items.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      setLotDetailsError(true);
       return;
     }
 
@@ -952,6 +964,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         remarks,
         items: items.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -1071,6 +1084,35 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   const handleRemoveItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDuplicateItem = (index: number) => {
+    setItems((prev) => {
+      const original = prev[index];
+      if (!original) return prev;
+      
+      const price = Number(original.unitPrice || 0);
+      const gross = Math.round(1 * price * 100) / 100;
+      const discountVal = Number(original.discountAmount || 0);
+      // We calculate a proportional discount if needed, but for simplicity
+      // since the user modifies it, we can reset discountAmount to 0 or re-calculate it based on discountType.
+      // Resetting discountAmount is safer when quantity is 1 unless it's a fixed % type.
+      
+      const duplicate: SalesReturnItem = {
+        ...original,
+        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Unique ID for React rendering
+        rfidTags: [], // Clear out RFIDs
+        quantity: 1, // Start with quantity 1
+        grossAmount: gross,
+        totalAmount: gross,
+        discountAmount: 0,
+        discountType: null // Reset discount to ensure accuracy
+      };
+
+      const updated = [...prev];
+      updated.splice(index + 1, 0, duplicate);
+      return updated;
+    });
   };
 
   const handleItemChange = (
@@ -1476,7 +1518,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     </TableHead>
                     {/* 🟢 REVISED: Delete Column hidden if not Pending */}
                     {true && (
-                      <TableHead className="text-white font-semibold h-11 w-[50px]"></TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
                     )}
                   </TableRow>
                 </TableHeader>
@@ -1721,7 +1763,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               )}
                             </TableCell>
                             {true && (
-                              <TableCell className="align-middle p-2 text-center">
+                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <button onClick={() => handleDuplicateItem(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
+                                  <Copy className="h-4 w-4" />
+                                </button>
                                 <button onClick={() => handleRemoveItem(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
                                   <Trash2 className="h-4 w-4" />
                                 </button>
@@ -1846,7 +1891,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
                               )}
                             </TableCell>
-                            <TableCell />
+                            <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
                           </TableRow>
 
                           {/* Child Rows (Individual Scans/Additions) */}
@@ -1977,20 +2022,48 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                     value={item.lot_id ? item.lot_id.toString() : ""}
                                     onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
                                     options={lotOptions
-                                      .filter(l => l.branch_id === branchId && l.unit_id === item.unit_id)
+                                      .filter(l => {
+                                        if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
+                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                        const maxCap = l.max_batch_capacity ?? 0;
+                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
+                                      })
                                       .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                     placeholder="Select lot"
-                                    className="h-9 text-xs"
+                                    className={cn(
+                                      "h-9 text-xs",
+                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                   />
                                 ) : (
                                   <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* Capacity */}
+                              <TableCell className="align-middle p-2 text-center">
+                                {(() => {
+                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                  const maxCap = lot?.max_batch_capacity ?? 0;
+                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                  const isFull = maxCap > 0 && item.quantity > availableCap;
+                                  return (
+                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                      {item.quantity} / {availableCap}
+                                    </div>
+                                  );
+                                })()}
+                              </TableCell>
                               <TableCell className="align-middle p-2">
                                 {true ? (
                                   <Input
                                     type="text"
-                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-left text-sm border-border px-2",
+                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.batch || ""}
                                     onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
                                     placeholder="Batch no."
@@ -1999,16 +2072,36 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                   <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* MFG Date */}
                               <TableCell className="align-middle p-2">
                                 {true ? (
-                                  <ReasonInputSection
-                                    value={item.reason || ""}
-                                    onChange={(val) => handleItemChange(idx, "reason", val)}
+                                  <Input
+                                    type="date"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                    value={item.manufacturing_date || ""}
+                                    onChange={(e) => handleItemChange(idx, "manufacturing_date", e.target.value)}
                                   />
                                 ) : (
-                                  <span className="text-sm text-muted-foreground italic">
-                                    {item.reason || "-"}
-                                  </span>
+                                  <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
+                                )}
+                              </TableCell>
+                              {/* EXP Date */}
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <Input
+                                    type="date"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                    value={item.expiry_date || ""}
+                                    onChange={(e) => handleItemChange(idx, "expiry_date", e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
                                 )}
                               </TableCell>
                               <TableCell className="align-middle p-2">
@@ -2042,12 +2135,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 )}
                               </TableCell>
                               {true && (
-                                <TableCell className="text-center align-middle">
+                                <TableCell className="text-center align-middle whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
+                                    onClick={() => handleDuplicateItem(idx)}
+                                    title="Duplicate row"
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
                                     onClick={() => handleRemoveItem(idx)}
+                                    title="Remove row"
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>

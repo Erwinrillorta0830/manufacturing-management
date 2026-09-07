@@ -179,6 +179,7 @@ export async function PATCH(req: NextRequest) {
     const data = await updateReturn(body, userId);
     return json({ data });
   } catch (error) {
+    console.error("Failed to update sales return:", error);
     return handleApiError(error, "Failed to update sales return");
   }
 }
