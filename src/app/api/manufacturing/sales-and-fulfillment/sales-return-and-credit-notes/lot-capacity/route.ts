@@ -23,8 +23,12 @@ export async function GET(req: Request) {
     // Aggregate onhandQuantity strictly by mm_lot_id (lot_id)
     const lotOnhandMap: Record<number, number> = {};
     for (const item of list) {
-      if (item.lot_id != null) {
-        lotOnhandMap[item.lot_id] = (lotOnhandMap[item.lot_id] || 0) + (Number(item.quantity) || 0);
+      const lotId = item.mm_lot_id ?? item.lot_id;
+      if (lotId != null) {
+        const idNum = Number(lotId);
+        if (!isNaN(idNum)) {
+          lotOnhandMap[idNum] = (lotOnhandMap[idNum] || 0) + (Number(item.quantity) || 0);
+        }
       }
     }
     return NextResponse.json({ data: lotOnhandMap });

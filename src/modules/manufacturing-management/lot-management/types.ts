@@ -230,6 +230,7 @@ export interface FefoAllocationResult {
 // ─── Inventory Movement Types (/api/mm-inventory-movements/all) ─────
 
 export interface InventoryMovement {
+    [key: string]: unknown;
     movementKey?: string;
     movementId?: number | null;
     transactionTypeId?: number | null;

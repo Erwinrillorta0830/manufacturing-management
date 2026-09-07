@@ -60,20 +60,19 @@ export default function BatchMovementsDialog({
         const bExpNorm = normalizeDate(batch.expirationDate);
 
         return movements.filter((m) => {
-            const rawM = m as Record<string, unknown>;
-            const mInvId = Number(m.inventoryLotId ?? rawM.inventory_lot_id ?? m.batchId ?? rawM.batch_id ?? 0);
-            const mBNo = String(m.batchNo ?? rawM.batch_no ?? "").toLowerCase().trim();
+            const mInvId = Number(m.inventoryLotId ?? m.inventory_lot_id ?? m.batchId ?? m.batch_id ?? 0);
+            const mBNo = String(m.batchNo ?? m.batch_no ?? "").toLowerCase().trim();
             const matchesBatchNo = mBNo === bNo || mBNo === rawBNo;
 
             const matchesInvId = batch.batchId > 0 && mInvId > 0 && mInvId === batch.batchId && (!mBNo || matchesBatchNo);
 
-            const mPId = Number(m.productId ?? rawM.product_id ?? 0);
-            const mLId = Number(m.mmLotId ?? rawM.mm_lot_id ?? m.lotId ?? rawM.lot_id ?? 0);
+            const mPId = Number(m.productId ?? m.product_id ?? 0);
+            const mLId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
             const matchesProd = pId === 0 || mPId === 0 || mPId === pId;
             const matchesLot = lId === 0 || mLId === 0 || mLId === lId;
 
-            const mMfgNorm = normalizeDate((m.manufacturingDate ?? rawM.manufacturing_date) as string);
-            const mExpNorm = normalizeDate((m.expirationDate ?? rawM.expiration_date ?? m.expiryDate ?? rawM.expiry_date) as string);
+            const mMfgNorm = normalizeDate((m.manufacturingDate ?? m.manufacturing_date) as string);
+            const mExpNorm = normalizeDate((m.expirationDate ?? m.expiration_date ?? m.expiryDate ?? m.expiry_date) as string);
 
             const mfgMatch = !bMfgNorm || !mMfgNorm || bMfgNorm === mMfgNorm;
             const expMatch = !bExpNorm || !mExpNorm || bExpNorm === mExpNorm;
@@ -82,10 +81,8 @@ export default function BatchMovementsDialog({
             if (matchesInvId) return true;
             return matchesBatchNo && matchesProd && matchesLot && matchesDates;
         }).sort((a, b) => {
-            const rawA = a as Record<string, unknown>;
-            const rawB = b as Record<string, unknown>;
-            const dateA = (a.postedAt || rawA.posted_at || a.transactionDate || rawA.transaction_date || 0) as string | number;
-            const dateB = (b.postedAt || rawB.posted_at || b.transactionDate || rawB.transaction_date || 0) as string | number;
+            const dateA = (a.postedAt || a.posted_at || a.transactionDate || a.transaction_date || 0) as string | number;
+            const dateB = (b.postedAt || b.posted_at || b.transactionDate || b.transaction_date || 0) as string | number;
             const timeA = new Date(dateA).getTime();
             const timeB = new Date(dateB).getTime();
             return timeB - timeA;
@@ -123,8 +120,8 @@ export default function BatchMovementsDialog({
     );
 
     // Compute stats from actual movement ledger
-    const totalIn = batchMovements.reduce((sum: number, m) => sum + Number(m.quantityIn ?? (m as Record<string, unknown>).quantity_in ?? 0), 0);
-    const totalOut = batchMovements.reduce((sum: number, m) => sum + Number(m.quantityOut ?? (m as Record<string, unknown>).quantity_out ?? 0), 0);
+    const totalIn = batchMovements.reduce((sum: number, m) => sum + Number(m.quantityIn ?? m.quantity_in ?? 0), 0);
+    const totalOut = batchMovements.reduce((sum: number, m) => sum + Number(m.quantityOut ?? m.quantity_out ?? 0), 0);
     const netOnhand = totalIn - totalOut;
     const unitLabel = batch.uomShortcut || batch.uomName || "";
     // When movement audit records exist, live on-hand is strictly computed from totalIn - totalOut
@@ -293,16 +290,15 @@ export default function BatchMovementsDialog({
                                 </TableHeader>
                                 <TableBody>
                                     {batchMovements.map((m, idx) => {
-                                        const rawM = m as Record<string, unknown>;
-                                        const isDirectionIn = String(m.movementDirection ?? rawM.movement_direction ?? "").toUpperCase() === "IN";
-                                        const refNo = (m.referenceNo ?? rawM.reference_no ?? m.movementKey ?? rawM.movement_key ?? "-") as string;
-                                        const keyNo = (m.movementKey ?? rawM.movement_key) as string | undefined;
-                                        const transType = (m.transactionType ?? rawM.transaction_type ?? m.sourceModule ?? rawM.source_module ?? "MOVEMENT") as string;
-                                        const qIn = Number(m.quantityIn ?? rawM.quantity_in ?? 0);
-                                        const qOut = Number(m.quantityOut ?? rawM.quantity_out ?? 0);
-                                        const cost = Number(m.unitCost ?? rawM.unit_cost ?? 0);
-                                        const cond = (m.inventoryCondition ?? rawM.inventory_condition ?? "GOOD") as string;
-                                        const dateStr = (m.transactionDate ?? rawM.transaction_date ?? m.postedAt ?? rawM.posted_at ?? "") as string;
+                                        const isDirectionIn = String(m.movementDirection ?? m.movement_direction ?? "").toUpperCase() === "IN";
+                                        const refNo = (m.referenceNo ?? m.reference_no ?? m.movementKey ?? m.movement_key ?? "-") as string;
+                                        const keyNo = (m.movementKey ?? m.movement_key) as string | undefined;
+                                        const transType = (m.transactionType ?? m.transaction_type ?? m.sourceModule ?? m.source_module ?? "MOVEMENT") as string;
+                                        const qIn = Number(m.quantityIn ?? m.quantity_in ?? 0);
+                                        const qOut = Number(m.quantityOut ?? m.quantity_out ?? 0);
+                                        const cost = Number(m.unitCost ?? m.unit_cost ?? 0);
+                                        const cond = (m.inventoryCondition ?? m.inventory_condition ?? "GOOD") as string;
+                                        const dateStr = (m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "") as string;
 
                                         return (
                                             <TableRow key={keyNo || idx}>
