@@ -108,6 +108,7 @@ export default function BatchTable({
                             <SelectItem value="QUARANTINED">Quarantined</SelectItem>
                             <SelectItem value="HOLD">Hold</SelectItem>
                             <SelectItem value="EXPIRED">Expired</SelectItem>
+                            <SelectItem value="NEGATIVE">Negative Balance</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -148,15 +149,14 @@ export default function BatchTable({
                                 <TableHead>Quantity</TableHead>
                                 <TableHead>Mfg Date</TableHead>
                                 <TableHead>Exp Date</TableHead>
-                                <TableHead>Status</TableHead>
                                 <TableHead className="text-right w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {paginatedBatches.map((batch) => {
                                 const unitLabel = batch.uomShortcut || batch.uomName || "";
-                                const statusConfig = getBatchStatusBadge(batch.status);
-                                const isNearExpiry = checkNearExpiry(batch.expirationDate);
+                                const isExpired = checkIsExpired(batch.expirationDate, batch.qaStatus, batch.status);
+                                const isNearExpiry = !isExpired && checkNearExpiry(batch.expirationDate);
                                 const fefoInfo = fefoMap.get(batch.batchId);
 
                                 return (
@@ -164,9 +164,11 @@ export default function BatchTable({
                                         key={batch.batchId}
                                         onClick={() => onViewMovements?.(batch)}
                                         className={`cursor-pointer transition-colors ${
-                                            fefoInfo?.isFefoNext
-                                                ? "bg-amber-500/5 hover:bg-amber-500/15"
-                                                : "hover:bg-muted/50"
+                                            isExpired
+                                                ? "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500"
+                                                : fefoInfo?.isFefoNext
+                                                  ? "bg-amber-500/5 hover:bg-amber-500/15"
+                                                  : "hover:bg-muted/50"
                                         }`}
                                     >
                                         <TableCell className="font-medium text-xs">{batch.displayNumber}</TableCell>
@@ -190,7 +192,15 @@ export default function BatchTable({
                                         </TableCell>
 
                                         <TableCell className="font-bold text-foreground" title={batch.batchNumber}>
-                                            {batch.batchNumber}
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="font-mono">{batch.batchNumber}</span>
+                                                {isExpired && (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/40 shrink-0 shadow-2xs">
+                                                        <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                                                        EXPIRED
+                                                    </span>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="font-semibold text-foreground" title={batch.lotName}>
                                             {batch.lotName}
@@ -238,18 +248,13 @@ export default function BatchTable({
                                                     {isNearExpiry && (
                                                         <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
                                                     )}
-                                                    <span className={isNearExpiry ? "font-semibold text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+                                                    <span className={isExpired ? "font-bold text-rose-600 dark:text-rose-400" : isNearExpiry ? "font-semibold text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
                                                         {batch.expirationDate.slice(0, 10)}
                                                     </span>
                                                 </div>
                                             ) : (
                                                 <span className="text-muted-foreground">-</span>
                                             )}
-                                        </TableCell>
-                                        <TableCell>
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusConfig.badgeClass}`}>
-                                                {statusConfig.label}
-                                            </span>
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
@@ -292,7 +297,7 @@ export default function BatchTable({
                             value={String(pageSize)}
                             onValueChange={(val) => setPageSize(Number(val))}
                         >
-                            <SelectTrigger className="w-[70px] h-8 bg-background border border-border">
+                            <SelectTrigger className="min-w-[76px] w-auto h-8 px-2.5 bg-background border border-border">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent position="popper" sideOffset={4} className="bg-popover border border-border">
@@ -384,4 +389,12 @@ function checkNearExpiry(expDate?: string): boolean {
     if (isNaN(expTime)) return false;
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     return expTime - Date.now() <= thirtyDaysMs;
+}
+
+function checkIsExpired(expDate?: string, qaStatus?: string, status?: string): boolean {
+    if (qaStatus === "EXPIRED" || status === "EXPIRED") return true;
+    if (!expDate) return false;
+    const expTime = new Date(expDate).getTime();
+    if (isNaN(expTime)) return false;
+    return expTime <= new Date().setHours(23, 59, 59, 999);
 }

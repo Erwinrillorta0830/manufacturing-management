@@ -20,7 +20,6 @@ export interface MmInventoryMovement {
     branchId?: number | null;
     inventoryLotId?: number | null;
     mmLotId?: number | null;
-    lotId?: number | null;
     productId?: number | null;
     productCode?: string | null;
     productName?: string | null;
@@ -47,7 +46,6 @@ export interface MmInventoryMovementFilters {
     branch?: number | null;
     product?: number | null;
     productType?: number | null;
-    lot?: number | null;
     mmLot?: number | null;
     inventoryLot?: number | null;
     unit?: number | null;
@@ -75,7 +73,6 @@ export interface NormalizedMmInventoryMovement extends MmInventoryMovement {
     branch_id: number | null;
     inventory_lot_id: number | null;
     mm_lot_id: number | null;
-    lot_id: number | null;
     batch_no: string | null;
     expiry_date: string | null;
     manufacturing_date: string | null;
@@ -141,7 +138,6 @@ function appendFilters(params: URLSearchParams, filters: MmInventoryMovementFilt
     appendPositiveInteger(params, "branch", filters.branch);
     appendPositiveInteger(params, "product", filters.product);
     appendPositiveInteger(params, "productType", filters.productType);
-    appendPositiveInteger(params, "lot", filters.lot);
     appendPositiveInteger(params, "mmLot", filters.mmLot);
     appendPositiveInteger(params, "inventoryLot", filters.inventoryLot);
     appendPositiveInteger(params, "unit", filters.unit);
@@ -193,12 +189,7 @@ function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovem
     const referenceDetailId = numericValue(raw.referenceDetailId ?? raw.reference_detail_id);
     const branchId = numericValue(raw.branchId ?? raw.branch_id);
     const inventoryLotId = numericValue(raw.inventoryLotId ?? raw.inventory_lot_id);
-    const mmLotId = numericValue(raw.mmLotId ?? raw.mm_lot_id);
-    const rawLotId = numericValue(raw.lotId ?? raw.lot_id);
-    // Canonical MM lots are the source of truth for Manufacturing Management;
-    // retain the legacy value only for historical rows that have not yet been
-    // reconciled by the cutover migration.
-    const lotId = mmLotId ?? rawLotId;
+    const mmLotId = numericValue(raw.mmLotId ?? raw.mm_lot_id ?? raw.lotId ?? raw.lot_id);
     const productId = numericValue(raw.productId ?? raw.product_id);
     const productTypeId = numericValue(raw.productTypeId ?? raw.product_type_id);
     const unitId = numericValue(raw.unitId ?? raw.unit_id);
@@ -222,7 +213,7 @@ function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovem
         branchId,
         inventoryLotId,
         mmLotId,
-        lotId,
+        lotId: mmLotId,
         productId,
         productTypeId,
         unitId,
@@ -244,7 +235,6 @@ function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovem
         branch_id: branchId,
         inventory_lot_id: inventoryLotId,
         mm_lot_id: mmLotId,
-        lot_id: lotId,
         batch_no: batchNo,
         expiry_date: expiryDate,
         manufacturing_date: manufacturingDate,

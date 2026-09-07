@@ -41,20 +41,51 @@ export default function BatchMovementsDialog({
     // Filter movements specifically for this batch
     const batchMovements = React.useMemo(() => {
         if (!batch) return [];
+
+        const normalizeDate = (d?: string | null): string => {
+            if (!d) return "";
+            const str = String(d).trim();
+            if (!str) return "";
+            if (str.length >= 10 && str.includes("-")) return str.slice(0, 10);
+            const dt = new Date(str);
+            if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+            return str.slice(0, 10);
+        };
+
+        const rawBNo = (batch.rawBatchNumber || batch.batchNumber || "").toLowerCase().trim();
         const bNo = batch.batchNumber.toLowerCase().trim();
         const pId = Number(batch.productId || 0);
         const lId = Number(batch.lotId || 0);
+        const bMfgNorm = normalizeDate(batch.manufacturingDate);
+        const bExpNorm = normalizeDate(batch.expirationDate);
+        const isSuffixedCard = Boolean(batch.rawBatchNumber && batch.batchNumber !== batch.rawBatchNumber);
 
-        return movements.filter((m) => {
-            const matchesInvId = batch.batchId > 0 && Number(m.inventoryLotId) === batch.batchId;
-            const matchesBatchNo = (m.batchNo || "").toLowerCase().trim() === bNo;
-            const matchesProd = pId === 0 || Number(m.productId) === pId;
-            const matchesLot = lId === 0 || Number(m.lotId) === lId;
+        return movements.filter((m: any) => {
+            const mInvId = Number(m.inventoryLotId ?? m.inventory_lot_id ?? m.batchId ?? m.batch_id ?? 0);
+            const mBNo = String(m.batchNo ?? m.batch_no ?? "").toLowerCase().trim();
+            const matchesBatchNo = mBNo === bNo || mBNo === rawBNo;
 
-            return matchesInvId || (matchesBatchNo && matchesProd && matchesLot);
-        }).sort((a, b) => {
-            const timeA = new Date(a.postedAt || a.transactionDate || 0).getTime();
-            const timeB = new Date(b.postedAt || b.transactionDate || 0).getTime();
+            const matchesInvId = batch.batchId > 0 && mInvId > 0 && mInvId === batch.batchId && (!mBNo || matchesBatchNo);
+
+            const mPId = Number(m.productId ?? m.product_id ?? 0);
+            const mLId = Number(m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id ?? 0);
+            const matchesProd = pId === 0 || mPId === 0 || mPId === pId;
+            const matchesLot = lId === 0 || mLId === 0 || mLId === lId;
+
+            const mMfgNorm = normalizeDate(m.manufacturingDate ?? m.manufacturing_date);
+            const mExpNorm = normalizeDate(m.expirationDate ?? m.expiration_date ?? m.expiryDate ?? m.expiry_date);
+
+            const mfgMatch = !bMfgNorm || !mMfgNorm || bMfgNorm === mMfgNorm;
+            const expMatch = !bExpNorm || !mExpNorm || bExpNorm === mExpNorm;
+            const matchesDates = mfgMatch && expMatch;
+
+            if (matchesInvId) return true;
+            return matchesBatchNo && matchesProd && matchesLot && matchesDates;
+        }).sort((a: any, b: any) => {
+            const dateA = a.postedAt || a.posted_at || a.transactionDate || a.transaction_date || 0;
+            const dateB = b.postedAt || b.posted_at || b.transactionDate || b.transaction_date || 0;
+            const timeA = new Date(dateA).getTime();
+            const timeB = new Date(dateB).getTime();
             return timeB - timeA;
         });
     }, [batch, movements]);
@@ -90,8 +121,8 @@ export default function BatchMovementsDialog({
     );
 
     // Compute stats from actual movement ledger
-    const totalIn = batchMovements.reduce((sum, m) => sum + Number(m.quantityIn || 0), 0);
-    const totalOut = batchMovements.reduce((sum, m) => sum + Number(m.quantityOut || 0), 0);
+    const totalIn = batchMovements.reduce((sum: number, m: any) => sum + Number(m.quantityIn ?? m.quantity_in ?? 0), 0);
+    const totalOut = batchMovements.reduce((sum: number, m: any) => sum + Number(m.quantityOut ?? m.quantity_out ?? 0), 0);
     const netOnhand = totalIn - totalOut;
     const unitLabel = batch.uomShortcut || batch.uomName || "";
     // When movement audit records exist, live on-hand is strictly computed from totalIn - totalOut
@@ -259,26 +290,35 @@ export default function BatchMovementsDialog({
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {batchMovements.map((m, idx) => {
-                                        const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
+                                    {batchMovements.map((m: any, idx) => {
+                                        const isDirectionIn = String(m.movementDirection ?? m.movement_direction ?? "").toUpperCase() === "IN";
+                                        const refNo = m.referenceNo ?? m.reference_no ?? m.movementKey ?? m.movement_key ?? "-";
+                                        const keyNo = m.movementKey ?? m.movement_key;
+                                        const transType = m.transactionType ?? m.transaction_type ?? m.sourceModule ?? m.source_module ?? "MOVEMENT";
+                                        const qIn = Number(m.quantityIn ?? m.quantity_in ?? 0);
+                                        const qOut = Number(m.quantityOut ?? m.quantity_out ?? 0);
+                                        const cost = Number(m.unitCost ?? m.unit_cost ?? 0);
+                                        const cond = m.inventoryCondition ?? m.inventory_condition ?? "GOOD";
+                                        const dateStr = m.transactionDate ?? m.transaction_date ?? m.postedAt ?? m.posted_at ?? "";
+
                                         return (
-                                            <TableRow key={m.movementKey || idx}>
+                                            <TableRow key={keyNo || idx}>
                                                 <TableCell className="text-xs text-muted-foreground font-medium pl-4 py-3">{idx + 1}</TableCell>
                                                 <TableCell className="py-3">
                                                     <div className="flex flex-col">
                                                         <span className="font-bold text-xs text-foreground">
-                                                             {m.referenceNo || m.movementKey || "-"}
+                                                             {refNo}
                                                         </span>
-                                                        {m.movementKey && m.movementKey !== m.referenceNo && (
+                                                        {keyNo && keyNo !== refNo && (
                                                             <span className="font-mono text-[10px] text-muted-foreground">
-                                                                {m.movementKey}
+                                                                {keyNo}
                                                             </span>
                                                         )}
                                                     </div>
                                                 </TableCell>
                                                 <TableCell className="py-3">
                                                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-muted text-foreground uppercase border border-border">
-                                                        {m.transactionType || m.sourceModule || "MOVEMENT"}
+                                                        {transType}
                                                     </span>
                                                 </TableCell>
                                                 <TableCell className="py-3">
@@ -295,21 +335,21 @@ export default function BatchMovementsDialog({
                                                     )}
                                                 </TableCell>
                                                 <TableCell className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-xs py-3">
-                                                    {Number(m.quantityIn || 0) > 0 ? `+${Number(m.quantityIn).toLocaleString()}` : "-"}
+                                                    {qIn > 0 ? `+${qIn.toLocaleString()}` : "-"}
                                                 </TableCell>
                                                 <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400 text-xs py-3">
-                                                    {Number(m.quantityOut || 0) > 0 ? `-${Number(m.quantityOut).toLocaleString()}` : "-"}
+                                                    {qOut > 0 ? `-${qOut.toLocaleString()}` : "-"}
                                                 </TableCell>
                                                 <TableCell className="text-right text-xs py-3">
-                                                    ₱{Number(m.unitCost || 0).toFixed(2)}
+                                                    ₱{cost.toFixed(2)}
                                                 </TableCell>
                                                 <TableCell className="py-3">
                                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">
-                                                        {m.inventoryCondition || "GOOD"}
+                                                        {cond}
                                                     </span>
                                                 </TableCell>
                                                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap py-3">
-                                                    {m.transactionDate ? m.transactionDate.replace("T", " ").slice(0, 19) : (m.postedAt ? m.postedAt.replace("T", " ").slice(0, 19) : "-")}
+                                                    {dateStr ? String(dateStr).replace("T", " ").slice(0, 19) : "-"}
                                                 </TableCell>
                                                 <TableCell className="text-xs text-muted-foreground max-w-[150px] truncate pr-4 py-3" title={m.remarks || ""}>
                                                     {m.remarks || "-"}

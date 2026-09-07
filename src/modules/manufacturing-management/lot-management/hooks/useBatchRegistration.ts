@@ -361,6 +361,7 @@ export function useBatchRegistration(
 
     const filteredBatches = useMemo(() => {
         const rawFiltered = batches.filter((b) => {
+            if (Number(b.quantity || 0) === 0) return false;
             if (selectedBranchId !== "ALL") {
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
                 if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
@@ -383,7 +384,11 @@ export function useBatchRegistration(
             const matchesGlobalLot = selectedLotId === "ALL" || Number(b.lotId) === Number(selectedLotId);
             const matchesLocalLot = selectedLotFilter === "ALL" || Number(b.lotId) === Number(selectedLotFilter);
             const matchesBatch = selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId);
-            const matchesStatus = statusFilter === "ALL" || b.status === statusFilter || b.qaStatus === statusFilter;
+            const matchesStatus =
+                statusFilter === "ALL" ||
+                (statusFilter === "NEGATIVE"
+                    ? Number(b.quantity || 0) < 0
+                    : (b.status === statusFilter || b.qaStatus === statusFilter));
             
             const localQuery = batchSearchQuery.toLowerCase().trim();
             const globalQuery = globalSearchQuery.toLowerCase().trim();
@@ -436,6 +441,7 @@ export function useBatchRegistration(
         const globalQuery = globalSearchQuery.toLowerCase().trim();
 
         const targetBatches = batches.filter((b) => {
+            if (Number(b.quantity || 0) === 0) return false;
             if (!isAllBranches) {
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
                 if (matchedLot && Number(matchedLot.branchId) !== Number(selectedBranchId)) {
