@@ -383,7 +383,7 @@ export function SalesReturnDataTable<TData, TValue>({
                 table.setPageSize(Number(value));
               }}
             >
-              <SelectTrigger className="h-8 w-[70px] rounded-lg">
+              <SelectTrigger className="h-8 min-w-[76px] w-auto px-2.5 rounded-lg">
                 <SelectValue
                   placeholder={table.getState().pagination.pageSize}
                 />
