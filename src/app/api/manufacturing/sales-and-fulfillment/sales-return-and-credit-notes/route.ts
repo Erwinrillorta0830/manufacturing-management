@@ -17,10 +17,10 @@ import {
   updateStatus,
   fetchLots,
   fetchInvoiceDetails,
-} from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return.service";
-import { getUserIdFromToken } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return.helpers";
-import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/lib/handle-api-error";
-import { SubmitReturnSchema, UpdateReturnSchema, UpdateStatusSchema } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/types/sales-return.schema";
+} from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/services/sales-return.service";
+import { getUserIdFromToken } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/services/sales-return.helpers";
+import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/lib/handle-api-error";
+import { SubmitReturnSchema, UpdateReturnSchema, UpdateStatusSchema } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/types/sales-return.schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
