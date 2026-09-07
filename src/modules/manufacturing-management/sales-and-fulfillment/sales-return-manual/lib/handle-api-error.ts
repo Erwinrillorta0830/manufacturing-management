@@ -5,8 +5,7 @@ export function handleApiError(error: unknown, defaultMessage = "Internal server
   console.error("API Error:", error);
 
   if (error instanceof ZodError) {
-    const zodError = error as unknown as { errors: Array<{ path: (string | number)[], message: string }> };
-    const messages = zodError.errors.map((e: { path: (string | number)[], message: string }) => `${e.path.join(".")}: ${e.message}`);
+    const messages = error.issues.map((e) => `${e.path.join(".")}: ${e.message}`);
     return NextResponse.json(
       { error: "Validation failed", details: messages },
       { status: 400 }
