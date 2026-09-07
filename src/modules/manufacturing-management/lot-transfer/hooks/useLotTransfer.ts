@@ -54,6 +54,10 @@ function initialForm(userBranchId?: number | null): LotTransferForm {
     };
 }
 
+function hasSameLotSelection(form: LotTransferForm): boolean {
+    return Boolean(form.sourceLotId && form.targetLotId && form.sourceLotId === form.targetLotId);
+}
+
 export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [records, setRecords] = useState<LotTransfer[]>([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -170,12 +174,26 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             ...current,
             sourceLotId: lotId,
             sourceInventoryLotId: "",
-            sourceBatchNo: ""
+            sourceBatchNo: "",
+            targetLotId: current.targetLotId === lotId ? "" : current.targetLotId,
+            targetInventoryLotId: current.targetLotId === lotId ? "" : current.targetInventoryLotId,
+            targetBatchNo: current.targetLotId === lotId ? "" : current.targetBatchNo
         }));
+        if (form.targetLotId === lotId) setError("Source and destination lot IDs must be different.");
         void loadBatchesForLot(Number(lotId));
-    }, [loadBatchesForLot]);
+    }, [form.targetLotId, loadBatchesForLot]);
 
     const handleTargetLotChange = useCallback((lotId: string) => {
+        if (form.sourceLotId === lotId) {
+            setForm((current) => ({
+                ...current,
+                targetLotId: "",
+                targetInventoryLotId: "",
+                targetBatchNo: ""
+            }));
+            setError("Source and destination lot IDs must be different.");
+            return;
+        }
         setForm((current) => ({
             ...current,
             targetLotId: lotId,
@@ -183,7 +201,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             targetBatchNo: ""
         }));
         void loadBatchesForLot(Number(lotId));
-    }, [loadBatchesForLot]);
+    }, [form.sourceLotId, loadBatchesForLot]);
 
     const handleProductChange = useCallback((productId: string) => {
         setForm((current) => ({
@@ -217,6 +235,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [batchesByLot, form.sourceLotId, form.targetLotId]);
 
     const saveDraft = useCallback(async () => {
+        if (hasSameLotSelection(form)) {
+            setError("Source and destination lot IDs must be different.");
+            return null;
+        }
         setIsActionLoading(true);
         try {
             const saved = selectedId
@@ -257,6 +279,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setError("Save the lot-transfer request as a Draft before submitting it for QA approval.");
             return null;
         }
+        if (hasSameLotSelection(form)) {
+            setError("Source and destination lot IDs must be different.");
+            return null;
+        }
         setIsActionLoading(true);
         try {
             const submitted = await submitLotTransfer(selectedId);
@@ -270,7 +296,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [clearSelection, refresh, selectedId]);
+    }, [clearSelection, form, refresh, selectedId]);
 
     const approve = useCallback(async () => {
         if (!selectedId) return null;
