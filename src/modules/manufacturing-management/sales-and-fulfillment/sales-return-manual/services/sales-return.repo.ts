@@ -441,4 +441,3 @@ export async function updateInventoryLotStatus(
     { status },
   );
 }
-

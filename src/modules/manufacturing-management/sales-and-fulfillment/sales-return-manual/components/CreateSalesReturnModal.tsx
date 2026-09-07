@@ -44,19 +44,17 @@ import {
   ProductPerPriceType,
   InvoiceLineItem,
   LotOption,
-} from "../type";
-
-// Import Child Modal
-import { ProductLookupModal } from "./ProductLookupModal";
-// Import Provider & Types
-import {
-  SalesReturnProvider,
   SalesmanOption,
   CustomerOption,
   BranchOption,
   Product,
-} from "../providers/fetchProviders";
-import { resolveFinalDiscount } from "../utils/discount-resolver";
+} from "../types/sales-return.types";
+
+// Import Child Modal
+import { ProductLookupModal } from "./ProductLookupModal";
+// Import API Client & Helpers
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
+import { resolveFinalDiscount } from "../services/sales-return.helpers";
 
 interface Props {
   isOpen: boolean;
@@ -273,9 +271,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
     if (appliedInvoiceId) {
-      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
-        .then((data) => setInvoiceLineItems(data))
-        .catch((err) => console.error("Failed to load invoice items", err));
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
     } else {
       setInvoiceLineItems([]);
     }
@@ -332,13 +330,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             priceTypesData,
             lotsData,
           ] = await Promise.all([
-            SalesReturnProvider.getFormSalesmen(),
-            SalesReturnProvider.getFormCustomers(),
-            SalesReturnProvider.getFormBranches(),
-            SalesReturnProvider.getLineDiscounts(),
-            SalesReturnProvider.getSalesReturnTypes(),
-            SalesReturnProvider.getPriceTypes(),
-            SalesReturnProvider.getLots(),
+            SalesReturnApiClient.getFormSalesmen(),
+            SalesReturnApiClient.getFormCustomers(),
+            SalesReturnApiClient.getFormBranches(),
+            SalesReturnApiClient.getLineDiscounts(),
+            SalesReturnApiClient.getSalesReturnTypes(),
+            SalesReturnApiClient.getPriceTypes(),
+            SalesReturnApiClient.getLots(),
           ]);
           setSalesmen(salesmenData);
           setCustomers(customersData);
@@ -369,10 +367,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
       await Promise.all(uniqueUnitIds.map(async (unitId) => {
         try {
-          const res = await SalesReturnProvider.getLotOnhandMap(branchId, unitId);
+          const res = await SalesReturnApiClient.getLotOnhandMap(branchId, unitId);
           for (const [lotId, qty] of Object.entries(res)) {
             if (newMap[Number(lotId)] !== qty) {
-              newMap[Number(lotId)] = qty;
+              newMap[Number(lotId)] = qty as number;
               updated = true;
             }
           }
@@ -433,7 +431,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (items.length > 0 && customerCode) {
       const updateDiscounts = async () => {
         try {
-          const catalog = await SalesReturnProvider.getFullCatalog(customerCode);
+          const catalog = await SalesReturnApiClient.getFullCatalog(customerCode);
 
           setItems((prevItems) =>
             prevItems.map((item) => {
@@ -535,7 +533,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (selectedSalesmanId && customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             selectedSalesmanId,
             customerCode,
           );
@@ -549,7 +547,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     } else if (customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             undefined,
             customerCode,
           );
@@ -603,7 +601,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
     // 1. Resolve Customer
     const foundCustomer = customers.find(
-      (c) =>
+      (c: CustomerOption) =>
         (targetCustomerCode && c.code === targetCustomerCode) ||
         (targetCustomerName && c.name === targetCustomerName)
     );
@@ -639,14 +637,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     // 3. Fetch Invoices and link matching invoice / salesman
     const fetchAndLinkInvoice = async () => {
       try {
-        const invList = await SalesReturnProvider.getInvoiceReturnList(
+        const invList = await SalesReturnApiClient.getInvoiceReturnList(
           undefined,
           targetCustomerCode || undefined
         );
         setInvoiceOptions(invList);
 
         const matchedInv = invList.find(
-          (inv) =>
+          (inv: InvoiceOption) =>
             (targetInvoiceNo && inv.invoice_no === targetInvoiceNo) ||
             (targetOrderNo && inv.order_id === targetOrderNo)
         );
@@ -917,7 +915,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         appliedInvoiceId: appliedInvoiceId ?? undefined,
       };
 
-      await SalesReturnProvider.submitReturn(payload);
+      await SalesReturnApiClient.submitReturn(payload);
 
       setSuccessOpen(true);
     } catch (err: unknown) {

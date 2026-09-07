@@ -33,7 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SalesReturnDataTable } from "./SalesReturnDataTable";
 
-import { SalesReturn } from "../type";
+import { SalesReturn } from "../types/sales-return.types";
 
 // =============================================================================
 // COLUMN DEFINITIONS

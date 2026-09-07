@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/lib/handle-api-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,10 +28,7 @@ export async function GET(req: Request) {
       }
     }
     return NextResponse.json({ data: lotOnhandMap });
-  } catch (error: unknown) {
-    console.error("[LotCapacity API] Failed to calculate lot capacity", error);
-    const msg = error instanceof Error ? error.message : "Failed to calculate capacity";
-    const status = (error as { status?: number })?.status || 500;
-    return NextResponse.json({ error: msg }, { status });
+  } catch (error) {
+    return handleApiError(error, "Failed to calculate capacity");
   }
 }

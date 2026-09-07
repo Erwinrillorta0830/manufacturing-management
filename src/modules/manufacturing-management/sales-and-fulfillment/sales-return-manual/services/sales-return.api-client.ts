@@ -22,7 +22,7 @@ import type {
   PriceTypeOption,
   ProductCatalog,
   InvoiceLineItem,
-} from "../type";
+} from "../types/sales-return.types";
 
 const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-manual";
 
@@ -43,7 +43,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 // PUBLIC API — Matching the old SalesReturnProvider interface
 // =============================================================================
 
-export const SalesReturnProvider = {
+export const SalesReturnApiClient = {
   // --- 1. MAIN LIST & FILTERING ---
   async getReturns(
     page: number = 1,

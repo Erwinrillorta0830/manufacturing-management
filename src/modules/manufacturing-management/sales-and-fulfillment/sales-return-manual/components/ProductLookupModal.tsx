@@ -29,8 +29,8 @@ import {
   API_LineDiscount,
   PriceTypeOption,
   ProductPerPriceType,
-} from "../type";
-import { SalesReturnProvider } from "../providers/fetchProviders";
+} from "../types/sales-return.types";
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -97,7 +97,7 @@ export function ProductLookupModal({
       const loadData = async () => {
         setIsLoading(true);
         try {
-          const catalog = await SalesReturnProvider.getFullCatalog(customerCode, includeInactive);
+          const catalog = await SalesReturnApiClient.getFullCatalog(customerCode, includeInactive);
           setBrandsList(Array.isArray(catalog.brands) ? catalog.brands : []);
           setCategoriesList(Array.isArray(catalog.categories) ? catalog.categories : []);
           setSuppliersList(Array.isArray(catalog.suppliers) ? catalog.suppliers : []);

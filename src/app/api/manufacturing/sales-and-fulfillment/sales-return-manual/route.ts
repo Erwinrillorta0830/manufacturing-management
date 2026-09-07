@@ -17,47 +17,11 @@ import {
   updateStatus,
   fetchLots,
   fetchInvoiceDetails,
-} from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return-service";
-/**
- * Decodes the base64url payload of a JWT without verifying the signature.
- */
-function decodeJwtPayload(token: string): any {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const base64Url = parts[1];
-    if (!base64Url) return null;
+} from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return.service";
+import { getUserIdFromToken } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/services/sales-return.helpers";
+import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/lib/handle-api-error";
+import { SubmitReturnSchema, UpdateReturnSchema, UpdateStatusSchema } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/types/sales-return.schema";
 
-    let base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    while (base64.length % 4) {
-      base64 += "=";
-    }
-
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join(""),
-    );
-    return JSON.parse(jsonPayload);
-  } catch (error) {
-    console.error("Failed to decode JWT payload:", error);
-    return null;
-  }
-}
-
-/**
- * Helper to extract user ID from a token.
- */
-function getUserIdFromToken(token: string | undefined): number | null {
-  if (!token) return null;
-  const payload = decodeJwtPayload(token);
-  if (!payload) return null;
-  const idValue = payload.id ?? payload.sub ?? payload.userId ?? payload.user_id;
-  if (idValue === undefined || idValue === null) return null;
-  const num = Number(idValue);
-  return isNaN(num) ? null : num;
-}
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -143,9 +107,8 @@ export async function GET(req: NextRequest) {
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
-  } catch (error: any) {
-    console.error("Sales Return Manual API GET Error:", error);
-    return json({ error: error.message || "Internal server error" }, 500);
+  } catch (error) {
+    return handleApiError(error, "Failed to execute GET action");
   }
 }
 
@@ -162,15 +125,13 @@ export async function POST(req: NextRequest) {
       return json({ error: "Unauthorized: Invalid or missing session" }, 401);
     }
 
-    const body = await req.json().catch(() => ({}));
+    const rawBody = await req.json().catch(() => ({}));
+    const body = SubmitReturnSchema.parse(rawBody);
+    
     const data = await submitReturn(body, userId);
     return json({ data }, 201);
-  } catch (error: any) {
-    console.error("Sales Return Manual API POST Error:", error);
-    return json(
-      { error: error.message || "Failed to create sales return" },
-      500,
-    );
+  } catch (error) {
+    return handleApiError(error, "Failed to create sales return");
   }
 }
 
@@ -188,10 +149,18 @@ export async function PATCH(req: NextRequest) {
       if (!id || !status) {
         return json({ error: "id and status are required" }, 400);
       }
-      const isReceived = url.searchParams.get("isReceived") === "true" ? 1 : undefined;
+      
+      const isReceived = url.searchParams.get("isReceived") === "true" ? true : undefined;
       const received_at = url.searchParams.get("receivedAt") || undefined;
 
-      const data = await updateStatus(Number(id), status, isReceived, received_at);
+      const body = UpdateStatusSchema.parse({
+        id: Number(id),
+        status,
+        isReceived,
+        receivedAt: received_at,
+      });
+
+      const data = await updateStatus(body.id, body.status, body.isReceived ? 1 : undefined, body.receivedAt);
       return json({ data });
     }
 
@@ -204,14 +173,12 @@ export async function PATCH(req: NextRequest) {
       return json({ error: "Unauthorized: Invalid or missing session" }, 401);
     }
 
-    const body = await req.json().catch(() => ({}));
+    const rawBody = await req.json().catch(() => ({}));
+    const body = UpdateReturnSchema.parse(rawBody);
+    
     const data = await updateReturn(body, userId);
     return json({ data });
-  } catch (error: any) {
-    console.error("Sales Return Manual API PATCH Error:", error);
-    return json(
-      { error: error.message || "Failed to update sales return" },
-      500,
-    );
+  } catch (error) {
+    return handleApiError(error, "Failed to update sales return");
   }
 }

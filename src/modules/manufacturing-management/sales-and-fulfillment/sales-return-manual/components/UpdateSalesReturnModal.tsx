@@ -56,7 +56,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 
-import { SalesReturnProvider } from "../providers/fetchProviders";
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import {
   SalesReturn,
   SalesReturnItem,
@@ -69,7 +69,7 @@ import {
   InvoiceLineItem,
   BranchOption,
   LotOption,
-} from "../type";
+} from "../types/sales-return.types";
 import { ProductLookupModal } from "./ProductLookupModal";
 import { SalesReturnPrintSlip } from "./SalesReturnPrintSlip";
 import { createRoot } from "react-dom/client";
@@ -278,9 +278,9 @@ export function UpdateSalesReturnModal({
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
     if (appliedInvoiceId) {
-      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
-        .then((data) => setInvoiceLineItems(data))
-        .catch((err) => console.error("Failed to load invoice items", err));
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
     } else {
       setInvoiceLineItems([]);
     }
@@ -356,15 +356,15 @@ export function UpdateSalesReturnModal({
           priceTypesData,
           branchesData,
         ] = await Promise.all([
-          SalesReturnProvider.getProductsSummary(returnId, headerData.returnNo),
-          SalesReturnProvider.getStatusCardData(returnId),
-          SalesReturnProvider.getLineDiscounts(),
-          SalesReturnProvider.getSalesReturnTypes(),
-          SalesReturnProvider.getFormSalesmen(),
-          SalesReturnProvider.getCustomersList(),
-          SalesReturnProvider.getLots(),
-          SalesReturnProvider.getPriceTypes(),
-          SalesReturnProvider.getFormBranches(),
+          SalesReturnApiClient.getProductsSummary(returnId, headerData.returnNo),
+          SalesReturnApiClient.getStatusCardData(returnId),
+          SalesReturnApiClient.getLineDiscounts(),
+          SalesReturnApiClient.getSalesReturnTypes(),
+          SalesReturnApiClient.getFormSalesmen(),
+          SalesReturnApiClient.getCustomersList(),
+          SalesReturnApiClient.getLots(),
+          SalesReturnApiClient.getPriceTypes(),
+          SalesReturnApiClient.getFormBranches(),
         ]);
 
         setDetails(items);
@@ -385,7 +385,7 @@ export function UpdateSalesReturnModal({
 
         // Fetch invoices filtered by salesman and customer
         try {
-          const invoices = await SalesReturnProvider.getInvoiceReturnList(
+          const invoices = await SalesReturnApiClient.getInvoiceReturnList(
             headerData.salesmanId?.toString(),
             headerData.customerCode,
           );
@@ -701,15 +701,15 @@ export function UpdateSalesReturnModal({
       const uniqueUnitIds = Array.from(new Set(details.map(item => item.unit_id).filter(Boolean))) as number[];
       if (uniqueUnitIds.length === 0) return;
       
-      const newMap = { ...lotOnhandMap };
+      const newMap: Record<number, number> = { ...lotOnhandMap };
       let updated = false;
 
       await Promise.all(uniqueUnitIds.map(async (unitId) => {
         try {
-          const res = await SalesReturnProvider.getLotOnhandMap(branchId, unitId);
+          const res = await SalesReturnApiClient.getLotOnhandMap(branchId, unitId);
           for (const [lotId, qty] of Object.entries(res)) {
             if (newMap[Number(lotId)] !== qty) {
-              newMap[Number(lotId)] = qty;
+              newMap[Number(lotId)] = qty as number;
               updated = true;
             }
           }
@@ -821,7 +821,7 @@ export function UpdateSalesReturnModal({
         branchId,
       };
 
-      const res = await SalesReturnProvider.updateReturn(payload);
+      const res = await SalesReturnApiClient.updateReturn(payload);
       if (res && res.success === false) {
         toast.error(res.error || "Failed to update sales return.");
         return;
@@ -861,7 +861,7 @@ export function UpdateSalesReturnModal({
         isThirdParty: headerData.isThirdParty,
         branchId,
       };
-      const saveRes = await SalesReturnProvider.updateReturn(savePayload);
+      const saveRes = await SalesReturnApiClient.updateReturn(savePayload);
       if (saveRes && saveRes.success === false) {
         toast.error(saveRes.error || "Failed to update sales return.");
         return;
@@ -870,7 +870,7 @@ export function UpdateSalesReturnModal({
       const manilaMs = Date.now() + 8 * 60 * 60 * 1000;
       const d = new Date(manilaMs);
       const now = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`;
-      await SalesReturnProvider.updateStatus(headerData.id, "Received", true, now);
+      await SalesReturnApiClient.updateStatus(headerData.id, "Received", true, now);
       setHeaderData({ ...headerData, status: "Received", isReceived: true, receivedAt: now });
       setStatusCardData((prev) =>
         prev
