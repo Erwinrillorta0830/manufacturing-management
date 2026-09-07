@@ -309,6 +309,7 @@ export function ProductLookupModal({
           code: product.product_code || product.barcode || "N/A",
           description: product.product_name,
           unit: unitLabel,
+          unit_id: product.unit_of_measurement,
           quantity: 1,
           unitPrice: selectedPrice,
           grossAmount: totalAmount,

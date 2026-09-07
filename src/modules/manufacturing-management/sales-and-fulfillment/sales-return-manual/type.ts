@@ -240,6 +240,16 @@ export interface LotOption {
   lot_name: string;
   branch_id: number;
   unit_id: number;
+  max_batch_capacity: number;
+}
+
+export interface LotCapacityCheck {
+  lotId: number;
+  lotName: string;
+  onhandQuantity: number;
+  maxCapacity: number;
+  isFull: boolean;
+  remainingCapacity: number;
 }
 
 export interface InvoiceLineItem {

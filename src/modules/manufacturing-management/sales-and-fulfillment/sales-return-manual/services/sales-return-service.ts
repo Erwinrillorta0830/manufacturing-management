@@ -367,9 +367,9 @@ export async function fetchReferences(): Promise<{
 /**
  * Fetches all lots.
  */
-export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
+export async function fetchLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; max_batch_capacity: number; }[]> {
   const result = await repo.getRawLots();
-  return (result.data || []) as { lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[];
+  return (result.data || []) as { lot_id: number; lot_name: string; branch_id: number; unit_id: number; max_batch_capacity: number; }[];
 }
 
 /**

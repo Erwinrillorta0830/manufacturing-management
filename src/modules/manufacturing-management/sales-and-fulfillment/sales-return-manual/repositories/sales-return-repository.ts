@@ -165,7 +165,7 @@ export async function getRawReferences() {
  */
 export async function getRawLots() {
   return directusGet<{ data: Record<string, unknown>[] }>(
-    "/items/mm_lots?limit=-1&fields=lot_id,lot_name,branch_id,unit_id,status&filter[status][_eq]=ACTIVE"
+    "/items/mm_lots?limit=-1&fields=lot_id,lot_name,branch_id,unit_id,status,max_batch_capacity&filter[status][_eq]=ACTIVE"
   );
 }
 

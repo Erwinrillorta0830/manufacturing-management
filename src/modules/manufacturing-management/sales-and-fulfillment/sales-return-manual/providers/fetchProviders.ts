@@ -124,9 +124,19 @@ export const SalesReturnProvider = {
     return handleResponse<InvoiceOption[]>(res);
   },
 
-  async getLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]> {
+  async getLots(): Promise<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; max_batch_capacity: number; }[]> {
     const res = await fetch(`${API_BASE}?action=lots`, { cache: "no-store" });
-    return handleResponse<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; }[]>(res);
+    return handleResponse<{ lot_id: number; lot_name: string; branch_id: number; unit_id: number; max_batch_capacity: number; }[]>(res);
+  },
+
+  async getLotOnhandMap(branchId: number, unitId: number): Promise<Record<number, number>> {
+    const res = await fetch(`/api/manufacturing/sales-and-fulfillment/sales-return-manual/lot-capacity?branch_id=${branchId}&unit_id=${unitId}`, { cache: "no-store" });
+    const json = await res.json();
+    if (!res.ok) {
+      console.warn("Failed to fetch lot capacity", json);
+      return {};
+    }
+    return json.data || {};
   },
 
   async getInvoiceDetails(invoiceId: number | string): Promise<InvoiceLineItem[]> {

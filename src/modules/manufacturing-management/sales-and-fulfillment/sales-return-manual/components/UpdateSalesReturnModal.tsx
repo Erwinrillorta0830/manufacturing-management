@@ -301,6 +301,7 @@ export function UpdateSalesReturnModal({
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [customerOptions, setCustomerOptions] = useState<{value: string | number; label: string}[]>([]);
   const [lotOptions, setLotOptions] = useState<LotOption[]>([]);
+  const [lotOnhandMap, setLotOnhandMap] = useState<Record<number, number>>({});
 
   const [isProductLookupOpen, setIsProductLookupOpen] = useState(false);
   const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
@@ -310,6 +311,7 @@ export function UpdateSalesReturnModal({
   const [isUpdating, setIsUpdating] = useState(false);
   const [isReceiving, setIsReceiving] = useState(false);
   const [returnTypeError, setReturnTypeError] = useState(false);
+  const [lotDetailsError, setLotDetailsError] = useState(false);
   const [orderError, setOrderError] = useState(false);
   const [invoiceError, setInvoiceError] = useState(false);
 
@@ -519,6 +521,41 @@ export function UpdateSalesReturnModal({
       item.grossAmount = gross;
       item.totalAmount = Math.round((gross - disc) * 100) / 100;
 
+      // Validation check for lot capacity
+      if ((field === "quantity" || field === "lot_id") && item.lot_id) {
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        
+        if (maxCap > 0 && Number(item.quantity || 0) > availableCap) {
+          item.quantity = availableCap;
+          
+          const newQty = item.quantity;
+          const newGross = Math.round(newQty * agPrice * 100) / 100;
+          const newVariance = Math.round((price - agPrice) * newQty * 100) / 100;
+          let newDisc = 0;
+          if (item.discountType && item.discountType !== "No Discount") {
+            const selectedDisc = discountOptions.find(
+              (d) => d.id.toString() === item.discountType?.toString(),
+            );
+            if (selectedDisc) {
+              const percentage = parseFloat(selectedDisc.total_percent);
+              newDisc = Math.round(newGross * (percentage / 100) * 100) / 100;
+            }
+          }
+          item.priceVariance = newVariance;
+          item.discountAmount = newDisc;
+          item.grossAmount = newGross;
+          item.totalAmount = Math.round((newGross - newDisc) * 100) / 100;
+
+          toast.warning("Lot Capacity Reached", {
+            id: `capacity-toast-${index}`,
+            description: `Quantity capped to max available (${availableCap}). Please add a new product line for the remainder.`,
+          });
+        }
+      }
+
       newDetails[index] = item;
       return newDetails;
     });
@@ -598,7 +635,7 @@ export function UpdateSalesReturnModal({
             code: item.code || "N/A",
             description: item.description || item.product_name || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined,
+            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: price,
             agreedPrice: agPrice,
@@ -650,8 +687,48 @@ export function UpdateSalesReturnModal({
     setIsUpdateConfirmOpen(true);
   };
 
+  // --- NEW: FETCH LOT CAPACITIES ---
+  useEffect(() => {
+    const selectedSalesmanObj = salesmenOptions.find(
+      (s) => String(s.id) === String(headerData.salesmanId)
+    );
+    const branchId = selectedSalesmanObj ? selectedSalesmanObj.branchId : null;
+    
+    if (!branchId || details.length === 0) {
+      return;
+    }
+    const fetchLotCapacities = async () => {
+      const uniqueUnitIds = Array.from(new Set(details.map(item => item.unit_id).filter(Boolean))) as number[];
+      if (uniqueUnitIds.length === 0) return;
+      
+      const newMap = { ...lotOnhandMap };
+      let updated = false;
+
+      await Promise.all(uniqueUnitIds.map(async (unitId) => {
+        try {
+          const res = await SalesReturnProvider.getLotOnhandMap(branchId, unitId);
+          for (const [lotId, qty] of Object.entries(res)) {
+            if (newMap[Number(lotId)] !== qty) {
+              newMap[Number(lotId)] = qty;
+              updated = true;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch lot capacity", err);
+        }
+      }));
+
+      if (updated) {
+        setLotOnhandMap(newMap);
+      }
+    };
+    fetchLotCapacities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headerData.salesmanId, details]);
+
   const handleReceiveClick = () => {
     setReturnTypeError(false);
+    setLotDetailsError(false);
     setOrderError(false);
     setInvoiceError(false);
 
@@ -675,10 +752,52 @@ export function UpdateSalesReturnModal({
       setReturnTypeError(true);
       return;
     }
+
+    const missingLotDetails = details.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items before receiving.");
+      setLotDetailsError(true);
+      return;
+    }
+
+    for (const item of details) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot before receiving.`
+          });
+          return;
+        }
+      }
+    }
+
     setIsReceiveConfirmOpen(true);
   };
 
   const handleConfirmUpdate = async () => {
+    for (const item of details) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot.`
+          });
+          return;
+        }
+      }
+    }
+
     try {
       setIsUpdating(true);
       const selectedSalesmanObj = salesmenOptions.find(
@@ -978,6 +1097,9 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Lot
                       </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
+                        Capacity
+                      </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Batch
                       </TableHead>
@@ -1152,21 +1274,47 @@ export function UpdateSalesReturnModal({
                                     options={lotOptions
                                       .filter(l => {
                                         const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
-                                        return s && l.branch_id === s.branchId && l.unit_id === item.unit_id;
+                                        if (!s || l.branch_id !== s.branchId || l.unit_id !== item.unit_id) return false;
+                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                        const maxCap = l.max_batch_capacity ?? 0;
+                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
                                       })
                                       .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                     placeholder="Select lot"
-                                    className="h-9 text-xs"
+                                    className={cn(
+                                      "h-9 text-xs",
+                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                   />
                                 ) : (
                                   <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* Capacity */}
+                              <TableCell className="align-middle p-2 text-center">
+                                {(() => {
+                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                  const maxCap = lot?.max_batch_capacity ?? 0;
+                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                  const isFull = maxCap > 0 && item.quantity > availableCap;
+                                  return (
+                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                      {item.quantity} / {availableCap}
+                                    </div>
+                                  );
+                                })()}
+                              </TableCell>
                               <TableCell className="align-middle p-2">
                                 {canEditAll ? (
                                   <Input
                                     type="text"
-                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-left text-sm border-border px-2",
+                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.batch || ""}
                                     onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
                                     placeholder="Batch no."
@@ -1180,7 +1328,10 @@ export function UpdateSalesReturnModal({
                                 {canEditAll ? (
                                   <Input
                                     type="date"
-                                    className="h-9 w-full text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.manufacturing_date || ""}
                                     onChange={(e) => handleDetailChange(idx, "manufacturing_date", e.target.value)}
                                   />
@@ -1193,7 +1344,10 @@ export function UpdateSalesReturnModal({
                                 {canEditAll ? (
                                   <Input
                                     type="date"
-                                    className="h-9 w-full text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.expiry_date || ""}
                                     onChange={(e) => handleDetailChange(idx, "expiry_date", e.target.value)}
                                   />
@@ -1502,7 +1656,10 @@ export function UpdateSalesReturnModal({
                                         })
                                         .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                       placeholder="Select lot"
-                                      className="h-9 text-xs"
+                                      className={cn(
+                                        "h-9 text-xs",
+                                        lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      )}
                                     />
                                   ) : (
                                     <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
@@ -1512,7 +1669,10 @@ export function UpdateSalesReturnModal({
                                   {canEditAll ? (
                                     <Input
                                       type="text"
-                                      className="h-9 w-full text-left text-sm border-border px-2"
+                                      className={cn(
+                                        "h-9 w-full text-left text-sm border-border px-2",
+                                        lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      )}
                                       value={item.batch || ""}
                                       onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
                                       placeholder="Batch no."
