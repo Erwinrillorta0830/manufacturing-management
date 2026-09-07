@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { SalesReturn } from "../type";
-import { SalesReturnProvider } from "../providers/fetchProviders";
+import { SalesReturn } from "../types/sales-return.types";
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
 
 export function useSalesReturnList() {
   const [data, setData] = useState<SalesReturn[]>([]);
@@ -41,13 +41,13 @@ export function useSalesReturnList() {
       // When searching: fetch ALL returns (limit=-1) so we can filter by name client-side
       // When not searching: use normal server-side pagination
       const [returnsResult, customersList, salesmenList] = await Promise.all([
-        SalesReturnProvider.getReturns(
+        SalesReturnApiClient.getReturns(
           isSearching ? 1 : page,
           isSearching ? -1 : pageSize,
           filters,
         ),
-        SalesReturnProvider.getCustomersList(),
-        SalesReturnProvider.getSalesmenList(),
+        SalesReturnApiClient.getCustomersList(),
+        SalesReturnApiClient.getSalesmenList(),
       ]);
 
       // 3. Update Options State (for Filter Dropdowns)
@@ -58,17 +58,17 @@ export function useSalesReturnList() {
 
       // 4. Create Lookup Maps (Normalizing Keys)
       const customerMap = new Map<string, string>();
-      customersList.forEach((c) => {
+      customersList.forEach((c: { value: string; label: string }) => {
         customerMap.set(normalize(c.value), c.label);
       });
 
       const salesmanMap = new Map<string, string>();
-      salesmenList.forEach((s) => {
+      salesmenList.forEach((s: { value: string; label: string; code?: string }) => {
         salesmanMap.set(s.value.toString(), s.label);
       });
 
       // 5. Map Names into Data (enrich with resolved names)
-      let mappedData = returnsResult.data.map((item) => {
+      let mappedData = returnsResult.data.map((item: SalesReturn) => {
         const cleanCustomerCode = normalize(item.customerCode);
         const customerName = customerMap.get(cleanCustomerCode);
         const salesmanName = salesmanMap.get(item.salesmanId.toString());
@@ -83,7 +83,7 @@ export function useSalesReturnList() {
       // 6. Client-side search filtering (AFTER names are resolved)
       if (isSearching) {
         const lowerSearch = search.toLowerCase().trim();
-        mappedData = mappedData.filter((item) => {
+        mappedData = mappedData.filter((item: SalesReturn) => {
           const matchReturn = item.returnNo
             ?.toLowerCase()
             .includes(lowerSearch);

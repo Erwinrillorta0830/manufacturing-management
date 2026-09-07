@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Copy,
   Printer,
   Save,
   AlertTriangle,
@@ -56,7 +57,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 
-import { SalesReturnProvider } from "../providers/fetchProviders";
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import {
   SalesReturn,
   SalesReturnItem,
@@ -69,7 +70,7 @@ import {
   InvoiceLineItem,
   BranchOption,
   LotOption,
-} from "../type";
+} from "../types/sales-return.types";
 import { ProductLookupModal } from "./ProductLookupModal";
 import { SalesReturnPrintSlip } from "./SalesReturnPrintSlip";
 import { createRoot } from "react-dom/client";
@@ -278,9 +279,9 @@ export function UpdateSalesReturnModal({
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
     if (appliedInvoiceId) {
-      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
-        .then((data) => setInvoiceLineItems(data))
-        .catch((err) => console.error("Failed to load invoice items", err));
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
     } else {
       setInvoiceLineItems([]);
     }
@@ -301,6 +302,7 @@ export function UpdateSalesReturnModal({
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [customerOptions, setCustomerOptions] = useState<{value: string | number; label: string}[]>([]);
   const [lotOptions, setLotOptions] = useState<LotOption[]>([]);
+  const [lotOnhandMap, setLotOnhandMap] = useState<Record<number, number>>({});
 
   const [isProductLookupOpen, setIsProductLookupOpen] = useState(false);
   const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
@@ -310,6 +312,7 @@ export function UpdateSalesReturnModal({
   const [isUpdating, setIsUpdating] = useState(false);
   const [isReceiving, setIsReceiving] = useState(false);
   const [returnTypeError, setReturnTypeError] = useState(false);
+  const [lotDetailsError, setLotDetailsError] = useState(false);
   const [orderError, setOrderError] = useState(false);
   const [invoiceError, setInvoiceError] = useState(false);
 
@@ -354,15 +357,15 @@ export function UpdateSalesReturnModal({
           priceTypesData,
           branchesData,
         ] = await Promise.all([
-          SalesReturnProvider.getProductsSummary(returnId, headerData.returnNo),
-          SalesReturnProvider.getStatusCardData(returnId),
-          SalesReturnProvider.getLineDiscounts(),
-          SalesReturnProvider.getSalesReturnTypes(),
-          SalesReturnProvider.getFormSalesmen(),
-          SalesReturnProvider.getCustomersList(),
-          SalesReturnProvider.getLots(),
-          SalesReturnProvider.getPriceTypes(),
-          SalesReturnProvider.getFormBranches(),
+          SalesReturnApiClient.getProductsSummary(returnId, headerData.returnNo),
+          SalesReturnApiClient.getStatusCardData(returnId),
+          SalesReturnApiClient.getLineDiscounts(),
+          SalesReturnApiClient.getSalesReturnTypes(),
+          SalesReturnApiClient.getFormSalesmen(),
+          SalesReturnApiClient.getCustomersList(),
+          SalesReturnApiClient.getLots(),
+          SalesReturnApiClient.getPriceTypes(),
+          SalesReturnApiClient.getFormBranches(),
         ]);
 
         setDetails(items);
@@ -383,7 +386,7 @@ export function UpdateSalesReturnModal({
 
         // Fetch invoices filtered by salesman and customer
         try {
-          const invoices = await SalesReturnProvider.getInvoiceReturnList(
+          const invoices = await SalesReturnApiClient.getInvoiceReturnList(
             headerData.salesmanId?.toString(),
             headerData.customerCode,
           );
@@ -519,6 +522,41 @@ export function UpdateSalesReturnModal({
       item.grossAmount = gross;
       item.totalAmount = Math.round((gross - disc) * 100) / 100;
 
+      // Validation check for lot capacity
+      if ((field === "quantity" || field === "lot_id") && item.lot_id) {
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        
+        if (maxCap > 0 && Number(item.quantity || 0) > availableCap) {
+          item.quantity = availableCap;
+          
+          const newQty = item.quantity;
+          const newGross = Math.round(newQty * agPrice * 100) / 100;
+          const newVariance = Math.round((price - agPrice) * newQty * 100) / 100;
+          let newDisc = 0;
+          if (item.discountType && item.discountType !== "No Discount") {
+            const selectedDisc = discountOptions.find(
+              (d) => d.id.toString() === item.discountType?.toString(),
+            );
+            if (selectedDisc) {
+              const percentage = parseFloat(selectedDisc.total_percent);
+              newDisc = Math.round(newGross * (percentage / 100) * 100) / 100;
+            }
+          }
+          item.priceVariance = newVariance;
+          item.discountAmount = newDisc;
+          item.grossAmount = newGross;
+          item.totalAmount = Math.round((newGross - newDisc) * 100) / 100;
+
+          toast.warning("Lot Capacity Reached", {
+            id: `capacity-toast-${index}`,
+            description: `Quantity capped to max available (${availableCap}). Please add a new product line for the remainder.`,
+          });
+        }
+      }
+
       newDetails[index] = item;
       return newDetails;
     });
@@ -526,6 +564,32 @@ export function UpdateSalesReturnModal({
 
   const handleDeleteRow = (index: number) => {
     setDetails((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDuplicateRow = (index: number) => {
+    setDetails((prev) => {
+      const original = prev[index];
+      if (!original) return prev;
+      
+      const price = Number(original.unitPrice || 0);
+      const gross = Math.round(1 * price * 100) / 100;
+      
+      const duplicate: SalesReturnItem = {
+        ...original,
+        id: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Required for backend to treat as new (matches service logic)
+        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Keep tempId for React keys if needed
+        rfidTags: [], // Clear out RFIDs
+        quantity: 1, // Start with quantity 1
+        grossAmount: gross,
+        totalAmount: gross,
+        discountAmount: 0,
+        discountType: null // Reset discount to ensure accuracy
+      };
+
+      const updated = [...prev];
+      updated.splice(index + 1, 0, duplicate);
+      return updated;
+    });
   };
 
   const handleAddProductsToEdit = (newItems: (Partial<SalesReturnItem> & { price?: number, product_name?: string })[]) => {
@@ -598,7 +662,7 @@ export function UpdateSalesReturnModal({
             code: item.code || "N/A",
             description: item.description || item.product_name || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined,
+            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: price,
             agreedPrice: agPrice,
@@ -647,11 +711,61 @@ export function UpdateSalesReturnModal({
       setReturnTypeError(true);
       return;
     }
+
+    const missingLotDetails = details.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      setLotDetailsError(true);
+      return;
+    }
+
     setIsUpdateConfirmOpen(true);
   };
 
+  // --- NEW: FETCH LOT CAPACITIES ---
+  useEffect(() => {
+    const selectedSalesmanObj = salesmenOptions.find(
+      (s) => String(s.id) === String(headerData.salesmanId)
+    );
+    const branchId = selectedSalesmanObj ? selectedSalesmanObj.branchId : null;
+    
+    if (!branchId || details.length === 0) {
+      return;
+    }
+    const fetchLotCapacities = async () => {
+      const uniqueUnitIds = Array.from(new Set(details.map(item => item.unit_id).filter(Boolean))) as number[];
+      if (uniqueUnitIds.length === 0) return;
+      
+      const newMap: Record<number, number> = { ...lotOnhandMap };
+      let updated = false;
+
+      await Promise.all(uniqueUnitIds.map(async (unitId) => {
+        try {
+          const res = await SalesReturnApiClient.getLotOnhandMap(branchId, unitId);
+          for (const [lotId, qty] of Object.entries(res)) {
+            if (newMap[Number(lotId)] !== qty) {
+              newMap[Number(lotId)] = qty as number;
+              updated = true;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch lot capacity", err);
+        }
+      }));
+
+      if (updated) {
+        setLotOnhandMap(newMap);
+      }
+    };
+    fetchLotCapacities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headerData.salesmanId, details]);
+
   const handleReceiveClick = () => {
     setReturnTypeError(false);
+    setLotDetailsError(false);
     setOrderError(false);
     setInvoiceError(false);
 
@@ -675,10 +789,52 @@ export function UpdateSalesReturnModal({
       setReturnTypeError(true);
       return;
     }
+
+    const missingLotDetails = details.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items before receiving.");
+      setLotDetailsError(true);
+      return;
+    }
+
+    for (const item of details) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot before receiving.`
+          });
+          return;
+        }
+      }
+    }
+
     setIsReceiveConfirmOpen(true);
   };
 
   const handleConfirmUpdate = async () => {
+    for (const item of details) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot.`
+          });
+          return;
+        }
+      }
+    }
+
     try {
       setIsUpdating(true);
       const selectedSalesmanObj = salesmenOptions.find(
@@ -691,6 +847,7 @@ export function UpdateSalesReturnModal({
         returnNo: headerData.returnNo,
         items: details.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -702,7 +859,7 @@ export function UpdateSalesReturnModal({
         branchId,
       };
 
-      const res = await SalesReturnProvider.updateReturn(payload);
+      const res = await SalesReturnApiClient.updateReturn(payload);
       if (res && res.success === false) {
         toast.error(res.error || "Failed to update sales return.");
         return;
@@ -732,6 +889,7 @@ export function UpdateSalesReturnModal({
         returnNo: headerData.returnNo,
         items: details.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -742,7 +900,7 @@ export function UpdateSalesReturnModal({
         isThirdParty: headerData.isThirdParty,
         branchId,
       };
-      const saveRes = await SalesReturnProvider.updateReturn(savePayload);
+      const saveRes = await SalesReturnApiClient.updateReturn(savePayload);
       if (saveRes && saveRes.success === false) {
         toast.error(saveRes.error || "Failed to update sales return.");
         return;
@@ -751,7 +909,7 @@ export function UpdateSalesReturnModal({
       const manilaMs = Date.now() + 8 * 60 * 60 * 1000;
       const d = new Date(manilaMs);
       const now = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`;
-      await SalesReturnProvider.updateStatus(headerData.id, "Received", true, now);
+      await SalesReturnApiClient.updateStatus(headerData.id, "Received", true, now);
       setHeaderData({ ...headerData, status: "Received", isReceived: true, receivedAt: now });
       setStatusCardData((prev) =>
         prev
@@ -978,6 +1136,9 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Lot
                       </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
+                        Capacity
+                      </TableHead>
                       <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                         Batch
                       </TableHead>
@@ -995,7 +1156,7 @@ export function UpdateSalesReturnModal({
                       </TableHead>
                       {/* 🟢 REVISED: Delete Column hidden if not Pending */}
                       {canEditAll && (
-                        <TableHead className="text-white font-semibold h-11 w-[50px]"></TableHead>
+                        <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
                       )}
                     </TableRow>
                   </TableHeader>
@@ -1152,21 +1313,47 @@ export function UpdateSalesReturnModal({
                                     options={lotOptions
                                       .filter(l => {
                                         const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
-                                        return s && l.branch_id === s.branchId && l.unit_id === item.unit_id;
+                                        if (!s || l.branch_id !== s.branchId || l.unit_id !== item.unit_id) return false;
+                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                        const maxCap = l.max_batch_capacity ?? 0;
+                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
                                       })
                                       .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                     placeholder="Select lot"
-                                    className="h-9 text-xs"
+                                    className={cn(
+                                      "h-9 text-xs",
+                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                   />
                                 ) : (
                                   <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* Capacity */}
+                              <TableCell className="align-middle p-2 text-center">
+                                {(() => {
+                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                  const maxCap = lot?.max_batch_capacity ?? 0;
+                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                  const isFull = maxCap > 0 && item.quantity > availableCap;
+                                  return (
+                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                      {item.quantity} / {availableCap}
+                                    </div>
+                                  );
+                                })()}
+                              </TableCell>
                               <TableCell className="align-middle p-2">
                                 {canEditAll ? (
                                   <Input
                                     type="text"
-                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-left text-sm border-border px-2",
+                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.batch || ""}
                                     onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
                                     placeholder="Batch no."
@@ -1180,7 +1367,10 @@ export function UpdateSalesReturnModal({
                                 {canEditAll ? (
                                   <Input
                                     type="date"
-                                    className="h-9 w-full text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.manufacturing_date || ""}
                                     onChange={(e) => handleDetailChange(idx, "manufacturing_date", e.target.value)}
                                   />
@@ -1193,7 +1383,10 @@ export function UpdateSalesReturnModal({
                                 {canEditAll ? (
                                   <Input
                                     type="date"
-                                    className="h-9 w-full text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.expiry_date || ""}
                                     onChange={(e) => handleDetailChange(idx, "expiry_date", e.target.value)}
                                   />
@@ -1240,11 +1433,14 @@ export function UpdateSalesReturnModal({
                                 )}
                               </TableCell>
                               {canEditAll && (
-                                <TableCell className="align-middle p-2 text-center">
-                                  <button onClick={() => handleDeleteRow(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </TableCell>
+                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <button onClick={() => handleDuplicateRow(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                                <button onClick={() => handleDeleteRow(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </TableCell>
                               )}
                             </TableRow>
                           );
@@ -1365,7 +1561,7 @@ export function UpdateSalesReturnModal({
                                   <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
                                 )}
                               </TableCell>
-                              <TableCell />
+                              <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
                             </TableRow>
 
                             {/* Child Rows (Individual Scans/Additions) */}
@@ -1502,7 +1698,10 @@ export function UpdateSalesReturnModal({
                                         })
                                         .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                       placeholder="Select lot"
-                                      className="h-9 text-xs"
+                                      className={cn(
+                                        "h-9 text-xs",
+                                        lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      )}
                                     />
                                   ) : (
                                     <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
@@ -1512,7 +1711,10 @@ export function UpdateSalesReturnModal({
                                   {canEditAll ? (
                                     <Input
                                       type="text"
-                                      className="h-9 w-full text-left text-sm border-border px-2"
+                                      className={cn(
+                                        "h-9 w-full text-left text-sm border-border px-2",
+                                        lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      )}
                                       value={item.batch || ""}
                                       onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
                                       placeholder="Batch no."
@@ -1564,12 +1766,22 @@ export function UpdateSalesReturnModal({
                                   )}
                                 </TableCell>
                                 {canEditAll && (
-                                  <TableCell className="text-center align-middle">
+                                  <TableCell className="text-center align-middle whitespace-nowrap">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
+                                      onClick={() => handleDuplicateRow(idx)}
+                                      title="Duplicate row"
+                                    >
+                                      <Copy className="h-4 w-4" />
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="icon"
                                       className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
                                       onClick={() => handleDeleteRow(idx)}
+                                      title="Remove row"
                                     >
                                       <Trash2 className="h-4 w-4" />
                                     </Button>
@@ -1745,7 +1957,7 @@ export function UpdateSalesReturnModal({
                   <span className="text-muted-foreground font-medium">
                     Discount Amount
                   </span>
-                  <div className="font-semibold text-foreground">
+                  <div className={`font-semibold font-mono ${totalDiscount > 0 ? "text-amber-600 dark:text-amber-500" : "text-foreground"}`}>
                     {loading ? (
                       <Skeleton className="h-5 w-24" />
                     ) : (
@@ -1759,7 +1971,7 @@ export function UpdateSalesReturnModal({
                   <span className="text-muted-foreground font-medium">
                     Price Variance Logged
                   </span>
-                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-green-600" : totalVariance < 0 ? "text-destructive" : "text-foreground"}`}>
+                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500" : "text-slate-500"}`}>
                     {loading ? (
                       <Skeleton className="h-5 w-24" />
                     ) : (

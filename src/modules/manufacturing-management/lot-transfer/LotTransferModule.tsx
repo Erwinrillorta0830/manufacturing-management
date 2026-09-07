@@ -58,7 +58,7 @@ function formatDate(value: string | null | undefined) {
 function statusClass(status: string) {
     if (status === "Approved") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     if (status === "Rejected") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
-    if (status === "For Approval") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
+    if (status === "Submitted") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
     return "bg-muted text-muted-foreground";
 }
 
@@ -176,6 +176,10 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         const branchMatches = !form.branchId || lot.branchId === 0 || lot.branchId === Number(form.branchId);
         return branchMatches && lot.status.toUpperCase() === "ACTIVE";
     }), [controller.lots, form.branchId]);
+    const targetLots = useMemo(
+        () => activeLots.filter((lot) => String(lot.lotId) !== form.sourceLotId),
+        [activeLots, form.sourceLotId]
+    );
     const sourceBatches = controller.sourceBatches;
     const targetBatches = controller.targetBatches;
 
@@ -242,7 +246,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 </div>
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /></label>
+                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={targetLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /><p className="mt-1 text-xs text-muted-foreground">Choose a destination lot different from the source lot.</p></label>
                     <label className="mt-3 block"><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetBatches} value={form.targetInventoryLotId} onChange={(value) => controller.handleBatchChange("target", value)} disabled={!form.targetLotId} source={false} /></label>
                     {targetBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Current on hand<br /><strong>{formatQuantity(targetBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(targetBatch.expirationDate)}</strong></span><span>QA<br /><strong>{targetBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{targetBatch.batchId}</strong></span></div>}
                 </div>
@@ -312,14 +316,14 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
     };
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-qa-review-heading">
-            {!record ? <EmptyState message="Select a For Approval request to review its QA checks." /> : <>
+            {!record ? <EmptyState message="Select a Submitted request to review its QA checks." /> : <>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)}</span></div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">QA validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{notice}</div>}
-                {record.status === "For Approval" && <><label className="mt-4 block"><FieldLabel>Rejection reason</FieldLabel><textarea className={textAreaClassName} value={rejectionReason} onChange={(event) => setRejectionReason(event.currentTarget.value)} placeholder="Required when rejecting..." /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="destructive" onClick={() => void handleReject()} disabled={controller.isActionLoading}><XCircle />Reject</Button><Button type="button" onClick={() => void handleApprove()} disabled={controller.isActionLoading || !preview?.canApprove}><ShieldCheck />Approve and post</Button></div></>}
+                {record.status === "Submitted" && <><label className="mt-4 block"><FieldLabel>Rejection reason</FieldLabel><textarea className={textAreaClassName} value={rejectionReason} onChange={(event) => setRejectionReason(event.currentTarget.value)} placeholder="Required when rejecting..." /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="destructive" onClick={() => void handleReject()} disabled={controller.isActionLoading}><XCircle />Reject</Button><Button type="button" onClick={() => void handleApprove()} disabled={controller.isActionLoading || !preview?.canApprove}><ShieldCheck />Approve and post</Button></div></>}
             </>}
         </section>
     );

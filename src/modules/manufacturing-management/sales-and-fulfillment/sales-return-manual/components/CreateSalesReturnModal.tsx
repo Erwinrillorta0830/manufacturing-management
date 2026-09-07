@@ -5,6 +5,7 @@ import {
   X,
   Plus,
   Trash2,
+  Copy,
   Save,
   ChevronDown,
   FileText,
@@ -44,19 +45,17 @@ import {
   ProductPerPriceType,
   InvoiceLineItem,
   LotOption,
-} from "../type";
-
-// Import Child Modal
-import { ProductLookupModal } from "./ProductLookupModal";
-// Import Provider & Types
-import {
-  SalesReturnProvider,
   SalesmanOption,
   CustomerOption,
   BranchOption,
   Product,
-} from "../providers/fetchProviders";
-import { resolveFinalDiscount } from "../utils/discount-resolver";
+} from "../types/sales-return.types";
+
+// Import Child Modal
+import { ProductLookupModal } from "./ProductLookupModal";
+// Import API Client & Helpers
+import { SalesReturnApiClient } from "../services/sales-return.api-client";
+import { resolveFinalDiscount } from "../services/sales-return.helpers";
 
 interface Props {
   isOpen: boolean;
@@ -225,6 +224,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   // UI State for Validation
   const [returnTypeError, setReturnTypeError] = useState(false);
+  const [lotDetailsError, setLotDetailsError] = useState(false);
 
   // Bottom Form Fields
   const [orderNo, setOrderNo] = useState("");
@@ -247,6 +247,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   >([]);
   const [priceTypeOptions, setPriceTypeOptions] = useState<PriceTypeOption[]>([]);
   const [lotOptions, setLotOptions] = useState<LotOption[]>([]);
+  const [lotOnhandMap, setLotOnhandMap] = useState<Record<number, number>>({});
 
   // INVOICE DATA LIST & DROPDOWN STATE
   const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>([]);
@@ -272,9 +273,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
     if (appliedInvoiceId) {
-      SalesReturnProvider.getInvoiceDetails(appliedInvoiceId)
-        .then((data) => setInvoiceLineItems(data))
-        .catch((err) => console.error("Failed to load invoice items", err));
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
     } else {
       setInvoiceLineItems([]);
     }
@@ -331,13 +332,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             priceTypesData,
             lotsData,
           ] = await Promise.all([
-            SalesReturnProvider.getFormSalesmen(),
-            SalesReturnProvider.getFormCustomers(),
-            SalesReturnProvider.getFormBranches(),
-            SalesReturnProvider.getLineDiscounts(),
-            SalesReturnProvider.getSalesReturnTypes(),
-            SalesReturnProvider.getPriceTypes(),
-            SalesReturnProvider.getLots(),
+            SalesReturnApiClient.getFormSalesmen(),
+            SalesReturnApiClient.getFormCustomers(),
+            SalesReturnApiClient.getFormBranches(),
+            SalesReturnApiClient.getLineDiscounts(),
+            SalesReturnApiClient.getSalesReturnTypes(),
+            SalesReturnApiClient.getPriceTypes(),
+            SalesReturnApiClient.getLots(),
           ]);
           setSalesmen(salesmenData);
           setCustomers(customersData);
@@ -353,6 +354,40 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       loadData();
     }
   }, [isOpen]);
+
+  // --- NEW: FETCH LOT CAPACITIES ---
+  useEffect(() => {
+    if (!branchId || items.length === 0) {
+      return;
+    }
+    const fetchLotCapacities = async () => {
+      const uniqueUnitIds = Array.from(new Set(items.map(item => item.unit_id).filter(Boolean))) as number[];
+      if (uniqueUnitIds.length === 0) return;
+      
+      const newMap = { ...lotOnhandMap };
+      let updated = false;
+
+      await Promise.all(uniqueUnitIds.map(async (unitId) => {
+        try {
+          const res = await SalesReturnApiClient.getLotOnhandMap(branchId, unitId);
+          for (const [lotId, qty] of Object.entries(res)) {
+            if (newMap[Number(lotId)] !== qty) {
+              newMap[Number(lotId)] = qty as number;
+              updated = true;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch lot capacity", err);
+        }
+      }));
+
+      if (updated) {
+        setLotOnhandMap(newMap);
+      }
+    };
+    fetchLotCapacities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId, items]);
 
   // 🟢 NEW: Effect to automatically update prices when Price Type changes
   useEffect(() => {
@@ -398,7 +433,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (items.length > 0 && customerCode) {
       const updateDiscounts = async () => {
         try {
-          const catalog = await SalesReturnProvider.getFullCatalog(customerCode);
+          const catalog = await SalesReturnApiClient.getFullCatalog(customerCode);
 
           setItems((prevItems) =>
             prevItems.map((item) => {
@@ -500,7 +535,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (selectedSalesmanId && customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             selectedSalesmanId,
             customerCode,
           );
@@ -514,7 +549,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     } else if (customerCode) {
       const fetchInv = async () => {
         try {
-          const data = await SalesReturnProvider.getInvoiceReturnList(
+          const data = await SalesReturnApiClient.getInvoiceReturnList(
             undefined,
             customerCode,
           );
@@ -581,7 +616,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
     // 1. Resolve Customer
     const foundCustomer = customers.find(
-      (c) =>
+      (c: CustomerOption) =>
         (targetCustomerCode && c.code === targetCustomerCode) ||
         (targetCustomerName && c.name === targetCustomerName)
     );
@@ -617,14 +652,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     // 3. Fetch Invoices and link matching invoice / salesman
     const fetchAndLinkInvoice = async () => {
       try {
-        const invList = await SalesReturnProvider.getInvoiceReturnList(
+        const invList = await SalesReturnApiClient.getInvoiceReturnList(
           undefined,
           targetCustomerCode || undefined
         );
         setInvoiceOptions(invList);
 
         const matchedInv = invList.find(
-          (inv) =>
+          (inv: InvoiceOption) =>
             (targetInvoiceNo && inv.invoice_no === targetInvoiceNo) ||
             (targetOrderNo && inv.order_id === targetOrderNo)
         );
@@ -844,6 +879,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   const handleCreateReturn = async () => {
     setReturnTypeError(false);
+    setLotDetailsError(false);
     setOrderError(false);
     setInvoiceError(false);
 
@@ -877,6 +913,31 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       return;
     }
 
+    const missingLotDetails = items.some(
+      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+    );
+    if (missingLotDetails) {
+      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      setLotDetailsError(true);
+      return;
+    }
+
+    for (const item of items) {
+      if (item.lot_id) {
+        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const incomingQty = Number(item.quantity) || 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        if (maxCap > 0 && incomingQty > availableCap) {
+          toast.error("Lot Capacity Exceeded", {
+            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot.`
+          });
+          return;
+        }
+      }
+    }
+
     try {
       setIsSubmitting(true);
       const selectedSalesmanObj = salesmen.find(
@@ -903,13 +964,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         remarks,
         items: items.map(item => ({
           ...item,
+          quantity: Number(item.quantity || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
         appliedInvoiceId: appliedInvoiceId ?? undefined,
       };
 
-      await SalesReturnProvider.submitReturn(payload);
+      await SalesReturnApiClient.submitReturn(payload);
 
       setSuccessOpen(true);
     } catch (err: unknown) {
@@ -998,7 +1060,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             code: item.code || "N/A",
             description: item.description || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined,
+            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: unitPrice,
             agreedPrice: unitPrice,
@@ -1022,6 +1084,34 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   const handleRemoveItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDuplicateItem = (index: number) => {
+    setItems((prev) => {
+      const original = prev[index];
+      if (!original) return prev;
+      
+      const price = Number(original.unitPrice || 0);
+      const gross = Math.round(1 * price * 100) / 100;
+      // We calculate a proportional discount if needed, but for simplicity
+      // since the user modifies it, we can reset discountAmount to 0 or re-calculate it based on discountType.
+      // Resetting discountAmount is safer when quantity is 1 unless it's a fixed % type.
+      
+      const duplicate: SalesReturnItem = {
+        ...original,
+        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Unique ID for React rendering
+        rfidTags: [], // Clear out RFIDs
+        quantity: 1, // Start with quantity 1
+        grossAmount: gross,
+        totalAmount: gross,
+        discountAmount: 0,
+        discountType: null // Reset discount to ensure accuracy
+      };
+
+      const updated = [...prev];
+      updated.splice(index + 1, 0, duplicate);
+      return updated;
+    });
   };
 
   const handleItemChange = (
@@ -1063,6 +1153,38 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       }
 
       item.totalAmount = Math.round(((item.grossAmount || 0) - (item.discountAmount || 0)) * 100) / 100;
+      
+      // Validation check for lot capacity
+      if ((field === "quantity" || field === "lot_id") && item.lot_id) {
+        const onhand = lotOnhandMap[item.lot_id] ?? 0;
+        const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+        const maxCap = lot?.max_batch_capacity ?? 0;
+        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+        
+        if (maxCap > 0 && item.quantity > availableCap) {
+          item.quantity = availableCap;
+          
+          // Recalculate based on clamped quantity
+          const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice;
+          item.grossAmount = Math.round(item.quantity * agPrice * 100) / 100;
+          item.priceVariance = Math.round(((item.unitPrice || 0) - agPrice) * item.quantity * 100) / 100;
+          
+          if (item.discountType) {
+            const selectedOption = lineDiscountOptions.find((d) => d.id.toString() === item.discountType?.toString());
+            if (selectedOption) {
+              const percentage = parseFloat(selectedOption.total_percent) || 0;
+              item.discountAmount = Math.round((item.grossAmount || 0) * (percentage / 100) * 100) / 100;
+            }
+          }
+          item.totalAmount = Math.round(((item.grossAmount || 0) - (item.discountAmount || 0)) * 100) / 100;
+          
+          toast.warning("Lot Capacity Reached", {
+            id: `capacity-toast-${index}`,
+            description: `Quantity capped to max available (${availableCap}). Please add a new product line for the remainder.`,
+          });
+        }
+      }
+      
       updated[index] = item;
       return updated;
     });
@@ -1375,6 +1497,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Lot
                     </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
+                      Capacity
+                    </TableHead>
                     <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
                       Batch
                     </TableHead>
@@ -1392,7 +1517,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     </TableHead>
                     {/* 🟢 REVISED: Delete Column hidden if not Pending */}
                     {true && (
-                      <TableHead className="text-white font-semibold h-11 w-[50px]"></TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
                     )}
                   </TableRow>
                 </TableHeader>
@@ -1528,7 +1653,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                   value={item.lot_id ? item.lot_id.toString() : ""}
                                   onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
                                   options={lotOptions
-                                    .filter(l => l.branch_id === branchId && l.unit_id === item.unit_id)
+                                    .filter(l => {
+                                      if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
+                                      const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                      const maxCap = l.max_batch_capacity ?? 0;
+                                      const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                      return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
+                                    })
                                     .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                   placeholder="Select lot"
                                   className="h-9 text-xs"
@@ -1536,6 +1667,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               ) : (
                                 <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                               )}
+                            </TableCell>
+                            {/* Capacity */}
+                            <TableCell className="align-middle p-2 text-center">
+                              {(() => {
+                                if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                const maxCap = lot?.max_batch_capacity ?? 0;
+                                const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                const isFull = maxCap > 0 && item.quantity > availableCap;
+                                return (
+                                  <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                    {item.quantity} / {availableCap}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="align-middle p-2">
                               {true ? (
@@ -1615,7 +1762,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               )}
                             </TableCell>
                             {true && (
-                              <TableCell className="align-middle p-2 text-center">
+                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <button onClick={() => handleDuplicateItem(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
+                                  <Copy className="h-4 w-4" />
+                                </button>
                                 <button onClick={() => handleRemoveItem(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
                                   <Trash2 className="h-4 w-4" />
                                 </button>
@@ -1740,7 +1890,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
                               )}
                             </TableCell>
-                            <TableCell />
+                            <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
                           </TableRow>
 
                           {/* Child Rows (Individual Scans/Additions) */}
@@ -1871,20 +2021,48 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                     value={item.lot_id ? item.lot_id.toString() : ""}
                                     onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
                                     options={lotOptions
-                                      .filter(l => l.branch_id === branchId && l.unit_id === item.unit_id)
+                                      .filter(l => {
+                                        if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
+                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
+                                        const maxCap = l.max_batch_capacity ?? 0;
+                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
+                                      })
                                       .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
                                     placeholder="Select lot"
-                                    className="h-9 text-xs"
+                                    className={cn(
+                                      "h-9 text-xs",
+                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                   />
                                 ) : (
                                   <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* Capacity */}
+                              <TableCell className="align-middle p-2 text-center">
+                                {(() => {
+                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
+                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
+                                  const maxCap = lot?.max_batch_capacity ?? 0;
+                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
+                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
+                                  const isFull = maxCap > 0 && item.quantity > availableCap;
+                                  return (
+                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
+                                      {item.quantity} / {availableCap}
+                                    </div>
+                                  );
+                                })()}
+                              </TableCell>
                               <TableCell className="align-middle p-2">
                                 {true ? (
                                   <Input
                                     type="text"
-                                    className="h-9 w-full text-left text-sm border-border px-2"
+                                    className={cn(
+                                      "h-9 w-full text-left text-sm border-border px-2",
+                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
                                     value={item.batch || ""}
                                     onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
                                     placeholder="Batch no."
@@ -1893,16 +2071,36 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                   <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
                                 )}
                               </TableCell>
+                              {/* MFG Date */}
                               <TableCell className="align-middle p-2">
                                 {true ? (
-                                  <ReasonInputSection
-                                    value={item.reason || ""}
-                                    onChange={(val) => handleItemChange(idx, "reason", val)}
+                                  <Input
+                                    type="date"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                    value={item.manufacturing_date || ""}
+                                    onChange={(e) => handleItemChange(idx, "manufacturing_date", e.target.value)}
                                   />
                                 ) : (
-                                  <span className="text-sm text-muted-foreground italic">
-                                    {item.reason || "-"}
-                                  </span>
+                                  <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
+                                )}
+                              </TableCell>
+                              {/* EXP Date */}
+                              <TableCell className="align-middle p-2">
+                                {true ? (
+                                  <Input
+                                    type="date"
+                                    className={cn(
+                                      "h-9 w-full text-sm border-border px-2",
+                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                    value={item.expiry_date || ""}
+                                    onChange={(e) => handleItemChange(idx, "expiry_date", e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
                                 )}
                               </TableCell>
                               <TableCell className="align-middle p-2">
@@ -1936,12 +2134,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 )}
                               </TableCell>
                               {true && (
-                                <TableCell className="text-center align-middle">
+                                <TableCell className="text-center align-middle whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
+                                    onClick={() => handleDuplicateItem(idx)}
+                                    title="Duplicate row"
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
                                     onClick={() => handleRemoveItem(idx)}
+                                    title="Remove row"
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
@@ -2145,9 +2353,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     })}
                   </span>
                 </div>
-                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-green-600" : totalVariance < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500 font-semibold" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500 font-semibold" : "text-muted-foreground"}`}>
                   <span>Price Variance</span>
-                  <span className="font-medium tabular-nums">
+                  <span className="font-medium tabular-nums font-mono">
                     {totalVariance > 0 ? "+" : ""}
                     ₱
                     {totalVariance.toLocaleString(undefined, {
@@ -2155,9 +2363,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     })}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm text-destructive">
+                <div className={`flex justify-between items-center text-sm ${totalDiscount > 0 ? "text-amber-600 dark:text-amber-500 font-semibold" : "text-muted-foreground"}`}>
                   <span>Total Discount</span>
-                  <span className="font-medium tabular-nums">
+                  <span className="font-medium tabular-nums font-mono">
                     - ₱
                     {totalDiscount.toLocaleString(undefined, {
                       minimumFractionDigits: 2,

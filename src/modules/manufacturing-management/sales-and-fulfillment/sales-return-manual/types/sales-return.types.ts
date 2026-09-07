@@ -1,4 +1,4 @@
-// src/modules/sales-returnv3/type.ts
+// src/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/types/sales-return.types.ts
 
 // --- RETURN TYPES ---
 export type ReturnType = "Good Order" | "Bad Order" | "Expired" | string;
@@ -81,10 +81,6 @@ export interface Unit {
   order: number;
 }
 
-// src/modules/sales-returnv3/type.ts
-
-// ... existing imports ...
-
 export interface Product {
   product_id: number;
   isActive: number;
@@ -109,8 +105,6 @@ export interface Product {
   
   parent_id?: number | { product_id?: number; id?: number } | null;
 }
-
-// ... rest of the file ...
 
 export interface ProductSupplierConnection {
   id: number;
@@ -194,7 +188,6 @@ export interface SalesmanOption {
   branchName?: string;
 }
 
-// type.ts
 export interface CustomerOption {
   id: number;
   name: string; // Changed from 'customer_name' to 'name'
@@ -202,9 +195,6 @@ export interface CustomerOption {
   discountType?: number | string | null;
   price_type_id?: number | string | null;
 }
-
-// If you need the full object elsewhere, we can keep a separate type for that,
-// but for the filter, we only need these two.
 
 export interface BranchOption {
   id: number;
@@ -224,7 +214,6 @@ export interface SalesReturnStatusCard {
   isInvoicePosted?: boolean;
 }
 
-// 🟢 NEW: Add this interface for the Invoice Dropdown
 export interface InvoiceOption {
   id: number | string;
   invoice_no: string;
@@ -240,6 +229,16 @@ export interface LotOption {
   lot_name: string;
   branch_id: number;
   unit_id: number;
+  max_batch_capacity: number;
+}
+
+export interface LotCapacityCheck {
+  lotId: number;
+  lotName: string;
+  onhandQuantity: number;
+  maxCapacity: number;
+  isFull: boolean;
+  remainingCapacity: number;
 }
 
 export interface InvoiceLineItem {

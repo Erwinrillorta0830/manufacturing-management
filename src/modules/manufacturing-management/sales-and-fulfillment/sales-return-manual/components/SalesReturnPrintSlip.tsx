@@ -1,6 +1,6 @@
 "use client";
 import React, { forwardRef } from "react";
-import { SalesReturnItem } from "../type";
+import { SalesReturnItem } from "../types/sales-return.types";
 
 // Extended interface to support the specific fields in the image
 interface PrintData {
