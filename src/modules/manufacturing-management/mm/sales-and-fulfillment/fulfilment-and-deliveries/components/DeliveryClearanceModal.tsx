@@ -391,7 +391,7 @@ export default function DeliveryClearanceModal({
         }
 
         window.open(
-            `/mm/sales-and-fulfillment/sales-return-manual?${params.toString()}`,
+            `/mm/sales-and-fulfillment/sales-return-and-credit-notes?${params.toString()}`,
             "_blank"
         );
     };

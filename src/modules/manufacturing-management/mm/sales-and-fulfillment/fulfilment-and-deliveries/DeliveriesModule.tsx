@@ -612,7 +612,7 @@ export default function DeliveriesModule() {
                                                                                                             localStorage.removeItem("scm_dispatch_return_data");
                                                                                                         }
                                                                                                         window.open(
-                                                                                                            `/mm/sales-and-fulfillment/sales-return-manual?fromClearance=true&editReturnNo=${encodeURIComponent(returnNo)}`,
+                                                                                                            `/mm/sales-and-fulfillment/sales-return-and-credit-notes?fromClearance=true&editReturnNo=${encodeURIComponent(returnNo)}`,
                                                                                                             "_blank"
                                                                                                         );
                                                                                                     }

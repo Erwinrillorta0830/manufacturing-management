@@ -24,7 +24,7 @@ import type {
   InvoiceLineItem,
 } from "../types/sales-return.types";
 
-const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-manual";
+const API_BASE = "/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes";
 
 // =============================================================================
 // INTERNAL HELPERS
@@ -130,7 +130,7 @@ export const SalesReturnApiClient = {
   },
 
   async getLotOnhandMap(branchId: number, unitId: number): Promise<Record<number, number>> {
-    const res = await fetch(`/api/manufacturing/sales-and-fulfillment/sales-return-manual/lot-capacity?branch_id=${branchId}&unit_id=${unitId}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/sales-and-fulfillment/sales-return-and-credit-notes/lot-capacity?branch_id=${branchId}&unit_id=${unitId}`, { cache: "no-store" });
     const json = await res.json();
     if (!res.ok) {
       console.warn("Failed to fetch lot capacity", json);

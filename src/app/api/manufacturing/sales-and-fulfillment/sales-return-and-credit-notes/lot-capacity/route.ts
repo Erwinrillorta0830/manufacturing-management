@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
-import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/lib/handle-api-error";
+import { handleApiError } from "@/modules/manufacturing-management/sales-and-fulfillment/sales-return-and-credit-notes/lib/handle-api-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
