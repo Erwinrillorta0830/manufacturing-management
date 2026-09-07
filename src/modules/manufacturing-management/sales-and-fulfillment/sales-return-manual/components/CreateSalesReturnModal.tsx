@@ -534,7 +534,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!isOpen || customers.length === 0) return;
 
-    
+    interface ClearancePayloadItem {
+      product_id?: number | string;
+      product_code?: string;
+      product_name?: string;
+      uom?: string;
+      ordered_quantity?: number | string;
+      received_quantity?: number | string;
+      returned_quantity?: number | string;
+      unit_price?: number | string;
+      concern_notes?: string;
+    }
+
     const storedRaw = typeof window !== "undefined" ? localStorage.getItem("scm_dispatch_return_data") : null;
 
     let data: {
@@ -547,6 +558,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       salesmanName?: string;
       branchName?: string;
       remarks?: string;
+      items?: ClearancePayloadItem[];
     } = {};
     if (storedRaw) {
       try {
@@ -556,11 +568,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       }
     }
 
+    const salesmanIdParam = searchParams.get("salesmanId");
     const targetCustomerCode = customerCodeParam || data.customerCode || "";
     const targetCustomerName = data.customerName || "";
     const targetInvoiceNo = invoiceNoParam || data.invoiceNo || "";
     const targetOrderNo = orderNoParam || data.orderNo || "";
-    const targetSalesmanId = data.salesmanId || "";
+    const targetSalesmanId = salesmanIdParam || data.salesmanId || "";
     const targetSalesmanCode = data.salesmanCode || "";
     const targetSalesmanName = data.salesmanName || "";
     const targetBranchName = data.branchName || "";
@@ -680,7 +693,36 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       setBranchName(targetBranchName);
     }
 
-    // 5. Cleanup
+    // 5. Pre-fill products summary from clearance items
+    if (Array.isArray(data.items) && data.items.length > 0) {
+      const mappedItems: SalesReturnItem[] = data.items
+        .filter((it: ClearancePayloadItem) => Number(it.returned_quantity || 0) > 0 || Number(it.ordered_quantity || 0) > 0)
+        .map((it: ClearancePayloadItem) => {
+          const qty = Number(it.returned_quantity) > 0 ? Number(it.returned_quantity) : Number(it.ordered_quantity || 1);
+          const price = Number(it.unit_price || 0);
+          const gross = Math.round(qty * price * 100) / 100;
+          return {
+            productId: Number(it.product_id),
+            code: it.product_code || `SKU-${it.product_id}`,
+            description: it.product_name || `Product #${it.product_id}`,
+            unit: it.uom || "PCS",
+            quantity: qty,
+            unitPrice: price,
+            agreedPrice: price,
+            grossAmount: gross,
+            discountType: null,
+            discountAmount: 0,
+            totalAmount: gross,
+            returnType: "Good Order",
+            reason: it.concern_notes || "",
+          };
+        });
+      if (mappedItems.length > 0) {
+        setItems(mappedItems);
+      }
+    }
+
+    // 6. Cleanup
     if (storedRaw) {
       localStorage.removeItem("scm_dispatch_return_data");
     }
@@ -694,6 +736,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     salesmen,
     branches,
     priceTypeOptions,
+    searchParams,
   ]);
 
   // --- 6. CLICK OUTSIDE HANDLERS ---
