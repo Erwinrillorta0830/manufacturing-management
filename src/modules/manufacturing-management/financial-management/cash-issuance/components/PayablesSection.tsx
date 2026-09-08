@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, FileSpreadsheet } from "lucide-react";
 import { SearchableDropdown } from "./SearchableDropdown";
 import { StickyTableWrapper } from "./StickyTableWrapper";
-import { PayableLine, COADto, DivisionDto } from "../types";
-import { isInheritedVatSplitLine, updateVatSplitDivision } from "@/modules/manufacturing-management/financial-management/treasury/components/payable-line-splits";
+import { PayableLine, COADto } from "../types";
 import { isMemoPayableLine, normalizeMemoReference } from "@/modules/manufacturing-management/financial-management/treasury/components/memo-payable-line";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +15,6 @@ interface PayablesSectionProps {
     payables: PayableLine[];
     setPayables: (val: PayableLine[]) => void;
     coas: COADto[];
-    divisions: DivisionDto[];
     isPayableOrExpenseCOA: (c: COADto) => boolean;
     totalAmount: number;
     payeeId: number | "";
@@ -30,8 +28,6 @@ interface PayablesSectionProps {
     memoReferences?: ReadonlySet<string>;
     memoSupplierMismatchIndices?: ReadonlySet<number>;
     memoAmountErrors?: Readonly<Record<number, string>>;
-    divisionValidationErrors?: ReadonlySet<string>;
-    onDivisionSelect?: (index: number, divisionId?: number) => void;
     fillHeight?: boolean;
 }
 
@@ -39,7 +35,6 @@ export function PayablesSection({
     payables,
     setPayables,
     coas,
-    divisions,
     isPayableOrExpenseCOA,
     totalAmount,
     payeeId,
@@ -53,8 +48,6 @@ export function PayablesSection({
     memoReferences = new Set(),
     memoSupplierMismatchIndices = new Set(),
     memoAmountErrors = {},
-    divisionValidationErrors = new Set(),
-    onDivisionSelect,
     fillHeight = false,
 }: PayablesSectionProps) {
     return (
@@ -76,18 +69,17 @@ export function PayablesSection({
                     <Table className="border-collapse">
                         <TableHeader className="bg-muted sticky top-0 z-10 border-b border-border">
                             <TableRow className="border-border">
-                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[120px]">Bill / Ref No</TableHead>
-                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[200px]">Chart of Account (Category)</TableHead>
-                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[125px]">Division</TableHead>
-                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[180px]">Memo Description</TableHead>
-                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 w-[120px] text-right">Amount</TableHead>
+                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[140px]">Bill / Ref No</TableHead>
+                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[260px]">Chart of Account (Category)</TableHead>
+                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 min-w-[240px]">Memo Description</TableHead>
+                                <TableHead className="text-[11px] font-bold text-muted-foreground uppercase h-9 py-1 px-3 w-[140px] text-right">Amount</TableHead>
                                 <TableHead className="w-[40px]"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody className="divide-y divide-border bg-card">
                             {payables.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-8">
+                                    <TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-8">
                                         No distribution lines added. Click &quot;Add line&quot; to allocate.
                                     </TableCell>
                                 </TableRow>
@@ -95,7 +87,6 @@ export function PayablesSection({
                                 const memoLine = isMemoPayableLine(p, memoReferences) || memoReferences.has(normalizeMemoReference(p.memoNumber));
                                 const memoSupplierMismatch = memoSupplierMismatchIndices.has(i);
                                 const memoAmountError = memoAmountErrors[i];
-                                const divisionError = divisionValidationErrors.has(`${i}:divisionId`);
                                 return (
                                 <TableRow key={i} className={`hover:bg-muted/40 border-b ${memoSupplierMismatch ? "border-destructive bg-destructive/5" : "border-border"}`}>
                                     {/* Ref No */}
@@ -123,7 +114,7 @@ export function PayablesSection({
                                         <SearchableDropdown<number>
                                             options={coas.filter(isPayableOrExpenseCOA).map((c) => ({
                                                 value: c.coaId ?? 0,
-                                                label: `${c.glCode || 'NO-CODE'} - ${c.accountTitle || 'Unknown'}`
+                                                label: c.accountTitle || 'Unknown'
                                             }))}
                                             value={p.coaId || ""}
                                             onSelect={(val) => {
@@ -136,40 +127,6 @@ export function PayablesSection({
                                             className="h-7 w-full bg-transparent border-transparent hover:border-input focus:border-primary focus:bg-background text-xs rounded-sm shadow-none px-2 text-foreground disabled:opacity-50"
                                             popoverWidth="w-[380px]"
                                         />
-                                    </TableCell>
-                                    
-                                    {/* Division */}
-                                    <TableCell className="p-1 align-middle">
-                                        <SearchableDropdown<string>
-                                            options={[
-                                                { value: "", label: "(Select Division)" },
-                                                ...divisions.map((d) => ({
-                                                    value: String(d.divisionId),
-                                                    label: d.divisionName || `Division-${d.divisionId}`,
-                                                })),
-                                            ]}
-                                            value={p.divisionId == null ? "" : String(p.divisionId)}
-                                            onSelect={(value) => onDivisionSelect
-                                                ? onDivisionSelect(i, value ? Number(value) : undefined)
-                                                : setPayables(updateVatSplitDivision(
-                                                    payables,
-                                                    i,
-                                                    value ? Number(value) : undefined,
-                                                ))}
-                                            placeholder="(Select Division)"
-                                            disabled={disabled || isInheritedVatSplitLine(payables, i)}
-                                            ariaInvalid={divisionError}
-                                            className={cn(
-                                                "h-7 w-full bg-transparent border border-transparent hover:border-input focus:border-primary focus:bg-background rounded-sm text-xs px-2 focus:outline-none transition-all disabled:bg-transparent disabled:cursor-not-allowed text-foreground",
-                                                divisionError && "border-destructive bg-destructive/5 text-destructive",
-                                            )}
-                                            popoverWidth="w-[280px]"
-                                        />
-                                        {divisionError && (
-                                            <p role="alert" className="px-2 text-[10px] leading-tight text-destructive">
-                                                Cost Division is required.
-                                            </p>
-                                        )}
                                     </TableCell>
                                     
                                     {/* Remarks */}

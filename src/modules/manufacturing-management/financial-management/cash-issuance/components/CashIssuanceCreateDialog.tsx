@@ -672,7 +672,7 @@ export function CashIssuanceCreateDialog({
 
     const paymentCoaOptions = useMemo(() => coas.filter(isPaymentCOA).map((coa) => ({
         value: coa.coaId,
-        label: `${coa.glCode || "NO-CODE"} - ${coa.accountTitle || "Unknown"}`,
+        label: coa.accountTitle || "Unknown",
     })), [coas]);
 
     const handleAddPayment = useCallback(() => {
@@ -910,7 +910,6 @@ export function CashIssuanceCreateDialog({
                                     payables={payables}
                                     setPayables={setPayables}
                                     coas={coas}
-                                    divisions={divisions}
                                     isPayableOrExpenseCOA={isPayableOrExpenseCOA}
                                     totalAmount={totalAmount}
                                     payeeId={payeeId}
@@ -922,8 +921,6 @@ export function CashIssuanceCreateDialog({
                                     memoReferences={memoReferences}
                                     memoSupplierMismatchIndices={memoSupplierMismatchIndices}
                                     memoAmountErrors={memoAmountErrors}
-                                    divisionValidationErrors={payableValidationErrors}
-                                    onDivisionSelect={handleDivisionSelect}
                                     disabled={isPayablesLocked}
                                     isAddDisabled={!departmentId}
                                     fillHeight={!isPaymentEditorEnabled}
