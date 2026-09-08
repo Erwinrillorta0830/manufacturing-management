@@ -48,11 +48,17 @@ export function matrixPriceTypeColor(index: number) {
 export function getVisibleMatrixPriceTypes(
     priceTypes: PriceType[],
     selectedPriceTypeIds: string[] = [],
-    _usedPriceTypeKeys?: Set<string>,
+    usedPriceTypeKeys?: Set<string>,
 ): PriceType[] {
     if (selectedPriceTypeIds.length > 0) {
         const selectedIds = new Set(selectedPriceTypeIds);
         return priceTypes.filter((priceType) => selectedIds.has(String(priceType.price_type_id)));
+    }
+
+    if (usedPriceTypeKeys && usedPriceTypeKeys.size > 0) {
+        return sortPriceTypes(
+            priceTypes.filter((priceType) => usedPriceTypeKeys.has(priceTypeTierKey(priceType))),
+        );
     }
 
     return sortPriceTypes(priceTypes);
