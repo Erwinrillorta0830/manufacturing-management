@@ -4,6 +4,7 @@ import type {
     LotOption,
     LotTransfer,
     LotTransferForm,
+    LotTransferFormDetail,
     LotTransferPreview,
     ProductOption,
     UserOption
@@ -147,15 +148,20 @@ export async function deleteLotTransfer(id: number): Promise<void> {
 function toPayload(form: LotTransferForm) {
     return {
         branchId: Number(form.branchId),
-        productId: Number(form.productId),
         sourceLotId: Number(form.sourceLotId),
-        sourceInventoryLotId: Number(form.sourceInventoryLotId),
-        sourceBatchNo: form.sourceBatchNo,
         targetLotId: Number(form.targetLotId),
-        targetInventoryLotId: Number(form.targetInventoryLotId),
-        targetBatchNo: form.targetBatchNo,
-        quantity: Number(form.quantity),
-        reason: form.reason
+        reason: form.reason,
+        details: form.details.map((detail: LotTransferFormDetail, index) => ({
+            detailId: detail.detailId,
+            lineNo: detail.lineNo || index + 1,
+            productId: Number(detail.productId),
+            sourceInventoryLotId: Number(detail.sourceInventoryLotId),
+            sourceBatchNo: detail.sourceBatchNo,
+            targetInventoryLotId: Number(detail.targetInventoryLotId),
+            targetBatchNo: detail.targetBatchNo,
+            quantity: Number(detail.quantity),
+            lineRemarks: detail.lineRemarks
+        }))
     };
 }
 
