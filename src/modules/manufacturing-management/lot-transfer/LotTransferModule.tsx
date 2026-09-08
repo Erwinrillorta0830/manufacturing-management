@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
-import type { BatchOption, LotBalanceSnapshot, LotTransferMode } from "./types";
+import type { BatchOption, LotBalanceSnapshot, LotTransferMode, LotTransferStatus } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
@@ -422,14 +422,97 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
     );
 }
 
+function FilterSelect({
+    label,
+    value,
+    onChange,
+    options,
+    placeholder
+}: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    options: { value: string; label: string }[];
+    placeholder: string;
+}) {
+    return <label className="min-w-0"><FieldLabel>{label}</FieldLabel><LotTransferSearchableSelect value={value} onValueChange={onChange} options={[{ value: "", label: placeholder }, ...options]} placeholder={placeholder} className={selectClassName} /></label>;
+}
+
+function SummaryReportFilters({ controller }: { controller: LotTransferController }) {
+    const { reportFilters } = controller;
+    const allStatusesSelected = reportFilters.statuses.length === 0;
+    const setFilter = controller.setReportFilter;
+    const statusOptions: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected"];
+    const productOptions = controller.products.map((product) => ({
+        value: String(product.productId),
+        label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}`
+    }));
+    const lotOptions = controller.lots.map((lot) => ({
+        value: String(lot.lotId),
+        label: `${lot.lotName || `Lot #${lot.lotId}`} | ${branchLabel(lot.branchId, controller.branches)}`
+    }));
+    const userOptions = controller.users.map((user) => ({ value: String(user.id), label: user.name }));
+
+    const toggleStatus = (status: LotTransferStatus) => {
+        if (allStatusesSelected) {
+            setFilter("statuses", [status]);
+            return;
+        }
+        const nextStatuses = reportFilters.statuses.includes(status)
+            ? reportFilters.statuses.filter((selectedStatus) => selectedStatus !== status)
+            : [...reportFilters.statuses, status];
+        setFilter("statuses", nextStatuses.length > 0 ? nextStatuses : []);
+    };
+
+    return <div className="mb-4 rounded-lg border bg-muted/20 p-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <h3 className="text-sm font-semibold">Report filters</h3>
+                <p className="text-xs text-muted-foreground">Filters use the requested date and the immutable audit fields.</p>
+            </div>
+            <span className="text-xs text-muted-foreground">{controller.totalCount} record(s)</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="sm:col-span-2 lg:col-span-3"><FieldLabel>Search</FieldLabel><input className={inputClassName} value={reportFilters.search} onChange={(event) => setFilter("search", event.currentTarget.value)} placeholder="Request number, reason, or batch..." aria-label="Search lot-transfer report" /></label>
+            <label><FieldLabel>Requested from</FieldLabel><input type="date" className={inputClassName} value={reportFilters.requestedFrom} onChange={(event) => setFilter("requestedFrom", event.currentTarget.value)} /></label>
+            <label><FieldLabel>Requested to</FieldLabel><input type="date" className={inputClassName} value={reportFilters.requestedTo} onChange={(event) => setFilter("requestedTo", event.currentTarget.value)} /></label>
+            {!controller.userBranchId && <FilterSelect label="Branch" value={reportFilters.branchId} onChange={(value) => setFilter("branchId", value)} options={controller.branches.map((branch) => ({ value: String(branch.id), label: `${branch.branchName} (${branch.branchCode})` }))} placeholder="All branches" />}
+            <FilterSelect label="Product" value={reportFilters.productId} onChange={(value) => setFilter("productId", value)} options={productOptions} placeholder="All products" />
+            <FilterSelect label="Source lot" value={reportFilters.sourceLotId} onChange={(value) => setFilter("sourceLotId", value)} options={lotOptions} placeholder="All source lots" />
+            <FilterSelect label="Destination lot" value={reportFilters.targetLotId} onChange={(value) => setFilter("targetLotId", value)} options={lotOptions} placeholder="All destination lots" />
+            <label><FieldLabel>Source batch</FieldLabel><input className={inputClassName} value={reportFilters.sourceBatchNo} onChange={(event) => setFilter("sourceBatchNo", event.currentTarget.value)} placeholder="Any source batch" /></label>
+            <label><FieldLabel>Destination batch</FieldLabel><input className={inputClassName} value={reportFilters.targetBatchNo} onChange={(event) => setFilter("targetBatchNo", event.currentTarget.value)} placeholder="Any destination batch" /></label>
+            <FilterSelect label="Creator" value={reportFilters.requestedBy} onChange={(value) => setFilter("requestedBy", value)} options={userOptions} placeholder="All creators" />
+            <FilterSelect label="Approver" value={reportFilters.approvedBy} onChange={(value) => setFilter("approvedBy", value)} options={userOptions} placeholder="All approvers" />
+            <FilterSelect label="Poster" value={reportFilters.postedBy} onChange={(value) => setFilter("postedBy", value)} options={userOptions} placeholder="All posters" />
+            <fieldset className="sm:col-span-2 lg:col-span-3">
+                <legend className="mb-1.5 text-xs font-semibold text-muted-foreground">Status</legend>
+                <div className="flex flex-wrap gap-2 rounded-lg border bg-background p-2" role="group" aria-label="Filter lot-transfer report by status">
+                    <button type="button" aria-pressed={allStatusesSelected} onClick={() => setFilter("statuses", [])} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${allStatusesSelected ? "border-primary bg-primary text-primary-foreground shadow-sm" : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>All statuses</button>
+                    {statusOptions.map((status) => {
+                        const selected = !allStatusesSelected && reportFilters.statuses.includes(status);
+                        return <button key={status} type="button" aria-pressed={selected} onClick={() => toggleStatus(status)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${selected ? statusClass(status) : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>{status}</button>;
+                    })}
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">Choose one or more statuses, or select All statuses.</p>
+            </fieldset>
+        </div>
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => controller.clearReportFilters()}>Clear filters</Button>
+            <Button type="button" size="sm" onClick={() => controller.applyReportFilters()}>Apply filters</Button>
+        </div>
+    </div>;
+}
+
 function SummaryTable({ controller, onView }: {
     controller: LotTransferController;
     onView: (record: LotTransferController["records"][number]) => void;
 }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-summary-heading">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 id="lot-transfer-summary-heading" className="font-semibold">Master LOT Transfer Summary</h2><p className="text-xs text-muted-foreground">Immutable posted and rejected transfer history.</p></div><div className="flex gap-2"><input className={`${inputClassName} w-52`} value={controller.search} onChange={(event) => controller.setSearch(event.currentTarget.value)} placeholder="Search requests..." aria-label="Search lot-transfer requests" /><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div></div>
-            {controller.records.length === 0 ? <EmptyState message="No posted or rejected lot-transfer records found." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">{formatDate(row.requestedAt)}</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">Lot #{row.sourceLotId} -&gt; Lot #{row.targetLotId}</span></td><td className="px-3 py-2.5">{formatQuantity(row.quantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 id="lot-transfer-summary-heading" className="font-semibold">Master LOT Transfer Summary</h2><p className="text-xs text-muted-foreground">Searchable audit history for lot-transfer lifecycle records.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} />Refresh</Button></div>
+            <SummaryReportFilters controller={controller} />
+            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records match the selected report filters." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">{formatDate(row.requestedAt)}</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">Lot #{row.sourceLotId} -&gt; Lot #{row.targetLotId}</span></td><td className="px-3 py-2.5">{formatQuantity(row.quantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
         </section>
     );
 }

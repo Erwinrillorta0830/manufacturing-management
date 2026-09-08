@@ -1141,10 +1141,53 @@ export async function getSessionUserId(): Promise<number | null> {
     return null;
 }
 
+export async function getSessionUserBranchId(): Promise<number | null> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value || cookieStore.get("springboot_token")?.value;
+        if (!token) return null;
+        const parts = token.split(".");
+        if (parts.length < 2) return null;
+        let encoded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (encoded.length % 4) encoded += "=";
+        const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RecordValue;
+        for (const key of ["branch_id", "branchId", "branch"]) {
+            const id = numeric(payload[key]);
+            if (id > 0) return id;
+        }
+    } catch {
+        // Requests without a branch-scoped session may use the explicit report branch filter.
+    }
+    return null;
+}
+
+function requestedDateBoundary(value: string, endExclusive = false): string {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) throw new LotTransferError(400, "Requested date filters must use YYYY-MM-DD.");
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const utcMidnight = Date.UTC(year, month - 1, day);
+    const canonicalDate = new Date(utcMidnight).toISOString().slice(0, 10);
+    if (canonicalDate !== value) throw new LotTransferError(400, `Requested date ${value} is invalid.`);
+    const boundary = utcMidnight + (endExclusive ? 24 * 60 * 60 * 1000 : 0) - (8 * 60 * 60 * 1000);
+    return new Date(boundary).toISOString();
+}
+
 export async function listLotTransfers(options: {
-    status?: string | null;
+    status?: string | string[] | null;
     branchId?: number | null;
     search?: string | null;
+    requestedFrom?: string | null;
+    requestedTo?: string | null;
+    productId?: number | null;
+    sourceLotId?: number | null;
+    targetLotId?: number | null;
+    sourceBatchNo?: string | null;
+    targetBatchNo?: string | null;
+    requestedBy?: number | null;
+    approvedBy?: number | null;
+    postedBy?: number | null;
     limit?: number;
     offset?: number;
 }): Promise<{ data: LotTransferRecord[]; totalCount: number }> {
@@ -1155,11 +1198,29 @@ export async function listLotTransfers(options: {
         meta: "filter_count",
         sort: "-requested_at,-lot_transfer_id"
     });
-    if (options.status && (LOT_TRANSFER_STATUSES as readonly string[]).includes(options.status)) {
-        params.set("filter[status][_eq]", options.status);
+    const statuses = Array.isArray(options.status)
+        ? options.status
+        : options.status
+            ? options.status.split(",").map((status) => status.trim()).filter(Boolean)
+            : [];
+    if (statuses.length > 0) {
+        params.set("filter[status][_in]", statuses.join(","));
     }
     if (options.branchId && options.branchId > 0) params.set("filter[branch_id][_eq]", String(options.branchId));
     if (options.search?.trim()) params.set("search", options.search.trim());
+    if (options.requestedFrom) params.set("filter[requested_at][_gte]", requestedDateBoundary(options.requestedFrom));
+    if (options.requestedTo) params.set("filter[requested_at][_lt]", requestedDateBoundary(options.requestedTo, true));
+    if (options.requestedFrom && options.requestedTo && requestedDateBoundary(options.requestedFrom) > requestedDateBoundary(options.requestedTo, true)) {
+        throw new LotTransferError(400, "Requested date range is invalid: the start date must be on or before the end date.");
+    }
+    if (options.productId && options.productId > 0) params.set("filter[product_id][_eq]", String(options.productId));
+    if (options.sourceLotId && options.sourceLotId > 0) params.set("filter[source_lot_id][_eq]", String(options.sourceLotId));
+    if (options.targetLotId && options.targetLotId > 0) params.set("filter[target_lot_id][_eq]", String(options.targetLotId));
+    if (options.sourceBatchNo?.trim()) params.set("filter[source_batch_no][_icontains]", options.sourceBatchNo.trim());
+    if (options.targetBatchNo?.trim()) params.set("filter[target_batch_no][_icontains]", options.targetBatchNo.trim());
+    if (options.requestedBy && options.requestedBy > 0) params.set("filter[requested_by][_eq]", String(options.requestedBy));
+    if (options.approvedBy && options.approvedBy > 0) params.set("filter[approved_by][_eq]", String(options.approvedBy));
+    if (options.postedBy && options.postedBy > 0) params.set("filter[posted_by][_eq]", String(options.postedBy));
 
     const payload = await directusRequest(`/items/${LOT_TRANSFER_COLLECTION}?${params.toString()}`, {}, "Lot-transfer list lookup");
     if (!isRecord(payload) || !Array.isArray(payload.data)) {
