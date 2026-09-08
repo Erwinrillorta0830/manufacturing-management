@@ -999,14 +999,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                         </div>
 
                         {/* Sticky Action Footer */}
-                        <div className="flex items-center justify-between border-t bg-muted/20 px-6 py-3.5 shrink-0">
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-xl border bg-background px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shadow-xs"
-                            >
-                                Cancel
-                            </button>
+                        <div className="flex items-center justify-end border-t bg-muted/20 px-6 py-3.5 shrink-0">
+ 
                             <div className="flex items-center gap-3">
                                 <button 
                                     type="button" 
