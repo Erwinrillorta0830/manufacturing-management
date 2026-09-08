@@ -1,4 +1,4 @@
-// src/modules/supply-chain-management/product-pricing-management/product-pricing/components/PricingFiltersBar.tsx
+// src/modules/supply-chain-management/product-pricing-request-management/product-pricing-request/components/PricingFiltersBar.tsx
 "use client";
 
 import * as React from "react";

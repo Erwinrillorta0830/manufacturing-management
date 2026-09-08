@@ -1,4 +1,4 @@
-// src/modules/supply-chain-management/product-pricing-management/product-pricing/components/PricingTable.tsx
+// src/modules/supply-chain-management/product-pricing-request-management/product-pricing-request/components/PricingTable.tsx
 "use client";
 
 import * as React from "react";
@@ -140,7 +140,7 @@ function toErrorString(err: unknown): string | null {
     }
 }
 
-const VIEW_MODE_STORAGE_KEY = "product-pricing:view-mode";
+const VIEW_MODE_STORAGE_KEY = "product-pricing-request:view-mode";
 
 function LoadingCardBody({ rowCount }: { rowCount: number }) {
     return (

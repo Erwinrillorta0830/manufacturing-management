@@ -1,4 +1,4 @@
-// src/modules/supply-chain-management/product-pricing-management/product-pricing/components/PricingMatrixView.tsx
+// src/modules/supply-chain-management/product-pricing-request-management/product-pricing-request/components/PricingMatrixView.tsx
 "use client";
 
 import * as React from "react";
@@ -684,7 +684,7 @@ export default function PricingMatrixView() {
                 matrixRows: data.rows,
                 priceTypes: pt.priceTypes,
                 units: lookups.units,
-                filenamePrefix: "product-pricing",
+                filenamePrefix: "product-pricing-request",
                 includeListCost: true,
                 includeProposedColumns,
                 pendingPriceRequests: pendingPriceResult.data,

@@ -32,7 +32,7 @@ export async function getLookups(params?: {
 
     const qs = sp.toString();
     // Reusing the existing lookups API if possible, or we could create a new one.
-    // For now, I'll use the product-pricing lookups as they cover the same entities.
+    // For now, I'll use the product-pricing-request lookups as they cover the same entities.
     return http<{ data: { categories: Category[]; brands: Brand[]; units: Unit[]; suppliers?: Supplier[]; productTypes: ProductType[] } }>(
         `/api/manufacturing/financial-management/price-control/printables/lookups${qs ? `?${qs}` : ""}`,
     );

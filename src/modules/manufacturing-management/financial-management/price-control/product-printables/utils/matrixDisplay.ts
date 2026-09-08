@@ -1,4 +1,5 @@
 import type { PriceType, Unit } from "../types";
+import { sortPriceTypes } from "../../product-pricing/utils/pivot";
 
 export const MATRIX_PRICE_TYPE_COLORS = [
     {
@@ -47,20 +48,14 @@ export function matrixPriceTypeColor(index: number) {
 export function getVisibleMatrixPriceTypes(
     priceTypes: PriceType[],
     selectedPriceTypeIds: string[] = [],
-    usedPriceTypeKeys?: Set<string>,
+    _usedPriceTypeKeys?: Set<string>,
 ): PriceType[] {
     if (selectedPriceTypeIds.length > 0) {
         const selectedIds = new Set(selectedPriceTypeIds);
         return priceTypes.filter((priceType) => selectedIds.has(String(priceType.price_type_id)));
     }
 
-    if (usedPriceTypeKeys) {
-        return priceTypes.filter(
-            (priceType) => priceType.sort != null || usedPriceTypeKeys.has(priceTypeTierKey(priceType))
-        );
-    }
-
-    return priceTypes.filter((priceType) => priceType.sort != null);
+    return sortPriceTypes(priceTypes);
 }
 
 export function getVisibleMatrixUnits(units: Unit[], usedUnitIds: Set<number>): Unit[] {

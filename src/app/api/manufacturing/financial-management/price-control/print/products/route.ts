@@ -1,4 +1,4 @@
-// src/app/api/product-pricing/print/products/route.ts
+// src/app/api/product-pricing-request/print/products/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 import { parsePrintCatalogQuery } from "../../_printCatalog";
