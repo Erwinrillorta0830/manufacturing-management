@@ -262,3 +262,64 @@ export function allocateFefoStock(
         allocations
     };
 }
+
+/**
+ * Groups and sums batches within a storage lot according to business rules:
+ * 1. Same lot, same batch no, same mfg date, same expiry date -> SUM quantities together into one card/record.
+ * 2. Same lot, same batch no, but DIFFERENT mfg date or expiry date -> DO NOT sum.
+ *    The first group keeps the original batch number, subsequent groups get `-1`, `-2`, etc. appended.
+ */
+export function groupAndSumLotBatches(lotBatches: Batch[]): Batch[] {
+    const batchesByKey = new Map<string, Batch[]>();
+    for (const b of lotBatches) {
+        const bNo = (b.batchNumber || "").trim().toLowerCase();
+        const pId = Number(b.productId || 0);
+        const lId = Number(b.lotId || 0);
+        const key = `${lId}_${pId}_${bNo}`;
+        const list = batchesByKey.get(key) || [];
+        list.push(b);
+        batchesByKey.set(key, list);
+    }
+
+    const result: Batch[] = [];
+
+    batchesByKey.forEach((group) => {
+        const dateGroups = new Map<string, Batch[]>();
+        for (const b of group) {
+            const mfg = (b.manufacturingDate || "").slice(0, 10);
+            const exp = (b.expirationDate || "").slice(0, 10);
+            const dateKey = `${mfg}_${exp}`;
+            const list = dateGroups.get(dateKey) || [];
+            list.push(b);
+            dateGroups.set(dateKey, list);
+        }
+
+        // Sort date groups by earliest expiry / mfg date
+        const sortedDateGroups = Array.from(dateGroups.values()).sort((a, b) => {
+            const expA = a[0]?.expirationDate ? new Date(a[0].expirationDate).getTime() : Infinity;
+            const expB = b[0]?.expirationDate ? new Date(b[0].expirationDate).getTime() : Infinity;
+            if (expA !== expB) return expA - expB;
+            const mfgA = a[0]?.manufacturingDate ? new Date(a[0].manufacturingDate).getTime() : Infinity;
+            const mfgB = b[0]?.manufacturingDate ? new Date(b[0].manufacturingDate).getTime() : Infinity;
+            return mfgA - mfgB;
+        });
+
+        sortedDateGroups.forEach((subGroup, idx) => {
+            const base = subGroup[0];
+            const totalQty = subGroup.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+            if (totalQty === 0) return;
+
+            const baseBatchNumber = base.rawBatchNumber || base.batchNumber;
+            const displayBatchNumber = idx === 0 ? baseBatchNumber : `${baseBatchNumber}-${idx}`;
+
+            result.push({
+                ...base,
+                batchNumber: displayBatchNumber,
+                rawBatchNumber: baseBatchNumber,
+                quantity: totalQty,
+            });
+        });
+    });
+
+    return result;
+}

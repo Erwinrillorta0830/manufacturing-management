@@ -135,7 +135,7 @@ export function useInventoryMovements(
 
                 // Storage Lot filter
                 if (lotFilter !== "ALL") {
-                    if (Number(m.lotId) !== Number(lotFilter)) return false;
+                    if (Number(m.mmLotId ?? m.lotId) !== Number(lotFilter)) return false;
                 }
 
                 // Product filter

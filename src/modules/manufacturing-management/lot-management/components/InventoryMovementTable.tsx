@@ -278,8 +278,9 @@ export default function InventoryMovementTable({
                         <TableBody>
                             {paginatedMovements.map((m) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
-                                const matchedLot = lots.find((l) => Number(l.lotId) === Number(m.lotId));
-                                const resolvedLotName = m.lotName || matchedLot?.lotName || (m.lotId ? `Lot #${m.lotId}` : "-");
+                                const effectiveLotId = m.mmLotId ?? m.lotId;
+                                const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
+                                const resolvedLotName = m.lotName || matchedLot?.lotName || (effectiveLotId ? `Lot #${effectiveLotId}` : "-");
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
 
                                 return (
@@ -398,7 +399,7 @@ export default function InventoryMovementTable({
                             value={String(pageSize)}
                             onValueChange={(val) => setPageSize(Number(val))}
                         >
-                            <SelectTrigger className="w-[70px] h-8 bg-background border border-border">
+                            <SelectTrigger className="min-w-[76px] w-auto h-8 px-2.5 bg-background border border-border">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent position="popper" sideOffset={4} className="bg-popover border border-border">

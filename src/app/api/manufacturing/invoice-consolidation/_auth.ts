@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 
-export const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || "http://100.95.246.18:8188";
+export const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL   ;
 
 export async function getAuthToken(): Promise<string | null> {
     try {

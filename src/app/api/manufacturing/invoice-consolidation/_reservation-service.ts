@@ -680,7 +680,7 @@ async function fetchLotsAndMovements(productIds: number[], branchId?: number): P
     for (const sb of springBatchOnhand as Array<Record<string, unknown>>) {
         const pId = Number(sb.productId ?? sb.product_id ?? (sb.product as { product_id?: number })?.product_id ?? 0);
         const bId = Number(sb.branchId ?? sb.branch_id ?? (sb.branch as { branch_id?: number })?.branch_id ?? 0);
-        const lId = Number(sb.lotId ?? sb.lot_id ?? (sb.lot as { lot_id?: number })?.lot_id ?? 0);
+        const lId = Number(sb.lotId ?? sb.mmLotId ?? sb.lot_id ?? sb.mm_lot_id ?? (sb.lot as { lot_id?: number })?.lot_id ?? 0);
         const rawBatchStr = String(sb.batchNo ?? sb.batch_no ?? "").trim() || "LOT-N/A";
         const batchList = rawBatchStr.includes(",") ? rawBatchStr.split(",").map((s) => s.trim()).filter(Boolean) : [rawBatchStr];
         const onhandTotal = Number(sb.onhandQuantity ?? sb.onhand_quantity ?? sb.quantity ?? 0);
@@ -820,54 +820,85 @@ async function createReservationsInDirectus(rows: Array<{
     updated_at: string;
 }>): Promise<number[]> {
     if (rows.length === 0) return [];
-    
+
+    console.log("[createReservations] INPUT rows:", JSON.stringify(rows.map((r) => ({
+        product_id: r.product_id,
+        inventory_lot_id: r.inventory_lot_id,
+        lot_id: r.lot_id,
+        batch_no: r.batch_no,
+        reserved_quantity: r.reserved_quantity,
+        sales_order_detail_id: r.sales_order_detail_id,
+    })), null, 2));
+
     // Ensure all inventory_lot_id values exist in mm_inventory_lots
     const pIds = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
     const invLotsRes = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?filter[product_id][_in]=${pIds.join(",")}&limit=-1&fields=inventory_lot_id,id,product_id,lot_id,batch_no`, { headers: directusHeaders, cache: "no-store" }).catch(() => null);
     const existingInvLots: Array<{ inventory_lot_id: number; id?: number; product_id: number; lot_id: number; batch_no: string }> = invLotsRes && invLotsRes.ok ? (await invLotsRes.json()).data || [] : [];
-    
+
+    console.log("[createReservations] mm_inventory_lots fetched for product_ids", pIds, ":", JSON.stringify(existingInvLots.map((r) => ({
+        inventory_lot_id: r.inventory_lot_id,
+        lot_id: r.lot_id,
+        product_id: r.product_id,
+        batch_no: r.batch_no,
+    })), null, 2));
+
     const validInvLotIds = new Set(existingInvLots.map((r) => Number(r.inventory_lot_id || r.id)));
     const invByProdAndBatch = new Map<string, number>();
     for (const r of existingInvLots) {
         const id = Number(r.inventory_lot_id || r.id);
         const p = Number(r.product_id);
+        const lId = Number(typeof r.lot_id === "object" && r.lot_id !== null ? (r.lot_id as { lot_id?: number; id?: number }).lot_id || (r.lot_id as { lot_id?: number; id?: number }).id : r.lot_id) || 0;
         const rawBatchStr = String(r.batch_no || "").trim().toUpperCase();
         if (p && rawBatchStr) {
             const parts = rawBatchStr.split(",").map((s) => s.trim()).filter(Boolean);
             for (const part of parts) {
-                if (!invByProdAndBatch.has(`${p}:${part}`)) {
-                    invByProdAndBatch.set(`${p}:${part}`, id);
+                if (!invByProdAndBatch.has(`${p}:${lId}:${part}`)) {
+                    invByProdAndBatch.set(`${p}:${lId}:${part}`, id);
                 }
             }
         }
     }
 
+    console.log("[createReservations] invByProdAndBatch map (product:lot:batch -> inventory_lot_id):", Object.fromEntries(invByProdAndBatch));
+
     const sanitizedRows = [];
     for (const r of rows) {
         let invId = r.inventory_lot_id;
         const bNo = String(r.batch_no || "").trim();
+        const lId = Number(r.lot_id || 0);
+        const lookupKey = `${r.product_id}:${lId}:${bNo.toUpperCase()}`;
+        console.log(`[createReservations] Resolving row → product_id=${r.product_id} lot_id=${lId} batch_no="${bNo}" inventory_lot_id(incoming)=${invId} lookupKey="${lookupKey}"`);
+
         if (!validInvLotIds.has(invId)) {
-            if (bNo && invByProdAndBatch.has(`${r.product_id}:${bNo.toUpperCase()}`)) {
-                invId = invByProdAndBatch.get(`${r.product_id}:${bNo.toUpperCase()}`)!;
+            console.log(`[createReservations] incoming inventory_lot_id=${invId} NOT in validSet → attempting map lookup with key "${lookupKey}"`);
+            if (bNo && invByProdAndBatch.has(lookupKey)) {
+                invId = invByProdAndBatch.get(lookupKey)!;
+                console.log(`[createReservations] MAP HIT → resolved inventory_lot_id=${invId}`);
             } else if (bNo) {
-                // Check if lot exists across all products by batch_no
+                // Last-resort: query Directus filtered by batch_no, preferring lot_id match when available
+                const lotFilter = lId ? `&filter[lot_id][_eq]=${lId}` : "";
+                console.log(`[createReservations] MAP MISS → falling back to Directus query: batch_no="${bNo}" lot_id=${lId}`);
                 const findRes = await fetch(
-                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[batch_no][_eq]=${encodeURIComponent(bNo)}&limit=1&fields=inventory_lot_id,id`,
+                    `${DIRECTUS_URL}/items/mm_inventory_lots?filter[batch_no][_eq]=${encodeURIComponent(bNo)}${lotFilter}&limit=1&fields=inventory_lot_id,id`,
                     { headers: directusHeaders, cache: "no-store" }
                 ).catch(() => null);
                 if (findRes && findRes.ok) {
                     const findJson = await findRes.json();
                     invId = Number(findJson?.data?.[0]?.inventory_lot_id || findJson?.data?.[0]?.id || 0);
+                    console.log(`[createReservations] DIRECTUS FALLBACK result → inventory_lot_id=${invId}`);
                     if (invId) {
                         validInvLotIds.add(invId);
-                        invByProdAndBatch.set(`${r.product_id}:${bNo.toUpperCase()}`, invId);
+                        invByProdAndBatch.set(lookupKey, invId);
                     }
                 }
             }
+        } else {
+            console.log(`[createReservations] incoming inventory_lot_id=${invId} is VALID → no resolution needed`);
         }
         if (!invId || (!validInvLotIds.has(invId) && invId <= 0)) {
             throw new Error(`Cannot reserve stock: inventory lot for batch "${bNo}" does not exist in collection "mm_inventory_lots"`);
         }
+        console.log(`[createReservations] FINAL → product_id=${r.product_id} lot_id=${lId} batch_no="${bNo}" inventory_lot_id=${invId} qty=${r.reserved_quantity}`);
         sanitizedRows.push({ ...r, inventory_lot_id: invId });
     }
 
@@ -1109,6 +1140,8 @@ export async function allocateInvoicesForConsolidation(invoiceIds: number[], use
 }
 
 export interface CustomAllocationInput {
+    invoiceDetailId?: number;
+    invoiceId?: number;
     productId: number;
     inventoryLotId: number;
     lotId: number;
@@ -1123,9 +1156,19 @@ export async function allocateInvoicesWithCustomAllocations(
 ) {
     const createdReservationIds: number[] = [];
 
+    console.log("[allocateCustom] CALLED with invoiceIds:", invoiceIds, "userId:", userId);
+    console.log("[allocateCustom] customAllocations received:", JSON.stringify(customAllocations, null, 2));
+
     try {
         const { details } = await loadCandidateDocuments(invoiceIds);
         if (details.length === 0) throw new Error("Selected documents have no product details");
+
+        console.log("[allocateCustom] document details loaded:", JSON.stringify(details.map((d) => ({
+            detail_id: d.detail_id,
+            product_id: d.product_id,
+            quantity: d.quantity,
+            invoice_no: d.invoice_no,
+        })), null, 2));
 
         // Clone custom allocations pool
         const allocPool = customAllocations.map((a) => ({ ...a }));
@@ -1151,12 +1194,17 @@ export async function allocateInvoicesWithCustomAllocations(
             const pId = Number(detail.product_id);
             let remaining = Number(detail.quantity || 0);
 
-            // First check if matching invoiceDetailId or invoiceId
+            // Pass 1: Match allocations explicitly assigned to this detail or document
             for (const item of allocPool) {
                 if (remaining <= 0) break;
                 if (item.quantity <= 0) continue;
-                if (item.productId === pId) {
+                if (
+                    item.productId === pId &&
+                    ((item.invoiceDetailId && item.invoiceDetailId === detail.detail_id) ||
+                        (item.invoiceId && item.invoiceId === Number(detail.invoice_no)))
+                ) {
                     const take = Math.min(remaining, item.quantity);
+                    console.log(`[allocateCustom] PASS 1 MATCH detail_id=${detail.detail_id} product_id=${pId} → using alloc inventory_lot_id=${item.inventoryLotId} lot_id=${item.lotId} batch_no="${item.batchNo}" take=${take}`);
                     pendingRows.push({
                         sales_order_detail_id: detail.detail_id,
                         sales_invoice_detail_id: detail.isSalesInvoiceDetail ? detail.detail_id : null,
@@ -1177,14 +1225,53 @@ export async function allocateInvoicesWithCustomAllocations(
                 }
             }
 
+            // Pass 2: Fallback for unassigned generic allocations for this product
+            if (remaining > 0) {
+                for (const item of allocPool) {
+                    if (remaining <= 0) break;
+                    if (item.quantity <= 0) continue;
+                    if (item.productId === pId && !item.invoiceDetailId && !item.invoiceId) {
+                        const take = Math.min(remaining, item.quantity);
+                        console.log(`[allocateCustom] PASS 2 FALLBACK detail_id=${detail.detail_id} product_id=${pId} → using alloc inventory_lot_id=${item.inventoryLotId} lot_id=${item.lotId} batch_no="${item.batchNo}" take=${take}`);
+                        pendingRows.push({
+                            sales_order_detail_id: detail.detail_id,
+                            sales_invoice_detail_id: detail.isSalesInvoiceDetail ? detail.detail_id : null,
+                            product_id: pId,
+                            inventory_lot_id: item.inventoryLotId,
+                            lot_id: item.lotId,
+                            batch_no: item.batchNo,
+                            reserved_quantity: take,
+                            quantity: take,
+                            status: "Reserved",
+                            created_by: userId,
+                            created_at: now,
+                            updated_by: userId,
+                            updated_at: now,
+                        });
+                        item.quantity -= take;
+                        remaining -= take;
+                    }
+                }
+            }
+
             if (remaining > 0) {
                 throw new Error(`Insufficient custom allocation for product #${pId} in document #${detail.invoice_no}`);
             }
         }
 
+        console.log("[allocateCustom] pendingRows to be saved:", JSON.stringify(pendingRows.map((r) => ({
+            sales_order_detail_id: r.sales_order_detail_id,
+            product_id: r.product_id,
+            inventory_lot_id: r.inventory_lot_id,
+            lot_id: r.lot_id,
+            batch_no: r.batch_no,
+            reserved_quantity: r.reserved_quantity,
+        })), null, 2));
+
         if (pendingRows.length > 0) {
             const ids = await createReservationsInDirectus(pendingRows);
             createdReservationIds.push(...ids);
+            console.log("[allocateCustom] DONE — created reservation IDs:", ids);
         }
 
         return { createdReservationIds };

@@ -6,12 +6,12 @@ import { Batch, BatchStatus, BatchQaStatus } from "@/modules/manufacturing-manag
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL ;
 
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const filterLotId = searchParams.get("lotId");
+        const filterLotId = searchParams.get("lotId") || searchParams.get("mmLotId") || searchParams.get("mm_lot_id") || searchParams.get("lot_id");
         const timestamp = Date.now();
 
         let token: string | undefined;
@@ -135,7 +135,7 @@ export async function GET(request: Request) {
         const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
 
         rawMovements.forEach((m) => {
-            const lId = Number(m.lotId || m.lot_id || 0);
+            const lId = Number(m.mmLotId || m.mm_lot_id || m.lotId || m.lot_id || 0);
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
             const qIn = Number(m.quantityIn || m.quantity_in || 0);
@@ -214,7 +214,7 @@ export async function GET(request: Request) {
         });
 
         rawOnhand.forEach((oh) => {
-            const lId = Number(oh.lotId || oh.lot_id || 0);
+            const lId = Number(oh.mmLotId || oh.mm_lot_id || oh.lotId || oh.lot_id || 0);
             const pId = Number(oh.productId || oh.product_id || 0);
             const bNo = String(oh.batchNo || oh.batch_no || "").trim();
             const invId = Number(oh.inventoryLotId || oh.inventory_lot_id || 0);

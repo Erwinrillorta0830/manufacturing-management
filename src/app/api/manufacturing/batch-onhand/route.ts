@@ -4,13 +4,15 @@ import { cookies } from "next/headers";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SPRING_API_BASE = process.env.SPRING_API_BASE_URL || "http://100.95.246.18:8188";
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL  ;
 
 export interface MMBatchOnhand {
   branchId: number;
-  inventoryLotId: number;
-  lotId: number;
+  inventoryLotId?: number | null;
+  mmLotId?: number;
   productId: number;
+  productTypeId?: number;
+  productTypeName?: string;
   unitId?: number;
   batchNo: string;
   manufacturingDate?: string | null;
@@ -32,7 +34,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const branch = searchParams.get("branch") || searchParams.get("branch_id");
     const product = searchParams.get("product") || searchParams.get("product_id");
-    const lot = searchParams.get("lot") || searchParams.get("lot_id");
+    const mmLot = searchParams.get("mmLot") || searchParams.get("mmLotId") || searchParams.get("mm_lot_id");
     const unit = searchParams.get("unit") || searchParams.get("unit_id");
     const batchNo = searchParams.get("batchNo") || searchParams.get("batch_no");
     const condition = searchParams.get("inventoryCondition") || searchParams.get("inventory_condition");
@@ -44,7 +46,7 @@ export async function GET(req: Request) {
     const query = new URLSearchParams();
     if (branch) query.append("branch", branch);
     if (product) query.append("product", product);
-    if (lot) query.append("lot", lot);
+    if (mmLot) query.append("mmLot", mmLot);
     if (unit) query.append("unit", unit);
     if (batchNo) query.append("batchNo", batchNo);
     if (condition) query.append("inventoryCondition", condition);
