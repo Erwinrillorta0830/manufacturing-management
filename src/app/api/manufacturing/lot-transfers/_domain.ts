@@ -3,8 +3,8 @@ import { z } from "zod";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
 export const LOT_TRANSFER_COLLECTION = process.env.MANUFACTURING_LOT_TRANSFER_COLLECTION || "mm_lot_transfers";
-export const LOT_TRANSFER_SOURCE_OUT_TYPE = "Lot Transfer Source OUT";
-export const LOT_TRANSFER_TARGET_IN_TYPE = "Lot Transfer Target IN";
+export const LOT_TRANSFER_SOURCE_OUT_TYPE = "LOT_TRANSFER_OUT";
+export const LOT_TRANSFER_TARGET_IN_TYPE = "LOT_TRANSFER_IN";
 export const LOT_TRANSFER_EPSILON = 0.000001;
 const MM_LOT_COLLECTION = "mm_lots";
 const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
@@ -59,6 +59,7 @@ export interface LotTransferRecord {
     status: LotTransferStatus;
     branchId: number;
     productId: number;
+    unitId: number | null;
     sourceLotId: number;
     sourceInventoryLotId: number;
     sourceBatchNo: string;
@@ -70,6 +71,8 @@ export interface LotTransferRecord {
     requestedBy: number | null;
     requestedByName: string | null;
     requestedAt: string | null;
+    transferDate: string | null;
+    submittedBy: number | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;
@@ -92,6 +95,7 @@ export interface LotTransferRecord {
     targetBalanceBefore: number | null;
     targetBalanceAfter: number | null;
     idempotencyKey: string | null;
+    reversalOfId: number | null;
     postingStartedAt: string | null;
     reconciliationRequired: boolean;
     postingError: string | null;
@@ -112,11 +116,30 @@ export interface LotBalanceSnapshot {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     availableQuantity: number;
     onHandAfter: number;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
+}
+
+export type ProtectedAllocationSource =
+    | "SALES_ORDER"
+    | "SALES_INVOICE"
+    | "JOB_ORDER_MATERIAL"
+    | "STOCK_TRANSFER"
+    | "LOT_TRANSFER";
+
+export interface ProtectedAllocation {
+    source: ProtectedAllocationSource;
+    allocationId: number;
+    quantity: number;
+    status: string;
+    reference: string | null;
 }
 
 export interface LotTransferPreview {
@@ -220,10 +243,19 @@ function numeric(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatProtectedAllocationQuantity(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function nullableNumeric(value: unknown): number | null {
     if (value === null || value === undefined || value === "") return null;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+}
+
+function positiveCapacity(value: unknown): number | null {
+    const parsed = nullableNumeric(value);
+    return parsed !== null && parsed > 0 ? parsed : null;
 }
 
 function stringValue(value: unknown): string {
@@ -434,6 +466,11 @@ type CanonicalLotTransferReferences = Pick<
     "sourceLotId" | "sourceInventoryLotId" | "targetLotId" | "targetInventoryLotId"
 >;
 
+interface CanonicalLotTransferResolution {
+    sourceLot: RecordValue;
+    targetLot: RecordValue;
+}
+
 function assertDifferentLotIds(sourceLotId: number, targetLotId: number): void {
     if (sourceLotId === targetLotId) {
         throw new LotTransferError(
@@ -444,7 +481,7 @@ function assertDifferentLotIds(sourceLotId: number, targetLotId: number): void {
     }
 }
 
-async function assertCanonicalLotReferences(input: CanonicalLotTransferReferences): Promise<void> {
+async function assertCanonicalLotReferences(input: CanonicalLotTransferReferences): Promise<CanonicalLotTransferResolution> {
     const [sourceLot, targetLot, sourceInventoryLot, targetInventoryLot] = await Promise.all([
         readMmLot(input.sourceLotId, "Source lot lookup"),
         readMmLot(input.targetLotId, "Target lot lookup"),
@@ -471,10 +508,31 @@ async function assertCanonicalLotReferences(input: CanonicalLotTransferReference
             }
         );
     }
+    return { sourceLot, targetLot };
 }
 
-function unitId(row: RecordValue): number {
-    return relationId(firstValue(row, ["unit_id", "uom_id", "unit_of_measurement"]), ["unit_id", "uom_id", "id"]);
+function unitId(row: RecordValue): number | null {
+    const resolved = relationId(firstValue(row, ["unit_id"]), ["unit_id", "id"]);
+    return resolved > 0 ? resolved : null;
+}
+
+function matchingTransferUnitId(resolution: CanonicalLotTransferResolution): number | null {
+    const sourceUnitId = unitId(resolution.sourceLot);
+    const targetUnitId = unitId(resolution.targetLot);
+    return sourceUnitId !== null && sourceUnitId === targetUnitId ? sourceUnitId : null;
+}
+
+function requireMatchingTransferUnitId(resolution: CanonicalLotTransferResolution): number {
+    const sourceUnitId = unitId(resolution.sourceLot);
+    const targetUnitId = unitId(resolution.targetLot);
+    if (sourceUnitId === null || targetUnitId === null || sourceUnitId !== targetUnitId) {
+        throw new LotTransferError(
+            409,
+            "Source and destination lots must have the same valid UOM before a transfer can be saved.",
+            { sourceUnitId, targetUnitId }
+        );
+    }
+    return sourceUnitId;
 }
 
 function normalizeStatus(value: unknown): string {
@@ -596,9 +654,8 @@ async function movementsForBatch(input: { productId: number; branchId: number; l
     return excludeExactTransferMovement(rows, excludeTransfer);
 }
 
-async function movementsForLot(input: { productId: number; branchId: number; lotId: number }, excludeTransfer?: { id: number; requestNo: string }): Promise<RecordValue[]> {
+async function movementsForLot(input: { branchId: number; lotId: number }, excludeTransfer?: { id: number; requestNo: string }): Promise<RecordValue[]> {
     const filters: Record<string, unknown>[] = [
-        { product_id: { _eq: input.productId } },
         { branch_id: { _eq: input.branchId } },
         { mm_lot_id: { _eq: input.lotId } }
     ];
@@ -611,27 +668,322 @@ async function movementsForLot(input: { productId: number; branchId: number; lot
     return excludeExactTransferMovement(rows, excludeTransfer);
 }
 
-async function reservedQuantityForInventoryLot(inventoryLotIdValue: number): Promise<number> {
-    const params = new URLSearchParams({
-        "filter[status][_eq]": "Reserved",
-        "filter[inventory_lot_id][_eq]": String(inventoryLotIdValue),
-        fields: "quantity",
-        limit: "-1"
+const ACTIVE_JOB_ORDER_STATUSES = new Set([
+    "PLANNED",
+    "DRAFT",
+    "RELEASED",
+    "IN PROGRESS",
+    "ONGOING",
+    "PROCEED",
+    "ON HOLD"
+]);
+const ACTIVE_STOCK_TRANSFER_STATUS_VALUES = [
+    "REQUESTED",
+    "FOR_PICKING",
+    "PICKING",
+    "PICKED",
+    "FOR_LOADING"
+];
+const ACTIVE_STOCK_TRANSFER_STATUSES = new Set(ACTIVE_STOCK_TRANSFER_STATUS_VALUES.map((status) => normalizeStatus(status)));
+const ACTIVE_LOT_TRANSFER_STATUS_VALUES = ["Submitted", "Approved"];
+
+interface ProtectedAllocationLookup {
+    branchId: number;
+    productId: number;
+    lotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    legacyReservedQuantity: number;
+    excludeLotTransferId?: number;
+}
+
+interface ProtectedAllocationSummary {
+    legacyReservedQuantity: number;
+    explicitQuantity: number;
+    totalQuantity: number;
+    allocations: ProtectedAllocation[];
+    unresolved: string[];
+}
+
+function normalizedBatch(value: unknown): string {
+    return stringValue(value).toLowerCase();
+}
+
+function activeStatus(value: unknown, statuses: Set<string>): boolean {
+    return statuses.has(normalizeStatus(value));
+}
+
+function appendProtectedAllocation(
+    allocations: ProtectedAllocation[],
+    seen: Set<string>,
+    input: ProtectedAllocation
+): void {
+    if (input.allocationId <= 0 || input.quantity <= 0) return;
+    const key = `${input.source}:${input.allocationId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    allocations.push(input);
+}
+
+function jobOrderStatus(row: RecordValue, statusByMaterialId: Map<number, string>): string {
+    const material = firstValue(row, ["jo_material_id"]);
+    const jobOrder = isRecord(material) ? firstValue(material, ["job_order_id"]) : null;
+    const nestedStatus = isRecord(jobOrder) ? firstValue(jobOrder, ["status"]) : null;
+    const materialId = relationId(material, ["jo_material_id"]);
+    return stringValue(
+        nestedStatus || firstValue(row, ["job_order_status", "jo_material_id.job_order_id.status"]) || statusByMaterialId.get(materialId)
+    );
+}
+
+async function jobOrderStatusesForReservations(rows: RecordValue[]): Promise<Map<number, string>> {
+    const materialIds = [...new Set(rows.map((row) => relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"])).filter((id) => id > 0))];
+    if (materialIds.length === 0) return new Map();
+
+    const materials = await directusRows(
+        `/items/manufacturing_job_order_materials?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_material_id,job_order_id&limit=-1`,
+        "Job-order material identity lookup"
+    );
+    const jobOrderIds = [...new Set(materials.map((row) => relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])).filter((id) => id > 0))];
+    if (jobOrderIds.length === 0) return new Map();
+
+    const jobOrders = await directusRows(
+        `/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id,status&limit=-1`,
+        "Job-order status lookup"
+    );
+    const statusByJobOrderId = new Map(
+        jobOrders.map((row) => [relationId(firstValue(row, ["job_order_id"]), ["job_order_id"]), stringValue(row.status)])
+    );
+    return new Map(
+        materials.map((row) => [
+            relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"]),
+            statusByJobOrderId.get(relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])) || ""
+        ])
+    );
+}
+
+function stockTransferReference(row: RecordValue, header: RecordValue | undefined): string | null {
+    return nullableString(
+        firstValue(header || {}, ["order_no"]) ||
+        firstValue(row, ["stock_transfer_id", "reference_no"])
+    );
+}
+
+async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLookup): Promise<ProtectedAllocationSummary> {
+    const allocationRows: ProtectedAllocation[] = [];
+    const seen = new Set<string>();
+    const unresolved: string[] = [];
+    const batchKey = normalizedBatch(input.batchNo);
+
+    const reservationFilter = JSON.stringify({
+        _and: [
+            { inventory_lot_id: { _eq: input.inventoryLotId } },
+            { status: { _in: ["Reserved", "Picked"] } }
+        ]
     });
-    try {
-        const rows = await directusRows(`/items/sales_invoice_reservation?${params.toString()}`, "Inventory reservation lookup");
-        return Math.max(0, rows.reduce((sum, row) => sum + Math.max(0, numeric(row.quantity)), 0));
-    } catch (error) {
-        if (error instanceof LotTransferError && error.statusCode === 404) return 0;
-        throw error;
+    const jobReservationFilter = JSON.stringify({
+        _and: [
+            { product_id: { _eq: input.productId } },
+            { branch_id: { _eq: input.branchId } }
+        ]
+    });
+    const stockDetailFilter = JSON.stringify({
+        product_id: { _eq: input.productId }
+    });
+    const lotTransferFilter = JSON.stringify({
+        _and: [
+            { source_lot_id: { _eq: input.lotId } },
+            { source_inventory_lot_id: { _eq: input.inventoryLotId } },
+            { status: { _in: ACTIVE_LOT_TRANSFER_STATUS_VALUES } }
+        ]
+    });
+
+    const [salesOrderRows, salesInvoiceRows, jobReservationRows, stockDetailRows, lotTransferRows] = await Promise.all([
+        directusRows(
+            `/items/sales_order_reservation?filter=${encodeURIComponent(reservationFilter)}&fields=reservation_id,reserved_quantity,picked_quantity,status,sales_order_detail_id&limit=-1`,
+            "Sales-order protected allocation lookup"
+        ),
+        directusRows(
+            `/items/sales_invoice_reservation?filter=${encodeURIComponent(reservationFilter)}&fields=id,quantity,status,sales_invoice_detail_id&limit=-1`,
+            "Sales-invoice protected allocation lookup"
+        ),
+        directusRows(
+            `/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(jobReservationFilter)}&fields=jo_materials_reservation_id,product_id,branch_id,mm_lot_id,batch_no,reserved_quantity,actual_used_quantity,jo_material_id&limit=-1`,
+            "Job-order protected allocation lookup"
+        ),
+        directusRows(
+            `/items/mm_stock_transfer_details?filter=${encodeURIComponent(stockDetailFilter)}&fields=id,stock_transfer_id,inventory_lot_id,lot_id,product_id,batch_no,allocated_quantity,picked_quantity,dispatched_quantity,received_quantity&limit=-1`,
+            "Stock-transfer protected allocation lookup"
+        ),
+        directusRows(
+            `/items/${LOT_TRANSFER_COLLECTION}?filter=${encodeURIComponent(lotTransferFilter)}&fields=lot_transfer_id,request_no,status,source_lot_id,source_inventory_lot_id,source_batch_no,quantity&limit=-1`,
+            "Lot-transfer protected allocation lookup"
+        )
+    ]);
+    const statusByMaterialId = await jobOrderStatusesForReservations(jobReservationRows);
+
+    for (const row of salesOrderRows) {
+        const allocationId = rowId(row, ["reservation_id", "id"]);
+        const quantity = Math.max(numeric(row.reserved_quantity), numeric(row.picked_quantity));
+        if (quantity > 0 && allocationId <= 0) {
+            unresolved.push("A sales-order allocation has no resolvable reservation identity.");
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "SALES_ORDER",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["sales_order_detail_id"]))
+        });
     }
+
+    for (const row of salesInvoiceRows) {
+        const allocationId = rowId(row, ["id"]);
+        const quantity = Math.max(0, numeric(row.quantity));
+        if (quantity > 0 && allocationId <= 0) {
+            unresolved.push("A sales-invoice allocation has no resolvable reservation identity.");
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "SALES_INVOICE",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["sales_invoice_detail_id"]))
+        });
+    }
+
+    for (const row of jobReservationRows) {
+        const allocationId = rowId(row, ["jo_materials_reservation_id"]);
+        const quantity = Math.max(0, numeric(row.reserved_quantity));
+        const status = jobOrderStatus(row, statusByMaterialId);
+        if (quantity <= 0) continue;
+        if (allocationId <= 0) {
+            unresolved.push("A job-order allocation has no resolvable reservation identity.");
+            continue;
+        }
+        if (!status) {
+            unresolved.push(`Job-order allocation ${allocationId} has no resolvable job-order status.`);
+            continue;
+        }
+        if (!activeStatus(status, ACTIVE_JOB_ORDER_STATUSES)) continue;
+
+        const rowLotId = relationId(firstValue(row, ["mm_lot_id"]), ["lot_id", "mm_lot_id"]);
+        const rowBatch = normalizedBatch(row.batch_no);
+        if (rowLotId !== input.lotId || rowBatch !== batchKey) {
+            if (rowLotId <= 0 || !rowBatch) {
+                unresolved.push(`Job-order allocation ${allocationId} has no exact lot/batch identity.`);
+            }
+            continue;
+        }
+
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "JOB_ORDER_MATERIAL",
+            allocationId,
+            quantity,
+            status: status || "Active job order",
+            reference: nullableString(firstValue(row, ["jo_material_id"]))
+        });
+    }
+
+    const stockTransferIds = [...new Set(stockDetailRows.map((row) => rowId(row, ["stock_transfer_id"])).filter((id) => id > 0))];
+    const stockTransferHeaders = stockTransferIds.length > 0
+        ? await directusRows(
+            `/items/mm_stock_transfer?filter[id][_in]=${stockTransferIds.join(",")}&fields=id,order_no,status,source_branch_id&limit=-1`,
+            "Stock-transfer header lookup"
+        )
+        : [];
+    const stockHeadersById = new Map(stockTransferHeaders.map((row) => [rowId(row, ["id"]), row]));
+
+    for (const row of stockDetailRows) {
+        const detailId = rowId(row, ["id"]);
+        const transferId = rowId(row, ["stock_transfer_id"]);
+        if (detailId <= 0 || transferId <= 0) {
+            unresolved.push("A stock-transfer allocation has no resolvable detail or transfer identity.");
+            continue;
+        }
+        const header = stockHeadersById.get(transferId);
+        if (!header) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no resolvable transfer header.`);
+            continue;
+        }
+        if (!stringValue(header.status)) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no resolvable transfer status.`);
+            continue;
+        }
+        if (!activeStatus(header.status, ACTIVE_STOCK_TRANSFER_STATUSES)) continue;
+        const headerBranchId = relationId(header.source_branch_id, ["branch_id", "id"]);
+        if (headerBranchId <= 0) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no exact source branch identity.`);
+            continue;
+        }
+        if (headerBranchId !== input.branchId) continue;
+
+        const rowProductId = productId(row);
+        const rowInventoryLotId = relationId(firstValue(row, ["inventory_lot_id"]), ["inventory_lot_id", "id"]);
+        const rowLotId = relationId(firstValue(row, ["lot_id"]), ["lot_id", "id"]);
+        const rowBatch = normalizedBatch(row.batch_no);
+        const allocated = Math.max(numeric(row.allocated_quantity), numeric(row.picked_quantity));
+        const alreadyDispatched = Math.max(numeric(row.dispatched_quantity), numeric(row.received_quantity));
+        const quantity = Math.max(0, allocated - alreadyDispatched);
+        if (rowProductId !== input.productId || quantity <= 0) continue;
+
+        if (rowInventoryLotId <= 0 || rowLotId <= 0 || !rowBatch) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no exact lot/batch identity.`);
+            continue;
+        }
+        if (rowInventoryLotId !== input.inventoryLotId || rowLotId !== input.lotId || rowBatch !== batchKey) {
+            continue;
+        }
+
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "STOCK_TRANSFER",
+            allocationId: detailId,
+            quantity,
+            status: stringValue(header.status),
+            reference: stockTransferReference(row, header)
+        });
+    }
+
+    for (const row of lotTransferRows) {
+        const allocationId = rowId(row, ["lot_transfer_id"]);
+        if (allocationId === input.excludeLotTransferId) continue;
+        const quantity = Math.max(0, numeric(row.quantity));
+        if (quantity <= 0) continue;
+        if (allocationId <= 0) {
+            unresolved.push("A lot-transfer allocation has no resolvable request identity.");
+            continue;
+        }
+        if (normalizedBatch(row.source_batch_no) !== batchKey) {
+            unresolved.push(`Lot-transfer allocation ${allocationId} does not have the exact source batch identity.`);
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "LOT_TRANSFER",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["request_no"]))
+        });
+    }
+
+    const explicitQuantity = allocationRows.reduce((sum, allocation) => sum + allocation.quantity, 0);
+    const legacyReservedQuantity = Math.max(0, input.legacyReservedQuantity);
+    return {
+        legacyReservedQuantity,
+        explicitQuantity,
+        totalQuantity: Math.max(legacyReservedQuantity, explicitQuantity),
+        allocations: allocationRows,
+        unresolved
+    };
 }
 
 async function resolveMovementType(typeName: string, direction: "IN" | "OUT"): Promise<number> {
     const params = new URLSearchParams({
         "filter[type_name][_eq]": typeName,
         "filter[direction][_eq]": direction,
-        fields: "transaction_type_id,type_name,direction",
+        "filter[origin_table][_eq]": LOT_TRANSFER_COLLECTION,
+        fields: "transaction_type_id,type_name,direction,origin_table",
         limit: "-1"
     });
     const rows = await directusRows(`/items/inventory_transaction_types?${params.toString()}`, "Inventory transaction type lookup");
@@ -662,6 +1014,7 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         status,
         branchId: numeric(row.branch_id),
         productId: numeric(row.product_id),
+        unitId: relationId(row.unit_id, ["unit_id", "id"]) || null,
         sourceLotId: numeric(row.source_lot_id),
         sourceInventoryLotId: numeric(row.source_inventory_lot_id),
         sourceBatchNo: stringValue(row.source_batch_no),
@@ -673,6 +1026,8 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         requestedBy: relationId(requestedByValue, ["user_id"]),
         requestedByName: relationName(requestedByValue, ["name", "user_name", "user_fname", "email"]),
         requestedAt: nullableString(row.requested_at),
+        transferDate: nullableString(row.transfer_date),
+        submittedBy: relationId(row.submitted_by, ["user_id"]) || null,
         submittedAt: nullableString(row.submitted_at),
         approvedBy: relationId(approvedByValue, ["user_id"]),
         approvedByName: relationName(approvedByValue, ["name", "user_name", "user_fname", "email"]),
@@ -695,6 +1050,7 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         targetBalanceBefore: nullableNumeric(row.target_balance_before),
         targetBalanceAfter: nullableNumeric(row.target_balance_after),
         idempotencyKey: nullableString(row.idempotency_key),
+        reversalOfId: relationId(row.reversal_of_id, ["lot_transfer_id", "id"]) || null,
         postingStartedAt: nullableString(row.posting_started_at),
         reconciliationRequired: row.reconciliation_required === true || numeric(row.reconciliation_required) === 1,
         postingError: nullableString(row.posting_error),
@@ -703,13 +1059,14 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
     };
 }
 
-function transientRecordFromInput(input: LotTransferInput): LotTransferRecord {
+function transientRecordFromInput(input: LotTransferInput, transferUnitId: number | null = null): LotTransferRecord {
     return {
         id: 0,
         requestNo: "DRAFT-PREFLIGHT",
         status: "Draft",
         branchId: input.branchId,
         productId: input.productId,
+        unitId: transferUnitId,
         sourceLotId: input.sourceLotId,
         sourceInventoryLotId: input.sourceInventoryLotId,
         sourceBatchNo: input.sourceBatchNo,
@@ -721,6 +1078,8 @@ function transientRecordFromInput(input: LotTransferInput): LotTransferRecord {
         requestedBy: null,
         requestedByName: null,
         requestedAt: null,
+        transferDate: null,
+        submittedBy: null,
         submittedAt: null,
         approvedBy: null,
         approvedByName: null,
@@ -743,6 +1102,7 @@ function transientRecordFromInput(input: LotTransferInput): LotTransferRecord {
         targetBalanceBefore: null,
         targetBalanceAfter: null,
         idempotencyKey: null,
+        reversalOfId: null,
         postingStartedAt: null,
         reconciliationRequired: false,
         postingError: null,
@@ -751,12 +1111,25 @@ function transientRecordFromInput(input: LotTransferInput): LotTransferRecord {
     };
 }
 
-function transferPayload(input: LotTransferInput, actorUserId: number | null, requestNo: string): RecordValue {
+function manilaCalendarDate(value = new Date()): string {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Manila",
+        calendar: "gregory",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+    }).formatToParts(value);
+    const values = new Map(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
+}
+
+function transferPayload(input: LotTransferInput, actorUserId: number | null, requestNo: string, transferUnitId: number): RecordValue {
     return {
         request_no: requestNo,
         status: "Draft",
         branch_id: input.branchId,
         product_id: input.productId,
+        unit_id: transferUnitId,
         source_lot_id: input.sourceLotId,
         source_inventory_lot_id: input.sourceInventoryLotId,
         source_batch_no: input.sourceBatchNo,
@@ -767,11 +1140,12 @@ function transferPayload(input: LotTransferInput, actorUserId: number | null, re
         reason: input.reason,
         requested_by: actorUserId,
         requested_at: new Date().toISOString(),
+        transfer_date: manilaCalendarDate(),
         reconciliation_required: false
     };
 }
 
-function patchPayload(input: LotTransferPatchInput): RecordValue {
+function patchPayload(input: LotTransferPatchInput, transferUnitId: number): RecordValue {
     const result: RecordValue = {};
     const mappings: Array<[keyof LotTransferPatchInput, string]> = [
         ["branchId", "branch_id"],
@@ -788,6 +1162,7 @@ function patchPayload(input: LotTransferPatchInput): RecordValue {
     for (const [key, mappedKey] of mappings) {
         if (input[key] !== undefined) result[mappedKey] = input[key];
     }
+    result.unit_id = transferUnitId;
     result.updated_at = new Date().toISOString();
     return result;
 }
@@ -801,7 +1176,7 @@ function generateRequestNo(): string {
 export async function getSessionUserId(): Promise<number | null> {
     try {
         const cookieStore = await cookies();
-        const token = cookieStore.get("vos_access_token")?.value;
+        const token = cookieStore.get("vos_access_token")?.value || cookieStore.get("springboot_token")?.value;
         if (!token) return null;
         const parts = token.split(".");
         if (parts.length < 2) return null;
@@ -818,10 +1193,71 @@ export async function getSessionUserId(): Promise<number | null> {
     return null;
 }
 
+export async function getSessionUserBranchId(): Promise<number | null> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value || cookieStore.get("springboot_token")?.value;
+        if (!token) return null;
+        const parts = token.split(".");
+        if (parts.length < 2) return null;
+        let encoded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (encoded.length % 4) encoded += "=";
+        const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as RecordValue;
+        for (const key of ["branch_id", "branchId", "branch"]) {
+            const id = numeric(payload[key]);
+            if (id > 0) return id;
+        }
+    } catch {
+        // Requests without a branch-scoped session may use the explicit report branch filter.
+    }
+    return null;
+}
+
+function requireSessionUserId(userId: number | null, action: string): number {
+    if (!userId || userId <= 0) {
+        throw new LotTransferError(401, `An authenticated user is required to ${action}.`);
+    }
+    return userId;
+}
+
+function validDateFilter(value: string, label: string): string {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) throw new LotTransferError(400, `${label} filters must use YYYY-MM-DD.`);
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const utcMidnight = Date.UTC(year, month - 1, day);
+    const canonicalDate = new Date(utcMidnight).toISOString().slice(0, 10);
+    if (canonicalDate !== value) throw new LotTransferError(400, `${label} ${value} is invalid.`);
+    return value;
+}
+
+function requestedDateBoundary(value: string, endExclusive = false): string {
+    const canonicalDate = validDateFilter(value, "Requested date");
+    const year = Number(canonicalDate.slice(0, 4));
+    const month = Number(canonicalDate.slice(5, 7));
+    const day = Number(canonicalDate.slice(8, 10));
+    const utcMidnight = Date.UTC(year, month - 1, day);
+    const boundary = utcMidnight + (endExclusive ? 24 * 60 * 60 * 1000 : 0) - (8 * 60 * 60 * 1000);
+    return new Date(boundary).toISOString();
+}
+
 export async function listLotTransfers(options: {
-    status?: string | null;
+    status?: string | string[] | null;
     branchId?: number | null;
     search?: string | null;
+    requestedFrom?: string | null;
+    requestedTo?: string | null;
+    transferDateFrom?: string | null;
+    transferDateTo?: string | null;
+    productId?: number | null;
+    sourceLotId?: number | null;
+    targetLotId?: number | null;
+    sourceBatchNo?: string | null;
+    targetBatchNo?: string | null;
+    requestedBy?: number | null;
+    approvedBy?: number | null;
+    postedBy?: number | null;
     limit?: number;
     offset?: number;
 }): Promise<{ data: LotTransferRecord[]; totalCount: number }> {
@@ -830,13 +1266,38 @@ export async function listLotTransfers(options: {
         limit: String(Math.min(500, Math.max(1, options.limit || 200))),
         offset: String(Math.max(0, options.offset || 0)),
         meta: "filter_count",
-        sort: "-requested_at,-lot_transfer_id"
+        sort: "-transfer_date,-requested_at,-lot_transfer_id"
     });
-    if (options.status && (LOT_TRANSFER_STATUSES as readonly string[]).includes(options.status)) {
-        params.set("filter[status][_eq]", options.status);
+    const statuses = Array.isArray(options.status)
+        ? options.status
+        : options.status
+            ? options.status.split(",").map((status) => status.trim()).filter(Boolean)
+            : [];
+    if (statuses.length > 0) {
+        params.set("filter[status][_in]", statuses.join(","));
     }
     if (options.branchId && options.branchId > 0) params.set("filter[branch_id][_eq]", String(options.branchId));
     if (options.search?.trim()) params.set("search", options.search.trim());
+    if (options.requestedFrom) params.set("filter[requested_at][_gte]", requestedDateBoundary(options.requestedFrom));
+    if (options.requestedTo) params.set("filter[requested_at][_lt]", requestedDateBoundary(options.requestedTo, true));
+    if (options.requestedFrom && options.requestedTo && requestedDateBoundary(options.requestedFrom) > requestedDateBoundary(options.requestedTo, true)) {
+        throw new LotTransferError(400, "Requested date range is invalid: the start date must be on or before the end date.");
+    }
+    const transferDateFrom = options.transferDateFrom ? validDateFilter(options.transferDateFrom, "Transfer date") : null;
+    const transferDateTo = options.transferDateTo ? validDateFilter(options.transferDateTo, "Transfer date") : null;
+    if (transferDateFrom && transferDateTo && transferDateFrom > transferDateTo) {
+        throw new LotTransferError(400, "Transfer date range is invalid: the start date must be on or before the end date.");
+    }
+    if (transferDateFrom) params.set("filter[transfer_date][_gte]", transferDateFrom);
+    if (transferDateTo) params.set("filter[transfer_date][_lte]", transferDateTo);
+    if (options.productId && options.productId > 0) params.set("filter[product_id][_eq]", String(options.productId));
+    if (options.sourceLotId && options.sourceLotId > 0) params.set("filter[source_lot_id][_eq]", String(options.sourceLotId));
+    if (options.targetLotId && options.targetLotId > 0) params.set("filter[target_lot_id][_eq]", String(options.targetLotId));
+    if (options.sourceBatchNo?.trim()) params.set("filter[source_batch_no][_icontains]", options.sourceBatchNo.trim());
+    if (options.targetBatchNo?.trim()) params.set("filter[target_batch_no][_icontains]", options.targetBatchNo.trim());
+    if (options.requestedBy && options.requestedBy > 0) params.set("filter[requested_by][_eq]", String(options.requestedBy));
+    if (options.approvedBy && options.approvedBy > 0) params.set("filter[approved_by][_eq]", String(options.approvedBy));
+    if (options.postedBy && options.postedBy > 0) params.set("filter[posted_by][_eq]", String(options.postedBy));
 
     const payload = await directusRequest(`/items/${LOT_TRANSFER_COLLECTION}?${params.toString()}`, {}, "Lot-transfer list lookup");
     if (!isRecord(payload) || !Array.isArray(payload.data)) {
@@ -859,12 +1320,13 @@ export async function createLotTransfer(input: LotTransferInput, actorUserId: nu
     if (input.sourceInventoryLotId === input.targetInventoryLotId) {
         throw new LotTransferError(400, "Source and target inventory lots must be different.");
     }
-    await assertCanonicalLotReferences(input);
+    const canonical = await assertCanonicalLotReferences(input);
+    const transferUnitId = requireMatchingTransferUnitId(canonical);
     const requestNo = generateRequestNo();
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}`,
         "POST",
-        transferPayload(input, actorUserId, requestNo),
+        transferPayload(input, actorUserId, requestNo, transferUnitId),
         "Lot-transfer Draft creation"
     );
     if (!row) throw new LotTransferError(502, "Directus did not return the created lot-transfer request.");
@@ -893,11 +1355,12 @@ export async function updateLotTransfer(id: number, input: LotTransferPatchInput
     if (normalized.sourceInventoryLotId === normalized.targetInventoryLotId) {
         throw new LotTransferError(400, "Source and target inventory lots must be different.");
     }
-    await assertCanonicalLotReferences(normalized);
+    const canonical = await assertCanonicalLotReferences(normalized);
+    const transferUnitId = requireMatchingTransferUnitId(canonical);
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
         "PATCH",
-        patchPayload(input),
+        patchPayload(input, transferUnitId),
         "Lot-transfer Draft update"
     );
     if (!row) return getLotTransfer(id);
@@ -934,8 +1397,8 @@ interface TransferContext {
     targetBatchMovements: RecordValue[];
     sourceLotMovements: RecordValue[];
     targetLotMovements: RecordValue[];
-    sourceReservedQuantity: number;
-    targetReservedQuantity: number;
+    sourceProtectedAllocations: ProtectedAllocationSummary;
+    targetProtectedAllocations: ProtectedAllocationSummary;
 }
 
 async function loadTransferContext(record: LotTransferRecord, excludeTransferMovements = false): Promise<TransferContext> {
@@ -952,13 +1415,29 @@ async function loadTransferContext(record: LotTransferRecord, excludeTransferMov
     const targetInventoryLot = targetInventoryLotLookup.row;
 
     const excludedTransfer = excludeTransferMovements ? { id: record.id, requestNo: record.requestNo } : undefined;
-    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceReservedQuantity, targetReservedQuantity] = await Promise.all([
+    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceProtectedAllocations, targetProtectedAllocations] = await Promise.all([
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId, batchNo: record.sourceBatchNo }, excludedTransfer),
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId, batchNo: record.targetBatchNo }, excludedTransfer),
-        movementsForLot({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
-        movementsForLot({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
-        reservedQuantityForInventoryLot(record.sourceInventoryLotId),
-        reservedQuantityForInventoryLot(record.targetInventoryLotId)
+        movementsForLot({ branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
+        movementsForLot({ branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
+        protectedAllocationsForInventoryLot({
+            branchId: record.branchId,
+            productId: record.productId,
+            lotId: record.sourceLotId,
+            inventoryLotId: record.sourceInventoryLotId,
+            batchNo: record.sourceBatchNo,
+            legacyReservedQuantity: numeric(sourceInventoryLot.reserved_quantity),
+            excludeLotTransferId: record.id
+        }),
+        protectedAllocationsForInventoryLot({
+            branchId: record.branchId,
+            productId: record.productId,
+            lotId: record.targetLotId,
+            inventoryLotId: record.targetInventoryLotId,
+            batchNo: record.targetBatchNo,
+            legacyReservedQuantity: numeric(targetInventoryLot.reserved_quantity),
+            excludeLotTransferId: record.id
+        })
     ]);
 
     return {
@@ -978,8 +1457,8 @@ async function loadTransferContext(record: LotTransferRecord, excludeTransferMov
         targetBatchMovements,
         sourceLotMovements,
         targetLotMovements,
-        sourceReservedQuantity,
-        targetReservedQuantity
+        sourceProtectedAllocations,
+        targetProtectedAllocations
     };
 }
 
@@ -993,6 +1472,10 @@ function snapshot(input: {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
@@ -1004,6 +1487,10 @@ function snapshot(input: {
         batchNo: input.batchNo,
         onHandBefore: Math.max(0, input.onHandBefore),
         reservedQuantity: Math.max(0, input.reservedQuantity),
+        legacyReservedQuantity: Math.max(0, input.legacyReservedQuantity),
+        protectedAllocationQuantity: Math.max(0, input.protectedAllocationQuantity),
+        protectedAllocations: input.protectedAllocations,
+        protectedAllocationResolutionComplete: input.protectedAllocationResolutionComplete,
         availableQuantity: Math.max(0, input.onHandBefore - input.reservedQuantity),
         onHandAfter: Math.max(0, input.onHandBefore + input.quantityDelta),
         unitCost: input.unitCost,
@@ -1028,18 +1515,21 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
     const targetQuantityBefore = sumMovementQuantities(context.targetBatchMovements);
     const sourceLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.sourceLotMovements));
     const targetLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.targetLotMovements));
-    const sourceReserved = Math.max(numeric(context.sourceInventoryLot.reserved_quantity), context.sourceReservedQuantity);
-    const targetReserved = Math.max(numeric(context.targetInventoryLot.reserved_quantity), context.targetReservedQuantity);
+    const sourceReserved = context.sourceProtectedAllocations.totalQuantity;
+    const targetReserved = context.targetProtectedAllocations.totalQuantity;
     const sourceExpiry = dateValue(context.sourceInventoryLot, ["expiry_date", "expiration_date", "expiryDate"]);
     const targetExpiry = dateValue(context.targetInventoryLot, ["expiry_date", "expiration_date", "expiryDate"]);
     const sourceMfg = dateValue(context.sourceInventoryLot, ["manufacturing_date", "manufacturingDate"]);
     const targetMfg = dateValue(context.targetInventoryLot, ["manufacturing_date", "manufacturingDate"]);
     const sourceUnitCost = nullableNumeric(firstValue(context.sourceInventoryLot, ["unit_cost", "cost_per_unit", "final_landed_unit_cost"]));
     const targetUnitCost = nullableNumeric(firstValue(context.targetInventoryLot, ["unit_cost", "cost_per_unit", "final_landed_unit_cost"]));
+    const sourceUnitId = unitId(context.sourceLot);
+    const targetUnitId = unitId(context.targetLot);
     const sourceCapacity = nullableNumeric(firstValue(context.sourceLot, ["max_batch_capacity", "capacity"]));
-    const targetCapacity = nullableNumeric(firstValue(context.targetLot, ["max_batch_capacity", "capacity"]));
+    const targetCapacity = positiveCapacity(firstValue(context.targetLot, ["max_batch_capacity", "capacity"]));
     const targetOccupiedForCapacity = targetLotOccupiedBefore;
     const targetCapacityRemaining = targetCapacity === null ? null : Math.max(0, targetCapacity - targetOccupiedForCapacity);
+    const targetCapacityConfigured = targetCapacity !== null;
     const effectiveExpiry = earliestDate(sourceExpiry, targetExpiry);
     const today = new Date().toISOString().slice(0, 10);
     const checks: ValidationCheck[] = [
@@ -1049,9 +1539,26 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
         check("active", "Active stock records", normalizeStatus(context.sourceLot.status) === "ACTIVE" && normalizeStatus(context.targetLot.status) === "ACTIVE" && normalizeStatus(context.sourceInventoryLot.status) === "ACTIVE" && normalizeStatus(context.targetInventoryLot.status) === "ACTIVE", "Source and target lots/batches must be active."),
         check("qa", "QA-eligible source", ["GOOD", "PASSED", "PASS", "APPROVED"].includes(normalizeStatus(context.sourceInventoryLot.qa_status)), "Source stock must have a releasable QA status."),
         check("quantity", "Positive quantity", Number.isFinite(record.quantity) && record.quantity > 0, "Transfer quantity must be greater than zero."),
-        check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)}.`),
-        check("target-capacity", "Target capacity", targetCapacityRemaining === null || targetCapacityRemaining + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityRemaining === null ? "Target lot has no configured capacity limit." : `Remaining target lot capacity is ${targetCapacityRemaining}.`),
-        check("uom", "Unit compatibility", unitId(context.sourceInventoryLot) === 0 || unitId(context.targetInventoryLot) === 0 || unitId(context.sourceInventoryLot) === unitId(context.targetInventoryLot), "Source and target batches must use compatible units."),
+        check(
+            "protected-allocations",
+            "Protected allocation integrity",
+            context.sourceProtectedAllocations.unresolved.length === 0,
+            context.sourceProtectedAllocations.unresolved.length === 0
+                ? "All active protected allocations have an exact source identity."
+                : `Protected allocation reconciliation is required: ${context.sourceProtectedAllocations.unresolved.join(" ")}`
+        ),
+        check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)} after ${formatProtectedAllocationQuantity(sourceReserved)} of protected allocations.`),
+        check("target-capacity", "Target capacity", targetCapacityConfigured && (targetCapacityRemaining ?? 0) + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityConfigured ? `Destination lot currently contains ${targetLotOccupiedBefore}; configured capacity is ${targetCapacity}; remaining capacity is ${targetCapacityRemaining}.` : "Destination lot capacity is not configured. Set a positive max_batch_capacity before transferring stock."),
+        check(
+            "uom",
+            "Unit compatibility",
+            sourceUnitId !== null && targetUnitId !== null && sourceUnitId === targetUnitId,
+            sourceUnitId === null || targetUnitId === null
+                ? `Source and destination lots must each have an explicit valid UOM. Missing: ${[sourceUnitId === null ? "source" : "", targetUnitId === null ? "destination" : ""].filter(Boolean).join(" and ")}.`
+                : sourceUnitId === targetUnitId
+                    ? "Source and destination lots use the same UOM."
+                    : `Source UOM ${sourceUnitId} and destination UOM ${targetUnitId} are incompatible; UOM conversion is not supported.`
+        ),
         check("allergen", "Allergen profile match", context.sourceAllergens.available && context.targetAllergens.available && profilesEqual(context.sourceAllergens.values, context.targetAllergens.values), context.sourceAllergens.available && context.targetAllergens.available ? "Source and target allergen profiles match." : "Allergen profiles are unavailable; QA approval is blocked."),
         check("dates", "Valid manufacturing and expiry dates", validDate(sourceMfg) && validDate(targetMfg) && validDate(sourceExpiry) && validDate(targetExpiry) && (!effectiveExpiry || dateOnly(effectiveExpiry)! >= today) && (!sourceMfg || !sourceExpiry || dateOnly(sourceMfg)! <= dateOnly(sourceExpiry)!) && (!targetMfg || !targetExpiry || dateOnly(targetMfg)! <= dateOnly(targetExpiry)!), "Manufacturing and expiry values must be valid, chronological, and not expired."),
         check("different-lot", "Different source and destination lots", record.sourceLotId !== record.targetLotId, "Source and destination lot IDs must be different."),
@@ -1070,6 +1577,10 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
             batchNo: record.sourceBatchNo,
             onHandBefore: sourceQuantityBefore,
             reservedQuantity: sourceReserved,
+            legacyReservedQuantity: context.sourceProtectedAllocations.legacyReservedQuantity,
+            protectedAllocationQuantity: context.sourceProtectedAllocations.explicitQuantity,
+            protectedAllocations: context.sourceProtectedAllocations.allocations,
+            protectedAllocationResolutionComplete: context.sourceProtectedAllocations.unresolved.length === 0,
             unitCost: sourceUnitCost,
             expiryDate: sourceExpiry,
             manufacturingDate: sourceMfg,
@@ -1081,6 +1592,10 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
             batchNo: record.targetBatchNo,
             onHandBefore: targetQuantityBefore,
             reservedQuantity: targetReserved,
+            legacyReservedQuantity: context.targetProtectedAllocations.legacyReservedQuantity,
+            protectedAllocationQuantity: context.targetProtectedAllocations.explicitQuantity,
+            protectedAllocations: context.targetProtectedAllocations.allocations,
+            protectedAllocationResolutionComplete: context.targetProtectedAllocations.unresolved.length === 0,
             unitCost: targetUnitCost ?? sourceUnitCost,
             expiryDate: targetExpiry,
             manufacturingDate: targetMfg,
@@ -1109,11 +1624,19 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
     };
 }
 
-export async function submitLotTransfer(id: number): Promise<LotTransferRecord> {
+export async function submitLotTransfer(id: number, actorUserId: number | null): Promise<LotTransferRecord> {
     const record = await getLotTransfer(id);
     if (record.status !== "Draft") throw new LotTransferError(409, `Only Draft requests can be submitted. Current status: ${record.status}.`);
+    const submittedBy = requireSessionUserId(actorUserId, "submit a lot-transfer request");
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
-    await assertCanonicalLotReferences(record);
+    const canonical = await assertCanonicalLotReferences(record);
+    const transferUnitId = requireMatchingTransferUnitId(canonical);
+    if (record.unitId !== transferUnitId) {
+        throw new LotTransferError(409, "The stored transfer UOM does not match the selected canonical lots.", {
+            storedUnitId: record.unitId,
+            expectedUnitId: transferUnitId
+        });
+    }
     const preview = await buildLotTransferPreview(record);
     if (!preview.canApprove) {
         throw new LotTransferError(409, "The lot-transfer request failed the required submission checks.", {
@@ -1123,7 +1646,12 @@ export async function submitLotTransfer(id: number): Promise<LotTransferRecord> 
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
         "PATCH",
-        { status: "Submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+        {
+            status: "Submitted",
+            submitted_by: submittedBy,
+            submitted_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        },
         "Lot-transfer submission"
     );
     return row ? mapTransferRow(row) : getLotTransfer(id);
@@ -1131,8 +1659,8 @@ export async function submitLotTransfer(id: number): Promise<LotTransferRecord> 
 
 export async function previewLotTransferInput(input: LotTransferInput): Promise<LotTransferPreview> {
     assertDifferentLotIds(input.sourceLotId, input.targetLotId);
-    await assertCanonicalLotReferences(input);
-    return buildLotTransferPreview(transientRecordFromInput(input));
+    const canonical = await assertCanonicalLotReferences(input);
+    return buildLotTransferPreview(transientRecordFromInput(input, matchingTransferUnitId(canonical)));
 }
 
 async function createInventoryMovement(payload: RecordValue): Promise<number> {
@@ -1251,6 +1779,10 @@ function storedPostedPreview(record: LotTransferRecord): LotTransferPreview {
                 batchNo: record.sourceBatchNo,
                 onHandBefore: sourceBefore,
                 reservedQuantity: 0,
+                legacyReservedQuantity: 0,
+                protectedAllocationQuantity: 0,
+                protectedAllocations: [],
+                protectedAllocationResolutionComplete: true,
                 unitCost: record.sourceUnitCost,
                 expiryDate: record.effectiveExpiryDate,
                 manufacturingDate: null,
@@ -1265,6 +1797,10 @@ function storedPostedPreview(record: LotTransferRecord): LotTransferPreview {
                 batchNo: record.targetBatchNo,
                 onHandBefore: targetBefore,
                 reservedQuantity: 0,
+                legacyReservedQuantity: 0,
+                protectedAllocationQuantity: 0,
+                protectedAllocations: [],
+                protectedAllocationResolutionComplete: true,
                 unitCost: record.targetUnitCost,
                 expiryDate: record.effectiveExpiryDate,
                 manufacturingDate: null,
@@ -1305,6 +1841,14 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
     }
 
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
+    const canonical = await assertCanonicalLotReferences(record);
+    const transferUnitId = requireMatchingTransferUnitId(canonical);
+    if (record.unitId !== transferUnitId) {
+        throw new LotTransferError(409, "The stored transfer UOM does not match the selected canonical lots.", {
+            storedUnitId: record.unitId,
+            expectedUnitId: transferUnitId
+        });
+    }
     const preview = await buildLotTransferPreview(record);
     if (!preview.canApprove) {
         throw new LotTransferError(409, "The lot-transfer request failed the required QA checks.", {
@@ -1353,6 +1897,14 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
         throw new LotTransferError(409, `Only Approved requests can be posted. Current status: ${record.status}.`);
     }
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
+    const canonical = await assertCanonicalLotReferences(record);
+    const transferUnitId = requireMatchingTransferUnitId(canonical);
+    if (record.unitId !== transferUnitId) {
+        throw new LotTransferError(409, "The stored transfer UOM does not match the selected canonical lots.", {
+            storedUnitId: record.unitId,
+            expectedUnitId: transferUnitId
+        });
+    }
     if (record.postingStartedAt && record.idempotencyKey && record.idempotencyKey !== idempotencyKey) {
         throw new LotTransferError(409, "Another posting operation is already in progress for this request.");
     }

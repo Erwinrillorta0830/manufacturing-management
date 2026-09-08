@@ -46,7 +46,10 @@ export async function GET(req: Request) {
     const query = new URLSearchParams();
     if (branch) query.append("branch", branch);
     if (product) query.append("product", product);
-    if (mmLot) query.append("mmLot", mmLot);
+    if (mmLot) {
+      query.append("mmLot", mmLot);
+      query.append("lot", mmLot);
+    }
     if (unit) query.append("unit", unit);
     if (batchNo) query.append("batchNo", batchNo);
     if (condition) query.append("inventoryCondition", condition);

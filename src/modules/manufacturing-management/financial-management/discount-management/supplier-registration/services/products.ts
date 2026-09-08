@@ -5,6 +5,7 @@ import { Product, ProductsResponse } from "../types/product.schema";
  */
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE = `${API_BASE_URL}/items`;
+const SUPPLIER_ELIGIBLE_PRODUCT_TYPES = "389,390";
 
 /**
  * Get headers with authentication token
@@ -49,7 +50,7 @@ export async function fetchUnitsMap(): Promise<Record<number, string>> {
 export async function fetchAllProducts(): Promise<Product[]> {
   try {
     const [response, unitsMap] = await Promise.all([
-      fetch(`${API_BASE}/products?limit=-1&fields=*`, {
+      fetch(`${API_BASE}/products?limit=-1&fields=*&filter[product_type][_in]=${SUPPLIER_ELIGIBLE_PRODUCT_TYPES}`, {
         method: "GET",
         headers: getHeaders(),
         cache: "no-store",
@@ -88,7 +89,7 @@ export async function searchProducts(query: string): Promise<Product[]> {
 
     const [response, unitsMap] = await Promise.all([
       fetch(
-        `${API_BASE}/products?limit=-1&fields=*&filter=${encodeURIComponent(
+        `${API_BASE}/products?limit=-1&fields=*&filter[product_type][_in]=${SUPPLIER_ELIGIBLE_PRODUCT_TYPES}&filter=${encodeURIComponent(
           JSON.stringify(filter),
         )}`,
         {

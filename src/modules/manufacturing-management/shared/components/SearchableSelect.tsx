@@ -34,6 +34,7 @@ export interface SearchableSelectProps {
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
+  popoverClassName?: string;
 }
 
 export function SearchableSelect({
@@ -46,6 +47,7 @@ export function SearchableSelect({
   disabled = false,
   className,
   triggerClassName,
+  popoverClassName,
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -81,7 +83,7 @@ export function SearchableSelect({
           aria-expanded={open}
           disabled={disabled}
           className={cn(
-            "w-full justify-between text-left font-normal h-9 px-3 text-xs bg-background hover:bg-muted/30 border-input",
+            "w-full justify-between text-left font-normal h-9 px-3 text-xs bg-background hover:bg-muted/30 border-input cursor-pointer",
             !value && "text-muted-foreground",
             triggerClassName,
             className
@@ -94,7 +96,10 @@ export function SearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] min-w-[280px] p-0 shadow-xl border-border bg-popover z-50 overscroll-contain"
+        className={cn(
+          "w-[--radix-popover-trigger-width] min-w-[280px] p-0 shadow-xl border-border bg-popover z-[9999] overscroll-contain",
+          popoverClassName
+        )}
         align="start"
         sideOffset={4}
         data-radix-scroll-lock-ignore="true"

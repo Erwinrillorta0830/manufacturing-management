@@ -244,7 +244,7 @@ export default function ConsolidationDetailSheet({
     const totalPicked = consolidation.details.reduce((sum, detail) => sum + (detail.pickedQuantity || 0), 0);
     const totalAllocated = allocations.reduce((sum, a) => sum + (a.quantity || 0), 0);
 
-    const isPickingOrDone = ["In Picking", "Picked", "Audited"].includes(consolidation.status);
+    const isPickingOrDone = ["In Picking", "Picked", "Approved", "Audited"].includes(consolidation.status);
     const totalShort = isPickingOrDone
         ? Math.max(0, totalOrdered - totalPicked)
         : Math.max(0, totalOrdered - totalAllocated);
@@ -489,7 +489,7 @@ export default function ConsolidationDetailSheet({
                                         detail.orderedQuantity > 0
                                             ? (detail.pickedQuantity / detail.orderedQuantity) * 100
                                             : 0;
-                                    const isPickedOrAudited = consolidation.status === "Picked" || consolidation.status === "Audited";
+                                    const isPickedOrAudited = consolidation.status === "Picked" || consolidation.status === "Approved" || consolidation.status === "Audited";
                                     const currentProgress = isPickedOrAudited ? itemProgress : allocProgress;
                                     const shortage =
                                         totalAllocatedForProduct < detail.orderedQuantity &&
@@ -718,10 +718,10 @@ export default function ConsolidationDetailSheet({
                             </Button>
                         )}
 
-                        {consolidation.status === "Audited" && (
+                        {(consolidation.status === "Approved" || consolidation.status === "Audited") && (
                             <Badge className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-3 py-2 text-[10px] font-black uppercase tracking-widest">
                                 <CheckCircle className="mr-1.5 h-4 w-4" />
-                                Audited & Dispatched
+                                Approved & Dispatched
                             </Badge>
                         )}
                     </div>

@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
         }
 
         const consolidator = items[0];
-        if (consolidator.status === "Picked" || consolidator.status === "Audited") {
+        if (consolidator.status === "Picked" || consolidator.status === "Approved" || consolidator.status === "Audited") {
             return NextResponse.json({
                 message: `Cannot revert a ${consolidator.status} batch. Inventory movements have been posted.`,
             }, { status: 400 });

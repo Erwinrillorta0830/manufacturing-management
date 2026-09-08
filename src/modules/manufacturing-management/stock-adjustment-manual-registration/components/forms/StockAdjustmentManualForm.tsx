@@ -365,7 +365,7 @@ const ProductTableRow = React.memo(function ProductTableRow({
               type="button"
               className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
               onClick={() => handleUpdateQuantity(-1)}
-              disabled={Number(quantity || 0) <= 1}
+              disabled={Number(quantity || 0) <= 0}
             >
               <Minus className="h-3 w-3" />
             </button>
@@ -386,12 +386,12 @@ const ProductTableRow = React.memo(function ProductTableRow({
               }}
               onBlur={(e) => {
                 const val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 1) {
-                  handleQuantityChange(1);
+                if (isNaN(val) || val < 0) {
+                  handleQuantityChange(0);
                 }
               }}
               className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={1}
+              min={0}
             />
             <button
               type="button"

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { submitLotTransfer } from "../../_domain";
+import { getSessionUserId, submitLotTransfer } from "../../_domain";
 import { errorResponse, parseTransferId } from "../../_http";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function POST(_request: Request, { params }: RouteContext) {
     try {
         const { id } = await params;
-        const record = await submitLotTransfer(parseTransferId(id));
+        const record = await submitLotTransfer(parseTransferId(id), await getSessionUserId());
         return NextResponse.json({ success: true, data: record });
     } catch (error) {
         return errorResponse(error, "submit");

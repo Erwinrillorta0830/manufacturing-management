@@ -8,6 +8,7 @@ import {
     fetchBranches,
     fetchBatches,
     fetchLotTransfers,
+    fetchLotTransferUsers,
     fetchLots,
     fetchProducts,
     postLotTransfer,
@@ -25,9 +26,11 @@ import type {
     LotTransferForm,
     LotTransferMode,
     LotTransferPreview,
-    ProductOption
+    ProductOption,
+    LotTransferReportFilters,
+    UserOption
 } from "../types";
-import { EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
+import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
 
 interface UseLotTransferOptions {
     mode: LotTransferMode;
@@ -91,8 +94,16 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [products, setProducts] = useState<ProductOption[]>([]);
     const [lots, setLots] = useState<LotOption[]>([]);
     const [branches, setBranches] = useState<BranchOption[]>([]);
+    const [users, setUsers] = useState<UserOption[]>([]);
     const [batchesByLot, setBatchesByLot] = useState<Record<number, BatchOption[]>>({});
-    const [search, setSearch] = useState("");
+    const [reportFilters, setReportFilters] = useState<LotTransferReportFilters>(() => ({
+        ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
+        statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
+    }));
+    const [appliedReportFilters, setAppliedReportFilters] = useState<LotTransferReportFilters>(() => ({
+        ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
+        statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
+    }));
     const [isLoading, setIsLoading] = useState(true);
     const [isLookupLoading, setIsLookupLoading] = useState(false);
     const [isActionLoading, setIsActionLoading] = useState(false);
@@ -119,22 +130,40 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const refresh = useCallback(async () => {
         setIsLoading(true);
         try {
+            const workflowStatuses = mode === "request"
+                ? ["Draft"]
+                : mode === "approval"
+                    ? ["Submitted"]
+                    : mode === "posting"
+                        ? ["Approved"]
+                        : appliedReportFilters.statuses;
+            const report = mode === "summary" ? appliedReportFilters : null;
             const response = await fetchLotTransfers({
-                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : mode === "posting" ? "Approved" : undefined,
-                branchId: userBranchId || undefined
+                status: workflowStatuses,
+                branchId: userBranchId || (report?.branchId ? Number(report.branchId) : undefined),
+                search: report?.search,
+                requestedFrom: report?.requestedFrom,
+                requestedTo: report?.requestedTo,
+                transferDateFrom: report?.transferDateFrom,
+                transferDateTo: report?.transferDateTo,
+                productId: report?.productId ? Number(report.productId) : undefined,
+                sourceLotId: report?.sourceLotId ? Number(report.sourceLotId) : undefined,
+                targetLotId: report?.targetLotId ? Number(report.targetLotId) : undefined,
+                sourceBatchNo: report?.sourceBatchNo,
+                targetBatchNo: report?.targetBatchNo,
+                requestedBy: report?.requestedBy ? Number(report.requestedBy) : undefined,
+                approvedBy: report?.approvedBy ? Number(report.approvedBy) : undefined,
+                postedBy: report?.postedBy ? Number(report.postedBy) : undefined
             });
-            const nextRecords = mode === "summary"
-                ? response.data.filter((record) => record.status === "Posted" || record.status === "Rejected")
-                : response.data;
-            setRecords(nextRecords);
-            setTotalCount(mode === "summary" ? nextRecords.length : response.totalCount);
+            setRecords(response.data);
+            setTotalCount(response.totalCount);
             setError(null);
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : "Unable to load lot-transfer requests.");
         } finally {
             setIsLoading(false);
         }
-    }, [mode, userBranchId]);
+    }, [appliedReportFilters, mode, userBranchId]);
 
     useEffect(() => {
         void refresh();
@@ -178,15 +207,17 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         const loadLookups = async () => {
             setIsLookupLoading(true);
             try {
-                const [productRows, lotRows, branchRows] = await Promise.all([
+                const [productRows, lotRows, branchRows, userRows] = await Promise.all([
                     fetchProducts(),
                     fetchLots(userBranchId || undefined),
-                    fetchBranches()
+                    fetchBranches(),
+                    mode === "summary" ? fetchLotTransferUsers() : Promise.resolve([])
                 ]);
                 if (!active) return;
                 setProducts(productRows);
                 setLots(lotRows);
                 setBranches(branchRows);
+                setUsers(userRows);
                 setError(null);
             } catch (lookupError) {
                 if (active) setError(lookupError instanceof Error ? lookupError.message : "Unable to load lot-transfer options.");
@@ -198,7 +229,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         return () => {
             active = false;
         };
-    }, [userBranchId]);
+    }, [mode, userBranchId]);
 
     const loadBatchesForLot = useCallback(async (lotId: number) => {
         if (!lotId || batchesByLot[lotId]) return batchesByLot[lotId] || [];
@@ -450,18 +481,6 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [refresh, selectedId]);
 
-    const filteredRecords = useMemo(() => {
-        const query = search.trim().toLowerCase();
-        if (!query) return records;
-        return records.filter((record) => [
-            record.requestNo,
-            record.status,
-            record.sourceBatchNo,
-            record.targetBatchNo,
-            record.reason
-        ].some((value) => value.toLowerCase().includes(query)));
-    }, [records, search]);
-
     const sourceBatches = useMemo(() => {
         const rows = batchesByLot[Number(form.sourceLotId)] || [];
         return rows.filter((row) => !form.productId || row.productId === Number(form.productId));
@@ -474,7 +493,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
 
     return {
         userBranchId,
-        records: filteredRecords,
+        records,
         totalCount,
         form,
         selectedId,
@@ -483,14 +502,30 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         products,
         lots,
         branches,
+        users,
         sourceBatches,
         targetBatches,
         draftValidationStatus,
         draftValidationMessage,
         draftValidationIsCurrent,
         isDraftFormComplete: isCompleteDraftForm(form),
-        search,
-        setSearch,
+        reportFilters,
+        setReportFilter: <K extends keyof LotTransferReportFilters>(field: K, value: LotTransferReportFilters[K]) => {
+            setReportFilters((current) => ({ ...current, [field]: value }));
+        },
+        applyReportFilters: () => setAppliedReportFilters({
+            ...reportFilters,
+            statuses: [...reportFilters.statuses]
+        }),
+        clearReportFilters: () => {
+            const nextFilters = {
+                ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
+                branchId: userBranchId ? "" : DEFAULT_LOT_TRANSFER_REPORT_FILTERS.branchId,
+                statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
+            };
+            setReportFilters(nextFilters);
+            setAppliedReportFilters(nextFilters);
+        },
         setField,
         handleProductChange,
         handleSourceLotChange,

@@ -75,9 +75,6 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
         editedDetails.isActive !== undefined ? editedDetails.isActive : selectedProduct.isActive
     );
 
-    const createdAt = selectedProduct.created_at || "Unavailable";
-    const lastModified = selectedProduct.updated_at || "Not modified since creation";
-
     React.useEffect(() => {
         queueMicrotask(() => {
             setImagePreview(null);
@@ -255,7 +252,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                 <p className="text-xs text-muted-foreground">Manage hierarchy, measurements, and cost metrics for this finished good.</p>
             </div>
 
-            <div className="rounded-xl border border-border/80 bg-muted/15 px-4 py-3 text-xs">
+            {/* <div className="rounded-xl border border-border/80 bg-muted/15 px-4 py-3 text-xs">
                 <div className="flex items-center gap-2 font-semibold text-foreground">
                     <Activity className="h-4 w-4 text-primary/80" /> Audit timestamps
                 </div>
@@ -263,7 +260,7 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                     <span>Created: <strong className="font-mono text-foreground">{createdAt}</strong></span>
                     <span>Last modified: <strong className="font-mono text-foreground">{lastModified}</strong></span>
                 </div>
-            </div>
+            </div> */}
 
             <div className="grid gap-6 md:grid-cols-2">
                 {/* Identity & Classification Card */}

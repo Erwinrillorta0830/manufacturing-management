@@ -17,6 +17,10 @@ import {
 } from "@/modules/manufacturing-management/procurement/supplier-country";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { getConfiguredActiveForexRates } from "../forex/_rates";
+import {
+    PACKAGING_MATERIAL_PRODUCT_TYPE,
+    RAW_MATERIAL_PRODUCT_TYPE
+} from "../raw-materials/_classification-integrity";
 
 /**
  * Helper to get Philippine Standard Time (Asia/Manila) timestamps for database operations.
@@ -63,7 +67,8 @@ export type SupplierForeignFilter = "all" | "local" | "foreign";
 const SUPPLIER_FIELDS = "id,supplier_name,supplier_shortcut,contact_person,email_address,phone_number,address,city,brgy,state_province,postal_code,country,supplier_type,tin_number,bank_details,payment_terms,delivery_terms,agreement_or_contract,preferred_communication_method,notes_or_comments,date_added,supplier_image,isActive,nonBuy,user_id,is_foreign,currency";
 const SUPPLIER_PAGE_SIZE_DEFAULT = 10;
 const SUPPLIER_PAGE_SIZE_MAX = 100;
-const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.unit_of_measurement.*";
+const PRODUCT_FIELDS = "id,supplier_id,discount_type.*,product_id.*,product_id.product_type,product_id.unit_of_measurement.*";
+const SUPPLIER_PRODUCT_TYPE_FILTER = `${RAW_MATERIAL_PRODUCT_TYPE},${PACKAGING_MATERIAL_PRODUCT_TYPE}`;
 
 export class SupplierCurrencyValidationError extends Error {
     constructor(message: string) {
@@ -541,7 +546,7 @@ export async function updateSupplier(supplierId: number, supplierData: Record<st
 
 export async function fetchProductsBySupplier(supplierId: number): Promise<DirectusProductPerSupplier[]> {
     try {
-        const url = `${DIRECTUS_URL}/items/product_per_supplier?filter[supplier_id][_eq]=${supplierId}&fields=${encodeURIComponent(PRODUCT_FIELDS)}&limit=-1`;
+        const url = `${DIRECTUS_URL}/items/product_per_supplier?filter[supplier_id][_eq]=${supplierId}&filter[product_id][product_type][_in]=${SUPPLIER_PRODUCT_TYPE_FILTER}&fields=${encodeURIComponent(PRODUCT_FIELDS)}&limit=-1`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) throw new Error("Failed to fetch products for supplier");
         const json = await res.json();
@@ -563,6 +568,7 @@ export async function fetchProductsBySupplierPage(
     const normalizedSearch = search.trim();
     const params = new URLSearchParams({
         "filter[supplier_id][_eq]": String(supplierId),
+        "filter[product_id][product_type][_in]": SUPPLIER_PRODUCT_TYPE_FILTER,
         fields: PRODUCT_FIELDS,
         sort: "id",
         limit: String(pageSize),

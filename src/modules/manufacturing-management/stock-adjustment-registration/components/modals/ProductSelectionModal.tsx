@@ -22,6 +22,7 @@ interface ProductSelectionModalProps {
   onClose: () => void;
   supplierName: string;
   branchName: string;
+  inventoryType?: "FINISHED_GOODS" | "RAW_MATERIALS";
   products: StockAdjustmentManualProduct[];
   isLoading: boolean;
   rfidProductIds?: Set<number> | number[];
@@ -153,6 +154,7 @@ export function ProductSelectionModal({
   onClose,
   supplierName,
   branchName,
+  inventoryType = "FINISHED_GOODS",
   products,
   isLoading,
   initialSelectedItems,
@@ -172,13 +174,20 @@ export function ProductSelectionModal({
     }
   }, [isOpen, initialSelectedItems]);
 
-  // Pre-calculate classification for all products
+  // Pre-calculate classification for products based on inventoryType
   const classifiedProducts = useMemo(() => {
-    return products.map((p) => ({
+    let list = products;
+    if (inventoryType === "FINISHED_GOODS") {
+      list = products.filter((p) => getProductClassification(p) === "FG" || Number(p.product_type) === 388);
+    } else if (inventoryType === "RAW_MATERIALS") {
+      list = products.filter((p) => getProductClassification(p) !== "FG" && Number(p.product_type) !== 388);
+    }
+
+    return list.map((p) => ({
       ...p,
       _classification: getProductClassification(p),
     }));
-  }, [products]);
+  }, [products, inventoryType]);
 
   // Calculate counts per category
   const categoryCounts = useMemo(() => {
@@ -291,7 +300,8 @@ export function ProductSelectionModal({
               Add Products to {(branchName || "Selected Branch").toUpperCase()}
             </DialogTitle>
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              SUPPLIER: <span className="text-primary">{supplierName || "Selected Supplier"}</span>
+              {supplierName.includes("Internal") ? "SOURCE: " : "SUPPLIER: "}
+              <span className="text-primary">{supplierName || "Selected Supplier"}</span>
             </span>
           </div>
           {cartItems.length > 0 && (
@@ -306,7 +316,7 @@ export function ProductSelectionModal({
           <div className="w-[65%] flex flex-col border-r border-border bg-background">
             {/* Filter Toolbar: Search + Product Type Filter (Tabs on wide / Dropdown on smaller) */}
             <div className="p-4 border-b border-border shrink-0 flex items-center justify-between gap-3 bg-card/60">
-              <div className="relative w-60 md:w-72 shrink-0">
+              <div className={`relative ${inventoryType === "FINISHED_GOODS" ? "w-full max-w-md" : "w-60 md:w-72"} shrink-0`}>
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <input
                   type="text"
@@ -317,129 +327,108 @@ export function ProductSelectionModal({
                 />
               </div>
 
-              {/* Product Type Filter Tabs (shown when wide enough: 2xl:flex hidden) */}
-              <div className="hidden 2xl:flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
-                <Button
-                  size="sm"
-                  variant={productTypeFilter === "ALL" ? "default" : "outline"}
-                  onClick={() => setProductTypeFilter("ALL")}
-                  className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none shrink-0 transition-all ${
-                    productTypeFilter === "ALL"
-                      ? "bg-primary text-primary-foreground font-black"
-                      : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  ALL
-                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                    productTypeFilter === "ALL" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
-                  }`}>
-                    {categoryCounts.ALL}
-                  </span>
-                </Button>
+              {/* Only show RM/PKG classification filter when NOT Finished Goods */}
+              {inventoryType !== "FINISHED_GOODS" && (
+                <>
+                  {/* Product Type Filter Tabs (shown when wide enough: 2xl:flex hidden) */}
+                  <div className="hidden 2xl:flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+                    <Button
+                      size="sm"
+                      variant={productTypeFilter === "ALL" ? "default" : "outline"}
+                      onClick={() => setProductTypeFilter("ALL")}
+                      className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none shrink-0 transition-all ${
+                        productTypeFilter === "ALL"
+                          ? "bg-primary text-primary-foreground font-black"
+                          : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      ALL
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                        productTypeFilter === "ALL" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                      }`}>
+                        {categoryCounts.ALL}
+                      </span>
+                    </Button>
 
-                <Button
-                  size="sm"
-                  variant={productTypeFilter === "RM" ? "default" : "outline"}
-                  onClick={() => setProductTypeFilter("RM")}
-                  className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
-                    productTypeFilter === "RM"
-                      ? "bg-emerald-600 hover:bg-emerald-700 text-white font-black"
-                      : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Raw Materials (RM)
-                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                    productTypeFilter === "RM" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
-                  }`}>
-                    {categoryCounts.RM}
-                  </span>
-                </Button>
+                    <Button
+                      size="sm"
+                      variant={productTypeFilter === "RM" ? "default" : "outline"}
+                      onClick={() => setProductTypeFilter("RM")}
+                      className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
+                        productTypeFilter === "RM"
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white font-black"
+                          : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Raw Materials (RM)
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                        productTypeFilter === "RM" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                      }`}>
+                        {categoryCounts.RM}
+                      </span>
+                    </Button>
 
-                <Button
-                  size="sm"
-                  variant={productTypeFilter === "PKG" ? "default" : "outline"}
-                  onClick={() => setProductTypeFilter("PKG")}
-                  className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
-                    productTypeFilter === "PKG"
-                      ? "bg-amber-600 hover:bg-amber-700 text-white font-black"
-                      : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Packaging (PKG)
-                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                    productTypeFilter === "PKG" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
-                  }`}>
-                    {categoryCounts.PKG}
-                  </span>
-                </Button>
+                    <Button
+                      size="sm"
+                      variant={productTypeFilter === "PKG" ? "default" : "outline"}
+                      onClick={() => setProductTypeFilter("PKG")}
+                      className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
+                        productTypeFilter === "PKG"
+                          ? "bg-amber-600 hover:bg-amber-700 text-white font-black"
+                          : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Packaging (PKG)
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                        productTypeFilter === "PKG" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                      }`}>
+                        {categoryCounts.PKG}
+                      </span>
+                    </Button>
+                  </div>
 
-                <Button
-                  size="sm"
-                  variant={productTypeFilter === "FG" ? "default" : "outline"}
-                  onClick={() => setProductTypeFilter("FG")}
-                  className={`h-10 text-xs font-bold rounded-lg px-3.5 shadow-none whitespace-nowrap shrink-0 transition-all ${
-                    productTypeFilter === "FG"
-                      ? "bg-blue-600 hover:bg-blue-700 text-white font-black"
-                      : "bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Finished Goods (FG)
-                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                    productTypeFilter === "FG" ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
-                  }`}>
-                    {categoryCounts.FG}
-                  </span>
-                </Button>
-              </div>
-
-              {/* Product Type Dropdown Filter (shown when tabs do not fit: 2xl:hidden flex) */}
-              <div className="flex 2xl:hidden items-center gap-2 min-w-[200px] justify-end flex-1">
-                <Select
-                  value={productTypeFilter}
-                  onValueChange={(val) => setProductTypeFilter(val as ProductTypeFilter)}
-                >
-                  <SelectTrigger className="h-10 text-xs font-bold bg-background border-border rounded-lg min-w-[190px] w-full max-w-[240px]">
-                    <div className="flex items-center gap-2 truncate">
-                      <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      <SelectValue placeholder="Classification" />
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent align="end" className="min-w-[220px]">
-                    <SelectItem value="ALL" className="text-xs font-semibold cursor-pointer">
-                      <div className="flex items-center justify-between w-full gap-4">
-                        <span>ALL</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          {categoryCounts.ALL}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="RM" className="text-xs font-semibold cursor-pointer">
-                      <div className="flex items-center justify-between w-full gap-4">
-                        <span className="text-emerald-700 dark:text-emerald-400 font-bold">Raw Materials (RM)</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
-                          {categoryCounts.RM}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="PKG" className="text-xs font-semibold cursor-pointer">
-                      <div className="flex items-center justify-between w-full gap-4">
-                        <span className="text-amber-700 dark:text-amber-400 font-bold">Packaging (PKG)</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400">
-                          {categoryCounts.PKG}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="FG" className="text-xs font-semibold cursor-pointer">
-                      <div className="flex items-center justify-between w-full gap-4">
-                        <span className="text-blue-700 dark:text-blue-400 font-bold">Finished Goods (FG)</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-400">
-                          {categoryCounts.FG}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                  {/* Product Type Dropdown Filter (shown when tabs do not fit: 2xl:hidden flex) */}
+                  <div className="flex 2xl:hidden items-center gap-2 min-w-[200px] justify-end flex-1">
+                    <Select
+                      value={productTypeFilter}
+                      onValueChange={(val) => setProductTypeFilter(val as ProductTypeFilter)}
+                    >
+                      <SelectTrigger className="h-10 text-xs font-bold bg-background border-border rounded-lg min-w-[190px] w-full max-w-[240px]">
+                        <div className="flex items-center gap-2 truncate">
+                          <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <SelectValue placeholder="Classification" />
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent align="end" className="min-w-[220px]">
+                        <SelectItem value="ALL" className="text-xs font-semibold cursor-pointer">
+                          <div className="flex items-center justify-between w-full gap-4">
+                            <span>ALL</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                              {categoryCounts.ALL}
+                            </span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="RM" className="text-xs font-semibold cursor-pointer">
+                          <div className="flex items-center justify-between w-full gap-4">
+                            <span className="text-emerald-700 dark:text-emerald-400 font-bold">Raw Materials (RM)</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                              {categoryCounts.RM}
+                            </span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="PKG" className="text-xs font-semibold cursor-pointer">
+                          <div className="flex items-center justify-between w-full gap-4">
+                            <span className="text-amber-700 dark:text-amber-400 font-bold">Packaging (PKG)</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                              {categoryCounts.PKG}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* CATALOG GRID */}
@@ -456,10 +445,12 @@ export function ProductSelectionModal({
                   <p className="text-sm font-bold text-foreground mb-1">No products found</p>
                   <p className="text-xs text-muted-foreground max-w-sm mb-4">
                     {catalogSearch
-                      ? `No items match "${catalogSearch}" under classification "${productTypeFilter}".`
+                      ? `No items match "${catalogSearch}"${inventoryType !== "FINISHED_GOODS" && productTypeFilter !== "ALL" ? ` under classification "${productTypeFilter}".` : "."}`
+                      : inventoryType === "FINISHED_GOODS"
+                      ? "No finished goods products found."
                       : `No products found under classification "${productTypeFilter}".`}
                   </p>
-                  {(productTypeFilter !== "ALL" || catalogSearch) && (
+                  {((inventoryType !== "FINISHED_GOODS" && productTypeFilter !== "ALL") || catalogSearch) && (
                     <Button
                       variant="outline"
                       size="sm"

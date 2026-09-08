@@ -42,17 +42,22 @@ export async function GET(req: NextRequest) {
         const json = await res.json();
         const items: { status: string }[] = json.data || [];
 
-        let Pending = 0, Picking = 0, Picked = 0, Audited = 0;
+        let Pending = 0, Picking = 0, Picked = 0, Approved = 0, Audited = 0;
 
         for (const item of items) {
             const s = item.status || "Pending";
-            if (s === "Audited") Audited++;
-            else if (s === "Picked") Picked++;
+            if (s === "Approved") {
+                Approved++;
+                Audited++;
+            } else if (s === "Audited") {
+                Approved++;
+                Audited++;
+            } else if (s === "Picked") Picked++;
             else if (s === "Picking") Picking++;
             else Pending++;
         }
 
-        return NextResponse.json({ Pending, Picking, Picked, Audited, All: items.length });
+        return NextResponse.json({ Pending, Picking, Picked, Approved, Audited, All: items.length });
     } catch (e) {
         console.error("invoice-consolidation summary GET error:", e);
         return NextResponse.json({ message: "BFF Network Error" }, { status: 502 });

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import  { useState } from "react";
 import { useStockAdjustmentSummary } from "../hooks/useStockAdjustmentSummary";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -118,7 +118,7 @@ export function RecentLog() {
                             return (
                               <Badge variant="secondary" className="bg-blue-500/10 text-blue-500 font-bold uppercase tracking-wider text-[10px] rounded-full px-2.5 py-0.5 border-none shadow-none flex items-center gap-1">
                                 <Layers className="h-2.5 w-2.5" />
-                                # Lot / Batch
+                                Lot / Batch
                               </Badge>
                             );
                           })()}

@@ -7,6 +7,8 @@ import {
 export const FINISHED_GOODS_PRODUCT_TYPE = 388;
 export const PURCHASE_ORDER_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING", "FINISHED_GOODS"] as const;
 export type PurchaseOrderCategoryType = typeof PURCHASE_ORDER_CATEGORY_TYPES[number];
+export const SUPPLIER_ELIGIBLE_CATEGORY_TYPES = ["RAW_MATERIAL", "PACKAGING"] as const;
+export type SupplierEligibleCategoryType = typeof SUPPLIER_ELIGIBLE_CATEGORY_TYPES[number];
 
 type ProductClassificationRow = {
     product_id?: unknown;
@@ -53,6 +55,12 @@ export function purchaseOrderCategoryTypeFromProductType(value: unknown): Purcha
     if (id === PACKAGING_MATERIAL_PRODUCT_TYPE) return "PACKAGING";
     if (id === FINISHED_GOODS_PRODUCT_TYPE) return "FINISHED_GOODS";
     return null;
+}
+
+export function isSupplierEligibleCategoryType(
+    value: PurchaseOrderCategoryType | null | undefined
+): value is SupplierEligibleCategoryType {
+    return value === "RAW_MATERIAL" || value === "PACKAGING";
 }
 
 function productTypeDescription(value: unknown): string {
@@ -184,5 +192,43 @@ export async function validatePurchaseOrderCategoryTypes(
         }
     }
     return resolved;
+}
+
+/**
+ * Supplier catalog links must point to products explicitly classified as
+ * Raw Material or Packaging. Unlike purchase-order category validation, this
+ * intentionally does not fall back to a parent's classification.
+ */
+export async function validateSupplierProductIds(
+    productIds: ReadonlyArray<number>,
+    fetchImpl: typeof fetch = fetch
+): Promise<void> {
+    const uniqueProductIds = [...new Set(productIds.map(Number).filter(id => Number.isInteger(id) && id > 0))];
+    if (uniqueProductIds.length === 0) return;
+
+    const rows = await loadProducts(uniqueProductIds, fetchImpl);
+    const rowsById = new Map(rows.map(row => [relationId(row.product_id), row] as const));
+    const missingProductIds = uniqueProductIds.filter(productId => !rowsById.has(productId));
+    if (missingProductIds.length > 0) {
+        throw new ProductCategoryTypeValidationError(
+            400,
+            "PRODUCT_NOT_FOUND",
+            "One or more supplier catalog products do not exist in the product master.",
+            { missingProductIds }
+        );
+    }
+
+    const invalidProductIds = uniqueProductIds.filter(productId => {
+        const categoryType = purchaseOrderCategoryTypeFromProductType(rowsById.get(productId)?.product_type);
+        return !isSupplierEligibleCategoryType(categoryType);
+    });
+    if (invalidProductIds.length > 0) {
+        throw new ProductCategoryTypeValidationError(
+            400,
+            "SUPPLIER_PRODUCT_NOT_ELIGIBLE",
+            "Only Raw Materials and Packaging Items can be linked to suppliers or added to supplier purchase orders.",
+            { invalidProductIds, allowedCategoryTypes: SUPPLIER_ELIGIBLE_CATEGORY_TYPES }
+        );
+    }
 }
 

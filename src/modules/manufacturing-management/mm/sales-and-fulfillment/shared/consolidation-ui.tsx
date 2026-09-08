@@ -9,6 +9,7 @@ const statusStyles: Record<string, string> = {
     "For Picking":     "border-yellow-500/25 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400",
     Picking:           "border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-400",
     Picked:            "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-400",
+    Approved:          "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
     Audited:           "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
     "For Fulfillment": "border-cyan-500/25 bg-cyan-500/10 text-cyan-700 dark:text-cyan-400",
     Dispatched:        "border-indigo-500/25 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400",

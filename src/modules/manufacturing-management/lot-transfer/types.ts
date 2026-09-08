@@ -2,12 +2,54 @@ export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | 
 
 export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
+export interface LotTransferReportFilters {
+    search: string;
+    statuses: LotTransferStatus[];
+    branchId: string;
+    requestedFrom: string;
+    requestedTo: string;
+    transferDateFrom: string;
+    transferDateTo: string;
+    productId: string;
+    sourceLotId: string;
+    targetLotId: string;
+    sourceBatchNo: string;
+    targetBatchNo: string;
+    requestedBy: string;
+    approvedBy: string;
+    postedBy: string;
+}
+
+export interface UserOption {
+    id: number;
+    name: string;
+}
+
+export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
+    search: "",
+    statuses: ["Posted", "Rejected"],
+    branchId: "",
+    requestedFrom: "",
+    requestedTo: "",
+    transferDateFrom: "",
+    transferDateTo: "",
+    productId: "",
+    sourceLotId: "",
+    targetLotId: "",
+    sourceBatchNo: "",
+    targetBatchNo: "",
+    requestedBy: "",
+    approvedBy: "",
+    postedBy: ""
+};
+
 export interface LotTransfer {
     id: number;
     requestNo: string;
     status: LotTransferStatus;
     branchId: number;
     productId: number;
+    unitId: number | null;
     sourceLotId: number;
     sourceInventoryLotId: number;
     sourceBatchNo: string;
@@ -19,6 +61,8 @@ export interface LotTransfer {
     requestedBy: number | null;
     requestedByName: string | null;
     requestedAt: string | null;
+    transferDate: string | null;
+    submittedBy: number | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;
@@ -41,6 +85,7 @@ export interface LotTransfer {
     targetBalanceBefore: number | null;
     targetBalanceAfter: number | null;
     idempotencyKey: string | null;
+    reversalOfId: number | null;
     postingStartedAt: string | null;
     reconciliationRequired: boolean;
     postingError: string | null;
@@ -59,6 +104,8 @@ export interface LotOption {
     lotId: number;
     lotName: string;
     branchId: number;
+    uomId: number | null;
+    uomName: string;
     maxBatchCapacity: number;
     status: string;
 }
@@ -100,11 +147,30 @@ export interface LotBalanceSnapshot {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     availableQuantity: number;
     onHandAfter: number;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
+}
+
+export type ProtectedAllocationSource =
+    | "SALES_ORDER"
+    | "SALES_INVOICE"
+    | "JOB_ORDER_MATERIAL"
+    | "STOCK_TRANSFER"
+    | "LOT_TRANSFER";
+
+export interface ProtectedAllocation {
+    source: ProtectedAllocationSource;
+    allocationId: number;
+    quantity: number;
+    status: string;
+    reference: string | null;
 }
 
 export interface LotTransferPreview {

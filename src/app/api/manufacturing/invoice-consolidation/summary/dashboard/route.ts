@@ -127,7 +127,7 @@ export async function GET(request: NextRequest) {
             invoiceCountByBatch.set(consolidatorId, (invoiceCountByBatch.get(consolidatorId) || 0) + 1);
         }
 
-        const status = { All: consolidators.length, Pending: 0, Picking: 0, Picked: 0, Audited: 0 };
+        const status: Record<string, number> = { All: consolidators.length, Pending: 0, Picking: 0, Picked: 0, Approved: 0, Audited: 0 };
         let ordered = 0;
         let picked = 0;
         let remaining = 0;
@@ -137,7 +137,13 @@ export async function GET(request: NextRequest) {
 
         for (const consolidator of consolidators) {
             const batchStatus = consolidator.status || "Pending";
-            if (batchStatus === "Picking" || batchStatus === "Picked" || batchStatus === "Audited") {
+            if (batchStatus === "Approved") {
+                status.Approved += 1;
+                status.Audited += 1;
+            } else if (batchStatus === "Audited") {
+                status.Approved += 1;
+                status.Audited += 1;
+            } else if (batchStatus === "Picking" || batchStatus === "Picked") {
                 status[batchStatus] += 1;
             } else {
                 status.Pending += 1;
@@ -159,7 +165,7 @@ export async function GET(request: NextRequest) {
                 totals.picked += detailPicked;
                 productTotals.set(productId, totals);
 
-                if ((batchStatus === "Picked" || batchStatus === "Audited") && detailPicked < detailOrdered) {
+                if ((batchStatus === "Picked" || batchStatus === "Approved" || batchStatus === "Audited") && detailPicked < detailOrdered) {
                     hasDiscrepancy = true;
                     completedShort += detailOrdered - detailPicked;
                 }

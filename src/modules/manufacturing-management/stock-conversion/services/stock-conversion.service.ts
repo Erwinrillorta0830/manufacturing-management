@@ -46,8 +46,10 @@ export const stockConversionService = {
     const allOptions = await stockConversionRepo.fetchFilterOptions();
     console.log(`[Perf] Step 1 - fetchFilterOptions: ${Date.now() - t0}ms`);
 
-    // Do not show data on load if either branch or supplier is not selected
-    if (!branchId || !extraFilters?.supplierShortcut) {
+    const isFinishedGoods = extraFilters?.inventoryType === "FINISHED_GOODS";
+
+    // Do not show data on load if branch is not selected, or if raw materials and supplier is not selected
+    if (!branchId || (!isFinishedGoods && !extraFilters?.supplierShortcut)) {
       return { data: [], totalCount: 0, options: allOptions };
     }
 
@@ -57,6 +59,13 @@ export const stockConversionService = {
 
     if (extraFilters && typeof extraFilters === 'object') {
       const f = extraFilters as Record<string, string>;
+
+      if (isFinishedGoods) {
+        andClauses.push({ product_type: { _eq: 388 } });
+      } else {
+        andClauses.push({ product_type: { _neq: 388 } });
+      }
+
       if (f.productBrand) {
         const found = allOptions.brands.find((b: { id: number; name: string }) => b.name === f.productBrand);
         if (found?.id) andClauses.push({ product_brand: { _eq: found.id } });
@@ -80,7 +89,7 @@ export const stockConversionService = {
           ],
         });
       }
-      if (f.supplierShortcut) {
+      if (!isFinishedGoods && f.supplierShortcut) {
         const res = await fetch(`${DIRECTUS_API}/items/product_per_supplier?filter[supplier_id][supplier_shortcut][_eq]=${encodeURIComponent(f.supplierShortcut)}&fields=product_id&limit=-1`, {
           headers: { "Authorization": `Bearer ${DIRECTUS_TOKEN}` }
         });
@@ -537,7 +546,7 @@ export const stockConversionService = {
           if ((!invLotId || !lotId || !expDate) && alloc.batch_no) {
             try {
               const res = await fetch(
-                `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(alloc.batch_no)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date,expiration_date`,
+                `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(alloc.batch_no)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date`,
                 { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
               ).catch(() => null);
               if (res && res.ok) {
@@ -547,7 +556,7 @@ export const stockConversionService = {
                   invLotId = invLotId || Number(bRow.inventory_lot_id || bRow.id);
                   lotId = lotId || (typeof bRow.lot_id === 'object' && bRow.lot_id ? Number(bRow.lot_id.id || bRow.lot_id.lot_id) : Number(bRow.lot_id || 0));
                   mfgDate = mfgDate || bRow.manufacturing_date || null;
-                  expDate = expDate || bRow.expiry_date || bRow.expiration_date || null;
+                  expDate = expDate || bRow.expiry_date || null;
                 }
               }
             } catch {
@@ -603,7 +612,7 @@ export const stockConversionService = {
         if ((!srcInvLotId || !srcLotId) && payload.sourceBatchNo) {
           try {
             const res = await fetch(
-              `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(payload.sourceBatchNo)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date,expiration_date`,
+              `${DIRECTUS_API}/items/mm_inventory_lots?filter={"_and":[{"product_id":{"_eq":${payload.productId}}},{"batch_no":{"_eq":"${encodeURIComponent(payload.sourceBatchNo)}"}}]}&limit=1&fields=id,inventory_lot_id,lot_id,manufacturing_date,expiry_date`,
               { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
             ).catch(() => null);
             if (res && res.ok) {

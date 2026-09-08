@@ -3,6 +3,7 @@ import { Supplier, RawMaterial, LinkedProduct, SupplierCatalogUpdatePayload } fr
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, Search, Trash2, X, AlertCircle, Loader2, CheckCircle2, Globe, Save } from "lucide-react";
 import { normalizeProductRelationId } from "../product-relation";
+import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
 
 export interface SupplierCatalogMatrixModalProps {
     isOpen: boolean;
@@ -20,6 +21,7 @@ type CatalogMaterial = {
     product_code?: string;
     product_name: string;
     description?: string | null;
+    product_type?: number | string | { id?: number | string; type_id?: number | string; product_type_id?: number | string } | null;
     parent_id?: number | null;
     unit_of_measurement?: {
         unit_id: number;
@@ -31,6 +33,11 @@ type CatalogMaterial = {
 
 function getLinkedProductId(link: LinkedProduct): number {
     return normalizeProductRelationId(link.product_id) ?? NaN;
+}
+
+function isEligibleLinkedProduct(link: LinkedProduct): boolean {
+    return typeof link.product_id === "object"
+        && isSupplierEligibleProductType(link.product_id.product_type);
 }
 
 function toCatalogMaterial(link: LinkedProduct): CatalogMaterial | null {
@@ -50,6 +57,7 @@ function toCatalogMaterial(link: LinkedProduct): CatalogMaterial | null {
         product_code: product.product_code,
         product_name: product.product_name || `Product ${productId}`,
         description: product.description,
+        product_type: product.product_type,
         parent_id: parentId,
         unit_of_measurement: product.unit_of_measurement,
         cost_per_unit: Number(productRecord.cost_per_unit) || 0
@@ -104,6 +112,7 @@ function toStagedLinkedProduct(supplierId: number, material: CatalogMaterial): L
             product_code: material.product_code,
             product_name: material.product_name,
             description: material.description,
+            product_type: material.product_type,
             parent_id: material.parent_id,
             unit_of_measurement: material.unit_of_measurement
         }
@@ -119,10 +128,11 @@ interface CatalogDraft {
 }
 
 function createCatalogDraft(supplierId: number, linkedProducts: LinkedProduct[]): CatalogDraft {
+    const eligibleLinks = linkedProducts.filter(isEligibleLinkedProduct);
     return {
         supplierId,
-        initialLinkedProducts: linkedProducts,
-        stagedLinkedProducts: linkedProducts,
+        initialLinkedProducts: eligibleLinks,
+        stagedLinkedProducts: eligibleLinks,
         pendingAddedProductIds: [],
         pendingRemovedLinkIds: []
     };
@@ -153,7 +163,7 @@ export default function SupplierCatalogMatrixModal({
     const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
 
     const activeDraft = catalogDraft?.supplierId === supplier?.id ? catalogDraft : null;
-    const stagedLinkedProducts = activeDraft?.stagedLinkedProducts ?? linkedProducts;
+    const stagedLinkedProducts = activeDraft?.stagedLinkedProducts ?? linkedProducts.filter(isEligibleLinkedProduct);
     const pendingAddedProductIds = activeDraft?.pendingAddedProductIds ?? [];
     const pendingRemovedLinkIds = activeDraft?.pendingRemovedLinkIds ?? [];
 
@@ -168,14 +178,14 @@ export default function SupplierCatalogMatrixModal({
 
     const catalogCandidates = useMemo(() => {
         const candidates = new Map<number, CatalogMaterial>();
-        rawMaterials.forEach(material => {
+        rawMaterials.filter(material => isSupplierEligibleProductType(material.product_type)).forEach(material => {
             const productId = normalizeProductRelationId(material.product_id);
             if (productId !== null && !candidates.has(productId)) {
                 candidates.set(productId, material);
             }
         });
 
-        const initialLinkedProducts = activeDraft?.initialLinkedProducts ?? linkedProducts;
+        const initialLinkedProducts = activeDraft?.initialLinkedProducts ?? linkedProducts.filter(isEligibleLinkedProduct);
         initialLinkedProducts.forEach(link => {
             const material = toCatalogMaterial(link);
             if (material && !candidates.has(material.product_id)) {
@@ -195,6 +205,7 @@ export default function SupplierCatalogMatrixModal({
     }), [catalogCandidates, stagedProductIds, linkProductSearch]);
 
     const filteredLinkedProducts = useMemo(() => stagedLinkedProducts.filter(link => {
+        if (!isEligibleLinkedProduct(link)) return false;
         if (!linkedFilterSearch.trim()) return true;
         const query = linkedFilterSearch.toLowerCase().trim();
         const product = link.product_id;

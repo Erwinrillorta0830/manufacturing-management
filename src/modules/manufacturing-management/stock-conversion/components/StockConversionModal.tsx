@@ -196,7 +196,7 @@ export function StockConversionModal({
             // Compute current stock for every lot in the branch
             const lotStockMap = new Map<number, number>();
             (allBranchOnhand || []).forEach((b) => {
-              const lId = Number(b.lotId);
+              const lId = Number(b.mmLotId || 0);
               if (lId > 0) {
                 lotStockMap.set(lId, (lotStockMap.get(lId) || 0) + Number(b.onhandQuantity || 0));
               }
@@ -233,7 +233,7 @@ export function StockConversionModal({
             const liveBatches: MMInventoryLot[] = (onhandData || [])
               .filter((oh) => Number(oh.onhandQuantity || 0) > 0)
               .map((oh) => {
-                const lId = Number(oh.lotId || 1);
+                const lId = Number(oh.mmLotId || 1);
                 const resolvedLotName = lotNameMap.get(lId) || oh.lotName;
                 const cleanLotName = resolvedLotName
                   ? (resolvedLotName.toLowerCase().startsWith('lot')
@@ -242,7 +242,7 @@ export function StockConversionModal({
                   : `Lot #${lId}`;
 
                 return {
-                  inventory_lot_id: Number(oh.inventoryLotId || oh.lotId || 1),
+                  inventory_lot_id: Number(oh.inventoryLotId || oh.mmLotId || 1),
                   lot_id: lId,
                   branch_id: Number(oh.branchId || branchId),
                   product_id: Number(oh.productId || product.productId),

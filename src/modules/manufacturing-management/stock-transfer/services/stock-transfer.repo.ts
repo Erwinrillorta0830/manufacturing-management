@@ -552,7 +552,7 @@ export async function fetchStockTransferDetails(transferIds: number[]): Promise<
   if (transferIds.length === 0) return [];
   const res = await fetchItems<MMStockTransferDetail>("items/mm_stock_transfer_details", {
     "filter[stock_transfer_id][_in]": transferIds.join(","),
-    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiration_date,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
+    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiry_date,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
     limit: -1,
   });
   return res.data;
@@ -608,14 +608,38 @@ export async function createStockTransferDetails(details: MMStockTransferDetail[
   return res.data;
 }
 
+function sanitizeDetailPayload(data: Partial<MMStockTransferDetail>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...data };
+  if (sanitized.lot_id && typeof sanitized.lot_id === "object") {
+    sanitized.lot_id = (sanitized.lot_id as { lot_id?: number }).lot_id;
+  }
+  if (sanitized.inventory_lot_id && typeof sanitized.inventory_lot_id === "object") {
+    sanitized.inventory_lot_id = (sanitized.inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id;
+  }
+  if (sanitized.target_lot_id && typeof sanitized.target_lot_id === "object") {
+    sanitized.target_lot_id = (sanitized.target_lot_id as { lot_id?: number }).lot_id;
+  }
+  if (sanitized.target_inventory_lot_id && typeof sanitized.target_inventory_lot_id === "object") {
+    sanitized.target_inventory_lot_id = (sanitized.target_inventory_lot_id as { inventory_lot_id?: number }).inventory_lot_id;
+  }
+  if (sanitized.product_id && typeof sanitized.product_id === "object") {
+    sanitized.product_id = (sanitized.product_id as { product_id?: number }).product_id;
+  }
+  if (sanitized.unit_id && typeof sanitized.unit_id === "object") {
+    sanitized.unit_id = (sanitized.unit_id as { unit_id?: number }).unit_id;
+  }
+  return sanitized;
+}
+
 /**
  * Updates a single transfer detail record with local PH timestamp.
  */
 export async function updateStockTransferDetail(id: number, data: Partial<MMStockTransferDetail>): Promise<void> {
   const nowPHT = getPhNowString();
+  const cleanData = sanitizeDetailPayload(data);
   await updateItem("items/mm_stock_transfer_details", id, {
-    ...data,
-    updated_at: data.updated_at || nowPHT,
+    ...cleanData,
+    updated_at: cleanData.updated_at || nowPHT,
   });
 }
 
@@ -625,9 +649,10 @@ export async function updateStockTransferDetail(id: number, data: Partial<MMStoc
 export async function bulkUpdateStockTransferDetails(ids: number[], data: Partial<MMStockTransferDetail>): Promise<void> {
   if (ids.length === 0) return;
   const nowPHT = getPhNowString();
+  const cleanData = sanitizeDetailPayload(data);
   await bulkUpdateItems("items/mm_stock_transfer_details", ids, {
-    ...data,
-    updated_at: data.updated_at || nowPHT,
+    ...cleanData,
+    updated_at: cleanData.updated_at || nowPHT,
   } as Record<string, unknown>);
 }
 

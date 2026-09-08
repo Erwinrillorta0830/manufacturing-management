@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import {
+    PACKAGING_MATERIAL_PRODUCT_TYPE,
+    RAW_MATERIAL_PRODUCT_TYPE
+} from "../raw-materials/_classification-integrity";
 
 export async function GET(request: Request) {
     try {
@@ -18,6 +22,7 @@ export async function GET(request: Request) {
 
         const filters: string[] = [];
         if (supplierId) filters.push(`filter[supplier_id][_eq]=${supplierId}`);
+        filters.push(`filter[product_id][product_type][_in]=${RAW_MATERIAL_PRODUCT_TYPE},${PACKAGING_MATERIAL_PRODUCT_TYPE}`);
         if (productIds.length > 0) {
             filters.push(`filter[product_id][_in]=${productIds.join(",")}`);
         } else if (productId) {

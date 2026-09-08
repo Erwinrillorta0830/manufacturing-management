@@ -9,7 +9,7 @@ import { OrderGroupItem, ProductRow, ScannedItem, CurrentUser } from '../types/s
 import { cn } from '@/lib/utils';
 import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
-import { resolveBranchSalesman } from '../services/stock-transfer.helpers';
+import { resolveBranchSalesman, getLotAndBatchDisplayLines } from '../services/stock-transfer.helpers';
 import { StockAllocationModal } from '@/modules/manufacturing-management/shared/components/StockAllocationModal';
 import { isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import type { StockAllocationPlan, BatchAllocationResult } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
@@ -241,36 +241,44 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
                           {/* 2. Lot and Batch */}
                           <TableCell className="py-3">
                             <div className="flex flex-col gap-1">
-                              {item.batch_no ? (
-                                <button
-                                  type="button"
-                                  disabled={selectedGroup?.status !== 'For Picking'}
-                                  onClick={() => handleOpenAllocationModal(item)}
-                                  className={cn(
-                                    "inline-flex items-center gap-1 text-[9px] font-mono font-semibold px-2 py-1 rounded bg-primary/10 border border-primary/20 text-primary transition-all text-left w-fit",
-                                    selectedGroup?.status === 'For Picking' && "hover:bg-primary/20 hover:border-primary/40 cursor-pointer shadow-xs"
-                                  )}
-                                  title={selectedGroup?.status === 'For Picking' ? "Click to change picked lot and batch" : undefined}
-                                >
-                                  <Layers className="w-2.5 h-2.5 text-primary shrink-0" />
-                                  <span>Batch: {item.batch_no}</span>
-                                  {item.source_lot_id && (
-                                    <span className="text-[9px] text-muted-foreground ml-1">(Lot #{item.source_lot_id})</span>
-                                  )}
-                                </button>
-                              ) : (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={selectedGroup?.status !== 'For Picking'}
-                                  onClick={() => handleOpenAllocationModal(item)}
-                                  className="h-7 text-[10px] font-bold uppercase tracking-wider gap-1.5 border-dashed border-primary/50 text-primary hover:bg-primary/10 hover:border-primary px-2 shadow-none w-fit"
-                                >
-                                  <Layers className="w-3 h-3" />
-                                  Allocate Stock
-                                </Button>
-                              )}
+                              {(() => {
+                                const displayLines = getLotAndBatchDisplayLines(item);
+                                if (displayLines.length > 0) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      disabled={selectedGroup?.status !== 'For Picking'}
+                                      onClick={() => handleOpenAllocationModal(item)}
+                                      className={cn(
+                                        "inline-flex flex-col items-start gap-1 text-[10px] font-mono font-semibold px-2.5 py-1.5 rounded bg-primary/10 border border-primary/20 text-primary transition-all text-left w-fit",
+                                        selectedGroup?.status === 'For Picking' && "hover:bg-primary/20 hover:border-primary/40 cursor-pointer shadow-xs"
+                                      )}
+                                      title={selectedGroup?.status === 'For Picking' ? "Click to change picked lot and batch" : undefined}
+                                    >
+                                      {displayLines.map((line, idx) => (
+                                        <div key={idx} className="flex items-center gap-1.5 text-[10px] font-mono leading-tight">
+                                          {idx === 0 && <Layers className="w-3 h-3 text-primary shrink-0" />}
+                                          {idx > 0 && <span className="w-3 shrink-0" />}
+                                          <span>{line.displayText}</span>
+                                        </div>
+                                      ))}
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={selectedGroup?.status !== 'For Picking'}
+                                    onClick={() => handleOpenAllocationModal(item)}
+                                    className="h-7 text-[10px] font-bold uppercase tracking-wider gap-1.5 border-dashed border-primary/50 text-primary hover:bg-primary/10 hover:border-primary px-2 shadow-none w-fit"
+                                  >
+                                    <Layers className="w-3 h-3" />
+                                    Allocate Stock
+                                  </Button>
+                                );
+                              })()}
                             </div>
                           </TableCell>
 

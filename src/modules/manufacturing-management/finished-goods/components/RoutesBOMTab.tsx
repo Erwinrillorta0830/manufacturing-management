@@ -712,7 +712,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             aria-label={`Step batch size for step ${stepNum}`}
                                             type="number"
                                             disabled={isVersionLocked}
-                                            value={r.step_batch_size ?? 1}
+                                            value={r.step_batch_size}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "step_batch_size", parseFloat(e.target.value) || 1)}
                                             className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                         />

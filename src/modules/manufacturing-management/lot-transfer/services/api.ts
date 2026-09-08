@@ -5,7 +5,8 @@ import type {
     LotTransfer,
     LotTransferForm,
     LotTransferPreview,
-    ProductOption
+    ProductOption,
+    UserOption
 } from "../types";
 
 interface ApiEnvelope<T> {
@@ -58,20 +59,62 @@ function unwrap<T>(payload: ApiEnvelope<T> | T): T {
 }
 
 export async function fetchLotTransfers(options: {
-    status?: string;
+    status?: string | string[];
     branchId?: number;
     search?: string;
+    requestedFrom?: string;
+    requestedTo?: string;
+    transferDateFrom?: string;
+    transferDateTo?: string;
+    productId?: number;
+    sourceLotId?: number;
+    targetLotId?: number;
+    sourceBatchNo?: string;
+    targetBatchNo?: string;
+    requestedBy?: number;
+    approvedBy?: number;
+    postedBy?: number;
 } = {}): Promise<LotTransferListResponse> {
     const params = new URLSearchParams();
-    if (options.status) params.set("status", options.status);
+    const statusValue = Array.isArray(options.status) ? options.status.join(",") : options.status;
+    if (statusValue) params.set("status", statusValue);
     if (options.branchId && options.branchId > 0) params.set("branchId", String(options.branchId));
     if (options.search?.trim()) params.set("search", options.search.trim());
+    if (options.requestedFrom) params.set("requestedFrom", options.requestedFrom);
+    if (options.requestedTo) params.set("requestedTo", options.requestedTo);
+    if (options.transferDateFrom) params.set("transferDateFrom", options.transferDateFrom);
+    if (options.transferDateTo) params.set("transferDateTo", options.transferDateTo);
+    if (options.productId && options.productId > 0) params.set("productId", String(options.productId));
+    if (options.sourceLotId && options.sourceLotId > 0) params.set("sourceLotId", String(options.sourceLotId));
+    if (options.targetLotId && options.targetLotId > 0) params.set("targetLotId", String(options.targetLotId));
+    if (options.sourceBatchNo?.trim()) params.set("sourceBatchNo", options.sourceBatchNo.trim());
+    if (options.targetBatchNo?.trim()) params.set("targetBatchNo", options.targetBatchNo.trim());
+    if (options.requestedBy && options.requestedBy > 0) params.set("requestedBy", String(options.requestedBy));
+    if (options.approvedBy && options.approvedBy > 0) params.set("approvedBy", String(options.approvedBy));
+    if (options.postedBy && options.postedBy > 0) params.set("postedBy", String(options.postedBy));
     params.set("limit", "500");
     const payload = await requestJson<ApiEnvelope<LotTransfer[]>>(`/api/manufacturing/lot-transfers?${params.toString()}`);
     return {
         data: Array.isArray(payload.data) ? payload.data : [],
         totalCount: numberValue(payload.totalCount ?? payload.data?.length ?? 0)
     };
+}
+
+export async function fetchLotTransferUsers(): Promise<UserOption[]> {
+    const payload = await requestJson<unknown>("/api/manufacturing/planning-engineering?action=users");
+    const rows = Array.isArray(payload) ? payload : unwrap<Record<string, unknown>[]>(payload as ApiEnvelope<Record<string, unknown>[]>);
+    return (Array.isArray(rows) ? rows : [])
+        .map((row) => {
+            const id = numberValue(row.user_id ?? row.id);
+            const firstName = stringValue(row.user_fname ?? row.first_name ?? row.Firstname);
+            const lastName = stringValue(row.user_lname ?? row.last_name ?? row.LastName);
+            const email = stringValue(row.user_email ?? row.email);
+            return {
+                id,
+                name: [firstName, lastName].filter(Boolean).join(" ") || email || `User #${id}`
+            };
+        })
+        .filter((row) => row.id > 0);
 }
 
 export async function fetchLotTransfer(id: number): Promise<LotTransfer> {
@@ -202,6 +245,8 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
                 lotId: numberValue((row as LotOption).lotId ?? raw.lot_id),
                 lotName: stringValue((row as LotOption).lotName ?? raw.lot_name),
                 branchId: numberValue((row as LotOption).branchId ?? raw.branch_id),
+                uomId: numberValue((row as LotOption).uomId ?? raw.uom_id) || null,
+                uomName: stringValue((row as LotOption).uomName ?? raw.uom_name),
                 maxBatchCapacity: numberValue((row as LotOption).maxBatchCapacity ?? raw.max_batch_capacity),
                 status: stringValue((row as LotOption).status || "ACTIVE")
             };
