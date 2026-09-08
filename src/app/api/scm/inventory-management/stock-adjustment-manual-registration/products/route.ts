@@ -15,16 +15,20 @@ export async function GET(request: Request) {
     const search = searchParams.get("search") || undefined;
     const supplierId = searchParams.get("supplierId");
 
+    const inventoryType = searchParams.get("inventoryType");
+
     let data;
-    if (supplierId) {
+    if (inventoryType === "FINISHED_GOODS") {
+      data = await stockAdjustmentManualService.fetchFinishedGoodsProducts(search);
+    } else if (supplierId) {
       // Supplier-filtered product fetch
       data = await stockAdjustmentManualService.fetchProductsBySupplier(
         Number(supplierId),
         search
       );
     } else {
-      // Fallback: fetch all products (legacy)
-      data = await stockAdjustmentManualService.fetchProducts({ search });
+      // Fallback: fetch finished goods or all products
+      data = await stockAdjustmentManualService.fetchFinishedGoodsProducts(search);
     }
 
     return NextResponse.json({ data });

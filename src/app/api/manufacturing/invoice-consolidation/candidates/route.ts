@@ -44,15 +44,15 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ message: "branchId is required" }, { status: 400 });
         }
 
-        // 1. Fetch active, non-deleted consolidator batches (Pending, For Picking, Picking, Picked, Audited)
+        // 1. Fetch active, non-deleted consolidator batches (Pending, For Picking, Picking, Picked, Approved, Audited)
         const consolidatorRes = await fetch(
-            `${DIRECTUS_URL}/items/consolidator?filter[status][_in]=Pending,For Picking,Picking,Picked,Audited&limit=-1&fields=id,consolidator_no,status,is_delete`,
+            `${DIRECTUS_URL}/items/consolidator?filter[status][_in]=Pending,For Picking,Picking,Picked,Approved,Audited&limit=-1&fields=id,consolidator_no,status,is_delete`,
             { headers: directusHeaders, cache: "no-store" }
         ).catch(() => null);
         const consolidatorData: Array<{ id: number; status: string; is_delete?: unknown }> =
             consolidatorRes && consolidatorRes.ok ? (await consolidatorRes.json()).data || [] : [];
         const activeConsolidatorIds = consolidatorData
-            .filter((c) => !isDeleted(c.is_delete) && ["Pending", "For Picking", "Picking", "Picked", "Audited"].includes(c.status))
+            .filter((c) => !isDeleted(c.is_delete) && ["Pending", "For Picking", "Picking", "Picked", "Approved", "Audited"].includes(c.status))
             .map((c) => Number(c.id))
             .filter(Boolean);
 

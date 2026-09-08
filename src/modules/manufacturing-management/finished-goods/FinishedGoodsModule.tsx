@@ -874,7 +874,7 @@ export default function FinishedGoodsModule() {
                             </div>
                         </div>
 
-                        {/* Compare Matrix + Sync Yield Toolbar */}
+                        {/* Compare Matrix + Sync Yield Toolbar
                         {selectedProduct && (
                             <div className="px-3 py-2 border-b bg-muted/10 flex items-center gap-2 flex-wrap">
                                 <button
@@ -902,7 +902,7 @@ export default function FinishedGoodsModule() {
                                     Sync Yield
                                 </button>
                             </div>
-                        )}
+                        )} */}
 
                         {/* Version Search / Filter Box */}
                         {versions.length > 3 && (

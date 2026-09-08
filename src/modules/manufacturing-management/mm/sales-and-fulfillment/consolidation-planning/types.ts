@@ -1,4 +1,4 @@
-export type ConsolidationStatus = "Pending" | "Picking" | "Picked" | "Audited";
+export type ConsolidationStatus = "Pending" | "For Picking" | "Picking" | "Picked" | "Approved" | "Audited" | "For Fulfillment" | "Dispatched" | "Delivered";
 
 export interface ConsolidatorInvoiceProduct {
     productId: number;
@@ -84,6 +84,7 @@ export interface StatusSummary {
     Pending: number;
     Picking: number;
     Picked: number;
+    Approved?: number;
     Audited: number;
     All: number;
 }

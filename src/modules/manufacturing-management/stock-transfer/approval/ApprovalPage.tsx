@@ -261,8 +261,8 @@ export default function StockTransferApprovalView() {
                   <TableBody>
                     {paginatedItems.map((item: OrderGroupItem) => {
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as ProductRow) : null;
-                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
-                      const description = product?.description || product?.barcode || 'N/A';
+                      const productName = product?.description || product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
+                      const skuCode = product?.product_code || product?.barcode || 'N/A';
                       const brandName = typeof product?.product_brand === 'object' ? product?.product_brand?.brand_name : 'N/A';
                       const unitName = typeof product?.unit_of_measurement === 'object' ? product?.unit_of_measurement?.unit_name : 'unit';
                       const productImage = getAssetUrl(product?.product_image);
@@ -305,7 +305,7 @@ export default function StockTransferApprovalView() {
                               )}
                               <div className="flex flex-col min-w-0">
                                 <span className="font-semibold text-sm line-clamp-1">{productName}</span>
-                                <span className="text-[10px] text-muted-foreground font-mono">{description}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">SKU: {skuCode}</span>
                               </div>
                             </div>
                           </TableCell>

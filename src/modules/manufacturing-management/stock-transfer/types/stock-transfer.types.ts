@@ -388,6 +388,7 @@ export interface MMStockTransferDetail {
   batch_no: string;
   manufacturing_date?: string | null;
   expiration_date?: string | null;
+  expiry_date?: string | null;
   inventory_condition: 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED';
   unit_cost: number;
   allocated_quantity: number;

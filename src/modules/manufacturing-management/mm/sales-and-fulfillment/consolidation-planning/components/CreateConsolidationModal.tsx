@@ -52,6 +52,65 @@ interface Props {
 
 type AllocationMode = "auto" | "manual";
 type ModalStep = 1 | 2 | 3;
+function computeAggregatedProducts(
+    candidates: CandidateInvoice[],
+    selectedIds: Set<number>
+) {
+    const selected = candidates.filter((c) => selectedIds.has(c.invoiceId));
+    const agg = new Map<
+        number,
+        {
+            productId: number;
+            productName: string;
+            productCode: string;
+            totalQuantity: number;
+            invoiceIds: number[];
+            versionNames: string[];
+        }
+    >();
+
+    for (const inv of selected) {
+        for (const p of inv.products) {
+            const existing = agg.get(p.productId);
+            const version = p.versionName || "Unversioned";
+            if (!existing) {
+                agg.set(p.productId, {
+                    productId: p.productId,
+                    productName: p.productName,
+                    productCode: p.productCode,
+                    totalQuantity: p.quantity,
+                    invoiceIds: [inv.invoiceId],
+                    versionNames: [version],
+                });
+            } else {
+                agg.set(p.productId, {
+                    ...existing,
+                    totalQuantity: existing.totalQuantity + p.quantity,
+                    invoiceIds: existing.invoiceIds.includes(inv.invoiceId)
+                        ? existing.invoiceIds
+                        : [...existing.invoiceIds, inv.invoiceId],
+                    versionNames: existing.versionNames.includes(version)
+                        ? existing.versionNames
+                        : [...existing.versionNames, version],
+                });
+            }
+        }
+    }
+
+    return Array.from(agg.values())
+        .map((e) => ({
+            productId: e.productId,
+            productName: e.productName,
+            productCode: e.productCode,
+            totalQuantity: e.totalQuantity,
+            invoiceCount: e.invoiceIds.length,
+            versionLabel:
+                e.versionNames.length > 1
+                    ? "Multiple versions"
+                    : e.versionNames[0] || "Not assigned",
+        }))
+        .sort((a, b) => a.productName.localeCompare(b.productName));
+}
 
 export default function CreateConsolidationModal({
     isOpen,
@@ -65,6 +124,7 @@ export default function CreateConsolidationModal({
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<number>>(new Set());
     const [collapsedStep2InvoiceIds, setCollapsedStep2InvoiceIds] = useState<Set<number>>(new Set());
+    const [expandedStep3ProdIds, setExpandedStep3ProdIds] = useState<Set<number>>(new Set());
     const [step2Search, setStep2Search] = useState<string>("");
     const [step2CustomerFilter, setStep2CustomerFilter] = useState<string>("ALL");
     const [step2ProductFilter, setStep2ProductFilter] = useState<string>("ALL");
@@ -168,6 +228,7 @@ export default function CreateConsolidationModal({
         setShowExpiredConfirmModal(false);
         setCollapsedStep2InvoiceIds(new Set());
         setExpandedInvoiceIds(new Set());
+        setExpandedStep3ProdIds(new Set());
         setSearch("");
         setSelectedCustomer("ALL");
         setSelectedDocType("ALL");
@@ -363,44 +424,24 @@ export default function CreateConsolidationModal({
         setCollapsedStep2InvoiceIds(new Set(selectedIds));
     };
 
-    const aggregatedProducts = useMemo(() => {
-        const selected = candidates.filter((c) => selectedIds.has(c.invoiceId));
-        const versionSets = new Map<number, Set<string>>();
-        const agg = new Map<
-            number,
-            { quantity: number; invoiceCount: Set<number>; productName: string; productCode: string }
-        >();
-        for (const inv of selected) {
-            for (const p of inv.products) {
-                if (!agg.has(p.productId)) {
-                    agg.set(p.productId, {
-                        quantity: 0,
-                        invoiceCount: new Set(),
-                        productName: p.productName,
-                        productCode: p.productCode,
-                    });
-                }
-                if (!versionSets.has(p.productId)) versionSets.set(p.productId, new Set());
-                const entry = agg.get(p.productId)!;
-                entry.quantity += p.quantity;
-                entry.invoiceCount.add(inv.invoiceId);
-                versionSets.get(p.productId)!.add(p.versionName || "Unversioned");
-            }
-        }
-        return Array.from(agg.entries())
-            .map(([productId, e]) => ({
-                productId,
-                productName: e.productName,
-                productCode: e.productCode,
-                totalQuantity: e.quantity,
-                invoiceCount: e.invoiceCount.size,
-                versionLabel:
-                    versionSets.get(productId)!.size > 1
-                        ? "Multiple versions"
-                        : versionSets.get(productId)!.values().next().value || "Not assigned",
-            }))
-            .sort((a, b) => a.productName.localeCompare(b.productName));
-    }, [candidates, selectedIds]);
+    const toggleStep3Product = (productId: number) => {
+        setExpandedStep3ProdIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(productId)) next.delete(productId);
+            else next.add(productId);
+            return next;
+        });
+    };
+
+    const expandAllStep3Products = () => {
+        setExpandedStep3ProdIds(new Set(aggregatedProducts.map((p) => p.productId)));
+    };
+
+    const collapseAllStep3Products = () => {
+        setExpandedStep3ProdIds(new Set());
+    };
+
+    const aggregatedProducts = computeAggregatedProducts(candidates, selectedIds);
 
     // Lookup map for invoice allocation breakdown
     const invoiceBreakdownMap = useMemo(() => {
@@ -863,7 +904,6 @@ export default function CreateConsolidationModal({
         let customAllocations: CustomAllocationItem[] | undefined = undefined;
 
         if (allocationMode === "manual") {
-            if (!isManualValid) return;
             const aggMap = new Map<string, CustomAllocationItem>();
             for (const [key, qty] of Object.entries(manualAllocations)) {
                 if (qty > 0) {
@@ -1020,11 +1060,8 @@ export default function CreateConsolidationModal({
         if (selectedIds.size === 0 || previewLoading || !allocationPreview) {
             return false;
         }
-        if (allocationMode === "auto") {
-            return true;
-        }
-        return isManualValid;
-    }, [selectedIds, previewLoading, allocationPreview, allocationMode, isManualValid]);
+        return true;
+    }, [selectedIds, previewLoading, allocationPreview]);
 
     const handleProceedToStep3 = () => {
         if (expiredAllocatedBatches.length > 0 && !allowExpiredBatches) {
@@ -1038,11 +1075,8 @@ export default function CreateConsolidationModal({
         if (selectedIds.size === 0 || submitting || previewLoading || !allocationPreview) {
             return false;
         }
-        if (allocationMode === "auto") {
-            return allocationPreview.shortages.length === 0;
-        }
-        return isManualValid;
-    }, [selectedIds, submitting, previewLoading, allocationPreview, allocationMode, isManualValid]);
+        return true;
+    }, [selectedIds, submitting, previewLoading, allocationPreview]);
 
     const totalOrderedUnits = useMemo(() => {
         return aggregatedProducts.reduce((sum, p) => sum + p.totalQuantity, 0);
@@ -1859,17 +1893,9 @@ export default function CreateConsolidationModal({
                                                                     </div>
                                                                     <div>
                                                                         <div className="flex items-center gap-2">
-                                                                            {inv.documentType === "JOB_ORDER" ? (
-                                                                                <span className="inline-flex items-center rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-black text-purple-600">
-                                                                                    JO
-                                                                                </span>
-                                                                            ) : (
-                                                                                <span className="inline-flex items-center rounded-md border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] font-black text-blue-600">
-                                                                                    SO
-                                                                                </span>
-                                                                            )}
+
                                                                             <span className="font-mono font-black text-sm text-foreground">
-                                                                                {inv.orderNo || inv.invoiceNo}
+                                                                                {inv.orderNo}
                                                                             </span>
                                                                             {inv.poNo && (
                                                                                 <span className="text-[10px] text-muted-foreground bg-card border border-border/50 px-1.5 py-0.5 rounded-md">
@@ -2226,6 +2252,21 @@ export default function CreateConsolidationModal({
                                                                                                                                 min={0}
                                                                                                                                 value={currentQty || ""}
                                                                                                                                 placeholder="0"
+                                                                                                                                onFocus={(e) => e.target.select()}
+                                                                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                                                                                onBlur={(e) => {
+                                                                                                                                    if (e.target.value === "" || isNaN(Number(e.target.value))) {
+                                                                                                                                        handleManualQtyChange(
+                                                                                                                                            inv.invoiceId,
+                                                                                                                                            prod.productId,
+                                                                                                                                            b.inventoryLotId,
+                                                                                                                                            b.lotId,
+                                                                                                                                            b.batchNo,
+                                                                                                                                            b.availableQuantity,
+                                                                                                                                            "0"
+                                                                                                                                        );
+                                                                                                                                    }
+                                                                                                                                }}
                                                                                                                                 onChange={(e) =>
                                                                                                                                     handleManualQtyChange(
                                                                                                                                         inv.invoiceId,
@@ -2425,6 +2466,28 @@ export default function CreateConsolidationModal({
                                         </h3>
                                     </div>
                                     <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-xl border border-border/60">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={expandAllStep3Products}
+                                                className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                title="Expand all product details"
+                                            >
+                                                <Maximize2 className="h-3 w-3 mr-1" />
+                                                Expand All
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={collapseAllStep3Products}
+                                                className="h-7 px-2 text-[10px] font-bold rounded-lg text-muted-foreground hover:text-foreground"
+                                                title="Collapse all product details"
+                                            >
+                                                <Minimize2 className="h-3 w-3 mr-1" />
+                                                Collapse All
+                                            </Button>
+                                        </div>
                                         <span className="text-xs font-bold text-muted-foreground bg-muted/50 px-2.5 py-1 rounded-xl border border-border/40">
                                             Total Demand: <strong className="text-foreground">{totalOrderedUnits}</strong> units across <strong className="text-foreground">{selectedIds.size}</strong> order(s)
                                         </span>
@@ -2435,6 +2498,7 @@ export default function CreateConsolidationModal({
                                     <table className="w-full text-left border-collapse text-xs">
                                         <thead>
                                             <tr className="border-b bg-muted/10 text-muted-foreground text-[10px] font-bold uppercase tracking-wider">
+                                                <th className="p-3.5 w-10"></th>
                                                 <th className="p-3.5">Product</th>
                                                 <th className="p-3.5">Code</th>
                                                 <th className="p-3.5">BOM Version</th>
@@ -2447,6 +2511,7 @@ export default function CreateConsolidationModal({
                                         </thead>
                                         <tbody className="divide-y divide-border/40">
                                             {aggregatedProducts.map((p, pIdx) => {
+                                                const isExpanded = expandedStep3ProdIds.has(p.productId);
                                                 let productAllocatedQty = 0;
                                                 const assignedByOrderMap = new Map<number, {
                                                     invoiceId: number;
@@ -2542,110 +2607,214 @@ export default function CreateConsolidationModal({
                                                 }
 
                                                 const assignedOrders = Array.from(assignedByOrderMap.values()).filter((o) => o.batches.length > 0);
+                                                const totalAssignedBatchCount = assignedOrders.reduce((s, o) => s + o.batches.length, 0);
                                                 const isFullyCovered = productAllocatedQty >= p.totalQuantity;
                                                 const diff = p.totalQuantity - productAllocatedQty;
 
                                                 return (
-                                                    <motion.tr
-                                                        key={`demand-prod-${p.productId}`}
-                                                        initial={{ opacity: 0, y: -8 }}
-                                                        animate={{ opacity: 1, y: 0 }}
-                                                        transition={{ duration: 0.2, delay: Math.min(pIdx * 0.03, 0.3) }}
-                                                        className="hover:bg-muted/5 transition-colors"
-                                                    >
-                                                        <td className="p-3.5 font-bold text-foreground">
-                                                            {p.productName}
-                                                        </td>
-                                                        <td className="p-3.5 font-mono text-muted-foreground">
-                                                            {p.productCode || "-"}
-                                                        </td>
-                                                        <td className="p-3.5">
-                                                            <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
-                                                                {p.versionLabel}
-                                                            </span>
-                                                        </td>
-                                                        <td className="p-3.5 text-right font-bold text-muted-foreground">
-                                                            {p.invoiceCount} order(s)
-                                                        </td>
-                                                        <td className="p-3.5 text-right font-black text-foreground text-sm">
-                                                            {p.totalQuantity}
-                                                        </td>
-                                                        <td className="p-3.5 text-right font-black text-sm">
-                                                            <span className={isFullyCovered ? "text-emerald-600" : "text-amber-600"}>
-                                                                {productAllocatedQty}
-                                                            </span>
-                                                        </td>
-                                                        <td className="p-3.5">
-                                                            {assignedOrders.length > 0 ? (
-                                                                <div className="flex flex-col gap-2 max-w-lg">
-                                                                    {assignedOrders.map((orderGroup) => (
-                                                                        <div key={`order-group-${p.productId}-${orderGroup.invoiceId}`} className="rounded-lg border border-border/50 bg-muted/20 p-2">
-                                                                            {orderGroup.orderNo !== "Unspecified Order" && (
-                                                                                <div className="flex items-center gap-1.5 mb-1 text-[10px] font-bold text-foreground">
-                                                                                    <FileText className="h-3 w-3 text-primary shrink-0" />
-                                                                                    <span>{orderGroup.orderNo}</span>
-                                                                                    {orderGroup.customerName && (
-                                                                                        <span className="text-[9px] font-normal text-muted-foreground">({orderGroup.customerName})</span>
-                                                                                    )}
-                                                                                </div>
-                                                                            )}
-                                                                            <div className="flex flex-wrap gap-1.5">
-                                                                                {orderGroup.batches.map((b, bIdx) => {
-                                                                                    const batchInfo = (allocationPreview?.availableBatches || []).find(
-                                                                                        (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
-                                                                                    );
-                                                                                    const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
-
-                                                                                    return (
-                                                                                        <span
-                                                                                            key={`assigned-batch-${p.productId}-${orderGroup.invoiceId}-${b.batchNo}-${bIdx}`}
-                                                                                            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-medium shadow-xs ${
-                                                                                                isNegative
-                                                                                                    ? "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300"
-                                                                                                    : "border-border/70 bg-card"
-                                                                                            }`}
-                                                                                        >
-                                                                                            <span className="font-bold text-foreground">{b.lotName}</span>
-                                                                                            <span className="font-mono text-muted-foreground">({b.batchNo})</span>
-                                                                                            <span className="font-black text-primary ml-0.5">· {b.quantity} qty</span>
-                                                                                            {isNegative && (
-                                                                                                <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1 py-0.2 text-[8px] font-black uppercase">
-                                                                                                    <AlertTriangle className="h-2 w-2" /> Negative Balance
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </span>
-                                                                                    );
-                                                                                })}
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            ) : (
-                                                                <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-3.5 text-right">
-                                                            <span
-                                                                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                                                    isFullyCovered
-                                                                        ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                                                        : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                                                                }`}
-                                                            >
-                                                                {isFullyCovered ? (
-                                                                    <>
-                                                                        <CheckCircle2 className="h-3 w-3" />
-                                                                        Fully Covered
-                                                                    </>
+                                                    <React.Fragment key={`demand-prod-${p.productId}`}>
+                                                        <motion.tr
+                                                            initial={{ opacity: 0, y: -8 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            transition={{ duration: 0.2, delay: Math.min(pIdx * 0.03, 0.3) }}
+                                                            onClick={() => toggleStep3Product(p.productId)}
+                                                            className="cursor-pointer hover:bg-muted/10 transition-colors"
+                                                        >
+                                                            <td className="p-3.5 text-center">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleStep3Product(p.productId);
+                                                                    }}
+                                                                    className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                                                                >
+                                                                    <motion.div
+                                                                        animate={{ rotate: isExpanded ? 90 : 0 }}
+                                                                        transition={{ duration: 0.2 }}
+                                                                    >
+                                                                        <ChevronRight className="h-4 w-4" />
+                                                                    </motion.div>
+                                                                </button>
+                                                            </td>
+                                                            <td className="p-3.5 font-bold text-foreground">
+                                                                {p.productName}
+                                                            </td>
+                                                            <td className="p-3.5 font-mono text-muted-foreground">
+                                                                {p.productCode || "-"}
+                                                            </td>
+                                                            <td className="p-3.5">
+                                                                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[9px] font-bold text-primary">
+                                                                    {p.versionLabel}
+                                                                </span>
+                                                            </td>
+                                                            <td className="p-3.5 text-right font-bold text-muted-foreground">
+                                                                {p.invoiceCount} order(s)
+                                                            </td>
+                                                            <td className="p-3.5 text-right font-black text-foreground text-sm">
+                                                                {p.totalQuantity}
+                                                            </td>
+                                                            <td className="p-3.5 text-right font-black text-sm">
+                                                                <span className={isFullyCovered ? "text-emerald-600" : "text-amber-600"}>
+                                                                    {productAllocatedQty}
+                                                                </span>
+                                                            </td>
+                                                            <td className="p-3.5">
+                                                                {assignedOrders.length > 0 ? (
+                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-1 text-[10px] font-bold text-primary">
+                                                                            <Package className="h-3 w-3" />
+                                                                            {assignedOrders.length} order(s) · {totalAssignedBatchCount} batch(es)
+                                                                        </span>
+                                                                        <span className="text-[10px] text-muted-foreground font-semibold">
+                                                                            ({isExpanded ? "Click to collapse" : "Click to view hierarchy"})
+                                                                        </span>
+                                                                    </div>
                                                                 ) : (
-                                                                    <>
-                                                                        <AlertTriangle className="h-3 w-3" />
-                                                                        Shortage ({diff > 0 ? `-${diff}` : diff})
-                                                                    </>
+                                                                    <span className="text-[11px] text-muted-foreground italic">No batches allocated</span>
                                                                 )}
-                                                            </span>
-                                                        </td>
-                                                    </motion.tr>
+                                                            </td>
+                                                            <td className="p-3.5 text-right">
+                                                                <span
+                                                                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                                                        isFullyCovered
+                                                                            ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                                                            : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                                                                    }`}
+                                                                >
+                                                                    {isFullyCovered ? (
+                                                                        <>
+                                                                            <CheckCircle2 className="h-3 w-3" />
+                                                                            Fully Covered
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <AlertTriangle className="h-3 w-3" />
+                                                                            Shortage ({diff > 0 ? `-${diff}` : diff})
+                                                                        </>
+                                                                    )}
+                                                                </span>
+                                                            </td>
+                                                        </motion.tr>
+
+                                                        {/* EXPANDED NESTED HIERARCHY PANEL (ORDER -> LOT/RACK -> BATCH) */}
+                                                        <AnimatePresence initial={false}>
+                                                            {isExpanded && (
+                                                                <motion.tr
+                                                                    key={`expanded-demand-${p.productId}`}
+                                                                    initial={{ opacity: 0 }}
+                                                                    animate={{ opacity: 1 }}
+                                                                    exit={{ opacity: 0 }}
+                                                                    transition={{ duration: 0.2 }}
+                                                                    className="bg-muted/5"
+                                                                >
+                                                                    <td colSpan={9} className="p-0">
+                                                                        <motion.div
+                                                                            initial={{ opacity: 0, height: 0 }}
+                                                                            animate={{ opacity: 1, height: "auto" }}
+                                                                            exit={{ opacity: 0, height: 0 }}
+                                                                            transition={{ duration: 0.22, ease: "easeInOut" }}
+                                                                            className="overflow-hidden"
+                                                                        >
+                                                                            <div className="p-4 bg-muted/10 border-t border-b border-border/40 space-y-3">
+                                                                                <div className="flex items-center justify-between">
+                                                                                    <p className="text-[11px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                                                        <Layers className="h-3.5 w-3.5 text-primary" />
+                                                                                        Allocated Demand Hierarchy for <span className="text-foreground font-bold">{p.productName}</span>
+                                                                                    </p>
+
+                                                                                </div>
+
+                                                                                {assignedOrders.length > 0 ? (
+                                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                                        {assignedOrders.map((orderGroup) => (
+                                                                                            <div
+                                                                                                key={`step3-tree-order-${p.productId}-${orderGroup.invoiceId}`}
+                                                                                                className="rounded-2xl border border-border/60 bg-card p-3.5 shadow-sm space-y-2.5"
+                                                                                            >
+                                                                                                {/* LEVEL 1: ORDER HEADER */}
+                                                                                                <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                                                                                                    <div className="flex items-center gap-2">
+                                                                                                        <div className="rounded-lg bg-primary/10 p-1.5">
+                                                                                                            <FileText className="h-3.5 w-3.5 text-primary" />
+                                                                                                        </div>
+                                                                                                        <div>
+                                                                                                            <span className="font-mono font-black text-xs text-foreground">
+                                                                                                                {orderGroup.orderNo}
+                                                                                                            </span>
+                                                                                                            {orderGroup.customerName && (
+                                                                                                                <p className="text-[10px] font-semibold text-muted-foreground">
+                                                                                                                    {orderGroup.customerName}
+                                                                                                                </p>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                    <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                                                                                                        {orderGroup.batches.reduce((s, b) => s + b.quantity, 0)} units
+                                                                                                    </span>
+                                                                                                </div>
+
+                                                                                                {/* LEVEL 2 & 3: LOT / RACK & BATCHES */}
+                                                                                                <div className="space-y-1.5 pl-1">
+                                                                                                    {orderGroup.batches.map((b, bIdx) => {
+                                                                                                        const batchInfo = (allocationPreview?.availableBatches || []).find(
+                                                                                                            (ab) => ab.productId === p.productId && ab.batchNo === b.batchNo
+                                                                                                        );
+                                                                                                        const isNegative = batchInfo ? (batchInfo.availableQuantity < 0 || b.quantity > batchInfo.availableQuantity) : false;
+
+                                                                                                        return (
+                                                                                                            <div
+                                                                                                                key={`tree-batch-${p.productId}-${orderGroup.invoiceId}-${b.batchNo}-${bIdx}`}
+                                                                                                                className="flex items-center justify-between gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs"
+                                                                                                            >
+                                                                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                                                                    <span className="text-muted-foreground font-mono">└──</span>
+                                                                                                                    <div className="min-w-0">
+                                                                                                                        <div className="flex items-center gap-1.5">
+                                                                                                                            <span className="font-bold text-foreground">
+                                                                                                                                {b.lotName}
+                                                                                                                            </span>
+                                                                                                                            <span className="font-mono text-[10px] text-muted-foreground bg-card px-1.5 py-0.5 rounded border border-border/40">
+                                                                                                                                {b.batchNo}
+                                                                                                                            </span>
+                                                                                                                        </div>
+                                                                                                                        {batchInfo?.expiryDate && (
+                                                                                                                            <p className="text-[9px] text-muted-foreground mt-0.5">
+                                                                                                                                Exp: {batchInfo.expiryDate}
+                                                                                                                            </p>
+                                                                                                                        )}
+                                                                                                                    </div>
+                                                                                                                </div>
+
+                                                                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                                                                    {isNegative && (
+                                                                                                                        <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[8px] font-black uppercase">
+                                                                                                                            <AlertTriangle className="h-2.5 w-2.5" /> Negative
+                                                                                                                        </span>
+                                                                                                                    )}
+                                                                                                                    <span className="font-black text-primary text-xs bg-card px-2 py-1 rounded-lg border border-border/60">
+                                                                                                                        {b.quantity} qty
+                                                                                                                    </span>
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
+                                                                                        No stock batches allocated for this product line.
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        </motion.div>
+                                                                    </td>
+                                                                </motion.tr>
+                                                            )}
+                                                        </AnimatePresence>
+                                                    </React.Fragment>
                                                 );
                                             })}
                                         </tbody>

@@ -16,6 +16,8 @@ async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?
             headers: directusHeaders,
             body: JSON.stringify({
                 order_status: "For Invoicing",
+                for_consolidation_at: phNow,
+                for_invoicing_at: phNow,
                 modified_date: phNow,
                 modified_by: userId,
             }),
@@ -23,12 +25,13 @@ async function transitionSalesOrderToForInvoicing(documentIds: number[], userId?
         if (patchRes.ok) {
             updated++;
         } else {
-            // Retry with just order_status if modified_date/modified_by fails
+            // Retry with order_status and for_consolidation_at if modified_date/modified_by fails
             const retryRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
                 method: "PATCH",
                 headers: directusHeaders,
                 body: JSON.stringify({
                     order_status: "For Invoicing",
+                    for_consolidation_at: phNow,
                 }),
             });
             if (retryRes.ok) {
@@ -68,7 +71,7 @@ export async function POST(req: NextRequest) {
         }
 
         const consolidator = items[0];
-        if (consolidator.status === "Audited") {
+        if (consolidator.status === "Approved" || consolidator.status === "Audited") {
             const junctionRes = await fetch(
                 `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&limit=-1&fields=invoice_id`,
                 { headers: directusHeaders, cache: "no-store" }
@@ -107,7 +110,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: true, message: "Batch is already audited and synced" });
         }
         if (consolidator.status !== "Picked") {
-            return NextResponse.json({ message: "Batch must be in Picked status before audit" }, { status: 400 });
+            return NextResponse.json({ message: "Batch must be in Picked status before approval" }, { status: 400 });
         }
 
         const [invRes, detRes] = await Promise.all([

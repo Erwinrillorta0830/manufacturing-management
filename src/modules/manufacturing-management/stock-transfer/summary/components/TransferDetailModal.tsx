@@ -43,13 +43,77 @@ import { getAssetUrl } from '@/lib/assets';
 
 function formatBranchLabel(nameOrCode: string | undefined): string {
   if (!nameOrCode) return 'Unknown Branch';
-  if (nameOrCode.includes('_')) {
-    return nameOrCode
-      .split('_')
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(' ');
-  }
-  return nameOrCode;
+  const trimmed = nameOrCode.trim();
+  if (!trimmed) return 'Unknown Branch';
+  return trimmed
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+interface LotAllocItem {
+  lot_name?: string;
+  lot_id?: number | string;
+}
+
+function ExpandableLotBadges({ lotAllocations }: { lotAllocations: LotAllocItem[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const displayed = expanded ? lotAllocations : lotAllocations.slice(0, 3);
+  const hiddenCount = lotAllocations.length - 3;
+
+  return (
+    <>
+      {displayed.map((g, idx) => {
+        const lotClean = g.lot_name ? g.lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim() : (g.lot_id ? `${g.lot_id}` : '—');
+        return (
+          <span key={idx} className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">
+            Lot {lotClean}
+          </span>
+        );
+      })}
+      {lotAllocations.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="text-[9px] bg-primary/20 hover:bg-primary/30 text-primary px-1.5 py-0.2 rounded font-mono font-bold transition-colors cursor-pointer"
+        >
+          {expanded ? "Less" : `+${hiddenCount} more`}
+        </button>
+      )}
+    </>
+  );
+}
+
+interface BatchItem {
+  batch_no?: string | null;
+}
+
+function ExpandableBatchBadges({ batches }: { batches: BatchItem[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const displayed = expanded ? batches : batches.slice(0, 3);
+  const hiddenCount = batches.length - 3;
+
+  return (
+    <>
+      {displayed.map((b, bIdx) => {
+        const bNo = String(b.batch_no || 'N/A').replace(/^batch\s*[:#-]?\s*/i, '').trim();
+        return (
+          <span key={bIdx} className="text-[9px] bg-muted text-foreground px-1.5 py-0.2 rounded border border-border/50 font-mono font-semibold">
+            Batch: {bNo}
+          </span>
+        );
+      })}
+      {batches.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="text-[9px] bg-muted hover:bg-muted/80 text-foreground px-1.5 py-0.2 rounded border border-border/60 font-mono font-bold transition-colors cursor-pointer"
+        >
+          {expanded ? "Less" : `+${hiddenCount} more`}
+        </button>
+      )}
+    </>
+  );
 }
 
 function getStatusBadgeClass(status?: string | null): string {
@@ -234,28 +298,14 @@ export function TransferDetailModal({
                               <span className="font-bold text-sm truncate" title={productName}>{productName}</span>
                               <div className="flex items-center gap-2 flex-wrap mt-0.5">
                                 {item.lot_allocations && item.lot_allocations.length > 0 ? (
-                                  item.lot_allocations.map((g, idx) => {
-                                    const lotClean = g.lot_name ? g.lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim() : (g.lot_id ? `${g.lot_id}` : '—');
-                                    return (
-                                      <span key={idx} className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">
-                                        Lot {lotClean}
-                                      </span>
-                                    );
-                                  })
+                                  <ExpandableLotBadges lotAllocations={item.lot_allocations} />
                                 ) : (item.source_lot_name || item.source_lot_id) ? (
                                   <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.2 rounded font-mono font-semibold">
                                     Lot {item.source_lot_name ? item.source_lot_name.replace(/^lot\s*[:#-]?\s*/i, '').trim() : item.source_lot_id}
                                   </span>
                                 ) : null}
                                 {item.lot_allocations && item.lot_allocations.length > 0 ? (
-                                  item.lot_allocations.flatMap(g => g.batches || []).map((b, bIdx) => {
-                                    const bNo = String(b.batch_no || 'N/A').replace(/^batch\s*[:#-]?\s*/i, '').trim();
-                                    return (
-                                      <span key={bIdx} className="text-[9px] bg-muted text-foreground px-1.5 py-0.2 rounded border border-border/50 font-mono font-semibold">
-                                        Batch: {bNo}
-                                      </span>
-                                    );
-                                  })
+                                  <ExpandableBatchBadges batches={item.lot_allocations.flatMap(g => g.batches || [])} />
                                 ) : item.batch_no ? (
                                   <span className="text-[9px] bg-muted text-foreground px-1.5 py-0.2 rounded border border-border/50 font-mono font-semibold">
                                     Batch: {String(item.batch_no).replace(/^batch\s*[:#-]?\s*/i, '').trim()}

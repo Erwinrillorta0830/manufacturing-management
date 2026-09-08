@@ -219,7 +219,7 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                       const progress = targetQty > 0 ? (item.receivedQty || 0) / targetQty : 0;
                       const complete = progress >= 1;
                       const product = typeof item.product_id === 'object' ? (item.product_id as ProductRow) : null;
-                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
+                      const productName = product?.description || product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
                       const unitName = typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null 
                         ? (product.unit_of_measurement as { unit_name?: string }).unit_name 
                         : 'PCS';
@@ -251,7 +251,7 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                             <div className="flex flex-col">
                               <span className="font-bold text-sm group-hover:text-primary transition-colors">{productName}</span>
                               <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                <span className="text-[10px] text-muted-foreground font-mono">CODE: {product?.product_code || '---'}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono">SKU: {product?.product_code || product?.barcode || 'N/A'}</span>
                                 {item.batch_no && (
                                   <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono bg-muted/40 gap-1">
                                     <Layers className="w-2.5 h-2.5 text-primary" />
@@ -341,56 +341,65 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
 
                                   return (
                                     <SearchableSelect
-                                      options={optionsLots.map((l) => {
-                                        const lStock = Number(l.current_stock_quantity || 0);
-                                        const lCap = Number(l.max_batch_capacity || 0);
-                                        const isF = lCap > 0 && lStock >= lCap;
-                                        const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                        const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                        const isTConflict = tCompat.isTypeMismatch;
-                                        const isDraft = stored?.is_draft_allocation;
-                                        const typeSourceLabel = isDraft ? "Draft" : "Stock";
-                                        const lotIsBad = isBadStockLot(l);
+                                      options={[
+                                        {
+                                          value: "0",
+                                          label: "None",
+                                          subLabel: "Do not assign a storage lot",
+                                          badge: "Unassigned",
+                                          badgeClassName: "bg-muted text-muted-foreground border-border/60 font-mono",
+                                        },
+                                        ...optionsLots.map((l) => {
+                                          const lStock = Number(l.current_stock_quantity || 0);
+                                          const lCap = Number(l.max_batch_capacity || 0);
+                                          const isF = lCap > 0 && lStock >= lCap;
+                                          const stored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                          const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
+                                          const isTConflict = tCompat.isTypeMismatch;
+                                          const isDraft = stored?.is_draft_allocation;
+                                          const typeSourceLabel = isDraft ? "Draft" : "Stock";
+                                          const lotIsBad = isBadStockLot(l);
 
-                                        let badgeText: string | undefined;
-                                        let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+                                          let badgeText: string | undefined;
+                                          let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
 
-                                        if (isTConflict && stored) {
-                                          badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
-                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                        } else if (isF) {
-                                          badgeText = `Full (${lStock}/${lCap})`;
-                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                        } else if (lotIsBad) {
-                                          badgeText = "Bad Stock / Quarantine";
-                                          badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
-                                        } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
-                                          badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                          badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                        } else if (stored?.is_empty) {
-                                          badgeText = "Empty Lot";
-                                          badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                        }
+                                          if (isTConflict && stored) {
+                                            badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
+                                            badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                          } else if (isF) {
+                                            badgeText = `Full (${lStock}/${lCap})`;
+                                            badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                          } else if (lotIsBad) {
+                                            badgeText = "Bad Stock / Quarantine";
+                                            badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
+                                          } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
+                                            badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                            badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                          } else if (stored?.is_empty) {
+                                            badgeText = "Empty Lot";
+                                            badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                          }
 
-                                        const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
-                                        const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                        const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+                                          const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
+                                          const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                          const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
 
-                                        return {
-                                          value: String(l.lot_id),
-                                          label: `${prefix}${l.lot_name}${capStr}`,
-                                          subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                          badge: badgeText,
-                                          badgeClassName: badgeClass,
-                                        };
-                                      })}
-                                      value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
+                                          return {
+                                            value: String(l.lot_id),
+                                            label: `${prefix}${l.lot_name}${capStr}`,
+                                            subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                            badge: badgeText,
+                                            badgeClassName: badgeClass,
+                                          };
+                                        })
+                                      ]}
+                                      value={destinationLotIds[item.id] !== undefined ? String(destinationLotIds[item.id]) : "0"}
                                       onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
                                       placeholder={loadingLots ? "Loading..." : "Select Lot"}
                                       searchPlaceholder="Search lots..."
                                       disabled={loadingLots}
                                       emptyMessage="No compatible storage lots found."
-                                      triggerClassName={`h-8 text-xs font-semibold w-[160px] border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
+                                      triggerClassName={`h-8 text-xs font-semibold w-full border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
                                     />
                                   );
                                 })()}

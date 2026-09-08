@@ -208,3 +208,89 @@ export function resolveBranchSalesman(
   return undefined;
 }
 
+export interface LotAndBatchDisplayLine {
+  lotName: string;
+  batchNos: string[];
+  displayText: string;
+}
+
+/**
+ * Formats Lot and Batch information into structured lines:
+ * Lot Name  ( Batch no, Batch no )
+ * Lot Name  ( Batch no, Batch no )
+ */
+export function getLotAndBatchDisplayLines(item: {
+  batch_no?: string | null;
+  source_lot_id?: number | null;
+  source_lot_name?: string | null;
+  lot_id?: number | null;
+  lot_name?: string | null;
+  lot_allocations?: Array<{
+    lot_id?: number | null;
+    lot_name?: string | null;
+    batches?: Array<{ batch_no?: string | null }>;
+  }> | null;
+}): LotAndBatchDisplayLine[] {
+  const result: LotAndBatchDisplayLine[] = [];
+
+  if (item.lot_allocations && item.lot_allocations.length > 0) {
+    for (const grp of item.lot_allocations) {
+      const rawLotName = grp.lot_name || (grp.lot_id ? `Lot #${grp.lot_id}` : 'Lot');
+      const lotName = rawLotName.trim();
+      const batchNos: string[] = [];
+
+      if (grp.batches && grp.batches.length > 0) {
+        for (const b of grp.batches) {
+          if (b.batch_no) {
+            const parts = b.batch_no.split(',').map((s) => s.trim()).filter(Boolean);
+            batchNos.push(...parts);
+          }
+        }
+      }
+
+      const uniqueBatches = Array.from(new Set(batchNos));
+      const displayText = uniqueBatches.length > 0
+        ? `${lotName} ( ${uniqueBatches.join(', ')} )`
+        : lotName;
+
+      result.push({
+        lotName,
+        batchNos: uniqueBatches,
+        displayText,
+      });
+    }
+  }
+
+  if (result.length === 0) {
+    const rawLotName =
+      item.source_lot_name ||
+      item.lot_name ||
+      (item.source_lot_id ? `Lot #${item.source_lot_id}` : item.lot_id ? `Lot #${item.lot_id}` : '');
+    const lotName = rawLotName.trim();
+    const batchNoStr = item.batch_no || '';
+    const batchNos = batchNoStr
+      ? batchNoStr.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    if (lotName) {
+      const displayText = batchNos.length > 0
+        ? `${lotName} ( ${batchNos.join(', ')} )`
+        : lotName;
+      result.push({
+        lotName,
+        batchNos,
+        displayText,
+      });
+    } else if (batchNos.length > 0) {
+      result.push({
+        lotName: '',
+        batchNos,
+        displayText: `( ${batchNos.join(', ')} )`,
+      });
+    }
+  }
+
+  return result;
+}
+
+

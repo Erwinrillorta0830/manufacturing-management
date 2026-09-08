@@ -108,9 +108,16 @@ export const StockAdjustmentManualHeaderSchema = z.object({
   posted_by: z.any().optional(),
   postedAt: z.string().optional(),
   items: z.any().optional(), // Expanded items or count
+  inventory_type: z.enum(["FINISHED_GOODS", "RAW_MATERIALS"]).optional(),
   stock_adjustment_attachment: z.array(StockAdjustmentAttachmentSchema).optional(),
 });
 export type StockAdjustmentManualHeader = z.infer<typeof StockAdjustmentManualHeaderSchema>;
+
+/**
+ * Inventory Type options
+ */
+export const InventoryTypeSchema = z.enum(["FINISHED_GOODS", "RAW_MATERIALS"]);
+export type InventoryType = z.infer<typeof InventoryTypeSchema>;
 
 /**
  * Full Stock Adjustment (Header + Items + RFID)
@@ -127,7 +134,8 @@ export const StockAdjustmentManualFormSchema = z
   .object({
     doc_no: z.string().min(1, "Document number is required"),
     branch_id: z.number().min(1, "Branch is required"),
-    supplier_id: z.number().min(1, "Supplier is required"),
+    inventory_type: z.enum(["FINISHED_GOODS", "RAW_MATERIALS"]),
+    supplier_id: z.number().optional(),
     type: StockAdjustmentManualTypeSchema,
     remarks: z.string().optional(),
     items: z.array(StockAdjustmentManualItemSchema).min(1, "At least one item is required"),
@@ -137,6 +145,15 @@ export const StockAdjustmentManualFormSchema = z
     stock_adjustment_attachment: z.array(StockAdjustmentAttachmentSchema).min(1, "At least one attachment is required"),
   })
   .superRefine((data, ctx) => {
+    // Supplier is only required for Raw Materials / Packaging
+    if (data.inventory_type === "RAW_MATERIALS" && (!data.supplier_id || Number(data.supplier_id) <= 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Supplier is required for Raw Materials / Packaging",
+        path: ["supplier_id"],
+      });
+    }
+
     if (data.items && Array.isArray(data.items)) {
       data.items.forEach((item, index) => {
         if (!item.lot_id || !item.batch_no || String(item.batch_no).trim() === "") {

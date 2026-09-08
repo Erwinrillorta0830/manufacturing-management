@@ -91,9 +91,11 @@ export function useStockTransferReceiveManual() {
         const batchTotalQty = (allocs && allocs.length > 0)
           ? allocs.reduce((sum, g) => sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0)
           : undefined;
+        const isDispatched = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(st.status);
+        const dispatchedVal = st.dispatched_quantity ?? st.picked_quantity ?? st.scanned_quantity;
         const defaultQty = batchTotalQty !== undefined
           ? batchTotalQty
-          : Math.max(0, st.scanned_quantity ?? st.picked_quantity ?? st.allocated_quantity ?? 0);
+          : Math.max(0, dispatchedVal ?? (isDispatched ? 0 : st.allocated_quantity) ?? 0);
 
         return {
           ...st,
@@ -218,7 +220,7 @@ export function useStockTransferReceiveManual() {
           const sQtyMap = new Map<number, number>();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (onhand || []).forEach((bo: any) => {
-            const lId = Number(bo.lotId);
+            const lId = Number(bo.mmLotId || bo.mm_lot_id || 0);
             if (lId > 0) {
               sQtyMap.set(lId, (sQtyMap.get(lId) || 0) + Number(bo.onhandQuantity || 0));
             }
@@ -323,6 +325,18 @@ export function useStockTransferReceiveManual() {
     // Validate that every line item has a destination lot selected
     for (const item of group.items) {
       const allocs = itemLotAllocations[item.id];
+      const isDispatchedStatus = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(item.status);
+      const rawDispatched = item.dispatched_quantity ?? item.picked_quantity ?? item.scanned_quantity;
+      const dispatchedQty = Math.max(0, rawDispatched ?? (isDispatchedStatus ? 0 : item.allocated_quantity) ?? 0);
+      const itBatchTotal = (allocs && allocs.length > 0)
+        ? allocs.reduce((s, g) => s + (g.batches || []).reduce((bS, b) => bS + Number(b.quantity || 0), 0), 0)
+        : undefined;
+      const effectiveQty = itBatchTotal !== undefined ? itBatchTotal : (receivedQtys[item.id] ?? dispatchedQty);
+
+      if (dispatchedQty === 0 || effectiveQty === 0) {
+        continue;
+      }
+
       const assignedLotId = destinationLotIds[item.id];
       const hasAllocatedLot = (allocs && allocs.length > 0 && allocs.some(a => Number(a.lot_id) > 0)) || Number(assignedLotId || 0) > 0;
       if (!hasAllocatedLot) {
@@ -337,6 +351,18 @@ export function useStockTransferReceiveManual() {
     // Validate product type compatibility for all destination lots
     for (const item of group.items) {
       const allocs = itemLotAllocations[item.id];
+      const isDispatchedStatus = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(item.status);
+      const rawDispatched = item.dispatched_quantity ?? item.picked_quantity ?? item.scanned_quantity;
+      const dispatchedQty = Math.max(0, rawDispatched ?? (isDispatchedStatus ? 0 : item.allocated_quantity) ?? 0);
+      const itBatchTotal = (allocs && allocs.length > 0)
+        ? allocs.reduce((s, g) => s + (g.batches || []).reduce((bS, b) => bS + Number(b.quantity || 0), 0), 0)
+        : undefined;
+      const effectiveQty = itBatchTotal !== undefined ? itBatchTotal : (receivedQtys[item.id] ?? dispatchedQty);
+
+      if (dispatchedQty === 0 || effectiveQty === 0) {
+        continue;
+      }
+
       if (allocs && allocs.length > 0) {
         for (const g of allocs) {
           const lot = targetLots.find((l) => Number(l.lot_id) === Number(g.lot_id));

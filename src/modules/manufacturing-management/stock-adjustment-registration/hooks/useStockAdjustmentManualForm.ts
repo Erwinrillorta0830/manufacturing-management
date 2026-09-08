@@ -101,6 +101,28 @@ export function useStockAdjustmentManualForm() {
     }
   }, []);
 
+  // ── Products for Finished Goods (internal production, no supplier required) ──
+  const fetchFinishedGoodsProducts = useCallback(async (search?: string) => {
+    setIsProductsLoading(true);
+    setProducts([]);
+    try {
+      const params = new URLSearchParams();
+      params.set("inventoryType", "FINISHED_GOODS");
+      if (search) params.set("search", search);
+      const response = await fetch(
+        `/api/scm/inventory-management/stock-adjustment-manual-registration/products?${params.toString()}`
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const result = await response.json();
+      setProducts(result.data || []);
+    } catch (err) {
+      console.error("Failed to fetch finished goods products:", err);
+    } finally {
+      setIsProductsLoading(false);
+    }
+  }, []);
 
   // ── Branch inventory (pre-fetch once per branch) ──────────────────
   const fetchBranchInventory = useCallback(async (branchId: number) => {
@@ -256,6 +278,7 @@ export function useStockAdjustmentManualForm() {
     fetchById,
     fetchProducts,
     fetchProductsBySupplier,
+    fetchFinishedGoodsProducts,
     fetchBranchInventory,
     fetchInventory,
     fetchNextDocNo,

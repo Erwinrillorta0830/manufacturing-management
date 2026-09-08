@@ -34,6 +34,11 @@ interface StockConversionTableProps {
   convertingId?: number | null;
 }
 
+const INVENTORY_TYPE_OPTIONS = [
+  { value: "FINISHED_GOODS", label: "Finished Goods" },
+  { value: "RAW_MATERIALS", label: "Raw Materials" },
+];
+
 export function StockConversionTable({
   data,
   totalCount,
@@ -55,6 +60,7 @@ export function StockConversionTable({
   const [brandFilter, setBrandFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
+  const [inventoryType, setInventoryType] = useState<string>("FINISHED_GOODS");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [hasStockFilter, setHasStockFilter] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -121,6 +127,16 @@ export function StockConversionTable({
     });
   }, [options, data]);
 
+  const isPrimaryFilterSelected = !!localBranchId && (inventoryType === "FINISHED_GOODS" || !!supplierFilter);
+
+  const handleInventoryTypeChange = (val: string | null) => {
+    const nextType = val || "FINISHED_GOODS";
+    setInventoryType(nextType);
+    if (nextType === "FINISHED_GOODS") {
+      setSupplierFilter("");
+    }
+  };
+
   const handleApplyFilters = (searchOverride?: string, branchOverride?: number) => {
     const filterPayload: Record<string, string> = {};
     
@@ -129,7 +145,9 @@ export function StockConversionTable({
     const activeSearch = (typeof searchOverride === 'string') ? searchOverride : searchQuery;
     const activeBranchId = branchOverride !== undefined ? branchOverride : localBranchId;
 
-    if (supplierFilter) {
+    filterPayload.inventoryType = inventoryType;
+
+    if (inventoryType !== "FINISHED_GOODS" && supplierFilter) {
       // Find by name OR shortcut to be safe
       const found = uniqueSuppliers.find(s => s.name === supplierFilter || s.shortcut === supplierFilter);
       filterPayload.supplierShortcut = found?.shortcut || supplierFilter;
@@ -156,7 +174,7 @@ export function StockConversionTable({
     const handler = setTimeout(() => {
       // Apply filters if there is a search query OR if the search query was just cleared
       // This ensures that deleting the search string actually resets the list.
-      if (localBranchId && supplierFilter) {
+      if (localBranchId && (inventoryType === "FINISHED_GOODS" || supplierFilter)) {
         handleApplyFilters();
       }
     }, 400);
@@ -169,6 +187,7 @@ export function StockConversionTable({
     setBrandFilter("");
     setCategoryFilter("");
     setUnitFilter("");
+    setInventoryType("FINISHED_GOODS");
     setSupplierFilter("");
     setHasStockFilter(false);
     setSearchQuery("");
@@ -195,10 +214,10 @@ export function StockConversionTable({
   );
 
   const filterActions = (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      {/* Primary Controls: Branch & Supplier side by side */}
-      <div className="flex items-center gap-2">
-        <div className="w-[170px]">
+    <div className="flex items-center gap-1.5 xl:gap-2 flex-nowrap shrink-0">
+      {/* Primary Controls: Branch, Inventory Type & Supplier side by side */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        <div className="w-[145px]">
           <SearchableCombobox
             options={branches
               ?.filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
@@ -214,7 +233,18 @@ export function StockConversionTable({
           />
         </div>
 
-        <div className="w-[175px]">
+        <div className="w-[145px]">
+          <SearchableCombobox
+            options={INVENTORY_TYPE_OPTIONS}
+            value={inventoryType}
+            onValueChange={handleInventoryTypeChange}
+            placeholder="Inventory Type"
+            className="h-9"
+            disabled={isLoading}
+          />
+        </div>
+
+        <div className="w-[150px]">
           <SearchableCombobox
             options={uniqueSuppliers.map(s => ({
               value: s.name || "Unknown",
@@ -222,22 +252,22 @@ export function StockConversionTable({
             }))}
             value={supplierFilter}
             onValueChange={setSupplierFilter}
-            placeholder="Select Supplier"
+            placeholder={inventoryType === "FINISHED_GOODS" ? "Not Applicable" : "Select Supplier"}
             className="h-9"
-            disabled={isLoading}
+            disabled={isLoading || inventoryType === "FINISHED_GOODS"}
           />
         </div>
       </div>
 
       {/* Divider */}
-      <div className="hidden xl:block w-px h-6 bg-slate-200 dark:bg-slate-800" />
+      <div className="hidden lg:block w-px h-5 bg-slate-200 dark:bg-slate-800 shrink-0" />
 
       {/* Secondary Filters Group */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-1.5 shrink-0">
         <div 
-          className={`flex items-center space-x-2 bg-blue-500/5 px-3 py-1.5 rounded-md border border-blue-500/10 h-9 transition-colors ${(!localBranchId || !supplierFilter || isLoading) ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-blue-500/10"}`}
+          className={`flex items-center space-x-1.5 bg-blue-500/5 px-2.5 py-1 rounded-md border border-blue-500/10 h-9 transition-colors shrink-0 ${(!isPrimaryFilterSelected || isLoading) ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-blue-500/10"}`}
           onClick={(e) => {
-            if (isLoading || !localBranchId || !supplierFilter) return;
+            if (isLoading || !isPrimaryFilterSelected) return;
             if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).getAttribute("role") === "checkbox") return;
             setHasStockFilter(prev => !prev);
             setPage(1);
@@ -250,17 +280,17 @@ export function StockConversionTable({
               setHasStockFilter(!!checked);
               setPage(1);
             }} 
-            disabled={isLoading || !localBranchId || !supplierFilter}
+            disabled={isLoading || !isPrimaryFilterSelected}
           />
           <Label 
             htmlFor="convertible-only" 
-            className={`text-[10px] font-bold cursor-pointer uppercase tracking-tight select-none ${(!localBranchId || !supplierFilter) ? "text-muted-foreground opacity-50" : "text-blue-600 dark:text-blue-400"}`}
+            className={`text-[10px] font-bold cursor-pointer uppercase tracking-tight select-none whitespace-nowrap ${(!isPrimaryFilterSelected) ? "text-muted-foreground opacity-50" : "text-blue-600 dark:text-blue-400"}`}
           >
             Convertible Only
           </Label>
         </div>
 
-        <div className="w-[120px]">
+        <div className="w-[110px]">
           <SearchableCombobox
             options={uniqueBrands.map(b => ({
               value: b.name || "Unknown",
@@ -270,11 +300,11 @@ export function StockConversionTable({
             onValueChange={setBrandFilter}
             placeholder="All Brands"
             className="h-9"
-            disabled={isLoading || !localBranchId || !supplierFilter}
+            disabled={isLoading || !isPrimaryFilterSelected}
           />
         </div>
 
-        <div className="w-[130px]">
+        <div className="w-[125px]">
           <SearchableCombobox
             options={uniqueCategories.map(c => ({
               value: c.name || "Unknown",
@@ -282,13 +312,13 @@ export function StockConversionTable({
             }))}
             value={categoryFilter}
             onValueChange={setCategoryFilter}
-            placeholder="All Categories"
+            placeholder="Categories"
             className="h-9"
-            disabled={isLoading || !localBranchId || !supplierFilter}
+            disabled={isLoading || !isPrimaryFilterSelected}
           />
         </div>
 
-        <div className="w-[105px]">
+        <div className="w-[100px]">
           <SearchableCombobox
             options={uniqueUnits.map(u => ({
               value: u.name || "Unknown",
@@ -298,17 +328,17 @@ export function StockConversionTable({
             onValueChange={setUnitFilter}
             placeholder="All Units"
             className="h-9"
-            disabled={isLoading || !localBranchId || !supplierFilter}
+            disabled={isLoading || !isPrimaryFilterSelected}
           />
         </div>
 
-        <div className="flex items-center gap-1 ml-1">
+        <div className="flex items-center gap-1 shrink-0">
           <Button 
             variant="default" 
             size="sm" 
             onClick={() => handleApplyFilters()} 
-            disabled={isLoading || !localBranchId || !supplierFilter}
-            className="h-9 px-3 text-xs font-bold uppercase bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all active:scale-95 disabled:opacity-50"
+            disabled={isLoading || !isPrimaryFilterSelected}
+            className="h-9 px-2.5 text-xs font-bold uppercase bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all active:scale-95 disabled:opacity-50"
           >
             Apply
           </Button>
@@ -316,8 +346,8 @@ export function StockConversionTable({
             variant="outline" 
             size="sm" 
             onClick={handleClearFilters} 
-            disabled={isLoading || !localBranchId || !supplierFilter}
-            className="h-9 px-3 text-xs font-bold uppercase border-slate-200 hover:bg-slate-50 transition-all active:scale-95 disabled:opacity-50"
+            disabled={isLoading || !isPrimaryFilterSelected}
+            className="h-9 px-2.5 text-xs font-bold uppercase border-slate-200 hover:bg-slate-50 transition-all active:scale-95 disabled:opacity-50"
           >
             Clear
           </Button>
@@ -325,7 +355,7 @@ export function StockConversionTable({
             variant="ghost" 
             size="icon" 
             onClick={onRefresh} 
-            disabled={isLoading || !localBranchId || !supplierFilter} 
+            disabled={isLoading || !isPrimaryFilterSelected} 
             className="h-9 w-9 rounded-lg hover:bg-blue-50 text-blue-600 disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
@@ -356,8 +386,22 @@ export function StockConversionTable({
         searchKey="productName"
         isLoading={isLoading}
         actionComponent={filterActions}
-        emptyTitle={(!selectedBranchId || !supplierFilter) ? "Select a Branch and Supplier to start" : "No products found"}
-        emptyDescription={(!selectedBranchId || !supplierFilter) ? "Please choose both a branch and a supplier from the filters above and click Apply to view stock levels." : (hasStockFilter ? "No products with convertible stock found for this supplier." : "Try adjusting your filters.")}
+        emptyTitle={
+          !isPrimaryFilterSelected
+            ? (inventoryType === "FINISHED_GOODS"
+                ? "Select a Branch to start"
+                : "Select a Branch and Supplier to start")
+            : "No products found"
+        }
+        emptyDescription={
+          !isPrimaryFilterSelected
+            ? (inventoryType === "FINISHED_GOODS"
+                ? "Please choose a branch from the filters above and click Apply to view stock levels."
+                : "Please choose both a branch and a supplier from the filters above and click Apply to view stock levels.")
+            : (hasStockFilter
+                ? "No products with convertible stock found."
+                : "Try adjusting your filters.")
+        }
       />
     </div>
   );

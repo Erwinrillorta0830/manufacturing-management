@@ -366,7 +366,7 @@ async function fetchEligibleInvoices(branchId: number): Promise<InvoiceRow[]> {
         `${DIRECTUS_URL}/items/consolidator?limit=-1&fields=id,status,is_delete`
     ).catch(() => ({ data: [] }));
     const activeConsolidatorIds = ((consolidatorJson.data || []) as Array<{ id: number; status: string; is_delete?: number | boolean }>)
-        .filter((c) => !c.is_delete && ["Pending", "Picking", "Picked", "Audited"].includes(c.status))
+        .filter((c) => !c.is_delete && ["Pending", "Picking", "Picked", "Approved", "Audited"].includes(c.status))
         .map((c) => Number(c.id))
         .filter(Boolean);
 

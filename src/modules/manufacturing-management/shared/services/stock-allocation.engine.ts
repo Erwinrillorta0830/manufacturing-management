@@ -258,38 +258,49 @@ export async function allocateStock(params: {
     if (onhandData && onhandData.length > 0) {
       const batchMap = new Map<string, MMInventoryLot>();
       for (const oh of onhandData) {
-        if (Number(oh.branchId) !== Number(params.branchId)) continue;
-        const key = oh.batchNo || `lot-${oh.inventoryLotId || oh.lotId}`;
-        const existing = batchMap.get(key);
-        const qty = Number(oh.onhandQuantity || 0);
+        const rawOh = oh as unknown as Record<string, unknown>;
+        const bId = Number(oh.branchId ?? rawOh.branch_id ?? 0);
+        if (params.branchId && bId !== Number(params.branchId)) continue;
+
+        const effectiveMmLotId = Number(oh.mmLotId ?? rawOh.mm_lot_id ?? rawOh.lot_id ?? 0);
+        const effectiveInvLotId = (oh.inventoryLotId !== undefined && oh.inventoryLotId !== null)
+          ? Number(oh.inventoryLotId)
+          : (rawOh.inventory_lot_id !== undefined && rawOh.inventory_lot_id !== null ? Number(rawOh.inventory_lot_id) : null);
+
+        const key = (oh.batchNo ?? rawOh.batch_no) || `lot-${effectiveInvLotId || effectiveMmLotId}`;
+        const existing = batchMap.get(String(key));
+        const qty = Number(oh.onhandQuantity ?? rawOh.onhand_quantity ?? 0);
 
         if (existing) {
           existing.available_quantity = (existing.available_quantity || 0) + qty;
-          if (!existing.expiry_date && oh.expirationDate) {
-            existing.expiry_date = oh.expirationDate;
+          if (!existing.expiry_date && (oh.expirationDate ?? rawOh.expiration_date)) {
+            existing.expiry_date = (oh.expirationDate ?? rawOh.expiration_date) as string;
           }
-          if (!existing.manufacturing_date && oh.manufacturingDate) {
-            existing.manufacturing_date = oh.manufacturingDate;
+          if (!existing.manufacturing_date && (oh.manufacturingDate ?? rawOh.manufacturing_date)) {
+            existing.manufacturing_date = (oh.manufacturingDate ?? rawOh.manufacturing_date) as string;
           }
-          if (oh.inventoryLotId && Number(oh.inventoryLotId) > 0) {
-            existing.inventory_lot_id = Number(oh.inventoryLotId);
+          if (effectiveInvLotId && effectiveInvLotId > 0) {
+            existing.inventory_lot_id = effectiveInvLotId;
+          }
+          if (effectiveMmLotId && effectiveMmLotId > 0 && (!existing.lot_id || existing.lot_id <= 0)) {
+            existing.lot_id = effectiveMmLotId;
           }
         } else {
-          batchMap.set(key, {
-            inventory_lot_id: Number(oh.inventoryLotId || oh.lotId || 1),
-            lot_id: Number(oh.lotId || 1),
-            branch_id: Number(oh.branchId),
-            product_id: Number(oh.productId || params.productId),
-            batch_no: oh.batchNo,
-            manufacturing_date: oh.manufacturingDate || null,
-            expiry_date: oh.expirationDate || null,
-            qa_status: (oh.inventoryCondition as QAStatus) || "GOOD",
+          batchMap.set(String(key), {
+            inventory_lot_id: effectiveInvLotId && effectiveInvLotId > 0 ? effectiveInvLotId : (effectiveMmLotId > 0 ? effectiveMmLotId : 0),
+            lot_id: effectiveMmLotId > 0 ? effectiveMmLotId : 0,
+            branch_id: bId || Number(params.branchId),
+            product_id: Number(oh.productId ?? rawOh.product_id ?? params.productId),
+            batch_no: String(oh.batchNo ?? rawOh.batch_no ?? ""),
+            manufacturing_date: (oh.manufacturingDate ?? rawOh.manufacturing_date ?? null) as string | null,
+            expiry_date: (oh.expirationDate ?? rawOh.expiration_date ?? null) as string | null,
+            qa_status: ((oh.inventoryCondition ?? rawOh.inventory_condition ?? "GOOD") as string).toUpperCase() as QAStatus,
             status: "ACTIVE",
             unit_cost: 0,
             available_quantity: qty,
-            lot_name: oh.lotName || `Lot #${oh.lotId}`,
-            product_name: oh.productName,
-            product_code: oh.productCode,
+            lot_name: (oh.lotName ?? rawOh.lot_name ?? (effectiveMmLotId > 0 ? `Lot #${effectiveMmLotId}` : undefined)) as string | undefined,
+            product_name: (oh.productName ?? rawOh.product_name) as string | undefined,
+            product_code: (oh.productCode ?? rawOh.product_code) as string | undefined,
           });
         }
       }
