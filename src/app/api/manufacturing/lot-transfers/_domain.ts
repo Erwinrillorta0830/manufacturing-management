@@ -696,12 +696,39 @@ function appendProtectedAllocation(
     allocations.push(input);
 }
 
-function jobOrderStatus(row: RecordValue): string {
+function jobOrderStatus(row: RecordValue, statusByMaterialId: Map<number, string>): string {
     const material = firstValue(row, ["jo_material_id"]);
     const jobOrder = isRecord(material) ? firstValue(material, ["job_order_id"]) : null;
     const nestedStatus = isRecord(jobOrder) ? firstValue(jobOrder, ["status"]) : null;
+    const materialId = relationId(material, ["jo_material_id"]);
     return stringValue(
-        nestedStatus || firstValue(row, ["job_order_status", "jo_material_id.job_order_id.status"])
+        nestedStatus || firstValue(row, ["job_order_status", "jo_material_id.job_order_id.status"]) || statusByMaterialId.get(materialId)
+    );
+}
+
+async function jobOrderStatusesForReservations(rows: RecordValue[]): Promise<Map<number, string>> {
+    const materialIds = [...new Set(rows.map((row) => relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"])).filter((id) => id > 0))];
+    if (materialIds.length === 0) return new Map();
+
+    const materials = await directusRows(
+        `/items/manufacturing_job_order_materials?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_material_id,job_order_id&limit=-1`,
+        "Job-order material identity lookup"
+    );
+    const jobOrderIds = [...new Set(materials.map((row) => relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])).filter((id) => id > 0))];
+    if (jobOrderIds.length === 0) return new Map();
+
+    const jobOrders = await directusRows(
+        `/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id,status&limit=-1`,
+        "Job-order status lookup"
+    );
+    const statusByJobOrderId = new Map(
+        jobOrders.map((row) => [relationId(firstValue(row, ["job_order_id"]), ["job_order_id"]), stringValue(row.status)])
+    );
+    return new Map(
+        materials.map((row) => [
+            relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"]),
+            statusByJobOrderId.get(relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])) || ""
+        ])
     );
 }
 
@@ -751,7 +778,7 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
             "Sales-invoice protected allocation lookup"
         ),
         directusRows(
-            `/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(jobReservationFilter)}&fields=jo_materials_reservation_id,product_id,branch_id,mm_lot_id,batch_no,reserved_quantity,actual_used_quantity,jo_material_id,jo_material_id.job_order_id,jo_material_id.job_order_id.status&limit=-1`,
+            `/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(jobReservationFilter)}&fields=jo_materials_reservation_id,product_id,branch_id,mm_lot_id,batch_no,reserved_quantity,actual_used_quantity,jo_material_id&limit=-1`,
             "Job-order protected allocation lookup"
         ),
         directusRows(
@@ -763,6 +790,7 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
             "Lot-transfer protected allocation lookup"
         )
     ]);
+    const statusByMaterialId = await jobOrderStatusesForReservations(jobReservationRows);
 
     for (const row of salesOrderRows) {
         const allocationId = rowId(row, ["reservation_id", "id"]);
@@ -799,7 +827,7 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
     for (const row of jobReservationRows) {
         const allocationId = rowId(row, ["jo_materials_reservation_id"]);
         const quantity = Math.max(0, numeric(row.reserved_quantity));
-        const status = jobOrderStatus(row);
+        const status = jobOrderStatus(row, statusByMaterialId);
         if (quantity <= 0) continue;
         if (allocationId <= 0) {
             unresolved.push("A job-order allocation has no resolvable reservation identity.");
