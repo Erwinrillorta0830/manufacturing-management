@@ -703,6 +703,54 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
     };
 }
 
+function transientRecordFromInput(input: LotTransferInput): LotTransferRecord {
+    return {
+        id: 0,
+        requestNo: "DRAFT-PREFLIGHT",
+        status: "Draft",
+        branchId: input.branchId,
+        productId: input.productId,
+        sourceLotId: input.sourceLotId,
+        sourceInventoryLotId: input.sourceInventoryLotId,
+        sourceBatchNo: input.sourceBatchNo,
+        targetLotId: input.targetLotId,
+        targetInventoryLotId: input.targetInventoryLotId,
+        targetBatchNo: input.targetBatchNo,
+        quantity: input.quantity,
+        reason: input.reason,
+        requestedBy: null,
+        requestedByName: null,
+        requestedAt: null,
+        submittedAt: null,
+        approvedBy: null,
+        approvedByName: null,
+        approvedAt: null,
+        postedBy: null,
+        postedByName: null,
+        postedAt: null,
+        rejectedBy: null,
+        rejectedByName: null,
+        rejectedAt: null,
+        rejectionReason: null,
+        qaEvidence: null,
+        effectiveExpiryDate: null,
+        sourceUnitCost: null,
+        targetUnitCost: null,
+        sourceMovementId: null,
+        targetMovementId: null,
+        sourceBalanceBefore: null,
+        sourceBalanceAfter: null,
+        targetBalanceBefore: null,
+        targetBalanceAfter: null,
+        idempotencyKey: null,
+        postingStartedAt: null,
+        reconciliationRequired: false,
+        postingError: null,
+        createdAt: null,
+        updatedAt: null
+    };
+}
+
 function transferPayload(input: LotTransferInput, actorUserId: number | null, requestNo: string): RecordValue {
     return {
         request_no: requestNo,
@@ -1066,6 +1114,12 @@ export async function submitLotTransfer(id: number): Promise<LotTransferRecord> 
     if (record.status !== "Draft") throw new LotTransferError(409, `Only Draft requests can be submitted. Current status: ${record.status}.`);
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
     await assertCanonicalLotReferences(record);
+    const preview = await buildLotTransferPreview(record);
+    if (!preview.canApprove) {
+        throw new LotTransferError(409, "The lot-transfer request failed the required submission checks.", {
+            failedChecks: failedPreviewChecks(preview)
+        });
+    }
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
         "PATCH",
@@ -1073,6 +1127,12 @@ export async function submitLotTransfer(id: number): Promise<LotTransferRecord> 
         "Lot-transfer submission"
     );
     return row ? mapTransferRow(row) : getLotTransfer(id);
+}
+
+export async function previewLotTransferInput(input: LotTransferInput): Promise<LotTransferPreview> {
+    assertDifferentLotIds(input.sourceLotId, input.targetLotId);
+    await assertCanonicalLotReferences(input);
+    return buildLotTransferPreview(transientRecordFromInput(input));
 }
 
 async function createInventoryMovement(payload: RecordValue): Promise<number> {

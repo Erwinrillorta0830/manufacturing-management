@@ -132,6 +132,14 @@ export async function previewLotTransfer(id: number): Promise<LotTransferPreview
     return unwrap(payload);
 }
 
+export async function previewLotTransferInput(form: LotTransferForm): Promise<LotTransferPreview> {
+    const payload = await requestJson<ApiEnvelope<LotTransferPreview>>("/api/manufacturing/lot-transfers/preview", {
+        method: "POST",
+        body: JSON.stringify(toPayload(form))
+    });
+    return unwrap(payload);
+}
+
 export async function approveLotTransfer(id: number): Promise<{ transfer: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
     const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/approve`, {
         method: "POST",
