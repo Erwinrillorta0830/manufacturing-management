@@ -112,11 +112,30 @@ export interface LotBalanceSnapshot {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     availableQuantity: number;
     onHandAfter: number;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
+}
+
+export type ProtectedAllocationSource =
+    | "SALES_ORDER"
+    | "SALES_INVOICE"
+    | "JOB_ORDER_MATERIAL"
+    | "STOCK_TRANSFER"
+    | "LOT_TRANSFER";
+
+export interface ProtectedAllocation {
+    source: ProtectedAllocationSource;
+    allocationId: number;
+    quantity: number;
+    status: string;
+    reference: string | null;
 }
 
 export interface LotTransferPreview {
@@ -218,6 +237,10 @@ function isRecord(value: unknown): value is RecordValue {
 function numeric(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatProtectedAllocationQuantity(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function nullableNumeric(value: unknown): number | null {
@@ -616,20 +639,314 @@ async function movementsForLot(input: { branchId: number; lotId: number }, exclu
     return excludeExactTransferMovement(rows, excludeTransfer);
 }
 
-async function reservedQuantityForInventoryLot(inventoryLotIdValue: number): Promise<number> {
-    const params = new URLSearchParams({
-        "filter[status][_eq]": "Reserved",
-        "filter[inventory_lot_id][_eq]": String(inventoryLotIdValue),
-        fields: "quantity",
-        limit: "-1"
+const ACTIVE_JOB_ORDER_STATUSES = new Set([
+    "PLANNED",
+    "DRAFT",
+    "RELEASED",
+    "IN PROGRESS",
+    "ONGOING",
+    "PROCEED",
+    "ON HOLD"
+]);
+const ACTIVE_STOCK_TRANSFER_STATUS_VALUES = [
+    "REQUESTED",
+    "FOR_PICKING",
+    "PICKING",
+    "PICKED",
+    "FOR_LOADING"
+];
+const ACTIVE_STOCK_TRANSFER_STATUSES = new Set(ACTIVE_STOCK_TRANSFER_STATUS_VALUES.map((status) => normalizeStatus(status)));
+const ACTIVE_LOT_TRANSFER_STATUS_VALUES = ["Submitted", "Approved"];
+
+interface ProtectedAllocationLookup {
+    branchId: number;
+    productId: number;
+    lotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    legacyReservedQuantity: number;
+    excludeLotTransferId?: number;
+}
+
+interface ProtectedAllocationSummary {
+    legacyReservedQuantity: number;
+    explicitQuantity: number;
+    totalQuantity: number;
+    allocations: ProtectedAllocation[];
+    unresolved: string[];
+}
+
+function normalizedBatch(value: unknown): string {
+    return stringValue(value).toLowerCase();
+}
+
+function activeStatus(value: unknown, statuses: Set<string>): boolean {
+    return statuses.has(normalizeStatus(value));
+}
+
+function appendProtectedAllocation(
+    allocations: ProtectedAllocation[],
+    seen: Set<string>,
+    input: ProtectedAllocation
+): void {
+    if (input.allocationId <= 0 || input.quantity <= 0) return;
+    const key = `${input.source}:${input.allocationId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    allocations.push(input);
+}
+
+function jobOrderStatus(row: RecordValue, statusByMaterialId: Map<number, string>): string {
+    const material = firstValue(row, ["jo_material_id"]);
+    const jobOrder = isRecord(material) ? firstValue(material, ["job_order_id"]) : null;
+    const nestedStatus = isRecord(jobOrder) ? firstValue(jobOrder, ["status"]) : null;
+    const materialId = relationId(material, ["jo_material_id"]);
+    return stringValue(
+        nestedStatus || firstValue(row, ["job_order_status", "jo_material_id.job_order_id.status"]) || statusByMaterialId.get(materialId)
+    );
+}
+
+async function jobOrderStatusesForReservations(rows: RecordValue[]): Promise<Map<number, string>> {
+    const materialIds = [...new Set(rows.map((row) => relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"])).filter((id) => id > 0))];
+    if (materialIds.length === 0) return new Map();
+
+    const materials = await directusRows(
+        `/items/manufacturing_job_order_materials?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_material_id,job_order_id&limit=-1`,
+        "Job-order material identity lookup"
+    );
+    const jobOrderIds = [...new Set(materials.map((row) => relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])).filter((id) => id > 0))];
+    if (jobOrderIds.length === 0) return new Map();
+
+    const jobOrders = await directusRows(
+        `/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id,status&limit=-1`,
+        "Job-order status lookup"
+    );
+    const statusByJobOrderId = new Map(
+        jobOrders.map((row) => [relationId(firstValue(row, ["job_order_id"]), ["job_order_id"]), stringValue(row.status)])
+    );
+    return new Map(
+        materials.map((row) => [
+            relationId(firstValue(row, ["jo_material_id"]), ["jo_material_id"]),
+            statusByJobOrderId.get(relationId(firstValue(row, ["job_order_id"]), ["job_order_id"])) || ""
+        ])
+    );
+}
+
+function stockTransferReference(row: RecordValue, header: RecordValue | undefined): string | null {
+    return nullableString(
+        firstValue(header || {}, ["order_no"]) ||
+        firstValue(row, ["stock_transfer_id", "reference_no"])
+    );
+}
+
+async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLookup): Promise<ProtectedAllocationSummary> {
+    const allocationRows: ProtectedAllocation[] = [];
+    const seen = new Set<string>();
+    const unresolved: string[] = [];
+    const batchKey = normalizedBatch(input.batchNo);
+
+    const reservationFilter = JSON.stringify({
+        _and: [
+            { inventory_lot_id: { _eq: input.inventoryLotId } },
+            { status: { _in: ["Reserved", "Picked"] } }
+        ]
     });
-    try {
-        const rows = await directusRows(`/items/sales_invoice_reservation?${params.toString()}`, "Inventory reservation lookup");
-        return Math.max(0, rows.reduce((sum, row) => sum + Math.max(0, numeric(row.quantity)), 0));
-    } catch (error) {
-        if (error instanceof LotTransferError && error.statusCode === 404) return 0;
-        throw error;
+    const jobReservationFilter = JSON.stringify({
+        _and: [
+            { product_id: { _eq: input.productId } },
+            { branch_id: { _eq: input.branchId } }
+        ]
+    });
+    const stockDetailFilter = JSON.stringify({
+        product_id: { _eq: input.productId }
+    });
+    const lotTransferFilter = JSON.stringify({
+        _and: [
+            { source_lot_id: { _eq: input.lotId } },
+            { source_inventory_lot_id: { _eq: input.inventoryLotId } },
+            { status: { _in: ACTIVE_LOT_TRANSFER_STATUS_VALUES } }
+        ]
+    });
+
+    const [salesOrderRows, salesInvoiceRows, jobReservationRows, stockDetailRows, lotTransferRows] = await Promise.all([
+        directusRows(
+            `/items/sales_order_reservation?filter=${encodeURIComponent(reservationFilter)}&fields=reservation_id,reserved_quantity,picked_quantity,status,sales_order_detail_id&limit=-1`,
+            "Sales-order protected allocation lookup"
+        ),
+        directusRows(
+            `/items/sales_invoice_reservation?filter=${encodeURIComponent(reservationFilter)}&fields=id,quantity,status,sales_invoice_detail_id&limit=-1`,
+            "Sales-invoice protected allocation lookup"
+        ),
+        directusRows(
+            `/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(jobReservationFilter)}&fields=jo_materials_reservation_id,product_id,branch_id,mm_lot_id,batch_no,reserved_quantity,actual_used_quantity,jo_material_id&limit=-1`,
+            "Job-order protected allocation lookup"
+        ),
+        directusRows(
+            `/items/mm_stock_transfer_details?filter=${encodeURIComponent(stockDetailFilter)}&fields=id,stock_transfer_id,inventory_lot_id,lot_id,product_id,batch_no,allocated_quantity,picked_quantity,dispatched_quantity,received_quantity&limit=-1`,
+            "Stock-transfer protected allocation lookup"
+        ),
+        directusRows(
+            `/items/${LOT_TRANSFER_COLLECTION}?filter=${encodeURIComponent(lotTransferFilter)}&fields=lot_transfer_id,request_no,status,source_lot_id,source_inventory_lot_id,source_batch_no,quantity&limit=-1`,
+            "Lot-transfer protected allocation lookup"
+        )
+    ]);
+    const statusByMaterialId = await jobOrderStatusesForReservations(jobReservationRows);
+
+    for (const row of salesOrderRows) {
+        const allocationId = rowId(row, ["reservation_id", "id"]);
+        const quantity = Math.max(numeric(row.reserved_quantity), numeric(row.picked_quantity));
+        if (quantity > 0 && allocationId <= 0) {
+            unresolved.push("A sales-order allocation has no resolvable reservation identity.");
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "SALES_ORDER",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["sales_order_detail_id"]))
+        });
     }
+
+    for (const row of salesInvoiceRows) {
+        const allocationId = rowId(row, ["id"]);
+        const quantity = Math.max(0, numeric(row.quantity));
+        if (quantity > 0 && allocationId <= 0) {
+            unresolved.push("A sales-invoice allocation has no resolvable reservation identity.");
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "SALES_INVOICE",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["sales_invoice_detail_id"]))
+        });
+    }
+
+    for (const row of jobReservationRows) {
+        const allocationId = rowId(row, ["jo_materials_reservation_id"]);
+        const quantity = Math.max(0, numeric(row.reserved_quantity));
+        const status = jobOrderStatus(row, statusByMaterialId);
+        if (quantity <= 0) continue;
+        if (allocationId <= 0) {
+            unresolved.push("A job-order allocation has no resolvable reservation identity.");
+            continue;
+        }
+        if (!status) {
+            unresolved.push(`Job-order allocation ${allocationId} has no resolvable job-order status.`);
+            continue;
+        }
+        if (!activeStatus(status, ACTIVE_JOB_ORDER_STATUSES)) continue;
+
+        const rowLotId = relationId(firstValue(row, ["mm_lot_id"]), ["lot_id", "mm_lot_id"]);
+        const rowBatch = normalizedBatch(row.batch_no);
+        if (rowLotId !== input.lotId || rowBatch !== batchKey) {
+            if (rowLotId <= 0 || !rowBatch) {
+                unresolved.push(`Job-order allocation ${allocationId} has no exact lot/batch identity.`);
+            }
+            continue;
+        }
+
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "JOB_ORDER_MATERIAL",
+            allocationId,
+            quantity,
+            status: status || "Active job order",
+            reference: nullableString(firstValue(row, ["jo_material_id"]))
+        });
+    }
+
+    const stockTransferIds = [...new Set(stockDetailRows.map((row) => rowId(row, ["stock_transfer_id"])).filter((id) => id > 0))];
+    const stockTransferHeaders = stockTransferIds.length > 0
+        ? await directusRows(
+            `/items/mm_stock_transfer?filter[id][_in]=${stockTransferIds.join(",")}&fields=id,order_no,status,source_branch_id&limit=-1`,
+            "Stock-transfer header lookup"
+        )
+        : [];
+    const stockHeadersById = new Map(stockTransferHeaders.map((row) => [rowId(row, ["id"]), row]));
+
+    for (const row of stockDetailRows) {
+        const detailId = rowId(row, ["id"]);
+        const transferId = rowId(row, ["stock_transfer_id"]);
+        if (detailId <= 0 || transferId <= 0) {
+            unresolved.push("A stock-transfer allocation has no resolvable detail or transfer identity.");
+            continue;
+        }
+        const header = stockHeadersById.get(transferId);
+        if (!header) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no resolvable transfer header.`);
+            continue;
+        }
+        if (!stringValue(header.status)) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no resolvable transfer status.`);
+            continue;
+        }
+        if (!activeStatus(header.status, ACTIVE_STOCK_TRANSFER_STATUSES)) continue;
+        const headerBranchId = relationId(header.source_branch_id, ["branch_id", "id"]);
+        if (headerBranchId <= 0) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no exact source branch identity.`);
+            continue;
+        }
+        if (headerBranchId !== input.branchId) continue;
+
+        const rowProductId = productId(row);
+        const rowInventoryLotId = relationId(firstValue(row, ["inventory_lot_id"]), ["inventory_lot_id", "id"]);
+        const rowLotId = relationId(firstValue(row, ["lot_id"]), ["lot_id", "id"]);
+        const rowBatch = normalizedBatch(row.batch_no);
+        const allocated = Math.max(numeric(row.allocated_quantity), numeric(row.picked_quantity));
+        const alreadyDispatched = Math.max(numeric(row.dispatched_quantity), numeric(row.received_quantity));
+        const quantity = Math.max(0, allocated - alreadyDispatched);
+        if (rowProductId !== input.productId || quantity <= 0) continue;
+
+        if (rowInventoryLotId <= 0 || rowLotId <= 0 || !rowBatch) {
+            unresolved.push(`Stock-transfer allocation ${detailId} has no exact lot/batch identity.`);
+            continue;
+        }
+        if (rowInventoryLotId !== input.inventoryLotId || rowLotId !== input.lotId || rowBatch !== batchKey) {
+            continue;
+        }
+
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "STOCK_TRANSFER",
+            allocationId: detailId,
+            quantity,
+            status: stringValue(header.status),
+            reference: stockTransferReference(row, header)
+        });
+    }
+
+    for (const row of lotTransferRows) {
+        const allocationId = rowId(row, ["lot_transfer_id"]);
+        if (allocationId === input.excludeLotTransferId) continue;
+        const quantity = Math.max(0, numeric(row.quantity));
+        if (quantity <= 0) continue;
+        if (allocationId <= 0) {
+            unresolved.push("A lot-transfer allocation has no resolvable request identity.");
+            continue;
+        }
+        if (normalizedBatch(row.source_batch_no) !== batchKey) {
+            unresolved.push(`Lot-transfer allocation ${allocationId} does not have the exact source batch identity.`);
+            continue;
+        }
+        appendProtectedAllocation(allocationRows, seen, {
+            source: "LOT_TRANSFER",
+            allocationId,
+            quantity,
+            status: stringValue(row.status),
+            reference: nullableString(firstValue(row, ["request_no"]))
+        });
+    }
+
+    const explicitQuantity = allocationRows.reduce((sum, allocation) => sum + allocation.quantity, 0);
+    const legacyReservedQuantity = Math.max(0, input.legacyReservedQuantity);
+    return {
+        legacyReservedQuantity,
+        explicitQuantity,
+        totalQuantity: Math.max(legacyReservedQuantity, explicitQuantity),
+        allocations: allocationRows,
+        unresolved
+    };
 }
 
 async function resolveMovementType(typeName: string, direction: "IN" | "OUT"): Promise<number> {
@@ -940,8 +1257,8 @@ interface TransferContext {
     targetBatchMovements: RecordValue[];
     sourceLotMovements: RecordValue[];
     targetLotMovements: RecordValue[];
-    sourceReservedQuantity: number;
-    targetReservedQuantity: number;
+    sourceProtectedAllocations: ProtectedAllocationSummary;
+    targetProtectedAllocations: ProtectedAllocationSummary;
 }
 
 async function loadTransferContext(record: LotTransferRecord, excludeTransferMovements = false): Promise<TransferContext> {
@@ -958,13 +1275,29 @@ async function loadTransferContext(record: LotTransferRecord, excludeTransferMov
     const targetInventoryLot = targetInventoryLotLookup.row;
 
     const excludedTransfer = excludeTransferMovements ? { id: record.id, requestNo: record.requestNo } : undefined;
-    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceReservedQuantity, targetReservedQuantity] = await Promise.all([
+    const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceProtectedAllocations, targetProtectedAllocations] = await Promise.all([
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId, batchNo: record.sourceBatchNo }, excludedTransfer),
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId, batchNo: record.targetBatchNo }, excludedTransfer),
         movementsForLot({ branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
         movementsForLot({ branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
-        reservedQuantityForInventoryLot(record.sourceInventoryLotId),
-        reservedQuantityForInventoryLot(record.targetInventoryLotId)
+        protectedAllocationsForInventoryLot({
+            branchId: record.branchId,
+            productId: record.productId,
+            lotId: record.sourceLotId,
+            inventoryLotId: record.sourceInventoryLotId,
+            batchNo: record.sourceBatchNo,
+            legacyReservedQuantity: numeric(sourceInventoryLot.reserved_quantity),
+            excludeLotTransferId: record.id
+        }),
+        protectedAllocationsForInventoryLot({
+            branchId: record.branchId,
+            productId: record.productId,
+            lotId: record.targetLotId,
+            inventoryLotId: record.targetInventoryLotId,
+            batchNo: record.targetBatchNo,
+            legacyReservedQuantity: numeric(targetInventoryLot.reserved_quantity),
+            excludeLotTransferId: record.id
+        })
     ]);
 
     return {
@@ -984,8 +1317,8 @@ async function loadTransferContext(record: LotTransferRecord, excludeTransferMov
         targetBatchMovements,
         sourceLotMovements,
         targetLotMovements,
-        sourceReservedQuantity,
-        targetReservedQuantity
+        sourceProtectedAllocations,
+        targetProtectedAllocations
     };
 }
 
@@ -999,6 +1332,10 @@ function snapshot(input: {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
@@ -1010,6 +1347,10 @@ function snapshot(input: {
         batchNo: input.batchNo,
         onHandBefore: Math.max(0, input.onHandBefore),
         reservedQuantity: Math.max(0, input.reservedQuantity),
+        legacyReservedQuantity: Math.max(0, input.legacyReservedQuantity),
+        protectedAllocationQuantity: Math.max(0, input.protectedAllocationQuantity),
+        protectedAllocations: input.protectedAllocations,
+        protectedAllocationResolutionComplete: input.protectedAllocationResolutionComplete,
         availableQuantity: Math.max(0, input.onHandBefore - input.reservedQuantity),
         onHandAfter: Math.max(0, input.onHandBefore + input.quantityDelta),
         unitCost: input.unitCost,
@@ -1034,8 +1375,8 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
     const targetQuantityBefore = sumMovementQuantities(context.targetBatchMovements);
     const sourceLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.sourceLotMovements));
     const targetLotOccupiedBefore = Math.max(0, sumMovementQuantities(context.targetLotMovements));
-    const sourceReserved = Math.max(numeric(context.sourceInventoryLot.reserved_quantity), context.sourceReservedQuantity);
-    const targetReserved = Math.max(numeric(context.targetInventoryLot.reserved_quantity), context.targetReservedQuantity);
+    const sourceReserved = context.sourceProtectedAllocations.totalQuantity;
+    const targetReserved = context.targetProtectedAllocations.totalQuantity;
     const sourceExpiry = dateValue(context.sourceInventoryLot, ["expiry_date", "expiration_date", "expiryDate"]);
     const targetExpiry = dateValue(context.targetInventoryLot, ["expiry_date", "expiration_date", "expiryDate"]);
     const sourceMfg = dateValue(context.sourceInventoryLot, ["manufacturing_date", "manufacturingDate"]);
@@ -1058,7 +1399,15 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
         check("active", "Active stock records", normalizeStatus(context.sourceLot.status) === "ACTIVE" && normalizeStatus(context.targetLot.status) === "ACTIVE" && normalizeStatus(context.sourceInventoryLot.status) === "ACTIVE" && normalizeStatus(context.targetInventoryLot.status) === "ACTIVE", "Source and target lots/batches must be active."),
         check("qa", "QA-eligible source", ["GOOD", "PASSED", "PASS", "APPROVED"].includes(normalizeStatus(context.sourceInventoryLot.qa_status)), "Source stock must have a releasable QA status."),
         check("quantity", "Positive quantity", Number.isFinite(record.quantity) && record.quantity > 0, "Transfer quantity must be greater than zero."),
-        check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)}.`),
+        check(
+            "protected-allocations",
+            "Protected allocation integrity",
+            context.sourceProtectedAllocations.unresolved.length === 0,
+            context.sourceProtectedAllocations.unresolved.length === 0
+                ? "All active protected allocations have an exact source identity."
+                : `Protected allocation reconciliation is required: ${context.sourceProtectedAllocations.unresolved.join(" ")}`
+        ),
+        check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)} after ${formatProtectedAllocationQuantity(sourceReserved)} of protected allocations.`),
         check("target-capacity", "Target capacity", targetCapacityConfigured && (targetCapacityRemaining ?? 0) + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityConfigured ? `Destination lot currently contains ${targetLotOccupiedBefore}; configured capacity is ${targetCapacity}; remaining capacity is ${targetCapacityRemaining}.` : "Destination lot capacity is not configured. Set a positive max_batch_capacity before transferring stock."),
         check(
             "uom",
@@ -1088,6 +1437,10 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
             batchNo: record.sourceBatchNo,
             onHandBefore: sourceQuantityBefore,
             reservedQuantity: sourceReserved,
+            legacyReservedQuantity: context.sourceProtectedAllocations.legacyReservedQuantity,
+            protectedAllocationQuantity: context.sourceProtectedAllocations.explicitQuantity,
+            protectedAllocations: context.sourceProtectedAllocations.allocations,
+            protectedAllocationResolutionComplete: context.sourceProtectedAllocations.unresolved.length === 0,
             unitCost: sourceUnitCost,
             expiryDate: sourceExpiry,
             manufacturingDate: sourceMfg,
@@ -1099,6 +1452,10 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
             batchNo: record.targetBatchNo,
             onHandBefore: targetQuantityBefore,
             reservedQuantity: targetReserved,
+            legacyReservedQuantity: context.targetProtectedAllocations.legacyReservedQuantity,
+            protectedAllocationQuantity: context.targetProtectedAllocations.explicitQuantity,
+            protectedAllocations: context.targetProtectedAllocations.allocations,
+            protectedAllocationResolutionComplete: context.targetProtectedAllocations.unresolved.length === 0,
             unitCost: targetUnitCost ?? sourceUnitCost,
             expiryDate: targetExpiry,
             manufacturingDate: targetMfg,
@@ -1269,6 +1626,10 @@ function storedPostedPreview(record: LotTransferRecord): LotTransferPreview {
                 batchNo: record.sourceBatchNo,
                 onHandBefore: sourceBefore,
                 reservedQuantity: 0,
+                legacyReservedQuantity: 0,
+                protectedAllocationQuantity: 0,
+                protectedAllocations: [],
+                protectedAllocationResolutionComplete: true,
                 unitCost: record.sourceUnitCost,
                 expiryDate: record.effectiveExpiryDate,
                 manufacturingDate: null,
@@ -1283,6 +1644,10 @@ function storedPostedPreview(record: LotTransferRecord): LotTransferPreview {
                 batchNo: record.targetBatchNo,
                 onHandBefore: targetBefore,
                 reservedQuantity: 0,
+                legacyReservedQuantity: 0,
+                protectedAllocationQuantity: 0,
+                protectedAllocations: [],
+                protectedAllocationResolutionComplete: true,
                 unitCost: record.targetUnitCost,
                 expiryDate: record.effectiveExpiryDate,
                 manufacturingDate: null,
