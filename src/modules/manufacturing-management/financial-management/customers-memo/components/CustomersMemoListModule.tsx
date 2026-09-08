@@ -20,12 +20,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
     fetchMemosByStatus,
-    fetchSuppliers,
     fetchCustomers,
     fetchSalesmen,
     fetchCOAs
 } from "../service";
-import { MemoApprovalRow, Supplier, Customer, Salesman, ChartOfAccount } from "../types";
+import { MemoApprovalRow, Customer, Salesman, ChartOfAccount } from "../types";
 import { ApprovalDetailModal } from "./ApprovalDetailModal";
 import { formatPhDateTime } from "../utils/dateUtils";
 import { toast } from "sonner";
@@ -47,7 +46,6 @@ export default function CustomersMemoListModule() {
     const [searchQuery, setSearchQuery] = useState("");
 
     // Lookup Data
-    const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [salesmen, setSalesmen] = useState<Salesman[]>([]);
     const [coas, setCoas] = useState<ChartOfAccount[]>([]);
