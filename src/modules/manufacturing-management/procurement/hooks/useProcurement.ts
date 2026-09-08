@@ -10,7 +10,6 @@ import {
     createShipment,
     fetchShipmentExpenses,
     saveAndAllocateExpenses,
-    fetchRawMaterials,
     fetchRawMaterialCatalog,
     updateShipmentStatus,
     registerRawMaterial,
@@ -257,9 +256,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
     const loadRawMaterials = useCallback(async () => {
         setRawMaterialsLoading(true);
         try {
-            const data = activeTab === "raw-materials"
-                ? await fetchRawMaterialCatalog()
-                : await fetchRawMaterials();
+            const data = await fetchRawMaterialCatalog();
             setRawMaterials(data);
         } catch (e) {
             console.error(e);
@@ -267,7 +264,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
         } finally {
             setRawMaterialsLoading(false);
         }
-    }, [activeTab]);
+    }, []);
 
     // Load only the data required by the current procurement page. In particular,
     // raw-materials does not need the purchase-order shipment endpoint.

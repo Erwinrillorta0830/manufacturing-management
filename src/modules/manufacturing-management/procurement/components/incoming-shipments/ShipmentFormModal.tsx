@@ -3,7 +3,7 @@ import { Anchor, ArrowLeft, X, AlertCircle, Plus, Trash2, Loader2, Table, Sparkl
 import {
     ManifestLineFormItem,
     ShipmentFormState,
-    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
+    SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     FxRateStatus
 } from "./types";
 import { IncomingShipment, RawMaterial } from "../../types";
@@ -673,7 +673,7 @@ export function ShipmentFormModal({
                                                                 className="w-full rounded-md border bg-background px-2 py-1 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary"
                                                             >
                                                                 <option value="">Select Type...</option>
-                                                                {PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
+                                                                {SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
                                                                     <option key={option.value} value={option.value}>
                                                                         {option.label}
                                                                     </option>

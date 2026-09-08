@@ -21,7 +21,7 @@ import {
     isSupplierForeign,
     cleanNotes
 } from "../services/supplier.service";
-import { fetchRawMaterials } from "../services/procurement-api";
+import { fetchRawMaterialCatalog } from "../services/procurement-api";
 import type { SupplierForeignFilter, SupplierStatusFilter } from "../services/procurement-api";
 import PaginationFooter from "./PaginationFooter";
 import { isForeignCountry } from "../supplier-country";
@@ -227,7 +227,7 @@ export default function SuppliersDirectory({
     const loadCatalogMaterials = useCallback(async () => {
         setLoadingCatalogMaterials(true);
         try {
-            setCatalogMaterials(await fetchRawMaterials(-1));
+            setCatalogMaterials(await fetchRawMaterialCatalog(-1));
         } catch (error) {
             console.error(error);
             setCatalogMaterials(rawMaterials);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createBulkSupplierProducts } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/services/products-per-suppliers";
+import { ProductCategoryTypeValidationError, validateSupplierProductIds } from "@/app/api/manufacturing/procurement/_category-type";
 
 /**
  * POST /api/fm/supplier-registration/suppliers/[id]/products/bulk
@@ -29,6 +30,8 @@ export async function POST(
       );
     }
 
+    await validateSupplierProductIds(product_ids.map((productId: number) => Number(productId)));
+
     // Map product IDs to the format expected by the service
     const items = product_ids.map((productId: number) => ({
       supplier_id: supplierId,
@@ -45,6 +48,17 @@ export async function POST(
     });
   } catch (error) {
     console.error("Bulk product assignment error:", error);
+    if (error instanceof ProductCategoryTypeValidationError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         success: false,

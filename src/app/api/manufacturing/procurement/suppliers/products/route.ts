@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "../../_directus";
 import { fetchProductsBySupplier, fetchProductsBySupplierPage } from "../suppliers-helper";
+import { ProductCategoryTypeValidationError, validateSupplierProductIds } from "../../_category-type";
 
 const TRANSIENT_UPSTREAM_STATUSES = new Set([502, 503, 504]);
 
@@ -127,17 +128,20 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { supplierId, productId } = body;
-        if (!supplierId || !productId) {
+        const supplierId = Number(body.supplierId);
+        const productId = Number(body.productId);
+        if (!Number.isInteger(supplierId) || supplierId <= 0 || !Number.isInteger(productId) || productId <= 0) {
             return NextResponse.json({ error: "supplierId and productId are required" }, { status: 400 });
         }
+
+        await validateSupplierProductIds([productId]);
 
         const res = await fetch(`${DIRECTUS_URL}/items/product_per_supplier`, {
             method: "POST",
             headers,
             body: JSON.stringify({
-                supplier_id: Number(supplierId),
-                product_id: Number(productId)
+                supplier_id: supplierId,
+                product_id: productId
             })
         });
 
@@ -156,6 +160,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, data });
     } catch (e) {
         console.error("API Error linking product to supplier:", e);
+        if (e instanceof ProductCategoryTypeValidationError) {
+            return NextResponse.json({ error: e.message, code: e.code, details: e.details }, { status: e.status });
+        }
         return NextResponse.json({ error: (e as Error).message || "Failed to link product" }, { status: 500 });
     }
 }
@@ -181,6 +188,8 @@ export async function PATCH(request: Request) {
         } catch (error) {
             return NextResponse.json({ error: (error as Error).message }, { status: 400 });
         }
+
+        await validateSupplierProductIds(addProductIds);
 
         const [supplierLinks, requestedRemovalRows] = await Promise.all([
             fetchSupplierLinks(supplierId),
@@ -231,6 +240,9 @@ export async function PATCH(request: Request) {
         });
     } catch (e) {
         console.error("API Error saving bulk supplier catalog updates:", e);
+        if (e instanceof ProductCategoryTypeValidationError) {
+            return NextResponse.json({ error: e.message, code: e.code, details: e.details }, { status: e.status });
+        }
         return NextResponse.json({ error: (e as Error).message || "Failed to save supplier catalog updates" }, { status: 500 });
     }
 }
