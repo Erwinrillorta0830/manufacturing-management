@@ -133,15 +133,28 @@ export async function previewLotTransfer(id: number): Promise<LotTransferPreview
 }
 
 export async function approveLotTransfer(id: number): Promise<{ transfer: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/approve`, {
+        method: "POST",
+        body: "{}"
+    });
+    if (!payload.data || !payload.preview) throw new Error("Approval response did not include the transfer audit result.");
+    return {
+        transfer: payload.data,
+        preview: payload.preview,
+        idempotent: Boolean(payload.idempotent)
+    };
+}
+
+export async function postLotTransfer(id: number): Promise<{ transfer: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
     const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
-        : `lot-transfer-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/approve`, {
+        : `lot-transfer-post-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/post`, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         body: "{}"
     });
-    if (!payload.data || !payload.preview) throw new Error("Approval response did not include the transfer audit result.");
+    if (!payload.data || !payload.preview) throw new Error("Posting response did not include the transfer audit result.");
     return {
         transfer: payload.data,
         preview: payload.preview,
