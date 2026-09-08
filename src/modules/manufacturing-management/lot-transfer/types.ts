@@ -2,6 +2,43 @@ export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | 
 
 export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
+export interface LotTransferReportFilters {
+    search: string;
+    statuses: LotTransferStatus[];
+    branchId: string;
+    requestedFrom: string;
+    requestedTo: string;
+    productId: string;
+    sourceLotId: string;
+    targetLotId: string;
+    sourceBatchNo: string;
+    targetBatchNo: string;
+    requestedBy: string;
+    approvedBy: string;
+    postedBy: string;
+}
+
+export interface UserOption {
+    id: number;
+    name: string;
+}
+
+export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
+    search: "",
+    statuses: ["Posted", "Rejected"],
+    branchId: "",
+    requestedFrom: "",
+    requestedTo: "",
+    productId: "",
+    sourceLotId: "",
+    targetLotId: "",
+    sourceBatchNo: "",
+    targetBatchNo: "",
+    requestedBy: "",
+    approvedBy: "",
+    postedBy: ""
+};
+
 export interface LotTransfer {
     id: number;
     requestNo: string;
