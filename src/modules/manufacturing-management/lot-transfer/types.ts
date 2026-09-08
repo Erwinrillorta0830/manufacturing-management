@@ -1,6 +1,6 @@
-export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Rejected";
+export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected";
 
-export type LotTransferMode = "request" | "approval" | "summary";
+export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
 export interface LotTransfer {
     id: number;
@@ -23,6 +23,9 @@ export interface LotTransfer {
     approvedBy: number | null;
     approvedByName: string | null;
     approvedAt: string | null;
+    postedBy: number | null;
+    postedByName: string | null;
+    postedAt: string | null;
     rejectedBy: number | null;
     rejectedByName: string | null;
     rejectedAt: string | null;
@@ -56,6 +59,8 @@ export interface LotOption {
     lotId: number;
     lotName: string;
     branchId: number;
+    uomId: number | null;
+    uomName: string;
     maxBatchCapacity: number;
     status: string;
 }
@@ -108,6 +113,7 @@ export interface LotTransferPreview {
     transferId: number;
     requestNo: string;
     canApprove: boolean;
+    canPost: boolean;
     checks: ValidationCheck[];
     source: LotBalanceSnapshot;
     target: LotBalanceSnapshot;

@@ -4,6 +4,7 @@ import {
   isProductAlreadyAdded,
 } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/services/products-per-suppliers";
 import { NextRequest, NextResponse } from "next/server";
+import { ProductCategoryTypeValidationError, validateSupplierProductIds } from "@/app/api/manufacturing/procurement/_category-type";
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +78,8 @@ export async function POST(
       );
     }
 
+    await validateSupplierProductIds([Number(product_id)]);
+
     // Check if product already exists for this supplier
     const exists = await isProductAlreadyAdded(supplierId, product_id);
     if (exists) {
@@ -101,6 +104,12 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error adding product to supplier:", error);
+    if (error instanceof ProductCategoryTypeValidationError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, details: error.details },
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       {
         error: "Failed to add product to supplier",

@@ -132,16 +132,37 @@ export async function previewLotTransfer(id: number): Promise<LotTransferPreview
     return unwrap(payload);
 }
 
+export async function previewLotTransferInput(form: LotTransferForm): Promise<LotTransferPreview> {
+    const payload = await requestJson<ApiEnvelope<LotTransferPreview>>("/api/manufacturing/lot-transfers/preview", {
+        method: "POST",
+        body: JSON.stringify(toPayload(form))
+    });
+    return unwrap(payload);
+}
+
 export async function approveLotTransfer(id: number): Promise<{ transfer: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/approve`, {
+        method: "POST",
+        body: "{}"
+    });
+    if (!payload.data || !payload.preview) throw new Error("Approval response did not include the transfer audit result.");
+    return {
+        transfer: payload.data,
+        preview: payload.preview,
+        idempotent: Boolean(payload.idempotent)
+    };
+}
+
+export async function postLotTransfer(id: number): Promise<{ transfer: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
     const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
-        : `lot-transfer-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/approve`, {
+        : `lot-transfer-post-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/post`, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         body: "{}"
     });
-    if (!payload.data || !payload.preview) throw new Error("Approval response did not include the transfer audit result.");
+    if (!payload.data || !payload.preview) throw new Error("Posting response did not include the transfer audit result.");
     return {
         transfer: payload.data,
         preview: payload.preview,
@@ -181,6 +202,8 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
                 lotId: numberValue((row as LotOption).lotId ?? raw.lot_id),
                 lotName: stringValue((row as LotOption).lotName ?? raw.lot_name),
                 branchId: numberValue((row as LotOption).branchId ?? raw.branch_id),
+                uomId: numberValue((row as LotOption).uomId ?? raw.uom_id) || null,
+                uomName: stringValue((row as LotOption).uomName ?? raw.uom_name),
                 maxBatchCapacity: numberValue((row as LotOption).maxBatchCapacity ?? raw.max_batch_capacity),
                 status: stringValue((row as LotOption).status || "ACTIVE")
             };

@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { RawMaterial } from "../../types";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
-    PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
+    SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     PurchaseOrderMaterialType
 } from "./types";
 import { normalizeProductRelationId, resolveProductParentId } from "../../product-relation";
@@ -60,7 +60,7 @@ export function RawProductSelector({
     onSelect
 }: RawProductSelectorProps) {
     const filteredMaterials = useMemo(() => {
-        const productTypeId = PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(
+        const productTypeId = SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.find(
             option => option.value === materialType
         )?.productTypeId;
 

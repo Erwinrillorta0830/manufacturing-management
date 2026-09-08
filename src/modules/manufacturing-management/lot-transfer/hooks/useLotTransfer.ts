@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type SetStateAction } from "react";
 import {
     approveLotTransfer,
     createLotTransfer,
@@ -10,7 +10,9 @@ import {
     fetchLotTransfers,
     fetchLots,
     fetchProducts,
+    postLotTransfer,
     previewLotTransfer,
+    previewLotTransferInput,
     rejectLotTransfer,
     submitLotTransfer,
     updateLotTransfer
@@ -58,6 +60,27 @@ function hasSameLotSelection(form: LotTransferForm): boolean {
     return Boolean(form.sourceLotId && form.targetLotId && form.sourceLotId === form.targetLotId);
 }
 
+function formKey(form: LotTransferForm): string {
+    return JSON.stringify(form);
+}
+
+function isCompleteDraftForm(form: LotTransferForm): boolean {
+    return Boolean(
+        Number(form.branchId) > 0
+        && Number(form.productId) > 0
+        && Number(form.sourceLotId) > 0
+        && Number(form.sourceInventoryLotId) > 0
+        && form.sourceBatchNo.trim()
+        && Number(form.targetLotId) > 0
+        && Number(form.targetInventoryLotId) > 0
+        && form.targetBatchNo.trim()
+        && Number(form.quantity) > 0
+        && form.reason.trim()
+    );
+}
+
+type DraftValidationStatus = "idle" | "stale" | "loading" | "valid" | "invalid" | "error";
+
 export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [records, setRecords] = useState<LotTransfer[]>([]);
     const [totalCount, setTotalCount] = useState(0);
@@ -74,16 +97,34 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [isLookupLoading, setIsLookupLoading] = useState(false);
     const [isActionLoading, setIsActionLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [draftValidationStatus, setDraftValidationStatus] = useState<DraftValidationStatus>("idle");
+    const [draftValidationMessage, setDraftValidationMessage] = useState<string | null>(null);
+    const [validatedDraftKey, setValidatedDraftKey] = useState("");
+
+    const draftFormKey = useMemo(() => formKey(form), [form]);
+    const draftValidationIsCurrent = validatedDraftKey === draftFormKey;
+
+    const markDraftValidationStale = useCallback(() => {
+        setPreview(null);
+        setDraftValidationStatus("stale");
+        setDraftValidationMessage(null);
+        setValidatedDraftKey("");
+    }, []);
+
+    const updateForm = useCallback((updater: SetStateAction<LotTransferForm>) => {
+        markDraftValidationStale();
+        setForm(updater);
+    }, [markDraftValidationStale]);
 
     const refresh = useCallback(async () => {
         setIsLoading(true);
         try {
             const response = await fetchLotTransfers({
-                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : undefined,
+                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : mode === "posting" ? "Approved" : undefined,
                 branchId: userBranchId || undefined
             });
             const nextRecords = mode === "summary"
-                ? response.data.filter((record) => record.status === "Approved" || record.status === "Rejected")
+                ? response.data.filter((record) => record.status === "Posted" || record.status === "Rejected")
                 : response.data;
             setRecords(nextRecords);
             setTotalCount(mode === "summary" ? nextRecords.length : response.totalCount);
@@ -98,6 +139,39 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     useEffect(() => {
         void refresh();
     }, [refresh]);
+
+    useEffect(() => {
+        if (mode !== "request" || !isCompleteDraftForm(form)) return;
+        let cancelled = false;
+        const currentKey = draftFormKey;
+        const timer = window.setTimeout(async () => {
+            if (cancelled) return;
+            setDraftValidationStatus("loading");
+            setDraftValidationMessage("Running the latest server validation checks...");
+            try {
+                const nextPreview = await previewLotTransferInput(form);
+                if (cancelled) return;
+                setPreview(nextPreview);
+                setValidatedDraftKey(currentKey);
+                setDraftValidationStatus(nextPreview.canApprove ? "valid" : "invalid");
+                setDraftValidationMessage(nextPreview.canApprove
+                    ? "All server validation checks passed."
+                    : "Correct the failed checks before submitting for QA approval.");
+            } catch (validationError) {
+                if (cancelled) return;
+                setPreview(null);
+                setValidatedDraftKey("");
+                setDraftValidationStatus("error");
+                setDraftValidationMessage(validationError instanceof Error
+                    ? validationError.message
+                    : "Unable to run server validation. Retry before submitting.");
+            }
+        }, 450);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [draftFormKey, form, mode]);
 
     useEffect(() => {
         let active = true;
@@ -139,24 +213,28 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [batchesByLot]);
 
     const setField = useCallback(<K extends keyof LotTransferForm>(field: K, value: LotTransferForm[K]) => {
-        setForm((current) => ({ ...current, [field]: value }));
-    }, []);
+        updateForm((current) => ({ ...current, [field]: value }));
+    }, [updateForm]);
 
     const clearSelection = useCallback(() => {
         setSelectedId(null);
         setSelectedRecord(null);
         setPreview(null);
+        setDraftValidationStatus("idle");
+        setDraftValidationMessage(null);
+        setValidatedDraftKey("");
         setForm(initialForm(userBranchId));
     }, [userBranchId]);
 
     const selectRecord = useCallback(async (record: LotTransfer) => {
         setSelectedId(record.id);
         setSelectedRecord(record);
+        markDraftValidationStale();
         setForm(formFromRecord(record, userBranchId));
         setError(null);
         if (record.sourceLotId > 0) void loadBatchesForLot(record.sourceLotId);
         if (record.targetLotId > 0 && record.targetLotId !== record.sourceLotId) void loadBatchesForLot(record.targetLotId);
-        if (mode === "approval") {
+        if (mode === "approval" || mode === "posting") {
             setIsActionLoading(true);
             try {
                 setPreview(await previewLotTransfer(record.id));
@@ -167,10 +245,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
                 setIsActionLoading(false);
             }
         }
-    }, [loadBatchesForLot, mode, userBranchId]);
+    }, [loadBatchesForLot, markDraftValidationStale, mode, userBranchId]);
 
     const handleSourceLotChange = useCallback((lotId: string) => {
-        setForm((current) => ({
+        updateForm((current) => ({
             ...current,
             sourceLotId: lotId,
             sourceInventoryLotId: "",
@@ -181,11 +259,11 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }));
         if (form.targetLotId === lotId) setError("Source and destination lot IDs must be different.");
         void loadBatchesForLot(Number(lotId));
-    }, [form.targetLotId, loadBatchesForLot]);
+    }, [form.targetLotId, loadBatchesForLot, updateForm]);
 
     const handleTargetLotChange = useCallback((lotId: string) => {
         if (form.sourceLotId === lotId) {
-            setForm((current) => ({
+            updateForm((current) => ({
                 ...current,
                 targetLotId: "",
                 targetInventoryLotId: "",
@@ -194,17 +272,17 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setError("Source and destination lot IDs must be different.");
             return;
         }
-        setForm((current) => ({
+        updateForm((current) => ({
             ...current,
             targetLotId: lotId,
             targetInventoryLotId: "",
             targetBatchNo: ""
         }));
         void loadBatchesForLot(Number(lotId));
-    }, [form.sourceLotId, loadBatchesForLot]);
+    }, [form.sourceLotId, loadBatchesForLot, updateForm]);
 
     const handleProductChange = useCallback((productId: string) => {
-        setForm((current) => ({
+        updateForm((current) => ({
             ...current,
             productId,
             sourceLotId: "",
@@ -214,25 +292,25 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             targetInventoryLotId: "",
             targetBatchNo: ""
         }));
-    }, []);
+    }, [updateForm]);
 
     const handleBatchChange = useCallback((side: "source" | "target", inventoryLotId: string) => {
         const lotId = Number(side === "source" ? form.sourceLotId : form.targetLotId);
         const batch = (batchesByLot[lotId] || []).find((row) => String(row.batchId) === inventoryLotId);
         if (!batch) {
-            setForm((current) => ({
+            updateForm((current) => ({
                 ...current,
                 [side === "source" ? "sourceInventoryLotId" : "targetInventoryLotId"]: inventoryLotId,
                 [side === "source" ? "sourceBatchNo" : "targetBatchNo"]: ""
             }));
             return;
         }
-        setForm((current) => ({
+        updateForm((current) => ({
             ...current,
             [side === "source" ? "sourceInventoryLotId" : "targetInventoryLotId"]: String(batch.batchId),
             [side === "source" ? "sourceBatchNo" : "targetBatchNo"]: batch.batchNumber
         }));
-    }, [batchesByLot, form.sourceLotId, form.targetLotId]);
+    }, [batchesByLot, form.sourceLotId, form.targetLotId, updateForm]);
 
     const saveDraft = useCallback(async () => {
         if (hasSameLotSelection(form)) {
@@ -244,11 +322,27 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             const saved = selectedId
                 ? await updateLotTransfer(selectedId, form)
                 : await createLotTransfer(form);
+            const savedForm = formFromRecord(saved, userBranchId);
             setSelectedId(saved.id);
             setSelectedRecord(saved);
-            setForm(formFromRecord(saved, userBranchId));
+            setForm(savedForm);
             await refresh();
-            setError(null);
+            try {
+                const savedPreview = await previewLotTransfer(saved.id);
+                setPreview(savedPreview);
+                setValidatedDraftKey(formKey(savedForm));
+                setDraftValidationStatus(savedPreview.canApprove ? "valid" : "invalid");
+                setDraftValidationMessage(savedPreview.canApprove
+                    ? "All server validation checks passed."
+                    : "Draft saved. Correct the failed checks before submitting for QA approval.");
+                setError(null);
+            } catch (validationError) {
+                setPreview(null);
+                setValidatedDraftKey("");
+                setDraftValidationStatus("error");
+                setDraftValidationMessage("Draft saved, but server validation is unavailable. Retry before submitting.");
+                setError(validationError instanceof Error ? validationError.message : "Unable to validate the saved Draft.");
+            }
             return saved;
         } catch (saveError) {
             setError(saveError instanceof Error ? saveError.message : "Unable to save the lot-transfer draft.");
@@ -283,6 +377,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setError("Source and destination lot IDs must be different.");
             return null;
         }
+        if (!isCompleteDraftForm(form) || !draftValidationIsCurrent || draftValidationStatus !== "valid" || !preview?.canApprove) {
+            setError("Complete a current passing server validation before submitting for QA approval.");
+            return null;
+        }
         setIsActionLoading(true);
         try {
             const submitted = await submitLotTransfer(selectedId);
@@ -296,7 +394,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [clearSelection, form, refresh, selectedId]);
+    }, [clearSelection, draftValidationIsCurrent, draftValidationStatus, form, preview, refresh, selectedId]);
 
     const approve = useCallback(async () => {
         if (!selectedId) return null;
@@ -310,6 +408,24 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             return result.transfer;
         } catch (approveError) {
             setError(approveError instanceof Error ? approveError.message : "Unable to approve the lot-transfer request.");
+            return null;
+        } finally {
+            setIsActionLoading(false);
+        }
+    }, [refresh, selectedId]);
+
+    const post = useCallback(async () => {
+        if (!selectedId) return null;
+        setIsActionLoading(true);
+        try {
+            const result = await postLotTransfer(selectedId);
+            setSelectedRecord(result.transfer);
+            setPreview(result.preview);
+            await refresh();
+            setError(null);
+            return result.transfer;
+        } catch (postError) {
+            setError(postError instanceof Error ? postError.message : "Unable to post the lot-transfer request.");
             return null;
         } finally {
             setIsActionLoading(false);
@@ -369,6 +485,10 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         branches,
         sourceBatches,
         targetBatches,
+        draftValidationStatus,
+        draftValidationMessage,
+        draftValidationIsCurrent,
+        isDraftFormComplete: isCompleteDraftForm(form),
         search,
         setSearch,
         setField,
@@ -382,6 +502,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         deleteDraft,
         submit,
         approve,
+        post,
         reject,
         refresh,
         isLoading,

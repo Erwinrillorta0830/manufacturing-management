@@ -1,5 +1,6 @@
 import { Supplier, SupplierCurrencyOption, IncomingShipment, ShipmentLineItem, ShipmentExpense, RawMaterial, LinkedProduct, LinkedProductPageResponse, PSGCItem, RegisterRawMaterialPayload, PackagingVariant, BFFCatalogProduct, LandedCostAllocationRule, LandedCostAttachmentRecord, LandedCostDraftResponse, LandedCostExpenseDraft, LandedCostAuditResponse, SupplierCatalogUpdatePayload, SupplierCatalogUpdateResult, SupplierPageResponse, SupplierEvaluation, SupplierEvaluationInput } from "../types";
 import { normalizeProductRelationId } from "../product-relation";
+import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
 
 export type SupplierStatusFilter = "active" | "inactive" | "all";
 export type SupplierForeignFilter = "all" | "local" | "foreign";
@@ -240,7 +241,7 @@ async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials")
     // malformed response is returned.
     const rawItems = products.filter((p: BFFCatalogProduct) => {
         const ownType = Number(p.product_type);
-        if (productScope === "raw-materials") return ownType === 389 || ownType === 390;
+        if (productScope === "raw-materials") return isSupplierEligibleProductType(p.product_type);
 
         // Keep PO-eligible raw materials, packaging items, and finished goods
         // while retaining variants that inherit their classification from a
@@ -344,7 +345,7 @@ async function fetchCatalogProducts(limit = 250, productScope?: "raw-materials")
 }
 
 export async function fetchRawMaterials(limit = 250): Promise<RawMaterial[]> {
-    return fetchCatalogProducts(limit);
+    return fetchCatalogProducts(limit, "raw-materials");
 }
 
 export async function fetchRawMaterialCatalog(limit = 250): Promise<RawMaterial[]> {
