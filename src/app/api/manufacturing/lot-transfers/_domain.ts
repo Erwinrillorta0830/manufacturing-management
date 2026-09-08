@@ -2211,14 +2211,11 @@ export async function submitLotTransfer(id: number, actorUserId: number | null):
 export async function previewLotTransferInput(input: LotTransferInput): Promise<LotTransferPreview> {
     assertDifferentLotIds(input.sourceLotId, input.targetLotId);
     const details = normalizedDetails(input);
-    const unitIds = await Promise.all(details.map(async (detail) => requireMatchingTransferUnitId(await assertCanonicalLotReferences({
-        sourceLotId: input.sourceLotId,
-        sourceInventoryLotId: detail.sourceInventoryLotId,
-        targetLotId: input.targetLotId,
-        targetInventoryLotId: detail.targetInventoryLotId
-    }))));
-    const transferUnitId = unitIds.every((unit) => unit === unitIds[0]) ? unitIds[0] : null;
-    return buildLotTransferPreview(transientRecordFromInput({ ...input, details }, transferUnitId));
+    // Draft preflight must return the full line-level validation matrix, including
+    // failed canonical/UOM checks, so the editor can show the affected line and
+    // keep submission disabled instead of turning a validation result into a
+    // generic request error.
+    return buildLotTransferPreview(transientRecordFromInput({ ...input, details }, null));
 }
 
 async function createInventoryMovement(payload: RecordValue): Promise<number> {
