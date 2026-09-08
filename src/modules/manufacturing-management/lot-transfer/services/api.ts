@@ -64,6 +64,8 @@ export async function fetchLotTransfers(options: {
     search?: string;
     requestedFrom?: string;
     requestedTo?: string;
+    transferDateFrom?: string;
+    transferDateTo?: string;
     productId?: number;
     sourceLotId?: number;
     targetLotId?: number;
@@ -80,6 +82,8 @@ export async function fetchLotTransfers(options: {
     if (options.search?.trim()) params.set("search", options.search.trim());
     if (options.requestedFrom) params.set("requestedFrom", options.requestedFrom);
     if (options.requestedTo) params.set("requestedTo", options.requestedTo);
+    if (options.transferDateFrom) params.set("transferDateFrom", options.transferDateFrom);
+    if (options.transferDateTo) params.set("transferDateTo", options.transferDateTo);
     if (options.productId && options.productId > 0) params.set("productId", String(options.productId));
     if (options.sourceLotId && options.sourceLotId > 0) params.set("sourceLotId", String(options.sourceLotId));
     if (options.targetLotId && options.targetLotId > 0) params.set("targetLotId", String(options.targetLotId));

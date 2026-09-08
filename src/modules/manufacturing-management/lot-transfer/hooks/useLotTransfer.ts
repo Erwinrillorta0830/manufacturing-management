@@ -144,6 +144,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
                 search: report?.search,
                 requestedFrom: report?.requestedFrom,
                 requestedTo: report?.requestedTo,
+                transferDateFrom: report?.transferDateFrom,
+                transferDateTo: report?.transferDateTo,
                 productId: report?.productId ? Number(report.productId) : undefined,
                 sourceLotId: report?.sourceLotId ? Number(report.sourceLotId) : undefined,
                 targetLotId: report?.targetLotId ? Number(report.targetLotId) : undefined,
