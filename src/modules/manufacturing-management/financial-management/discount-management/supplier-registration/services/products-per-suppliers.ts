@@ -11,6 +11,7 @@ import { fetchUnitsMap } from "./products";
  */
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE = `${API_BASE_URL}/items`;
+const SUPPLIER_ELIGIBLE_PRODUCT_TYPES = "389,390";
 
 /**
  * Get headers with authentication token
@@ -38,13 +39,10 @@ export async function fetchSupplierProducts(
   supplierId: number,
 ): Promise<ProductPerSupplierWithDetails[]> {
   try {
-    const filter = { supplier_id: { _eq: supplierId } };
     const fields =
       "id,supplier_id,product_id,discount_type,product_id.product_id,product_id.product_name,product_id.product_code,product_id.short_description,product_id.unit_of_measurement";
 
-    const url = `${API_BASE}/product_per_supplier?limit=-1&fields=${fields}&filter=${encodeURIComponent(
-      JSON.stringify(filter),
-    )}`;
+    const url = `${API_BASE}/product_per_supplier?limit=-1&fields=${fields}&filter[supplier_id][_eq]=${supplierId}&filter[product_id][product_type][_in]=${SUPPLIER_ELIGIBLE_PRODUCT_TYPES}`;
 
     // DEBUGGER: Check the exact URL being constructed
     console.log(`[SERVER FETCH] Requesting Supplier ID: ${supplierId}`);
@@ -229,17 +227,8 @@ export async function isProductAlreadyAdded(
   productId: number,
 ): Promise<boolean> {
   try {
-    const filter = {
-      _and: [
-        { supplier_id: { _eq: supplierId } },
-        { product_id: { _eq: productId } },
-      ],
-    };
-
     const response = await fetch(
-      `${API_BASE}/product_per_supplier?limit=1&fields=id&filter=${encodeURIComponent(
-        JSON.stringify(filter),
-      )}`,
+      `${API_BASE}/product_per_supplier?limit=1&fields=id&filter[supplier_id][_eq]=${supplierId}&filter[product_id][_eq]=${productId}`,
       {
         method: "GET",
         headers: getHeaders(),

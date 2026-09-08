@@ -8,6 +8,7 @@ import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
 import { Globe, MapPin, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
+import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
 
 export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } from "./incoming-shipments/types";
 
@@ -232,6 +233,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         if (linkedIds.length === 0) return [];
 
         return rawMaterials.filter(rm => {
+            if (!isSupplierEligibleProductType(rm.product_type)) return false;
             const rmId = Number(rm.product_id);
             const rmParentId = rm.parent_id ? Number(rm.parent_id) : null;
             return linkedIds.includes(rmId) || (rmParentId !== null && linkedIds.includes(rmParentId));

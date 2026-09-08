@@ -44,6 +44,7 @@ import {
     ProductCategoryTypeValidationError,
     resolveProductCategoryTypes,
     validatePurchaseOrderCategoryTypes,
+    validateSupplierProductIds,
     type PurchaseOrderCategoryType
 } from "../_category-type";
 
@@ -1196,13 +1197,14 @@ export async function createIncomingShipment(
             throw new PurchaseOrderPaymentModeError("The selected Payment Type could not be validated.", 503);
         }
         await assertMrpProductJobOrderPairs(lineItems);
+        const productIds = [...new Set(lineItems.map(item =>
+            typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id)
+        ))].filter(id => Number.isSafeInteger(id) && id > 0);
+        await validateSupplierProductIds(productIds);
         await validatePurchaseOrderCategoryTypes(lineItems.map(item => ({
             productId: typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id),
             categoryType: item.category_type
         })));
-        const productIds = [...new Set(lineItems.map(item =>
-            typeof item.product_id === "object" ? Number(item.product_id.product_id) : Number(item.product_id)
-        ))].filter(id => Number.isSafeInteger(id) && id > 0);
         const categoryTypes = await resolveProductCategoryTypes(productIds);
         const productsResponse = await fetch(
             `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,weight,product_weight,net_weight,outer_carton_weight,pallet_weight,weight_unit_id.*&limit=-1`,

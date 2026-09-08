@@ -18,6 +18,10 @@ export const PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS: Array<{
     { value: "finished_goods", label: "Finished Goods", productTypeId: 388 }
 ];
 
+export const SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS = PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.filter(
+    option => option.value !== "finished_goods"
+);
+
 export function purchaseOrderMaterialTypeFromProductType(
     productType: number | string | null | undefined
 ): PurchaseOrderMaterialType | "" {
