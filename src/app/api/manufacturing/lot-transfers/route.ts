@@ -40,6 +40,8 @@ export async function GET(request: Request) {
             search: searchParams.get("search"),
             requestedFrom: searchParams.get("requestedFrom"),
             requestedTo: searchParams.get("requestedTo"),
+            transferDateFrom: searchParams.get("transferDateFrom"),
+            transferDateTo: searchParams.get("transferDateTo"),
             productId: optionalPositiveInteger(searchParams.get("productId"), "Product filter"),
             sourceLotId: optionalPositiveInteger(searchParams.get("sourceLotId"), "Source-lot filter"),
             targetLotId: optionalPositiveInteger(searchParams.get("targetLotId"), "Destination-lot filter"),

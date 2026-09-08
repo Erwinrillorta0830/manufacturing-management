@@ -8,6 +8,8 @@ export interface LotTransferReportFilters {
     branchId: string;
     requestedFrom: string;
     requestedTo: string;
+    transferDateFrom: string;
+    transferDateTo: string;
     productId: string;
     sourceLotId: string;
     targetLotId: string;
@@ -29,6 +31,8 @@ export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
     branchId: "",
     requestedFrom: "",
     requestedTo: "",
+    transferDateFrom: "",
+    transferDateTo: "",
     productId: "",
     sourceLotId: "",
     targetLotId: "",
@@ -45,6 +49,7 @@ export interface LotTransfer {
     status: LotTransferStatus;
     branchId: number;
     productId: number;
+    unitId: number | null;
     sourceLotId: number;
     sourceInventoryLotId: number;
     sourceBatchNo: string;
@@ -56,6 +61,8 @@ export interface LotTransfer {
     requestedBy: number | null;
     requestedByName: string | null;
     requestedAt: string | null;
+    transferDate: string | null;
+    submittedBy: number | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;
@@ -78,6 +85,7 @@ export interface LotTransfer {
     targetBalanceBefore: number | null;
     targetBalanceAfter: number | null;
     idempotencyKey: string | null;
+    reversalOfId: number | null;
     postingStartedAt: string | null;
     reconciliationRequired: boolean;
     postingError: string | null;
