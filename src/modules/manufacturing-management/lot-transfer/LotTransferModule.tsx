@@ -255,16 +255,28 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_240px]">
                 <label><FieldLabel required>Transfer quantity</FieldLabel><input className={inputClassName} type="number" min="0.000001" step="any" value={form.quantity} onChange={(event) => controller.setField("quantity", event.currentTarget.value)} placeholder="Enter quantity" /></label>
-                <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Server checks on submit</strong><br />On-hand, reservations, branch/product identity, QA status, UOM, expiry, capacity, and allergen compatibility are reloaded before approval.</div>
+                <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Live server validation</strong><br />On-hand, reservations, branch/product identity, QA status, UOM, expiry, capacity, and allergen compatibility are checked as the Draft is completed. Save is allowed while a check fails; submission is not.</div>
             </div>
             <label className="mt-4 block"><FieldLabel required>Transfer reason</FieldLabel><textarea className={textAreaClassName} value={form.reason} onChange={(event) => controller.setField("reason", event.currentTarget.value)} placeholder="Explain why the stock is being moved..." /></label>
+            <div className="mt-4 rounded-lg border p-3" aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <strong className="text-sm">Draft validation</strong>
+                    <span className="text-xs font-semibold text-muted-foreground">
+                        {controller.draftValidationStatus === "loading" ? "Checking..." : controller.draftValidationStatus === "valid" && controller.draftValidationIsCurrent ? "Ready to submit" : controller.draftValidationStatus === "invalid" && controller.draftValidationIsCurrent ? "Action required" : controller.draftValidationStatus === "error" ? "Retry required" : controller.isDraftFormComplete ? "Validation pending" : "Complete required fields"}
+                    </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    {controller.draftValidationMessage || (controller.isDraftFormComplete ? "Server validation will run shortly." : "Complete the branch, product, lot, batch, quantity, and reason fields to run all checks.")}
+                </p>
+                {controller.draftValidationIsCurrent && controller.preview && <div className="mt-3"><Checks preview={controller.preview} /></div>}
+            </div>
             {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
             <div className="mt-4 flex flex-wrap justify-end gap-2">
                 <Button type="button" variant="outline" onClick={onClose} disabled={controller.isActionLoading}>Cancel</Button>
                 <Button type="button" variant="outline" onClick={() => { controller.clearSelection(); setNotice(null); }} disabled={controller.isActionLoading}><XCircle />Clear</Button>
                 {controller.selectedId && controller.selectedRecord?.status === "Draft" && <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={controller.isActionLoading}><Trash2 />Delete Draft</Button>}
                 <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={controller.isActionLoading || controller.isLookupLoading}><Save />Save Draft</Button>
-                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft"}><Send />Submit for QA</Button>
+                <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft" || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
             </div>
         </section>
     );
