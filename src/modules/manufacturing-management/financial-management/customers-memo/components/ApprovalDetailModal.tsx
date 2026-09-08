@@ -18,6 +18,8 @@ import { DetailedMemo, CompanyProfile } from "../types";
 import { toast } from "sonner";
 import { PrintMemoSettingsDialog } from "./PrintMemoSettingsDialog";
 
+import { formatPhDateTime } from "../utils/dateUtils";
+
 interface ApprovalDetailModalProps {
     memoId: number | null;
     open: boolean;
@@ -182,15 +184,14 @@ export function ApprovalDetailModal({ memoId, open, onOpenChange, onApproved, re
                                 <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
                                     <div className="space-y-4">
                                         <DetailItem label="Customer" value={details.header.customer_id?.customer_name || "Unknown Customer"} />
-                                        <DetailItem label="Supplier" value={details.header.supplier_id?.supplier_name || "Unknown Supplier"} />
                                         <DetailItem label="Salesman" value={`${details.header.salesman_id?.salesman_code || "N/A"} - ${details.header.salesman_id?.salesman_name || "Unknown Salesman"}`} />
                                         <DetailItem label="Memo Type" value={details.header.type === 1 ? "Credit Memo" : details.header.type === 2 ? "Debit Memo" : "Unknown"} />
+                                        <DetailItem label="GL Account" value={details.header.chart_of_account?.account_title || "Unknown Account"} />
                                     </div>
                                     <div className="space-y-4">
-                                        <DetailItem label="GL Account" value={details.header.chart_of_account?.account_title || "Unknown Account"} />
-                                        <DetailItem label="Reason" value={details.header.reason || "No reason provided"} />
-                                        <DetailItem label="Date Created" value={new Date(details.header.created_at).toLocaleString()} />
                                         <DetailItem label="Collection Reference(s)" value={details.header.collection_references?.join(', ') || "N/A"} />
+                                        <DetailItem label="Reason" value={details.header.reason || "No reason provided"} />
+                                        <DetailItem label="Date Created" value={formatPhDateTime(details.header.created_at)} />
                                     </div>
                                 </div>
                             </div>

@@ -35,7 +35,6 @@ export default function CustomersMemoCreationModule() {
     const [loadingInitial, setLoadingInitial] = useState(true);
 
     // 2. Form State
-    const [selectedSupplier, setSelectedSupplier] = useState<string>("");
     const [selectedCustomer, setSelectedCustomer] = useState<string>("");
     const [selectedSalesman, setSelectedSalesman] = useState<string>("");
     const [selectedCOA, setSelectedCOA] = useState<string>("");
@@ -66,26 +65,20 @@ export default function CustomersMemoCreationModule() {
         load();
     }, []);
 
-    // 6. Memo Number Calculation
+    // 6. Memo Number Calculation based on balanceType (1 = Credit Memo "CM", 2 = Debit Memo "DM")
     useEffect(() => {
-        if (!selectedSupplier) {
-            setMemoNumber("(Auto-generated)");
-            return;
-        }
-        const s = suppliers.find(x => x.id === Number(selectedSupplier));
-        if (s?.supplier_shortcut) {
-            fetchNextMemoNumber(s.supplier_shortcut).then(setMemoNumber);
-        }
-    }, [selectedSupplier, suppliers]);
+        const prefix = balanceType === 1 ? "CM" : "DM";
+        fetchNextMemoNumber(prefix).then(setMemoNumber);
+    }, [balanceType]);
 
-    // 10. (Removed allocation logic, grouping, and handlers)
-    const isBalanced = amount > 0 && selectedSupplier && selectedCustomer && selectedSalesman && selectedCOA;
+    // Validation
+    const isBalanced = amount > 0 && selectedCustomer && selectedSalesman && selectedCOA;
 
     // 11. Orchestrated Submission
     const [submitting, setSubmitting] = useState(false);
     const handleSave = async () => {
         if (!isBalanced) return;
-        if (!selectedSupplier || !selectedCustomer || !selectedSalesman || !selectedCOA) {
+        if (!selectedCustomer || !selectedSalesman || !selectedCOA) {
             toast.error("Please ensure all header fields are complete.");
             return;
         }
@@ -95,7 +88,7 @@ export default function CustomersMemoCreationModule() {
             const payload = {
                 header: {
                     memo_number: memoNumber,
-                    supplier_id: Number(selectedSupplier),
+                    supplier_id: 0,
                     customer_id: Number(selectedCustomer),
                     salesman_id: Number(selectedSalesman),
                     chart_of_account: Number(selectedCOA),
@@ -109,15 +102,15 @@ export default function CustomersMemoCreationModule() {
 
             const res = await saveMemo(payload);
             if (res.success) {
-                toast.success("Customer Credit Memo has been created for approval.");
+                toast.success("Customer Memo has been created for approval.");
                 setAmount(0);
                 setReason("");
-                setSelectedSupplier("");
                 setSelectedCustomer("");
                 setSelectedSalesman("");
                 setSelectedCOA("");
                 setBalanceType(1);
-                setMemoNumber("(Auto-generated)");
+                const prefix = balanceType === 1 ? "CM" : "DM";
+                fetchNextMemoNumber(prefix).then(setMemoNumber);
             } else {
                 toast.error(res.error || "Save operation failed.");
             }
@@ -203,8 +196,6 @@ export default function CustomersMemoCreationModule() {
                         customers={customers}
                         salesmen={salesmen}
                         coas={coas}
-                        selectedSupplier={selectedSupplier}
-                        onSupplierChange={setSelectedSupplier}
                         selectedCustomer={selectedCustomer}
                         onCustomerChange={setSelectedCustomer}
                         selectedSalesman={selectedSalesman}
@@ -245,11 +236,11 @@ export default function CustomersMemoCreationModule() {
                                     <span className="font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{memoNumber}</span>
                                 </div>
 
-                                {selectedSupplier && (
+                                {selectedCustomer && (
                                     <div className="space-y-1">
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">Selected Supplier</p>
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">Selected Customer</p>
                                         <p className="text-sm font-bold truncate leading-tight">
-                                            {suppliers.find(s => String(s.id) === selectedSupplier)?.supplier_name}
+                                            {customers.find(c => String(c.id) === selectedCustomer)?.customer_name}
                                         </p>
                                     </div>
                                 )}

@@ -27,6 +27,7 @@ import {
 } from "../service";
 import { MemoApprovalRow, Supplier, Customer, Salesman, ChartOfAccount } from "../types";
 import { ApprovalDetailModal } from "./ApprovalDetailModal";
+import { formatPhDateTime } from "../utils/dateUtils";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { MultiSearchableSelect } from "./MultiSearchableSelect";
@@ -52,7 +53,6 @@ export default function CustomersMemoListModule() {
     const [coas, setCoas] = useState<ChartOfAccount[]>([]);
 
     // Filter State
-    const [filterSupplier, setFilterSupplier] = useState<string[]>([]);
     const [filterCustomer, setFilterCustomer] = useState<string[]>([]);
     const [filterSalesman, setFilterSalesman] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<"all" | "credit" | "debit">("all");
@@ -71,15 +71,13 @@ export default function CustomersMemoListModule() {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [memoData, supplierData, customerData, salesmanData, coaData] = await Promise.all([
+            const [memoData, customerData, salesmanData, coaData] = await Promise.all([
                 fetchMemosByStatus("ALL"),
-                fetchSuppliers(),
                 fetchCustomers(),
                 fetchSalesmen(),
                 fetchCOAs()
             ]);
             setMemos(memoData);
-            setSuppliers(supplierData);
             setCustomers(customerData);
             setSalesmen(salesmanData);
             setCoas(coaData);
@@ -99,7 +97,6 @@ export default function CustomersMemoListModule() {
             m.memo_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
             (m.customer_id?.customer_name || "").toLowerCase().includes(searchQuery.toLowerCase());
 
-        const matchesSupplier = filterSupplier.length === 0 || filterSupplier.includes(String(m.supplier_id?.id || ""));
         const matchesCustomer = filterCustomer.length === 0 || filterCustomer.includes(String(m.customer_id?.id || ""));
         const matchesSalesman = filterSalesman.length === 0 || filterSalesman.includes(String(m.salesman_id?.id || ""));
         const matchesTab = activeTab === "all" || (activeTab === "credit" && m.type === 1) || (activeTab === "debit" && m.type === 2);
@@ -124,13 +121,13 @@ export default function CustomersMemoListModule() {
             }
         }
 
-        return matchesSearch && matchesSupplier && matchesCustomer && matchesSalesman && matchesTab && matchesStatus && matchesCOA && matchesDate;
+        return matchesSearch && matchesCustomer && matchesSalesman && matchesTab && matchesStatus && matchesCOA && matchesDate;
     });
 
     // Reset page to 1 when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchQuery, filterSupplier, filterCustomer, filterSalesman, activeTab, filterStatus, filterCOA, filterDateFrom, filterDateTo]);
+    }, [searchQuery, filterCustomer, filterSalesman, activeTab, filterStatus, filterCOA, filterDateFrom, filterDateTo]);
 
     // Pagination Logic
     const totalPages = Math.ceil(filteredMemos.length / pageSize);
@@ -138,7 +135,6 @@ export default function CustomersMemoListModule() {
 
     const resetFilters = () => {
         setSearchQuery("");
-        setFilterSupplier([]);
         setFilterCustomer([]);
         setFilterSalesman([]);
         setFilterStatus([]);
@@ -277,15 +273,6 @@ export default function CustomersMemoListModule() {
 
                 <div className="flex-1 min-w-[200px]">
                     <MultiSearchableSelect
-                        placeholder="Filter by Supplier"
-                        options={suppliers.map(s => ({ value: String(s.id), label: s.supplier_name }))}
-                        value={filterSupplier}
-                        onValueChange={setFilterSupplier}
-                    />
-                </div>
-
-                <div className="flex-1 min-w-[200px]">
-                    <MultiSearchableSelect
                         placeholder="Filter by Salesman"
                         options={salesmen.map(s => ({
                             value: String(s.id),
@@ -346,7 +333,7 @@ export default function CustomersMemoListModule() {
                     value={filteredMemos.length}
                     icon={Database}
                     color="blue"
-                    trend={searchQuery || filterCustomer || filterSupplier || filterSalesman || filterStatus ? "Filtered Set" : "All Records"}
+                    trend={searchQuery || filterCustomer.length > 0 || filterSalesman.length > 0 || filterStatus.length > 0 ? "Filtered Set" : "All Records"}
                 />
                 <StatsCard
                     label="Total Value"
@@ -436,7 +423,7 @@ export default function CustomersMemoListModule() {
                                                         {memo.status}
                                                     </Badge>
                                                     <Badge variant="outline" className="text-[9px] font-black uppercase tracking-widest border-slate-200 text-slate-500 bg-white shadow-sm">
-                                                        {new Date(memo.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                                                        {formatPhDateTime(memo.created_at)}
                                                     </Badge>
                                                     <Badge variant="secondary" className={cn(
                                                         "text-[9px] font-black uppercase tracking-widest",

@@ -110,6 +110,9 @@ export async function POST(
             }
         }
 
+        // Collect and aggregate MEMO allocations by memo_id
+        const memoAmountMap = new Map<number, number>();
+
         for (const alloc of allocations) {
             if (alloc.amountApplied <= 0) continue; // Skip zero allocations
 
@@ -126,11 +129,7 @@ export async function POST(
             } else if (type === "MEMO") {
                 const memoId = parseInt(alloc.sourceTempId.replace(/\D/g, ""), 10);
                 if (!isNaN(memoId)) {
-                    memosPayload.push({
-                        collection_id: id,
-                        memo_id: memoId,
-                        amount: alloc.amountApplied
-                    });
+                    memoAmountMap.set(memoId, (memoAmountMap.get(memoId) || 0) + alloc.amountApplied);
                 }
             } else if (type === "RETURN") {
                 const returnNo = parseInt(alloc.sourceTempId.replace(/\D/g, ""), 10);
@@ -144,6 +143,14 @@ export async function POST(
                     });
                 }
             }
+        }
+
+        for (const [memoId, amount] of memoAmountMap.entries()) {
+            memosPayload.push({
+                collection_id: id,
+                memo_id: memoId,
+                amount: amount
+            });
         }
 
         // 3. Batch Insert to Directus
@@ -163,6 +170,44 @@ export async function POST(
                 body: JSON.stringify(memosPayload)
             });
             if (!res.ok) throw new Error(`Failed to insert collection_memos: ${await res.text()}`);
+
+            // Update customers_memo applied_amount and status
+            for (const memoItem of memosPayload) {
+                const memoId = memoItem.memo_id as number;
+                try {
+                    const memoRes = await fetch(`${DIRECTUS_URL}/items/customers_memo/${memoId}?fields=id,amount,applied_amount,status`, { headers });
+                    if (memoRes.ok) {
+                        const memoData = await memoRes.json();
+                        const memo = memoData.data;
+                        if (memo) {
+                            const colMemosRes = await fetch(`${DIRECTUS_URL}/items/collection_memos?filter[memo_id][_eq]=${memoId}&fields=amount`, { headers });
+                            let totalApplied = 0;
+                            if (colMemosRes.ok) {
+                                const colMemosData = await colMemosRes.json();
+                                totalApplied = (colMemosData.data || []).reduce((sum: number, item: { amount?: number }) => sum + (Number(item.amount) || 0), 0);
+                            } else {
+                                totalApplied = (Number(memo.applied_amount) || 0) + Number(memoItem.amount);
+                            }
+
+                            const origAmount = Number(memo.amount) || 0;
+                            const newStatus = totalApplied >= (origAmount - 0.009) ? "APPLIED" : (totalApplied > 0 ? "PARTIALLY APPLIED" : memo.status);
+
+                            const phDate = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace("T", " ");
+                            await fetch(`${DIRECTUS_URL}/items/customers_memo/${memoId}`, {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify({
+                                    applied_amount: totalApplied,
+                                    status: newStatus,
+                                    updated_at: phDate
+                                })
+                            });
+                        }
+                    }
+                } catch (memoErr) {
+                    console.warn(`Failed to update customers_memo ${memoId}:`, memoErr);
+                }
+            }
         }
 
         if (returnsPayload.length > 0) {
