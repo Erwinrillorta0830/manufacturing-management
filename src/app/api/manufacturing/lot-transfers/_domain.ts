@@ -1275,6 +1275,7 @@ async function hydrateTransferRecord(record: LotTransferRecord): Promise<LotTran
 }
 
 function normalizedDetails(input: LotTransferInput): LotTransferDetailInput[] {
+    const lineNumbers = new Set<number>();
     const seen = new Set<string>();
     return input.details.map((detail, index) => {
         const normalized = {
@@ -1282,6 +1283,10 @@ function normalizedDetails(input: LotTransferInput): LotTransferDetailInput[] {
             lineNo: detail.lineNo || index + 1,
             lineRemarks: detail.lineRemarks?.trim() || ""
         };
+        if (lineNumbers.has(normalized.lineNo)) {
+            throw new LotTransferError(400, `Transfer detail line ${normalized.lineNo} is duplicated. Each line must have a unique line number.`);
+        }
+        lineNumbers.add(normalized.lineNo);
         const identity = `${normalized.sourceInventoryLotId}:${normalized.sourceBatchNo.toLowerCase()}->${normalized.targetInventoryLotId}:${normalized.targetBatchNo.toLowerCase()}`;
         if (seen.has(identity)) {
             throw new LotTransferError(400, `Transfer detail line ${normalized.lineNo} duplicates another source/target batch pair.`);

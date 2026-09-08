@@ -403,6 +403,17 @@ export function MovementDetailModal({
                                     </p>
                                 </div>
 
+                                {movement.transactionType?.startsWith("LOT_TRANSFER") && movement.referenceDetailId && (
+                                    <div>
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground block mb-1.5">
+                                            Lot-transfer line detail
+                                        </span>
+                                        <p className="font-mono text-sm font-black text-foreground bg-primary/5 p-3 rounded-xl border border-primary/20">
+                                            {movement.referenceDetailId}
+                                        </p>
+                                    </div>
+                                )}
+
                                 <div>
                                     <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground block mb-1.5">
                                         Audit Remarks & Notes
