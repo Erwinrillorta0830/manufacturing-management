@@ -178,10 +178,17 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
         const branchMatches = !form.branchId || lot.branchId === 0 || lot.branchId === Number(form.branchId);
         return branchMatches && lot.status.toUpperCase() === "ACTIVE";
     }), [controller.lots, form.branchId]);
+    const selectedSourceLot = activeLots.find((lot) => String(lot.lotId) === form.sourceLotId);
+    const sourceUomConfigured = !selectedSourceLot || selectedSourceLot.uomId !== null;
     const targetLots = useMemo(
-        () => activeLots.filter((lot) => String(lot.lotId) !== form.sourceLotId),
-        [activeLots, form.sourceLotId]
+        () => activeLots.filter((lot) => {
+            if (String(lot.lotId) === form.sourceLotId) return false;
+            return !form.sourceLotId || (selectedSourceLot?.uomId !== null && selectedSourceLot?.uomId === lot.uomId);
+        }),
+        [activeLots, form.sourceLotId, selectedSourceLot?.uomId]
     );
+    const selectedTargetLot = targetLots.find((lot) => String(lot.lotId) === form.targetLotId);
+    const targetCapacityConfigured = !selectedTargetLot || selectedTargetLot.maxBatchCapacity > 0;
     const sourceBatches = controller.sourceBatches;
     const targetBatches = controller.targetBatches;
 
@@ -242,13 +249,13 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             <div className="mt-4 grid gap-4 rounded-lg border bg-muted/20 p-3 md:grid-cols-2">
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">SOURCE</span>Move out</div>
-                    <label className="block"><FieldLabel required>Source lot</FieldLabel><LotTransferSearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." disabled={!form.productId} className={selectClassName} /></label>
+                    <label className="block"><FieldLabel required>Source lot</FieldLabel><LotTransferSearchableSelect value={form.sourceLotId} onValueChange={controller.handleSourceLotChange} options={activeLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | UOM ${lot.uomName || (lot.uomId === null ? "not configured" : `#${lot.uomId}`)} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select source lot..." disabled={!form.productId} className={selectClassName} />{selectedSourceLot && !sourceUomConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Source lot UOM is not configured. Assign an explicit UOM before submitting this transfer.</p>}</label>
                     <label className="mt-3 block"><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceBatches} value={form.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange("source", value)} disabled={!form.sourceLotId} source /></label>
                     {sourceBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Available<br /><strong>{formatQuantity(sourceBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(sourceBatch.expirationDate)}</strong></span><span>QA<br /><strong>{sourceBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{sourceBatch.batchId}</strong></span></div>}
                 </div>
                 <div>
                     <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">TARGET</span>Move in</div>
-                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={targetLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder="Select target lot..." disabled={!form.productId} className={selectClassName} /><p className="mt-1 text-xs text-muted-foreground">Choose a destination lot different from the source lot.</p></label>
+                    <label className="block"><FieldLabel required>Target lot</FieldLabel><LotTransferSearchableSelect value={form.targetLotId} onValueChange={controller.handleTargetLotChange} options={targetLots.map((lot) => ({ value: String(lot.lotId), label: `${lot.lotName || `Lot #${lot.lotId}`} | UOM ${lot.uomName || (lot.uomId === null ? "not configured" : `#${lot.uomId}`)} | capacity ${lot.maxBatchCapacity > 0 ? formatQuantity(lot.maxBatchCapacity) : "not configured"}` }))} placeholder={form.sourceLotId && !sourceUomConfigured ? "Source UOM required first..." : "Select target lot..."} disabled={!form.productId || !sourceUomConfigured} className={selectClassName} /><p className="mt-1 text-xs text-muted-foreground">Choose an active destination lot with the same explicit UOM as the source.</p>{selectedTargetLot && !targetCapacityConfigured && <p role="alert" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300">Destination lot capacity is not configured. A positive capacity is required before this transfer can be submitted.</p>}</label>
                     <label className="mt-3 block"><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetBatches} value={form.targetInventoryLotId} onChange={(value) => controller.handleBatchChange("target", value)} disabled={!form.targetLotId} source={false} /></label>
                     {targetBatch && <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-background p-2 text-xs"><span>Current on hand<br /><strong>{formatQuantity(targetBatch.quantity)}</strong></span><span>Expiry<br /><strong>{formatDate(targetBatch.expirationDate)}</strong></span><span>QA<br /><strong>{targetBatch.qaStatus}</strong></span><span>Batch ID<br /><strong>{targetBatch.batchId}</strong></span></div>}
                 </div>

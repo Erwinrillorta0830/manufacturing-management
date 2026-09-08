@@ -202,6 +202,8 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
                 lotId: numberValue((row as LotOption).lotId ?? raw.lot_id),
                 lotName: stringValue((row as LotOption).lotName ?? raw.lot_name),
                 branchId: numberValue((row as LotOption).branchId ?? raw.branch_id),
+                uomId: numberValue((row as LotOption).uomId ?? raw.uom_id) || null,
+                uomName: stringValue((row as LotOption).uomName ?? raw.uom_name),
                 maxBatchCapacity: numberValue((row as LotOption).maxBatchCapacity ?? raw.max_batch_capacity),
                 status: stringValue((row as LotOption).status || "ACTIVE")
             };

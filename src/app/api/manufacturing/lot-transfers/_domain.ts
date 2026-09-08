@@ -226,6 +226,11 @@ function nullableNumeric(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
+function positiveCapacity(value: unknown): number | null {
+    const parsed = nullableNumeric(value);
+    return parsed !== null && parsed > 0 ? parsed : null;
+}
+
 function stringValue(value: unknown): string {
     return value === null || value === undefined ? "" : String(value).trim();
 }
@@ -473,8 +478,9 @@ async function assertCanonicalLotReferences(input: CanonicalLotTransferReference
     }
 }
 
-function unitId(row: RecordValue): number {
-    return relationId(firstValue(row, ["unit_id", "uom_id", "unit_of_measurement"]), ["unit_id", "uom_id", "id"]);
+function unitId(row: RecordValue): number | null {
+    const resolved = relationId(firstValue(row, ["unit_id"]), ["unit_id", "id"]);
+    return resolved > 0 ? resolved : null;
 }
 
 function normalizeStatus(value: unknown): string {
@@ -596,9 +602,8 @@ async function movementsForBatch(input: { productId: number; branchId: number; l
     return excludeExactTransferMovement(rows, excludeTransfer);
 }
 
-async function movementsForLot(input: { productId: number; branchId: number; lotId: number }, excludeTransfer?: { id: number; requestNo: string }): Promise<RecordValue[]> {
+async function movementsForLot(input: { branchId: number; lotId: number }, excludeTransfer?: { id: number; requestNo: string }): Promise<RecordValue[]> {
     const filters: Record<string, unknown>[] = [
-        { product_id: { _eq: input.productId } },
         { branch_id: { _eq: input.branchId } },
         { mm_lot_id: { _eq: input.lotId } }
     ];
@@ -955,8 +960,8 @@ async function loadTransferContext(record: LotTransferRecord, excludeTransferMov
     const [sourceMovements, targetBatchMovements, sourceLotMovements, targetLotMovements, sourceReservedQuantity, targetReservedQuantity] = await Promise.all([
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId, batchNo: record.sourceBatchNo }, excludedTransfer),
         movementsForBatch({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId, batchNo: record.targetBatchNo }, excludedTransfer),
-        movementsForLot({ productId: record.productId, branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
-        movementsForLot({ productId: record.productId, branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
+        movementsForLot({ branchId: record.branchId, lotId: record.sourceLotId }, excludedTransfer),
+        movementsForLot({ branchId: record.branchId, lotId: record.targetLotId }, excludedTransfer),
         reservedQuantityForInventoryLot(record.sourceInventoryLotId),
         reservedQuantityForInventoryLot(record.targetInventoryLotId)
     ]);
@@ -1036,10 +1041,13 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
     const targetMfg = dateValue(context.targetInventoryLot, ["manufacturing_date", "manufacturingDate"]);
     const sourceUnitCost = nullableNumeric(firstValue(context.sourceInventoryLot, ["unit_cost", "cost_per_unit", "final_landed_unit_cost"]));
     const targetUnitCost = nullableNumeric(firstValue(context.targetInventoryLot, ["unit_cost", "cost_per_unit", "final_landed_unit_cost"]));
+    const sourceUnitId = unitId(context.sourceLot);
+    const targetUnitId = unitId(context.targetLot);
     const sourceCapacity = nullableNumeric(firstValue(context.sourceLot, ["max_batch_capacity", "capacity"]));
-    const targetCapacity = nullableNumeric(firstValue(context.targetLot, ["max_batch_capacity", "capacity"]));
+    const targetCapacity = positiveCapacity(firstValue(context.targetLot, ["max_batch_capacity", "capacity"]));
     const targetOccupiedForCapacity = targetLotOccupiedBefore;
     const targetCapacityRemaining = targetCapacity === null ? null : Math.max(0, targetCapacity - targetOccupiedForCapacity);
+    const targetCapacityConfigured = targetCapacity !== null;
     const effectiveExpiry = earliestDate(sourceExpiry, targetExpiry);
     const today = new Date().toISOString().slice(0, 10);
     const checks: ValidationCheck[] = [
@@ -1050,8 +1058,17 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
         check("qa", "QA-eligible source", ["GOOD", "PASSED", "PASS", "APPROVED"].includes(normalizeStatus(context.sourceInventoryLot.qa_status)), "Source stock must have a releasable QA status."),
         check("quantity", "Positive quantity", Number.isFinite(record.quantity) && record.quantity > 0, "Transfer quantity must be greater than zero."),
         check("source-availability", "Source availability", Math.max(0, sourceQuantityBefore - sourceReserved) + LOT_TRANSFER_EPSILON >= record.quantity, `Available source quantity is ${Math.max(0, sourceQuantityBefore - sourceReserved)}.`),
-        check("target-capacity", "Target capacity", targetCapacityRemaining === null || targetCapacityRemaining + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityRemaining === null ? "Target lot has no configured capacity limit." : `Remaining target lot capacity is ${targetCapacityRemaining}.`),
-        check("uom", "Unit compatibility", unitId(context.sourceInventoryLot) === 0 || unitId(context.targetInventoryLot) === 0 || unitId(context.sourceInventoryLot) === unitId(context.targetInventoryLot), "Source and target batches must use compatible units."),
+        check("target-capacity", "Target capacity", targetCapacityConfigured && (targetCapacityRemaining ?? 0) + LOT_TRANSFER_EPSILON >= record.quantity, targetCapacityConfigured ? `Destination lot currently contains ${targetLotOccupiedBefore}; configured capacity is ${targetCapacity}; remaining capacity is ${targetCapacityRemaining}.` : "Destination lot capacity is not configured. Set a positive max_batch_capacity before transferring stock."),
+        check(
+            "uom",
+            "Unit compatibility",
+            sourceUnitId !== null && targetUnitId !== null && sourceUnitId === targetUnitId,
+            sourceUnitId === null || targetUnitId === null
+                ? `Source and destination lots must each have an explicit valid UOM. Missing: ${[sourceUnitId === null ? "source" : "", targetUnitId === null ? "destination" : ""].filter(Boolean).join(" and ")}.`
+                : sourceUnitId === targetUnitId
+                    ? "Source and destination lots use the same UOM."
+                    : `Source UOM ${sourceUnitId} and destination UOM ${targetUnitId} are incompatible; UOM conversion is not supported.`
+        ),
         check("allergen", "Allergen profile match", context.sourceAllergens.available && context.targetAllergens.available && profilesEqual(context.sourceAllergens.values, context.targetAllergens.values), context.sourceAllergens.available && context.targetAllergens.available ? "Source and target allergen profiles match." : "Allergen profiles are unavailable; QA approval is blocked."),
         check("dates", "Valid manufacturing and expiry dates", validDate(sourceMfg) && validDate(targetMfg) && validDate(sourceExpiry) && validDate(targetExpiry) && (!effectiveExpiry || dateOnly(effectiveExpiry)! >= today) && (!sourceMfg || !sourceExpiry || dateOnly(sourceMfg)! <= dateOnly(sourceExpiry)!) && (!targetMfg || !targetExpiry || dateOnly(targetMfg)! <= dateOnly(targetExpiry)!), "Manufacturing and expiry values must be valid, chronological, and not expired."),
         check("different-lot", "Different source and destination lots", record.sourceLotId !== record.targetLotId, "Source and destination lot IDs must be different."),
