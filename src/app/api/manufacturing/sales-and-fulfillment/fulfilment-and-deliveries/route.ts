@@ -1120,7 +1120,7 @@ export async function GET(req: NextRequest) {
                             orders: childOrders,
                         };
                     })
-                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Audited"));
+                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Approved" || r.status === "Audited"));
 
         // 12. Compute Overall Metrics across entire consolidations dataset
         const totalDispatched = records.length;

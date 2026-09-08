@@ -4,6 +4,7 @@ export type ConsolidationStatus =
     | "For Picking"
     | "Picking"
     | "Picked"
+    | "Approved"
     | "Audited"
     | "For Fulfillment"
     | "Dispatched"
@@ -15,6 +16,7 @@ export const CONSOLIDATION_STATUS_LABEL: Record<ConsolidationStatus, string> = {
     "For Picking":     "Ready for Picking",
     Picking:           "Picking",
     Picked:            "For Approval",
+    Approved:          "Approved",
     Audited:           "Approved",
     "For Fulfillment": "For Fulfillment",
     Dispatched:        "Dispatched",
@@ -26,6 +28,7 @@ export interface StatusSummary {
     "For Picking": number;
     Picking: number;
     Picked: number;
+    Approved?: number;
     Audited: number;
     "For Fulfillment": number;
     Dispatched: number;
