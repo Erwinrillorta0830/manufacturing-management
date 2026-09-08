@@ -3,8 +3,8 @@ import { z } from "zod";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 
 export const LOT_TRANSFER_COLLECTION = process.env.MANUFACTURING_LOT_TRANSFER_COLLECTION || "mm_lot_transfers";
-export const LOT_TRANSFER_SOURCE_OUT_TYPE = "Lot Transfer Source OUT";
-export const LOT_TRANSFER_TARGET_IN_TYPE = "Lot Transfer Target IN";
+export const LOT_TRANSFER_SOURCE_OUT_TYPE = "LOT_TRANSFER_OUT";
+export const LOT_TRANSFER_TARGET_IN_TYPE = "LOT_TRANSFER_IN";
 export const LOT_TRANSFER_EPSILON = 0.000001;
 const MM_LOT_COLLECTION = "mm_lots";
 const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
@@ -636,7 +636,8 @@ async function resolveMovementType(typeName: string, direction: "IN" | "OUT"): P
     const params = new URLSearchParams({
         "filter[type_name][_eq]": typeName,
         "filter[direction][_eq]": direction,
-        fields: "transaction_type_id,type_name,direction",
+        "filter[origin_table][_eq]": LOT_TRANSFER_COLLECTION,
+        fields: "transaction_type_id,type_name,direction,origin_table",
         limit: "-1"
     });
     const rows = await directusRows(`/items/inventory_transaction_types?${params.toString()}`, "Inventory transaction type lookup");

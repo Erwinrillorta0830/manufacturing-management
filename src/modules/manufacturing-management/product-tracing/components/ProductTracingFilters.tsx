@@ -53,8 +53,8 @@ const TRANSACTION_TYPES = [
     { value: "SALES_ISSUE", label: "Sales Issue" },
     { value: "QA_REJECT_BAD_ORDER_RECEIPT", label: "QA Reject / Bad Order Receipt" },
     { value: "QA_VENDOR_RETURN", label: "QA Vendor Return" },
-    { value: "LOT_TRANSFER_SOURCE_OUT", label: "Lot Transfer Source OUT" },
-    { value: "LOT_TRANSFER_TARGET_IN", label: "Lot Transfer Target IN" }
+    { value: "LOT_TRANSFER_OUT", label: "Lot Transfer OUT" },
+    { value: "LOT_TRANSFER_IN", label: "Lot Transfer IN" }
 ];
 
 const CONDITIONS = [
