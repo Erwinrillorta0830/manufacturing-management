@@ -59,6 +59,8 @@ export interface LotOption {
     lotId: number;
     lotName: string;
     branchId: number;
+    uomId: number | null;
+    uomName: string;
     maxBatchCapacity: number;
     status: string;
 }

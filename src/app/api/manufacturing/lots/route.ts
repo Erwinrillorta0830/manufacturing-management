@@ -208,6 +208,7 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { lot_name, max_batch_capacity } = body;
         const rawUnitId = body.unit_id !== undefined ? body.unit_id : body.uom_id;
+        const unitId = Number(rawUnitId);
 
         if (!lot_name || typeof lot_name !== "string" || !lot_name.trim()) {
             return NextResponse.json(
@@ -219,6 +220,13 @@ export async function POST(request: Request) {
         if (typeof max_batch_capacity !== "number" || max_batch_capacity <= 0) {
             return NextResponse.json(
                 { error: "max_batch_capacity must be a positive number greater than 0" },
+                { status: 400 }
+            );
+        }
+
+        if (!Number.isInteger(unitId) || unitId <= 0) {
+            return NextResponse.json(
+                { error: "unit_id is required and must be a positive unit identifier" },
                 { status: 400 }
             );
         }
@@ -282,7 +290,7 @@ export async function POST(request: Request) {
         const postBody: Record<string, unknown> = {
             lot_name: lot_name.trim(),
             branch_id: body.branch_id ? Number(body.branch_id) : 1,
-            unit_id: rawUnitId !== undefined && rawUnitId !== null && rawUnitId !== "" ? Number(rawUnitId) : 1,
+            unit_id: unitId,
             max_batch_capacity: Number(max_batch_capacity),
             status: body.status || "ACTIVE",
             created_by: userId ? Number(userId) : 1
