@@ -39,7 +39,7 @@ import {
   AllocationStrategy,
   QAStatus,
 } from '../types/lot-tracking.types';
-import { fetchBatchOnhand, fetchLotsByBranch, isBadStockLot } from '../services/lot-tracking.service';
+import { fetchBatchOnhand, fetchLotsByBranch, fetchInventoryLots, isBadStockLot } from '../services/lot-tracking.service';
 import { allocateStockSync } from '../services/stock-allocation.engine';
 
 export interface StockAllocationModalProps {
@@ -102,10 +102,11 @@ export function StockAllocationModal({
       setLoading(true);
       try {
         // Spring Boot /api/mm-batch-onhand is authoritative source for live quantities
-        // Also fetch mm_lots from Directus to resolve exact lot names for each lot_id
-        const [onhandData, branchLots] = await Promise.all([
+        // Also fetch mm_lots and mm_inventory_lots to resolve exact lot names and true inventory_lot_id
+        const [onhandData, branchLots, existingInvLots] = await Promise.all([
           fetchBatchOnhand({ branchId, productId }),
           fetchLotsByBranch(branchId).catch(() => []),
+          fetchInventoryLots({ branchId, productId }).catch(() => []),
         ]);
 
         if (isMounted) {
@@ -113,6 +114,17 @@ export function StockAllocationModal({
           (branchLots || []).forEach((l) => {
             if (l.lot_id && l.lot_name) {
               lotMap.set(l.lot_id, { name: l.lot_name, unit_id: l.unit_id, unit_name: l.unit_name });
+            }
+          });
+
+          const invLotLookup = new Map<string, number>();
+          (existingInvLots || []).forEach((il) => {
+            if (il.inventory_lot_id && il.batch_no) {
+              const bClean = il.batch_no.trim().toLowerCase();
+              invLotLookup.set(`${il.lot_id}:${bClean}`, il.inventory_lot_id);
+              if (!invLotLookup.has(bClean)) {
+                invLotLookup.set(bClean, il.inventory_lot_id);
+              }
             }
           });
 
@@ -132,11 +144,20 @@ export function StockAllocationModal({
             productCode?: string;
           }>();
 
+          let syntheticCounter = -1;
+
           for (const oh of onhandData) {
             if (Number(oh.branchId) !== Number(branchId)) continue;
-            const lotIdNum = Number(oh.lotId || 0);
-            const invLotIdNum = Number(oh.inventoryLotId || 0);
-            const batchStr = oh.batchNo ? String(oh.batchNo).trim() : `lot-${invLotIdNum || lotIdNum}`;
+            const lotIdNum = Number(oh.mmLotId || 0);
+            let invLotIdNum = Number(oh.inventoryLotId || 0);
+
+            // If inventoryLotId is null/0 from Spring Boot, resolve via mm_inventory_lots by lot_id and batch_no
+            if (invLotIdNum === 0 && oh.batchNo) {
+              const bClean = String(oh.batchNo).trim().toLowerCase();
+              invLotIdNum = invLotLookup.get(`${lotIdNum}:${bClean}`) || invLotLookup.get(bClean) || 0;
+            }
+
+            const batchStr = oh.batchNo ? String(oh.batchNo).trim() : (lotIdNum ? `lot-${lotIdNum}` : 'unassigned');
             const key = `${lotIdNum}:${invLotIdNum}:${batchStr}`;
 
             const existing = batchMap.get(key);
@@ -160,8 +181,10 @@ export function StockAllocationModal({
                 existing.inventoryLotId = invLotIdNum;
               }
             } else {
+              // Use real inventoryLotId if available; otherwise use a negative synthetic key for modal internal state
+              const modalKeyId = invLotIdNum > 0 ? invLotIdNum : syntheticCounter--;
               batchMap.set(key, {
-                inventoryLotId: invLotIdNum || lotIdNum || 1,
+                inventoryLotId: modalKeyId,
                 lotId: lotIdNum,
                 branchId: Number(oh.branchId),
                 productId: Number(oh.productId || productId),
@@ -361,7 +384,19 @@ export function StockAllocationModal({
   };
 
   const handleConfirm = () => {
-    onConfirm(currentPlan);
+    // Sanitize any negative internal modal keys back to 0 so no synthetic IDs are emitted
+    const sanitizedPlan: StockAllocationPlan = {
+      ...currentPlan,
+      allocations: currentPlan.allocations.map((a) => ({
+        ...a,
+        inventory_lot_id: a.inventory_lot_id > 0 ? a.inventory_lot_id : 0,
+      })),
+      unallocatedBatches: currentPlan.unallocatedBatches.map((b) => ({
+        ...b,
+        inventory_lot_id: b.inventory_lot_id > 0 ? b.inventory_lot_id : 0,
+      })),
+    };
+    onConfirm(sanitizedPlan);
     onOpenChange(false);
   };
 
@@ -648,6 +683,12 @@ export function StockAllocationModal({
                                   max={batch.available_quantity}
                                   value={allocatedQty === 0 ? '' : allocatedQty}
                                   placeholder="0"
+                                  onFocus={(e) => {
+                                    e.target.select();
+                                  }}
+                                  onClick={(e) => {
+                                    (e.target as HTMLInputElement).select();
+                                  }}
                                   onChange={(e) =>
                                     handleManualQtyChange(
                                       batch.inventory_lot_id,

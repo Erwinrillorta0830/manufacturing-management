@@ -66,31 +66,39 @@ export function useStockTransferDispatchManual() {
     const primaryAlloc = plan.allocations[0];
     const allBatchNos = plan.allocations.map((a) => a.batch_no).filter(Boolean).join(', ');
 
-    const lotAllocGroups: LotAllocationGroup[] = plan.allocations.map((a) => ({
-      lot_id: a.lot_id,
-      lot_name: a.lot_name || `Lot #${a.lot_id}`,
-      max_batch_capacity: a.available_quantity || 0,
-      allocated_quantity: a.allocated_quantity,
-      batches: [
-        {
-          inventory_lot_id: a.inventory_lot_id,
-          batch_no: a.batch_no,
-          manufacturing_date: a.manufacturing_date ?? null,
-          expiry_date: a.expiry_date ?? null,
-          quantity: a.allocated_quantity,
-          unit_cost: a.unit_cost ?? 0,
-          qa_status: a.qa_status,
-          is_existing: true,
-        },
-      ],
-    }));
+    const lotMap = new Map<number, LotAllocationGroup>();
+    for (const a of plan.allocations) {
+      const lotId = a.lot_id;
+      if (!lotMap.has(lotId)) {
+        lotMap.set(lotId, {
+          lot_id: lotId,
+          lot_name: a.lot_name || `Lot #${lotId}`,
+          max_batch_capacity: a.available_quantity || 0,
+          allocated_quantity: 0,
+          batches: [],
+        });
+      }
+      const grp = lotMap.get(lotId)!;
+      grp.allocated_quantity += a.allocated_quantity;
+      grp.batches.push({
+        inventory_lot_id: a.inventory_lot_id && a.inventory_lot_id > 0 ? a.inventory_lot_id : undefined,
+        batch_no: a.batch_no,
+        manufacturing_date: a.manufacturing_date ?? null,
+        expiry_date: a.expiry_date ?? null,
+        quantity: a.allocated_quantity,
+        unit_cost: a.unit_cost ?? 0,
+        qa_status: a.qa_status,
+        is_existing: true,
+      });
+    }
+    const lotAllocGroups = Array.from(lotMap.values());
 
     setItemLots(prev => ({
       ...prev,
       [itemId]: {
         lot_id: primaryAlloc?.lot_id,
         lot_name: primaryAlloc?.lot_name,
-        inventory_lot_id: primaryAlloc?.inventory_lot_id,
+        inventory_lot_id: (primaryAlloc?.inventory_lot_id && primaryAlloc.inventory_lot_id > 0) ? primaryAlloc.inventory_lot_id : undefined,
         batch_no: allBatchNos,
         manufacturing_date: primaryAlloc?.manufacturing_date ?? null,
         expiry_date: primaryAlloc?.expiry_date ?? null,

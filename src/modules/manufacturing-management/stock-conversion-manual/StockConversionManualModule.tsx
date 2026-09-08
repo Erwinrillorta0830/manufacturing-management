@@ -75,14 +75,14 @@ export default function StockConversionManualModule({
     const branchId = selectedBranchId > 0 ? selectedBranchId : (userBranchId || 190);
     const payload: StockConversionPayload = {
       productId: selectedProduct.productId,
-      sourceUnitId: selectedProduct.currentUnitId ?? 11,
+      sourceUnitId: selectedProduct.currentUnitId ,
       targetUnitId: targetUnit.unitId,
       targetProductId: targetUnit.targetProductId ?? selectedProduct.productId,
       quantityToConvert: qtyToConvert,
       convertedQuantity,
       pricePerUnit: selectedProduct.pricePerUnit,
       branchId,
-      userId: userId || 24,
+      userId: userId  ,
       sourceLotId: outputBatch?.sourceLotId,
       sourceInventoryLotId: outputBatch?.sourceInventoryLotId,
       sourceBatchNo: outputBatch?.sourceBatchNo || outputBatch?.sourceBatchSummary,
@@ -94,8 +94,8 @@ export default function StockConversionManualModule({
       targetManufacturingDate: outputBatch?.targetMfgDate,
       targetExpiryDate: outputBatch?.targetExpDate,
       targetAllocations: outputBatch?.targetAllocations,
-      sourceFactor: selectedProduct.conversionFactor || 1,
-      targetFactor: targetUnit.conversionFactor || 1,
+      sourceFactor: selectedProduct.conversionFactor ,
+      targetFactor: targetUnit.conversionFactor  ,
     };
 
     try {

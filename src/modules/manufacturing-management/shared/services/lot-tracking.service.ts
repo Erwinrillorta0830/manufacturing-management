@@ -31,11 +31,7 @@ const getHeaders = (token?: string) => {
 
 async function notifyClientApiError(res: Response, fallbackMessage: string): Promise<string> {
   if (typeof window === "undefined") return fallbackMessage;
-  if (res.status === 401) {
-    const authMsg = "Authentication expired. Please log in again.";
-    toast.error(authMsg);
-    return authMsg;
-  }
+
   let detail = "";
   try {
     const json = await res.json();
@@ -43,8 +39,98 @@ async function notifyClientApiError(res: Response, fallbackMessage: string): Pro
   } catch {
     detail = await res.text().catch(() => "");
   }
-  const message = detail || `${fallbackMessage} (HTTP ${res.status})`;
-  toast.error(message);
+
+  const status = res.status;
+
+  // Context-aware title, description and dynamic CTA action based on error code
+  if (status === 401) {
+    const authMsg = "Spring Boot Session Expired (401)";
+    const desc = detail || "Authentication token is missing or expired. Please re-authenticate.";
+    toast.error(authMsg, {
+      description: desc,
+      action: {
+        label: "Re-authenticate",
+        onClick: () => {
+          if (typeof window !== "undefined") {
+            window.location.href = "/auth/login";
+          }
+        },
+      },
+    });
+    return authMsg;
+  }
+
+  if (status === 403) {
+    const title = "Spring Boot Access Denied (403)";
+    const desc = detail || "You do not have permission to access batch inventory records.";
+    toast.error(title, {
+      description: desc,
+      action: {
+        label: "Dismiss",
+        onClick: () => {},
+      },
+    });
+    return title;
+  }
+
+  if (status === 404) {
+    const title = "Spring Boot Endpoint Not Found (404)";
+    const desc = detail || "The batch on-hand API endpoint was not found.";
+    toast.error(title, {
+      description: desc,
+      action: {
+        label: "Retry",
+        onClick: () => {
+          if (typeof window !== "undefined") {
+            window.location.reload();
+          }
+        },
+      },
+    });
+    return title;
+  }
+
+  if (status === 502 || status === 503 || status === 504) {
+    const title = `Spring Boot Service Unavailable (${status})`;
+    const desc = detail || "Unable to reach Spring Boot backend service.";
+    toast.error(title, {
+      description: desc,
+      action: {
+        label: "Retry Connection",
+        onClick: () => {
+          if (typeof window !== "undefined") {
+            window.location.reload();
+          }
+        },
+      },
+    });
+    return title;
+  }
+
+  if (status === 500) {
+    const title = "Spring Boot Server Error (500)";
+    const desc = detail || "Internal server error occurred while retrieving batch inventory.";
+    toast.error(title, {
+      description: desc,
+      action: {
+        label: "Retry",
+        onClick: () => {
+          if (typeof window !== "undefined") {
+            window.location.reload();
+          }
+        },
+      },
+    });
+    return title;
+  }
+
+  const message = detail || `${fallbackMessage} (HTTP ${status})`;
+  toast.error(message, {
+    action: {
+      label: "Dismiss",
+      onClick: () => {},
+    },
+  });
   return message;
 }
 
@@ -469,9 +555,11 @@ export interface MMProductOnhand {
 
 export interface MMBatchOnhand {
   branchId: number;
-  inventoryLotId: number;
-  lotId: number;
+  inventoryLotId?: number | null;
+  mmLotId?: number;
   productId: number;
+  productTypeId?: number;
+  productTypeName?: string;
   unitId?: number;
   batchNo: string;
   manufacturingDate?: string | null;
@@ -501,7 +589,7 @@ export interface MMInventoryMovement {
   postedBy?: number;
   branchId?: number;
   inventoryLotId?: number;
-  lotId?: number;
+  mmLotId?: number;
   productId?: number;
   productCode?: string;
   productName?: string;
@@ -560,37 +648,8 @@ export async function fetchProductOnhand(params: {
       // ignore and fallback
     }
 
-    // Server-side Directus fallback
-    const filterParts: string[] = [];
-    if (params.branchId) filterParts.push(`filter[branch_id][_eq]=${params.branchId}`);
-    if (params.productId) filterParts.push(`filter[product_id][_eq]=${params.productId}`);
-
-    const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
-    const directusUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?limit=-1${queryStr}`;
-    const dirRes = await fetch(directusUrl, { headers: getHeaders(), cache: "no-store" });
+    // Strictly no Directus fallback for v_mm_batch_onhand view (views are only queryable on Spring Boot)
     const productMap = new Map<number, MMProductOnhand>();
-    if (dirRes.ok) {
-      const dirJson = await dirRes.json();
-      const rows = dirJson.data || [];
-      for (const row of rows) {
-        const pId = Number(row.product_id);
-        const bId = Number(row.branch_id || params.branchId || 0);
-        const onhand = Number(row.onhand_quantity || 0);
-        const existing = productMap.get(pId);
-        if (existing) {
-          existing.onhandQuantity += onhand;
-        } else {
-          productMap.set(pId, {
-            branchId: bId,
-            productId: pId,
-            unitId: Number(row.unit_id || 1),
-            totalQuantityIn: onhand,
-            totalQuantityOut: 0,
-            onhandQuantity: onhand,
-          });
-        }
-      }
-    }
 
     // Also enrich / fallback from mm_stock_adjustment (posted items)
     try {
@@ -663,7 +722,7 @@ export async function fetchProductOnhand(params: {
 export async function fetchBatchOnhand(params: {
   branchId?: number;
   productId?: number;
-  lotId?: number;
+  mmLotId?: number;
   batchNo?: string;
   inventoryCondition?: string;
 }): Promise<MMBatchOnhand[]> {
@@ -671,7 +730,7 @@ export async function fetchBatchOnhand(params: {
     const searchParams = new URLSearchParams();
     if (params.branchId) searchParams.set("branch", String(params.branchId));
     if (params.productId) searchParams.set("product", String(params.productId));
-    if (params.lotId) searchParams.set("lot", String(params.lotId));
+    if (params.mmLotId) searchParams.set("mmLot", String(params.mmLotId));
     if (params.batchNo) searchParams.set("batchNo", params.batchNo);
     if (params.inventoryCondition) searchParams.set("inventoryCondition", params.inventoryCondition);
 
@@ -700,118 +759,7 @@ export async function fetchBatchOnhand(params: {
       // ignore and fallback
     }
 
-    // Server-side Directus fallback
-    const filterParts: string[] = [];
-    if (params.branchId) filterParts.push(`filter[branch_id][_eq]=${params.branchId}`);
-    if (params.productId) filterParts.push(`filter[product_id][_eq]=${params.productId}`);
-    if (params.lotId) filterParts.push(`filter[lot_id][_eq]=${params.lotId}`);
-    if (params.batchNo) filterParts.push(`filter[batch_no][_eq]=${encodeURIComponent(params.batchNo)}`);
-
-    const queryStr = filterParts.length > 0 ? `&${filterParts.join("&")}` : "";
-    const directusUrl = `${DIRECTUS_URL}/items/v_mm_batch_onhand?limit=-1${queryStr}`;
-    let dirRes = await fetch(directusUrl, { headers: getHeaders(), cache: "no-store" });
-    if (!dirRes.ok) {
-      const invLotUrl = `${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=*,lot_id.lot_name,product_id.product_name,product_id.product_code${queryStr}`;
-      dirRes = await fetch(invLotUrl, { headers: getHeaders(), cache: "no-store" });
-    }
-
-    if (dirRes.ok) {
-      const dirJson = await dirRes.json();
-      const rows = dirJson.data || [];
-      const mapped: MMBatchOnhand[] = rows.map((r: Record<string, unknown>) => {
-        const lotObj = typeof r.lot_id === "object" && r.lot_id !== null ? (r.lot_id as Record<string, unknown>) : null;
-        const prodObj = typeof r.product_id === "object" && r.product_id !== null ? (r.product_id as Record<string, unknown>) : null;
-
-        return {
-          branchId: Number(r.branch_id || params.branchId || 0),
-          inventoryLotId: Number(r.inventory_lot_id || r.id),
-          lotId: Number(lotObj ? lotObj.lot_id || lotObj.id : r.lot_id || 0),
-          productId: Number(prodObj ? prodObj.product_id || prodObj.id : r.product_id || params.productId || 0),
-          unitId: Number(r.unit_id || 1),
-          batchNo: String(r.batch_no || ""),
-          manufacturingDate: (r.manufacturing_date as string) || null,
-          expirationDate: (r.expiration_date || r.expiry_date as string) || null,
-          inventoryCondition: String(r.inventory_condition || r.qa_status || "GOOD").toUpperCase(),
-          totalQuantityIn: Number(r.total_quantity_in || r.onhand_quantity || r.quantity || 0),
-          totalQuantityOut: Number(r.total_quantity_out || 0),
-          onhandQuantity: Number(r.onhand_quantity !== undefined ? r.onhand_quantity : r.quantity || 0),
-          lotName: lotObj ? String(lotObj.lot_name || "") : (r.lot_name as string | undefined),
-          productName: prodObj ? String(prodObj.product_name || "") : (r.product_name as string | undefined),
-          productCode: prodObj ? String(prodObj.product_code || "") : (r.product_code as string | undefined),
-        };
-      });
-
-      // Also check posted mm_stock_adjustment for missing batches
-      try {
-        const postedHeaderRes = await fetch(
-          `${DIRECTUS_URL}/items/mm_stock_adjustment_header?filter={"isPosted":{"_eq":1}}&fields=doc_no&limit=-1`,
-          { headers: getHeaders(), cache: "no-store" }
-        );
-        if (postedHeaderRes.ok) {
-          const headerJson = await postedHeaderRes.json();
-          const postedDocNos = (headerJson.data || []).map((h: { doc_no: string }) => h.doc_no).filter(Boolean);
-          if (postedDocNos.length > 0) {
-            const adjFilterParts: string[] = [
-              `filter[doc_no][_in]=${encodeURIComponent(postedDocNos.join(","))}`
-            ];
-            if (params.branchId) adjFilterParts.push(`filter[branch_id][_eq]=${params.branchId}`);
-            if (params.productId) adjFilterParts.push(`filter[product_id][_eq]=${params.productId}`);
-            if (params.lotId) adjFilterParts.push(`filter[lot_id][_eq]=${params.lotId}`);
-            if (params.batchNo) adjFilterParts.push(`filter[batch_no][_eq]=${encodeURIComponent(params.batchNo)}`);
-
-            const adjUrl = `${DIRECTUS_URL}/items/mm_stock_adjustment?limit=-1&fields=*,lot_id.lot_name,product_id.product_name,product_id.product_code&${adjFilterParts.join("&")}`;
-            const adjRes = await fetch(adjUrl, { headers: getHeaders(), cache: "no-store" });
-            if (adjRes.ok) {
-              const adjJson = await adjRes.json();
-              const adjRows = adjJson.data || [];
-              for (const adj of adjRows) {
-                const cleanBatch = String(adj.batch_no || "").trim();
-                const pId = Number(typeof adj.product_id === "object" && adj.product_id !== null ? (adj.product_id as Record<string, unknown>).product_id || (adj.product_id as Record<string, unknown>).id : adj.product_id);
-                const lotObj = typeof adj.lot_id === "object" && adj.lot_id !== null ? (adj.lot_id as Record<string, unknown>) : null;
-                const prodObj = typeof adj.product_id === "object" && adj.product_id !== null ? (adj.product_id as Record<string, unknown>) : null;
-                const lId = Number(lotObj ? lotObj.lot_id || lotObj.id : adj.lot_id || 0);
-
-                const existingBatch = mapped.find(m => m.productId === pId && m.lotId === lId && m.batchNo === cleanBatch);
-                const qty = Number(adj.quantity || 0);
-                const isOut = adj.type === "OUT";
-                const netQty = isOut ? -qty : qty;
-                if (existingBatch) {
-                  existingBatch.onhandQuantity = Math.max(0, existingBatch.onhandQuantity + netQty);
-                  if (netQty > 0) {
-                    existingBatch.totalQuantityIn += netQty;
-                  } else {
-                    existingBatch.totalQuantityOut += Math.abs(netQty);
-                  }
-                } else if (cleanBatch && qty > 0) {
-                  mapped.push({
-                    branchId: Number(adj.branch_id || params.branchId || 0),
-                    inventoryLotId: Number(adj.inventory_lot_id || adj.id),
-                    lotId: lId,
-                    productId: pId,
-                    unitId: Number(adj.unit_id || 1),
-                    batchNo: cleanBatch,
-                    manufacturingDate: (adj.manufacturing_date as string) || null,
-                    expirationDate: (adj.expiration_date || adj.expiry_date as string) || null,
-                    inventoryCondition: String(adj.inventory_condition || "GOOD").toUpperCase(),
-                    totalQuantityIn: qty,
-                    totalQuantityOut: 0,
-                    onhandQuantity: qty,
-                    lotName: lotObj ? String(lotObj.lot_name || "") : undefined,
-                    productName: prodObj ? String(prodObj.product_name || "") : undefined,
-                    productCode: prodObj ? String(prodObj.product_code || "") : undefined,
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (adjErr) {
-        console.warn("[LotTracking] Stock adjustment batch fallback failed:", adjErr);
-      }
-
-      return mapped;
-    }
-
+    // Strictly no Directus fallback for v_mm_batch_onhand view (views are only queryable on Spring Boot)
     return [];
   } catch (err) {
     console.error("[LotTracking] Error fetching batch onhand:", err);
@@ -1042,7 +990,7 @@ export function buildLotStoredProductSummaryMap(
 
     // 1. Warehouse on-hand items from Spring Boot / Directus
     (allBranchOnhand || []).forEach((b) => {
-      const bLotId = Number(b.lotId || b.lot_id);
+      const bLotId = Number(b.mmLotId || b.mm_lot_id || 0);
       if (bLotId === lId) {
         const pId = Number(b.productId || b.product_id || 0);
         const ohQty = Number(b.onhandQuantity || b.available_quantity || 0);
@@ -1092,18 +1040,6 @@ export function buildLotStoredProductSummaryMap(
             }
             if (!existing.name && ib.product_name) existing.name = ib.product_name;
             if (!existing.code && ib.product_code) existing.code = ib.product_code;
-          } else if (productQtyMap.size === 0 && Number(ib.available_quantity || 0) > 0) {
-            const addQty = Number(ib.available_quantity || 0);
-            productQtyMap.set(pId, {
-              qty: addQty,
-              warehouseQty: addQty,
-              draftQty: 0,
-              name: ib.product_name,
-              code: ib.product_code,
-              type: ib.product_type,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              cat: ib.category_name || (ib as any).product_category,
-            });
           }
         }
       }
@@ -1195,20 +1131,25 @@ export function buildLotStoredProductSummaryMap(
     });
 
     const storedItems = Array.from(storedProductSummaryMap.values());
-    const isEmpty = totalQty <= 0 && storedItems.length === 0;
-    const isDraftOnly = totalWarehouseQty === 0 && totalDraftQty > 0;
+    const isEmpty = totalQty <= 0 || storedItems.length === 0;
+    const isDraftOnly = !isEmpty && totalWarehouseQty === 0 && totalDraftQty > 0;
+
+    const distinctLabels = Array.from(
+      new Set(storedItems.map((p) => p.classification_label).filter(Boolean))
+    );
+    const combinedLabel = distinctLabels.length > 0 ? distinctLabels.join(" & ") : (primaryLabel || "General Stock");
 
     map.set(lId, {
       lot_id: lId,
       lot_name: lot.lot_name,
-      total_stored_quantity: totalQty,
-      warehouse_stock_quantity: totalWarehouseQty,
-      draft_allocated_quantity: totalDraftQty,
+      total_stored_quantity: isEmpty ? 0 : totalQty,
+      warehouse_stock_quantity: isEmpty ? 0 : totalWarehouseQty,
+      draft_allocated_quantity: isEmpty ? 0 : totalDraftQty,
       is_draft_allocation: isDraftOnly,
-      active_batch_count: storedItems.length,
-      stored_products: storedItems,
-      primary_classification: primaryClass,
-      primary_classification_label: primaryLabel || (isEmpty ? "Empty Lot" : "General Stock"),
+      active_batch_count: isEmpty ? 0 : storedItems.length,
+      stored_products: isEmpty ? [] : storedItems,
+      primary_classification: isEmpty ? undefined : primaryClass,
+      primary_classification_label: isEmpty ? "Empty Lot" : combinedLabel,
       is_empty: isEmpty,
     });
   });
@@ -1223,7 +1164,7 @@ export function checkLotProductTypeCompatibility(
   lotStoredSummary: LotStoredProductSummary | undefined,
   targetClassification: { code: ProductClassification; label: string }
 ): { isCompatible: boolean; isTypeMismatch: boolean; mismatchReason?: string } {
-  if (!lotStoredSummary || lotStoredSummary.is_empty) {
+  if (!lotStoredSummary || lotStoredSummary.is_empty || (lotStoredSummary.total_stored_quantity ?? 0) <= 0) {
     return { isCompatible: true, isTypeMismatch: false };
   }
 
@@ -1231,7 +1172,16 @@ export function checkLotProductTypeCompatibility(
     return { isCompatible: true, isTypeMismatch: false };
   }
 
-  const isTypeMismatch = lotStoredSummary.primary_classification !== targetClassification.code;
+  // If the lot already contains products with the matching classification, it is compatible
+  const hasMatchingType =
+    lotStoredSummary.stored_products?.some((p) => p.classification === targetClassification.code) ||
+    lotStoredSummary.primary_classification === targetClassification.code;
+
+  if (hasMatchingType) {
+    return { isCompatible: true, isTypeMismatch: false };
+  }
+
+  const isTypeMismatch = !hasMatchingType;
   if (isTypeMismatch) {
     const sourceKind = lotStoredSummary.is_draft_allocation ? "Form Draft" : "Warehouse";
     return {

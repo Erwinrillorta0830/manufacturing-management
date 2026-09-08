@@ -361,11 +361,11 @@ export default function StockTransferTable({
               : activeAllocationItem.batch_no && (activeAllocationItem.inventory_lot_id || activeAllocationItem.lot_id)
               ? [
                   {
-                    inventory_lot_id: activeAllocationItem.inventory_lot_id || 1,
-                    lot_id: activeAllocationItem.lot_id || 1,
+                    inventory_lot_id: Number(activeAllocationItem.inventory_lot_id) > 0 ? Number(activeAllocationItem.inventory_lot_id) : 0,
+                    lot_id: Number(activeAllocationItem.lot_id) > 0 ? Number(activeAllocationItem.lot_id) : 0,
                     batch_no: activeAllocationItem.batch_no,
-                    allocated_quantity: activeAllocationItem.unitQty || 1,
-                    available_quantity: activeAllocationItem.qtyAvailable || activeAllocationItem.unitQty || 1,
+                    allocated_quantity: activeAllocationItem.unitQty || 0,
+                    available_quantity: activeAllocationItem.qtyAvailable || activeAllocationItem.unitQty || 0,
                     status: 'ACTIVE',
                     qa_status: activeAllocationItem.qa_status || 'GOOD',
                   } as BatchAllocationResult,

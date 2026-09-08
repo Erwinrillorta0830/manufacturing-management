@@ -70,6 +70,11 @@ import { pdfTemplateService } from "@/components/pdf-layout-design/services/pdf-
 import { PAPER_SIZES } from "@/components/pdf-layout-design/constants";
 import { CompanyData } from "@/components/pdf-layout-design/types";
 
+export const INVENTORY_TYPES = [
+  { id: "FINISHED_GOODS", label: "Finished Goods" },
+  { id: "RAW_MATERIALS", label: "Raw Materials / Packaging" },
+] as const;
+
 // ——————————————————————————————————————————————————————————————————————————————
 interface StockAdjustmentManualFormProps {
   id: number | null;
@@ -179,9 +184,42 @@ const ProductTableRow = React.memo(function ProductTableRow({
     return `(${batches.length} Batches)`;
   }, [batches]);
 
+  const allocatedBatchSum = useMemo(() => {
+    if (lotAllocations && lotAllocations.length > 0) {
+      return lotAllocations.reduce((sum, g) => {
+        return sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0);
+      }, 0);
+    }
+    return null;
+  }, [lotAllocations]);
+
+  const lineQty = Number(quantity || 0);
+  const hasQuantityMismatch = useMemo(() => {
+    if (type === "IN" && allocatedBatchSum !== null) {
+      return lineQty !== allocatedBatchSum;
+    }
+    return false;
+  }, [type, allocatedBatchSum, lineQty]);
+
   return (
-    <tr className="border-b border-border/50 hover:bg-muted/10 transition-colors bg-card">
-      <td className="p-3 text-xs text-muted-foreground text-center font-bold w-12 border-r border-border/50">{index + 1}</td>
+    <tr
+      className={`border-b transition-colors ${
+        hasQuantityMismatch
+          ? "bg-red-500/10 hover:bg-red-500/15 border-red-300 dark:border-red-900/50"
+          : rowError
+            ? "bg-amber-500/10 hover:bg-amber-500/15 border-amber-300 dark:border-amber-900/50"
+            : "hover:bg-muted/10 bg-card border-border/50"
+      }`}
+    >
+      <td
+        className={`p-3 text-xs text-center font-bold w-12 border-r transition-colors ${
+          hasQuantityMismatch
+            ? "text-red-600 dark:text-red-400 bg-red-500/10 border-red-300 dark:border-red-900/50"
+            : "text-muted-foreground border-border/50"
+        }`}
+      >
+        {index + 1}
+      </td>
       <td className="p-3">
         <span className="text-xs font-bold text-foreground">{brandName || "—"}</span>
       </td>
@@ -236,6 +274,17 @@ const ProductTableRow = React.memo(function ProductTableRow({
                     </button>
                   )
                 )}
+                {hasQuantityMismatch && allocatedBatchSum !== null && (
+                  <Badge
+                    variant="destructive"
+                    onClick={() => onOpenLotBatch?.(index)}
+                    className="text-[9px] py-0 h-4 px-1.5 font-bold cursor-pointer gap-1 shadow-2xs hover:bg-destructive/90 transition-colors"
+                    title={`Quantity Mismatch: Table quantity is ${lineQty.toLocaleString()}, but allocated batch sum is ${allocatedBatchSum.toLocaleString()}. Click to balance batches.`}
+                  >
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    Mismatch ({allocatedBatchSum.toLocaleString()} alloc)
+                  </Badge>
+                )}
                 {rowError?.batch_no && (
                   <span className="text-[10px] text-red-500 font-bold ml-1">
                     {rowError.batch_no.message}
@@ -273,46 +322,58 @@ const ProductTableRow = React.memo(function ProductTableRow({
         {isReadOnly ? (
           <span className="text-xs font-bold px-3 py-1 bg-muted rounded-md border border-border/50">{quantity}</span>
         ) : (
-          <div className="flex items-center gap-0 w-min bg-background border border-border rounded-md overflow-hidden">
-            <button
-              type="button"
-              className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
-              onClick={() => handleUpdateQuantity(-1)}
-              disabled={Number(quantity || 0) <= 0}
+          <div className="flex flex-col items-start gap-1">
+            <div
+              className={`flex items-center gap-0 w-min bg-background border rounded-md overflow-hidden transition-colors ${
+                hasQuantityMismatch ? "border-red-400 dark:border-red-600 ring-1 ring-red-400/40" : "border-border"
+              }`}
             >
-              <Minus className="h-3 w-3" />
-            </button>
-            <input
-              type="number"
-              value={quantity === 0 || quantity === undefined || quantity === null ? "" : quantity}
-              placeholder="0"
-              onFocus={(e) => e.target.select()}
-              onClick={(e) => (e.target as HTMLInputElement).select()}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  handleQuantityChange(0);
-                  return;
-                }
-                const val = parseInt(raw, 10);
-                handleQuantityChange(isNaN(val) ? 0 : Math.max(0, val));
-              }}
-              onBlur={(e) => {
-                const val = parseInt(e.target.value, 10);
-                if (isNaN(val) || val < 0) {
-                  handleQuantityChange(0);
-                }
-              }}
-              className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-              min={0}
-            />
-            <button
-              type="button"
-              className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
-              onClick={() => handleUpdateQuantity(1)}
-            >
-              <Plus className="h-3 w-3" />
-            </button>
+              <button
+                type="button"
+                className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
+                onClick={() => handleUpdateQuantity(-1)}
+                disabled={Number(quantity || 0) <= 0}
+              >
+                <Minus className="h-3 w-3" />
+              </button>
+              <input
+                type="number"
+                value={quantity === 0 || quantity === undefined || quantity === null ? "" : quantity}
+                placeholder="0"
+                onFocus={(e) => e.target.select()}
+                onClick={(e) => (e.target as HTMLInputElement).select()}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    handleQuantityChange(0);
+                    return;
+                  }
+                  const val = parseInt(raw, 10);
+                  handleQuantityChange(isNaN(val) ? 0 : Math.max(0, val));
+                }}
+                onBlur={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (isNaN(val) || val < 0) {
+                    handleQuantityChange(0);
+                  }
+                }}
+                className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                min={0}
+              />
+              <button
+                type="button"
+                className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
+                onClick={() => handleUpdateQuantity(1)}
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
+            {hasQuantityMismatch && allocatedBatchSum !== null && (
+              <div className="flex items-center gap-1 text-[10px] font-bold text-red-600 dark:text-red-400 whitespace-nowrap">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span>Batches: {allocatedBatchSum.toLocaleString()}</span>
+              </div>
+            )}
           </div>
         )}
         {rowError?.quantity && (
@@ -412,6 +473,7 @@ export function StockAdjustmentManualForm({
     createAdjustment,
     updateAdjustment,
     fetchProductsBySupplier,
+    fetchFinishedGoodsProducts,
     products = [],
     suppliers = [],
     isProductsLoading,
@@ -433,8 +495,10 @@ export function StockAdjustmentManualForm({
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [branchInputValue, setBranchInputValue] = useState("");
   const [supplierInputValue, setSupplierInputValue] = useState("");
+  const [inventoryTypeInputValue, setInventoryTypeInputValue] = useState("Finished Goods");
   const [branchSearch, setBranchSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
+  const [inventoryTypeSearch, setInventoryTypeSearch] = useState("");
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
@@ -456,9 +520,6 @@ export function StockAdjustmentManualForm({
       form.setValue(`items.${activeLotBatchIndex}.expiry_date`, result.expiry_date);
       form.setValue(`items.${activeLotBatchIndex}.qa_status`, result.qa_status);
       form.setValue(`items.${activeLotBatchIndex}.lot_allocations`, result.lot_allocations);
-      if (result.total_quantity && result.total_quantity > 0) {
-        form.setValue(`items.${activeLotBatchIndex}.quantity`, result.total_quantity, { shouldValidate: true });
-      }
       if (result.unit_cost) {
         form.setValue(`items.${activeLotBatchIndex}.cost_per_unit`, result.unit_cost);
       }
@@ -514,6 +575,7 @@ export function StockAdjustmentManualForm({
     defaultValues: {
       doc_no: "", // Will be fetched via effect
       branch_id: 0,
+      inventory_type: "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -532,6 +594,7 @@ export function StockAdjustmentManualForm({
     form.reset({
       doc_no: "",
       branch_id: 0,
+      inventory_type: "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -541,6 +604,7 @@ export function StockAdjustmentManualForm({
     });
     setBranchInputValue("");
     setSupplierInputValue("");
+    setInventoryTypeInputValue("Finished Goods");
 
     // Fetch and set the new doc_no for type "IN"
     const nextDocNo = await fetchNextDocNo("IN");
@@ -550,6 +614,7 @@ export function StockAdjustmentManualForm({
     initialValuesRef.current = JSON.stringify({
       doc_no: nextDocNo,
       branch_id: 0,
+      inventory_type: "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -892,12 +957,16 @@ export function StockAdjustmentManualForm({
           // Robust check for isPosted (handles boolean, number, string, or Directus Buffer)
           const resolvedIsPosted = isPostedStatus(data.isPosted);
 
+          const resolvedInventoryType =
+            data.inventory_type || (finalSupplierId ? "RAW_MATERIALS" : "FINISHED_GOODS");
+
           const resetObj = {
             doc_no: data.doc_no,
             branch_id:
               typeof data.branch_id === "object"
                 ? data.branch_id?.id
                 : (data.branch_id || 0),
+            inventory_type: resolvedInventoryType,
             supplier_id: finalSupplierId,
             type: data.type,
             remarks: data.remarks || "",
@@ -964,6 +1033,15 @@ export function StockAdjustmentManualForm({
   // Runs whenever branches/suppliers load OR when the form values change.
   const watchedBranchId = useWatch({ control: form.control, name: "branch_id" });
   const watchedSupplierId = useWatch({ control: form.control, name: "supplier_id" });
+  const watchedInventoryType = useWatch({ control: form.control, name: "inventory_type" }) || "FINISHED_GOODS";
+
+  useEffect(() => {
+    if (watchedInventoryType === "FINISHED_GOODS") {
+      setInventoryTypeInputValue("Finished Goods");
+    } else if (watchedInventoryType === "RAW_MATERIALS") {
+      setInventoryTypeInputValue("Raw Materials / Packaging");
+    }
+  }, [watchedInventoryType]);
 
   useEffect(() => {
     if (watchedBranchId && branches.length > 0) {
@@ -998,6 +1076,7 @@ export function StockAdjustmentManualForm({
       const defaultVal = {
         doc_no: form.getValues("doc_no") || "",
         branch_id: 0,
+        inventory_type: "FINISHED_GOODS",
         supplier_id: 0,
         type: "IN",
         remarks: "",
@@ -1045,10 +1124,12 @@ export function StockAdjustmentManualForm({
 
   // ——————————————————————————————————————————————————————————————————————————————
   useEffect(() => {
-    if (watchedSupplierId) {
+    if (watchedInventoryType === "FINISHED_GOODS") {
+      fetchFinishedGoodsProducts();
+    } else if (watchedSupplierId) {
       fetchProductsBySupplier(Number(watchedSupplierId));
     }
-  }, [watchedSupplierId, fetchProductsBySupplier]);
+  }, [watchedInventoryType, watchedSupplierId, fetchFinishedGoodsProducts, fetchProductsBySupplier]);
 
   // ——————————————————————————————————————————————————————————————————————————————
   const isFormLoading = id ? loading : false;
@@ -1622,24 +1703,95 @@ export function StockAdjustmentManualForm({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="supplier" className="text-sm font-bold text-muted-foreground">
-                  Supplier <span className="text-red-500">*</span>
+                <Label htmlFor="inventory_type" className="text-sm font-bold text-muted-foreground">
+                  Inventory Type <span className="text-red-500">*</span>
                 </Label>
                 <Combobox
-                  value={watchedSupplierIdForSelect ? String(watchedSupplierIdForSelect) : ""}
+                  value={watchedInventoryType}
                   onValueChange={(v: string | null) => {
+                    if (!v) return;
+                    const nextType = v as "FINISHED_GOODS" | "RAW_MATERIALS";
+                    form.setValue("inventory_type", nextType, { shouldValidate: true });
+                    if (nextType === "FINISHED_GOODS") {
+                      form.setValue("supplier_id", 0, { shouldValidate: true });
+                      setSupplierInputValue("");
+                    }
+                    const found = INVENTORY_TYPES.find((t) => t.id === nextType);
+                    if (found) setInventoryTypeInputValue(found.label);
+                  }}
+                  inputValue={inventoryTypeInputValue}
+                  onInputValueChange={(v: string) => {
+                    const matched = INVENTORY_TYPES.find(
+                      (t) => t.id === v || t.label.toLowerCase() === v.toLowerCase()
+                    );
+                    if (matched) {
+                      setInventoryTypeInputValue(matched.label);
+                      setInventoryTypeSearch("");
+                    } else {
+                      setInventoryTypeInputValue(v);
+                      setInventoryTypeSearch(v);
+                    }
+                  }}
+                >
+                  <ComboboxInput
+                    placeholder="Select Inventory Type"
+                    disabled={isReadOnly || !!id || fields.length > 0}
+                    className={form.formState.errors.inventory_type ? "border-red-500 bg-red-50 dark:bg-red-900/10" : ""}
+                    showTrigger={!id && fields.length === 0}
+                    showClear={false}
+                  />
+                  <ComboboxContent>
+                    <ComboboxList>
+                      {INVENTORY_TYPES
+                        .filter((t) =>
+                          t.label.toLowerCase().includes(inventoryTypeSearch.toLowerCase())
+                        )
+                        .map((t) => (
+                          <ComboboxItem key={t.id} value={t.id}>
+                            <span className="font-medium">{t.label}</span>
+                          </ComboboxItem>
+                        ))}
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+                {form.formState.errors.inventory_type && (
+                  <p className="text-xs text-red-500 font-medium">
+                    {String(form.formState.errors.inventory_type.message)}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="supplier" className="text-sm font-bold text-muted-foreground">
+                  Supplier {watchedInventoryType === "RAW_MATERIALS" ? <span className="text-red-500">*</span> : null}
+                </Label>
+                <Combobox
+                  value={
+                    watchedInventoryType === "FINISHED_GOODS"
+                      ? ""
+                      : watchedSupplierIdForSelect
+                      ? String(watchedSupplierIdForSelect)
+                      : ""
+                  }
+                  onValueChange={(v: string | null) => {
+                    if (watchedInventoryType === "FINISHED_GOODS") return;
                     if (!v) {
                       setSupplierInputValue("");
                       form.setValue("supplier_id", 0, { shouldValidate: true });
                       return;
                     }
-                    const found = suppliers.find(s => String(s.id) === v);
+                    const found = suppliers.find((s) => String(s.id) === v);
                     if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
                     form.setValue("supplier_id", Number(v), { shouldValidate: true });
                   }}
-                  inputValue={supplierInputValue}
+                  inputValue={
+                    watchedInventoryType === "FINISHED_GOODS"
+                      ? ""
+                      : supplierInputValue
+                  }
                   onInputValueChange={(v: string) => {
-                    const matched = suppliers.find(s => String(s.id) === v);
+                    if (watchedInventoryType === "FINISHED_GOODS") return;
+                    const matched = suppliers.find((s) => String(s.id) === v);
                     if (matched) {
                       setSupplierInputValue(`${matched.supplier_name}${matched.supplier_shortcut ? ` (${matched.supplier_shortcut})` : ""}`);
                       setSupplierSearch("");
@@ -1650,16 +1802,28 @@ export function StockAdjustmentManualForm({
                   }}
                 >
                   <ComboboxInput
-                    placeholder={isSuppliersLoading ? "Loading suppliers..." : "Select Supplier"}
-                    disabled={isReadOnly || !!id || fields.length > 0}
-                    className={form.formState.errors.supplier_id ? "border-red-500 bg-red-50 dark:bg-red-900/10" : ""}
-                    showTrigger={!id && fields.length === 0}
-                    showClear={!id && !isReadOnly && fields.length === 0}
+                    placeholder={
+                      watchedInventoryType === "FINISHED_GOODS"
+                        ? "Not Applicable (Internal Production)"
+                        : isSuppliersLoading
+                        ? "Loading suppliers..."
+                        : "Select Supplier"
+                    }
+                    disabled={watchedInventoryType === "FINISHED_GOODS" || isReadOnly || !!id || fields.length > 0}
+                    className={
+                      watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id
+                        ? "border-red-500 bg-red-50 dark:bg-red-900/10"
+                        : watchedInventoryType === "FINISHED_GOODS"
+                        ? "bg-muted/40 cursor-not-allowed opacity-75"
+                        : ""
+                    }
+                    showTrigger={watchedInventoryType === "RAW_MATERIALS" && !id && fields.length === 0}
+                    showClear={watchedInventoryType === "RAW_MATERIALS" && !id && !isReadOnly && fields.length === 0}
                   />
                   <ComboboxContent>
                     <ComboboxList>
                       {(() => {
-                        const filtered = suppliers.filter(s =>
+                        const filtered = suppliers.filter((s) =>
                           s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
                           (s.supplier_shortcut ?? "").toLowerCase().includes(supplierSearch.toLowerCase())
                         );
@@ -1670,7 +1834,7 @@ export function StockAdjustmentManualForm({
                             </ComboboxEmpty>
                           );
                         }
-                        return filtered.map(s => (
+                        return filtered.map((s) => (
                           <ComboboxItem key={s.id} value={String(s.id)}>
                             <span className="font-medium">{s.supplier_name}</span>
                             <span className="text-[10px] font-bold text-muted-foreground/40 font-mono italic ml-2">
@@ -1682,7 +1846,7 @@ export function StockAdjustmentManualForm({
                     </ComboboxList>
                   </ComboboxContent>
                 </Combobox>
-                {form.formState.errors.supplier_id && (
+                {watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id && (
                   <p className="text-xs text-red-500 font-medium">
                     {String(form.formState.errors.supplier_id.message)}
                   </p>
@@ -1778,7 +1942,10 @@ export function StockAdjustmentManualForm({
                 <Button
                   type="button"
                   onClick={() => setIsModalOpen(true)}
-                  disabled={!watchedSupplierIdForSelect}
+                  disabled={
+                    !watchedBranchIdForSelect ||
+                    (watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect)
+                  }
                   className="font-bold h-9 px-4 rounded-full shadow-sm flex items-center gap-2 text-sm transition-all border-primary/20 text-primary/90 bg-primary/10 hover:bg-primary/20 dark:bg-primary/20 dark:border-primary/40 shrink-0"
                   variant="outline"
                 >
@@ -1808,12 +1975,18 @@ export function StockAdjustmentManualForm({
                   </div>
                 </div>
                 <h3 className="text-lg font-bold text-foreground mb-1">
-                  {watchedSupplierIdForSelect ? "Empty Cart" : "Supplier required"}
+                  {!watchedBranchIdForSelect
+                    ? "Branch required"
+                    : watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect
+                    ? "Supplier required"
+                    : "Empty Cart"}
                 </h3>
                 <p className="text-muted-foreground font-medium max-w-xs mx-auto text-sm">
-                  {watchedSupplierIdForSelect
-                    ? "Click \"ADD MORE PRODUCTS\" to browse and add items."
-                    : "Select a supplier first to browse and add products."}
+                  {!watchedBranchIdForSelect
+                    ? "Select a branch first before adding products."
+                    : watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect
+                    ? "Select a supplier to browse and add raw materials / packaging."
+                    : 'Click "ADD MORE PRODUCTS" to browse and add items.'}
                 </p>
                 {form.formState.errors.items && form.formState.errors.items.message && (
                   <p className="text-sm text-red-500 font-bold mt-4">
@@ -1961,25 +2134,28 @@ export function StockAdjustmentManualForm({
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           supplierName={
-            suppliers.find((s) => String(s.id) === String(watchedSupplierIdForSelect))?.supplier_name || ""
+            watchedInventoryType === "FINISHED_GOODS"
+              ? "Internal Production (Finished Goods)"
+              : (suppliers.find((s) => String(s.id) === String(watchedSupplierIdForSelect))?.supplier_name || "")
           }
           branchName={
             branches?.find((b) => String(b.id) === String(watchedBranchIdForSelect))?.branch_name || ""
           }
+          inventoryType={watchedInventoryType}
           products={products}
           isLoading={isProductsLoading}
           initialSelectedItems={form.getValues("items")}
           onConfirm={handleConfirmModalItems}
         />
 
-        {/* For Stock OUT: Stock Allocation Modal (FEFO / Manual) */}
+        {/* Modal Selection: Stock OUT uses StockAllocationModal (takes from existing inventory batches), Stock IN uses LotBatchSelectionModal (creates/assigns batches) */}
         {watchedType === "OUT" ? (
           <StockAllocationModal
             open={lotBatchModalOpen}
             onOpenChange={setLotBatchModalOpen}
-            branchId={Number(watchedBranchId) || 0}
             productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : 0}
             productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : ''}
+            branchId={Number(watchedBranchId) || 0}
             requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 0 : 0}
             uomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
             initialAllocations={
@@ -2009,7 +2185,6 @@ export function StockAdjustmentManualForm({
             onConfirm={handleApplyAllocation}
           />
         ) : (
-          /* For Stock IN: Batch & Lot Assignment Modal */
           <LotBatchSelectionModal
             open={lotBatchModalOpen}
             onOpenChange={setLotBatchModalOpen}

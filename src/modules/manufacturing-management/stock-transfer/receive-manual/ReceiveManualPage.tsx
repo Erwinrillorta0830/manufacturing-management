@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PackageOpen, Printer, Loader2, ChevronLeft, ChevronRight, Hand, Paperclip, X, AlertTriangle, Layers } from 'lucide-react';
+import { PackageOpen, Printer, Loader2, ChevronLeft, ChevronRight, ChevronDown, Hand, Paperclip, X, AlertTriangle, Layers } from 'lucide-react';
 import { useStockTransferReceiveManual } from './hooks/use-stock-transfer-receive-manual';
 import { OrderGroupItem, UnitOfMeasurement, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
@@ -41,6 +41,46 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+
+interface InventoryLotGroupProps {
+  allocs: Array<{
+    lot_id?: number | string;
+    lot_name?: string;
+    batches?: Array<{ batch_no: string; quantity: number }>;
+  }>;
+}
+
+function LotBatchTree({ allocs }: InventoryLotGroupProps) {
+  return (
+    <div className="space-y-2 min-w-[210px] py-1 animate-in fade-in-50 slide-in-from-top-1 duration-200">
+      {allocs.map((lotAlloc, lIdx) => {
+        const batches = lotAlloc.batches || [];
+
+        return (
+          <div key={`lot-grp-${lIdx}`} className="rounded-lg bg-card border border-border/60 p-2 shadow-2xs space-y-1.5 transition-all">
+            {/* Level 2: Lot Header */}
+            <div className="flex items-center justify-between text-xs font-bold text-primary border-b border-border/40 pb-1">
+              <span className="flex items-center gap-1.5 truncate">
+                <Layers className="w-3.5 h-3.5 shrink-0 text-primary" />
+                <span className="truncate">{lotAlloc.lot_name || `Lot #${lotAlloc.lot_id}`}</span>
+              </span>
+            </div>
+
+            {/* Level 3: Batches List (Indented under Lot) */}
+            <div className="pl-3 ml-1 space-y-1 border-l-2 border-primary/30 pt-0.5">
+              {batches.map((b, bIdx) => (
+                <div key={`b-${bIdx}`} className="flex items-center justify-between text-[11px] font-mono px-2 py-1 rounded bg-muted/40 border border-border/40 hover:bg-muted/70 transition-colors">
+                  <span className="font-semibold text-foreground truncate max-w-[150px]" title={b.batch_no}>{b.batch_no}</span>
+                  <span className="font-extrabold text-primary ml-2">{b.quantity.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function StockTransferReceiveManualView({ currentUser }: { currentUser: CurrentUser }) {
   const {
@@ -80,6 +120,11 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<OrderGroupItem | null>(null);
+  const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({});
+
+  const toggleItemExpanded = (itemId: number) => {
+    setExpandedItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
 
   const handleOpenLotBatchModal = (item: OrderGroupItem) => {
     setActiveItem(item);
@@ -96,13 +141,8 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
         updateDestinationBatchNo(activeItem.id, result.batch_no);
       }
       if (result.total_quantity !== undefined) {
-        const targetQty = Math.max(
-          0,
-          activeItem.scanned_quantity ??
-            activeItem.picked_quantity ??
-            activeItem.allocated_quantity ??
-            0
-        );
+        const rawDisp = activeItem.dispatched_quantity ?? activeItem.picked_quantity ?? activeItem.scanned_quantity;
+        const targetQty = Math.max(0, rawDisp ?? 0);
         updateReceivedQty(activeItem.id, result.total_quantity, targetQty || result.total_quantity);
       }
     }
@@ -353,21 +393,23 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Allocated Qty</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Dispatched Qty</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[130px] print:hidden">Received Qty</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold min-w-[200px] print:hidden">Lot</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold min-w-[180px] print:hidden">Batch</TableHead>
+                      <TableHead className="text-[10px] uppercase font-bold min-w-[280px] print:hidden">Lot & Batches</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6 w-[110px]">Amount</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedItems.map((item: OrderGroupItem) => {
                       const allocatedQty = Number(item.allocated_quantity || 0);
-                      const dispatchedQty = Math.max(0, item.scanned_quantity ?? item.picked_quantity ?? item.allocated_quantity ?? 0);
+                      const isDispatchedStatus = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(item.status);
+                      const rawDispatched = item.dispatched_quantity ?? item.picked_quantity ?? item.scanned_quantity;
+                      const dispatchedQty = Math.max(0, rawDispatched ?? (isDispatchedStatus ? 0 : item.allocated_quantity) ?? 0);
                       const targetQty = dispatchedQty;
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? item.product_id : null;
-                      const productName = product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
+                      const productName = product?.description || product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
                       const productImage = getAssetUrl(product?.product_image);
-                      const allocs = itemLotAllocations[item.id] || (item.lot_allocations && item.lot_allocations.length > 0 ? item.lot_allocations : undefined);
-                      const hasMultiLotAlloc = Boolean(allocs && allocs.length > 0);
+                      const rawAllocs = itemLotAllocations[item.id] || (item.lot_allocations && item.lot_allocations.length > 0 ? item.lot_allocations : undefined);
+                      const allocs = (dispatchedQty > 0 || !isDispatchedStatus) ? rawAllocs : undefined;
+                      const hasMultiLotAlloc = Boolean(allocs && allocs.length > 0 && allocs.some(a => (a.batches || []).some(b => Number(b.quantity || 0) > 0)));
                       const batchTotalQty = hasMultiLotAlloc
                         ? allocs!.reduce((sum, g) => sum + (g.batches || []).reduce((bSum, b) => bSum + Number(b.quantity || 0), 0), 0)
                         : undefined;
@@ -377,48 +419,61 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                         : 'unit';
 
                       return (
-                        <TableRow key={item.id} className="border-b border-border/50">
-                          {/* 1. Product Name */}
-                          <TableCell className="py-3">
-                            <div className="flex items-center gap-3">
-                              {productImage ? (
-                                <div className="h-9 w-9 rounded-lg bg-muted/40 border border-border/60 overflow-hidden shrink-0 relative">
-                                  <Image
-                                    src={productImage}
-                                    alt={productName}
-                                    fill
-                                    unoptimized
-                                    className="object-cover"
-                                  />
+                        <React.Fragment key={item.id}>
+                          <TableRow className="border-b border-border/50">
+                            {/* 1. Product Name */}
+                            <TableCell className="py-3">
+                              <div className="flex items-center gap-2">
+                                {hasMultiLotAlloc && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => toggleItemExpanded(item.id)}
+                                    className="h-7 w-7 p-0 hover:bg-muted shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                                    title={expandedItems[item.id] ? "Collapse lot/batch breakdown" : "Expand lot/batch breakdown"}
+                                  >
+                                    <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", expandedItems[item.id] ? "rotate-0 text-primary font-bold" : "-rotate-90")} />
+                                  </Button>
+                                )}
+                                {productImage ? (
+                                  <div className="h-9 w-9 rounded-lg bg-muted/40 border border-border/60 overflow-hidden shrink-0 relative">
+                                    <Image
+                                      src={productImage}
+                                      alt={productName}
+                                      fill
+                                      unoptimized
+                                      className="object-cover"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
+                                    {productName.substring(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="flex flex-col min-w-0">
+                                  <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                  <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">SKU: {String(product?.product_code || product?.barcode || 'N/A')}</span>
                                 </div>
-                              ) : (
-                                <div className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
-                                  {productName.substring(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                              <div className="flex flex-col min-w-0">
-                                <span className="font-semibold text-sm line-clamp-1">{productName}</span>
-                                <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">ID: {String(product?.product_id || 'N/A')}</span>
                               </div>
-                            </div>
-                          </TableCell>
+                            </TableCell>
 
-                          {/* 2. UOM */}
-                          <TableCell className="text-sm font-bold text-center">
-                             <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest border-border/50 bg-muted/30 mx-auto w-fit">
-                              {unitName}
-                            </Badge>
-                          </TableCell>
+                            {/* 2. UOM */}
+                            <TableCell className="text-sm font-bold text-center">
+                              <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest border-border/50 bg-muted/30 mx-auto w-fit">
+                                {unitName}
+                              </Badge>
+                            </TableCell>
 
-                          {/* 3. Allocated Qty */}
-                          <TableCell className="text-sm font-bold text-center font-mono text-muted-foreground">{allocatedQty}</TableCell>
+                            {/* 3. Allocated Qty */}
+                            <TableCell className="text-sm font-bold text-center font-mono text-muted-foreground">{allocatedQty}</TableCell>
 
-                          {/* 4. Dispatched Qty */}
-                          <TableCell className="text-sm font-bold text-center font-mono">{dispatchedQty}</TableCell>
+                            {/* 4. Dispatched Qty */}
+                            <TableCell className="text-sm font-bold text-center font-mono">{dispatchedQty}</TableCell>
 
-                          {/* 5. Received Qty */}
-                          <TableCell className="text-center print:hidden py-2">
-                             <QuantityStepper 
+                            {/* 5. Received Qty */}
+                            <TableCell className="text-center print:hidden py-2">
+                              <QuantityStepper 
                                 value={currentQty}
                                 max={targetQty}
                                 onChange={(val) => {
@@ -460,186 +515,200 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                                 className="h-8 w-fit mx-auto"
                                 size="sm"
                               />
-                          </TableCell>
+                            </TableCell>
 
-                          {/* 6. Lot */}
-                          <TableCell className="print:hidden py-2">
-                            {(() => {
-                              const itemClass = getItemClassification(item);
+                            {/* 6. Lot & Batches */}
+                            <TableCell className="print:hidden py-2">
+                              {(() => {
+                                const itemClass = getItemClassification(item);
 
-                              if (hasMultiLotAlloc) {
-                                const hasConflict = allocs!.some((g) => {
-                                  const compat = getLotCompatibility(item, g.lot_id);
-                                  return compat.isTypeMismatch;
+                                if (hasMultiLotAlloc) {
+                                  const hasConflict = allocs!.some((g) => {
+                                    const compat = getLotCompatibility(item, g.lot_id);
+                                    return compat.isTypeMismatch;
+                                  });
+
+                                  return (
+                                    <div className="space-y-1.5 min-w-[200px]">
+                                      <div className="flex items-center justify-between gap-1 px-2 py-1 rounded bg-muted/40 border border-border/60">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleItemExpanded(item.id)}
+                                          className="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline cursor-pointer"
+                                        >
+                                          <ChevronDown className={cn("w-3 h-3 transition-transform duration-200", expandedItems[item.id] ? "rotate-0" : "-rotate-90")} />
+                                          {allocs!.length} {allocs!.length === 1 ? 'Lot' : 'Lots'} Allocated
+                                        </button>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => handleOpenLotBatchModal(item)}
+                                          className="h-5 px-1.5 text-[9px] font-bold text-primary hover:bg-primary/10 cursor-pointer"
+                                        >
+                                          Edit
+                                        </Button>
+                                      </div>
+                                      {hasConflict && (
+                                        <div className="flex items-center gap-1 text-[9px] text-destructive font-bold">
+                                          <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                                          <span>Type conflict in lot</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                const selectedLotId = destinationLotIds[item.id];
+                                const selectedCompat = selectedLotId ? getLotCompatibility(item, selectedLotId) : null;
+                                const isConflict = selectedCompat?.isTypeMismatch;
+                                const storedForSelected = selectedLotId ? lotStoredSummaryMap.get(Number(selectedLotId)) : null;
+
+                                const productUom = typeof product?.unit_of_measurement === 'object' ? product.unit_of_measurement : null;
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const itemUomId = Number(productUom?.unit_id || (product as any)?.unit_id || 0);
+
+                                const targetBranchObj = branches.find((b) => Number(b.id) === Number(selectedGroup.targetBranch));
+                                const isTargetBadStock = isBadStockLot(undefined, targetBranchObj || { branch_name: getBranchName(selectedGroup.targetBranch) });
+                                const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadStock;
+                                const compatibleLots = targetLots.filter((l) => {
+                                  if (l.status && l.status !== 'ACTIVE') return false;
+                                  if (l.unit_id && itemUomId && Number(l.unit_id) !== Number(itemUomId)) return false;
+                                  const stored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                  const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
+                                  if (!tCompat.isCompatible) return false;
+                                  const lotIsBad = isBadStockLot(l);
+                                  if (itemIsBad && !lotIsBad) return false;
+                                  if (!itemIsBad && lotIsBad) return false;
+                                  return true;
                                 });
 
+                                const matchedOptions = targetLots.filter(
+                                  (l) => Number(l.lot_id) === Number(destinationLotIds[item.id]) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
+                                );
+                                const optionsLots = matchedOptions.length > 0 ? matchedOptions : targetLots.filter((l) => !l.status || l.status === 'ACTIVE');
+
                                 return (
-                                  <div className="space-y-1.5 min-w-[200px]">
-                                    <div className="flex items-center justify-between gap-1 px-2 py-1 rounded bg-muted/40 border border-border/60">
-                                      <span className="text-[10px] font-bold text-primary flex items-center gap-1">
-                                        <Layers className="w-3 h-3" /> {allocs!.length} {allocs!.length === 1 ? 'Lot' : 'Lots'} Allocated
-                                      </span>
+                                  <div className="flex items-center gap-2 min-w-[280px]">
+                                    <div className="flex-1 min-w-[140px]">
+                                      <SearchableSelect
+                                        options={[
+                                          {
+                                            value: "0",
+                                            label: "None",
+                                            subLabel: "Do not assign a storage lot",
+                                            badge: "Unassigned",
+                                            badgeClassName: "bg-muted text-muted-foreground border-border/60 font-mono",
+                                          },
+                                          ...optionsLots.map((l) => {
+                                            const lStock = Number(l.current_stock_quantity || 0);
+                                            const lCap = Number(l.max_batch_capacity || 0);
+                                            const isF = lCap > 0 && lStock >= lCap;
+                                            const stored = lotStoredSummaryMap.get(Number(l.lot_id));
+                                            const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
+                                            const isTConflict = tCompat.isTypeMismatch;
+                                            const isDraft = stored?.is_draft_allocation;
+                                            const typeSourceLabel = isDraft ? "Draft" : "Stock";
+                                            const lotIsBad = isBadStockLot(l);
+
+                                            let badgeText: string | undefined;
+                                            let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+
+                                            if (isTConflict && stored) {
+                                              badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
+                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                            } else if (isF) {
+                                              badgeText = `Full (${lStock}/${lCap})`;
+                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                            } else if (lotIsBad) {
+                                              badgeText = "Bad Stock / Quarantine";
+                                              badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
+                                            } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
+                                              badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                              badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                            } else if (stored?.is_empty) {
+                                              badgeText = "Empty Lot";
+                                              badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                            }
+
+                                            const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
+                                            const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                            const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+
+                                            return {
+                                              value: String(l.lot_id),
+                                              label: `${prefix}${l.lot_name}${capStr}`,
+                                              subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                              badge: badgeText,
+                                              badgeClassName: badgeClass,
+                                            };
+                                          })
+                                        ]}
+                                        value={destinationLotIds[item.id] !== undefined ? String(destinationLotIds[item.id]) : "0"}
+                                        onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
+                                        placeholder={loadingLots ? "Loading..." : "Select Lot"}
+                                        searchPlaceholder="Search lots..."
+                                        disabled={loadingLots}
+                                        emptyMessage="No compatible storage lots found."
+                                        triggerClassName={`h-8 text-xs font-semibold w-full border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
+                                      />
+                                      {isConflict && (
+                                        <div className="flex items-center gap-1 text-[10px] text-destructive font-bold mt-1">
+                                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                                          <span>Type conflict: {storedForSelected?.primary_classification_label}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <Input
+                                        value={destinationBatchNos[item.id] ?? item.batch_no ?? item.lot_allocations?.[0]?.batches?.[0]?.batch_no ?? ''}
+                                        onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
+                                        className="h-8 text-xs font-mono w-[100px] border-border bg-background"
+                                        placeholder="Batch No"
+                                      />
                                       <Button
                                         type="button"
-                                        variant="ghost"
+                                        variant="outline"
                                         size="sm"
                                         onClick={() => handleOpenLotBatchModal(item)}
-                                        className="h-5 px-1.5 text-[9px] font-bold text-primary hover:bg-primary/10 cursor-pointer"
+                                        className="h-8 px-1.5 text-[9px] font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10 shrink-0 cursor-pointer"
+                                        title="Split across multiple storage lots or batches"
                                       >
-                                        Edit
+                                        <Layers className="w-3 h-3" />
+                                        Splits
                                       </Button>
                                     </div>
-                                    {hasConflict && (
-                                      <div className="flex items-center gap-1 text-[9px] text-destructive font-bold">
-                                        <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
-                                        <span>Type conflict in lot</span>
-                                      </div>
-                                    )}
                                   </div>
                                 );
-                              }
+                              })()}
+                            </TableCell>
 
-                              const selectedLotId = destinationLotIds[item.id];
-                              const selectedCompat = selectedLotId ? getLotCompatibility(item, selectedLotId) : null;
-                              const isConflict = selectedCompat?.isTypeMismatch;
-                              const storedForSelected = selectedLotId ? lotStoredSummaryMap.get(Number(selectedLotId)) : null;
+                            {/* 7. Amount */}
+                            <TableCell className="text-right text-xs font-semibold font-mono text-foreground">
+                              ₱{((currentQty || 0) * Number(product?.cost_per_unit || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
 
-                              const productUom = typeof product?.unit_of_measurement === 'object' ? product.unit_of_measurement : null;
-                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                              const itemUomId = Number(productUom?.unit_id || (product as any)?.unit_id || 0);
-
-                              const targetBranchObj = branches.find((b) => Number(b.id) === Number(selectedGroup.targetBranch));
-                              const isTargetBadStock = isBadStockLot(undefined, targetBranchObj || { branch_name: getBranchName(selectedGroup.targetBranch) });
-                              const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadStock;
-                              const compatibleLots = targetLots.filter((l) => {
-                                if (l.status && l.status !== 'ACTIVE') return false;
-                                if (l.unit_id && itemUomId && Number(l.unit_id) !== Number(itemUomId)) return false;
-                                const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                if (!tCompat.isCompatible) return false;
-                                const lotIsBad = isBadStockLot(l);
-                                if (itemIsBad && !lotIsBad) return false;
-                                if (!itemIsBad && lotIsBad) return false;
-                                return true;
-                              });
-
-                              const matchedOptions = targetLots.filter(
-                                (l) => Number(l.lot_id) === Number(destinationLotIds[item.id]) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
-                              );
-                              const optionsLots = matchedOptions.length > 0 ? matchedOptions : targetLots.filter((l) => !l.status || l.status === 'ACTIVE');
-
-                              return (
-                                <div className="space-y-1 min-w-[180px]">
-                                  <SearchableSelect
-                                    options={optionsLots.map((l) => {
-                                      const lStock = Number(l.current_stock_quantity || 0);
-                                      const lCap = Number(l.max_batch_capacity || 0);
-                                      const isF = lCap > 0 && lStock >= lCap;
-                                      const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                      const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                      const isTConflict = tCompat.isTypeMismatch;
-                                      const isDraft = stored?.is_draft_allocation;
-                                      const typeSourceLabel = isDraft ? "Draft" : "Stock";
-                                      const lotIsBad = isBadStockLot(l);
-
-                                      let badgeText: string | undefined;
-                                      let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
-
-                                      if (isTConflict && stored) {
-                                        badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
-                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                      } else if (isF) {
-                                        badgeText = `Full (${lStock}/${lCap})`;
-                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                      } else if (lotIsBad) {
-                                        badgeText = "Bad Stock / Quarantine";
-                                        badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
-                                      } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
-                                        badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                        badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                      } else if (stored?.is_empty) {
-                                        badgeText = "Empty Lot";
-                                        badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                      }
-
-                                      const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
-                                      const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                      const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
-
-                                      return {
-                                        value: String(l.lot_id),
-                                        label: `${prefix}${l.lot_name}${capStr}`,
-                                        subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                        badge: badgeText,
-                                        badgeClassName: badgeClass,
-                                      };
-                                    })}
-                                    value={destinationLotIds[item.id] ? String(destinationLotIds[item.id]) : ""}
-                                    onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
-                                    placeholder={loadingLots ? "Loading..." : "Select Lot"}
-                                    searchPlaceholder="Search lots..."
-                                    disabled={loadingLots}
-                                    emptyMessage="No compatible storage lots found."
-                                    triggerClassName={`h-8 text-xs font-semibold w-full border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
-                                  />
-                                  {isConflict && (
-                                    <div className="flex items-center gap-1 text-[10px] text-destructive font-bold">
-                                      <AlertTriangle className="w-3 h-3 shrink-0" />
-                                      <span>Type conflict: {storedForSelected?.primary_classification_label}</span>
-                                    </div>
-                                  )}
+                          {/* Sub-row: Lot & Batch Hierarchy directly below product line when expanded */}
+                          {hasMultiLotAlloc && expandedItems[item.id] && (
+                            <TableRow key={`${item.id}-sub`} className="bg-muted/15 border-b border-border/60 hover:bg-muted/15 animate-in fade-in-50 slide-in-from-top-1 duration-200">
+                              <TableCell colSpan={7} className="py-2.5 pl-10 pr-6">
+                                <div className="flex items-start gap-2.5">
+                                  <span className="text-primary pt-1 text-sm font-bold font-mono shrink-0">└──</span>
+                                  <div className="flex-1">
+                                    <LotBatchTree allocs={allocs!} />
+                                  </div>
                                 </div>
-                              );
-                            })()}
-                          </TableCell>
-
-                          {/* 7. Batch */}
-                          <TableCell className="print:hidden py-2">
-                            {hasMultiLotAlloc ? (
-                              <div className="space-y-1 min-w-[170px]">
-                                {allocs!.map((lotAlloc) => (
-                                  (lotAlloc.batches || []).map((b, bIdx) => (
-                                    <div key={`b-${bIdx}`} className="flex items-center justify-between text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/40 border border-border/40">
-                                      <span className="font-bold text-primary truncate max-w-[100px]">{b.batch_no}</span>
-                                      <span className="font-bold">{b.quantity}</span>
-                                    </div>
-                                  ))
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5 min-w-[170px]">
-                                <Input
-                                  value={destinationBatchNos[item.id] ?? item.batch_no ?? item.lot_allocations?.[0]?.batches?.[0]?.batch_no ?? ''}
-                                  onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
-                                  className="h-8 text-xs font-mono w-[110px] border-border bg-background"
-                                  placeholder="Batch No"
-                                />
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleOpenLotBatchModal(item)}
-                                  className="h-8 px-1.5 text-[9px] font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10 shrink-0 cursor-pointer"
-                                  title="Split across multiple storage lots or batches"
-                                >
-                                  <Layers className="w-3 h-3" />
-                                  Splits
-                                </Button>
-                              </div>
-                            )}
-                          </TableCell>
-
-                          {/* 8. Amount */}
-                          <TableCell className="text-right text-xs font-semibold font-mono text-foreground">
-                            ₱{((currentQty || 0) * Number(product?.cost_per_unit || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </TableCell>
-                        </TableRow>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </TableBody>
                   <TableFooter className="bg-muted/10">
                     <TableRow>
-                      <TableCell colSpan={7} className="text-right text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Total Verification Value</TableCell>
+                      <TableCell colSpan={6} className="text-right text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Total Verification Value</TableCell>
                       <TableCell className="text-right text-sm font-bold text-foreground font-mono">
                         ₱{selectedGroup.items.reduce((sum: number, item: OrderGroupItem) => {
                           const itAllocs = itemLotAllocations[item.id] || (item.lot_allocations && item.lot_allocations.length > 0 ? item.lot_allocations : undefined);

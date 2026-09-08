@@ -259,7 +259,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
           const sQtyMap = new Map<number, number>();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (onhand || []).forEach((bo: any) => {
-            const lId = Number(bo.lotId);
+            const lId = Number(bo.mmLotId || bo.mm_lot_id || 0);
             if (lId > 0) {
               sQtyMap.set(lId, (sQtyMap.get(lId) || 0) + Number(bo.onhandQuantity || 0));
             }
@@ -353,6 +353,13 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
 
     // Validate that every line item has a destination lot selected
     for (const item of group.items) {
+      const isDispatchedStatus = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(item.status);
+      const rawDispatched = item.dispatched_quantity ?? item.picked_quantity ?? item.scanned_quantity;
+      const dispatchedQty = Math.max(0, rawDispatched ?? (isDispatchedStatus ? 0 : item.allocated_quantity) ?? 0);
+      const recQty = item.receivedQty ?? dispatchedQty;
+      if (dispatchedQty === 0 || recQty === 0) {
+        continue;
+      }
       const assignedLotId = destinationLotIds[item.id];
       if (!assignedLotId || Number(assignedLotId) <= 0) {
         const prodName = (typeof item.product_id === 'object' && (item.product_id as ProductRow)?.product_name) || `Product #${item.product_id}`;
@@ -365,6 +372,13 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
 
     // Validate product type compatibility for all destination lots
     for (const item of group.items) {
+      const isDispatchedStatus = ['Dispatched', 'DISPATCHED', 'For Loading', 'FOR_LOADING', 'In Transit', 'IN_TRANSIT'].includes(item.status);
+      const rawDispatched = item.dispatched_quantity ?? item.picked_quantity ?? item.scanned_quantity;
+      const dispatchedQty = Math.max(0, rawDispatched ?? (isDispatchedStatus ? 0 : item.allocated_quantity) ?? 0);
+      const recQty = item.receivedQty ?? dispatchedQty;
+      if (dispatchedQty === 0 || recQty === 0) {
+        continue;
+      }
       const assignedLotId = destinationLotIds[item.id];
       if (assignedLotId) {
         const lot = targetLots.find(l => Number(l.lot_id) === Number(assignedLotId));

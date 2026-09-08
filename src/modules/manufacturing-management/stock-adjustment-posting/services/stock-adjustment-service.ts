@@ -78,7 +78,7 @@ async function syncInventoryLotBatch(params: {
   doc_no: string;
   userId?: number | null;
   type?: string | null;
-}): Promise<number | null> {
+}): Promise<{ inventory_lot_id: number; lot_id: number } | null> {
   if (!params.batch_no || String(params.batch_no).trim() === "") {
     return null;
   }
@@ -88,21 +88,93 @@ async function syncInventoryLotBatch(params: {
   const branchId = Number(params.branch_id || 0);
 
   try {
-    const filterAnd: Record<string, unknown>[] = [
-      { product_id: { _eq: productId } },
-      { batch_no: { _eq: cleanBatchNo } },
-    ];
+    // 1. Check if the batch already exists in mm_inventory_lots for this product & lot (matches uq_mm_inventory_lot_batch)
     if (lotId) {
-      filterAnd.push({ lot_id: { _eq: lotId } });
+      const uqQueryStr = new URLSearchParams({
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: lotId } },
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: cleanBatchNo } },
+          ],
+        }),
+        fields: "inventory_lot_id,lot_id",
+        limit: "1",
+      }).toString();
+
+      const uqExistingRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id: number }> }>(
+        `${DIRECTUS_URL}/items/mm_inventory_lots?${uqQueryStr}`
+      ).catch(() => ({ data: [] }));
+
+      if (uqExistingRes.data && uqExistingRes.data.length > 0) {
+        const found = uqExistingRes.data[0];
+        if (found.inventory_lot_id) {
+          return {
+            inventory_lot_id: Number(found.inventory_lot_id),
+            lot_id: Number(found.lot_id || lotId),
+          };
+        }
+      }
     }
 
-    const existingRes = await directusFetch<{ data: Array<{ id: number; inventory_lot_id?: number }> }>(
-      `${DIRECTUS_URL}/items/mm_inventory_lots?filter={"_and":${JSON.stringify(filterAnd)},"_or":[{"branch_id":{"_eq":${branchId}}},{"branch_id":{"_null":true}}]}&limit=1&fields=id,inventory_lot_id`
+    // 1b. If not found under specified lot, check if batch already exists in branch for this product across any lot
+    if (branchId) {
+      const branchQueryStr = new URLSearchParams({
+        filter: JSON.stringify({
+          _and: [
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: cleanBatchNo } },
+            {
+              _or: [
+                { branch_id: { _eq: branchId } },
+                { branch_id: { _null: true } },
+              ],
+            },
+          ],
+        }),
+        fields: "inventory_lot_id,lot_id",
+        limit: "1",
+      }).toString();
+
+      const branchExistingRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id: number }> }>(
+        `${DIRECTUS_URL}/items/mm_inventory_lots?${branchQueryStr}`
+      ).catch(() => ({ data: [] }));
+
+      if (branchExistingRes.data && branchExistingRes.data.length > 0) {
+        const found = branchExistingRes.data[0];
+        if (found.inventory_lot_id) {
+          return {
+            inventory_lot_id: Number(found.inventory_lot_id),
+            lot_id: Number(found.lot_id || lotId || 0),
+          };
+        }
+      }
+    }
+
+    // 1c. Check if batch already exists anywhere for this product in mm_inventory_lots
+    const globalQueryStr = new URLSearchParams({
+      filter: JSON.stringify({
+        _and: [
+          { product_id: { _eq: productId } },
+          { batch_no: { _eq: cleanBatchNo } },
+        ],
+      }),
+      fields: "inventory_lot_id,lot_id",
+      limit: "1",
+    }).toString();
+
+    const globalExistingRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id: number }> }>(
+      `${DIRECTUS_URL}/items/mm_inventory_lots?${globalQueryStr}`
     ).catch(() => ({ data: [] }));
 
-    if (existingRes.data && existingRes.data.length > 0) {
-      const found = existingRes.data[0];
-      return found.inventory_lot_id || found.id;
+    if (globalExistingRes.data && globalExistingRes.data.length > 0) {
+      const found = globalExistingRes.data[0];
+      if (found.inventory_lot_id) {
+        return {
+          inventory_lot_id: Number(found.inventory_lot_id),
+          lot_id: Number(found.lot_id || lotId || 0),
+        };
+      }
     }
 
     if (params.type === "OUT") {
@@ -112,11 +184,19 @@ async function syncInventoryLotBatch(params: {
     // Resolve fallback lot_id if none provided
     let effectiveLotId = lotId;
     if (!effectiveLotId && branchId) {
-      const lotRes = await directusFetch<{ data: Array<{ id: number; lot_id?: number }> }>(
-        `${DIRECTUS_URL}/items/mm_lots?filter={"branch_id":{"_eq":${branchId}}}&limit=1&fields=id,lot_id`
+      const lotRes = await directusFetch<{ data: Array<{ lot_id: number }> }>(
+        `${DIRECTUS_URL}/items/mm_lots?filter={"branch_id":{"_eq":${branchId}}}&limit=1&fields=lot_id`
       ).catch(() => ({ data: [] }));
       if (lotRes.data && lotRes.data.length > 0) {
-        effectiveLotId = lotRes.data[0].lot_id || lotRes.data[0].id;
+        effectiveLotId = lotRes.data[0].lot_id;
+      }
+    }
+    if (!effectiveLotId) {
+      const anyLotRes = await directusFetch<{ data: Array<{ lot_id: number }> }>(
+        `${DIRECTUS_URL}/items/mm_lots?limit=1&fields=lot_id`
+      ).catch(() => ({ data: [] }));
+      if (anyLotRes.data && anyLotRes.data.length > 0) {
+        effectiveLotId = anyLotRes.data[0].lot_id;
       }
     }
     if (!effectiveLotId) {
@@ -132,44 +212,63 @@ async function syncInventoryLotBatch(params: {
       batch_no: cleanBatchNo,
       manufacturing_date: mfgDate,
       expiry_date: expDate,
-      expiration_date: expDate,
       unit_cost: Number(params.unit_cost || 0),
       qa_status: params.inventory_condition || params.qa_status || "GOOD",
       status: "ACTIVE",
       source_type: "STOCK_ADJUSTMENT",
       source_reference: params.doc_no,
       remarks: `Created from Stock Adjustment IN - ${params.doc_no}`,
-      created_by: params.userId || null,
-      updated_by: params.userId || null,
+      created_by: params.userId || 22,
+      updated_by: params.userId || 22,
     };
 
-    const createRes = await directusFetch<{ data: { id: number; inventory_lot_id?: number } }>(
-      `${DIRECTUS_URL}/items/mm_inventory_lots`,
-      {
-        method: "POST",
-        body: JSON.stringify(batchPayload),
-      }
-    ).catch(async () => {
-      return directusFetch<{ data: { id: number; inventory_lot_id?: number } }>(
-        `${DIRECTUS_URL}/items/inventory_lots`,
+    try {
+      const createRes = await directusFetch<{ data: { inventory_lot_id?: number } }>(
+        `${DIRECTUS_URL}/items/mm_inventory_lots`,
         {
           method: "POST",
           body: JSON.stringify(batchPayload),
         }
-      ).catch((err) => {
-        console.error("Failed to create inventory lot in directus:", err);
-        return null;
-      });
-    });
+      );
 
-    if (createRes?.data) {
-      return createRes.data.inventory_lot_id || createRes.data.id;
+      if (createRes?.data?.inventory_lot_id) {
+        return {
+          inventory_lot_id: Number(createRes.data.inventory_lot_id),
+          lot_id: Number(effectiveLotId),
+        };
+      }
+    } catch (createErr) {
+      console.warn("Conflict or error creating mm_inventory_lots, checking for existing batch:", createErr);
+      // Conflict recovery: re-query uq_mm_inventory_lot_batch
+      const conflictQueryStr = new URLSearchParams({
+        filter: JSON.stringify({
+          _and: [
+            { lot_id: { _eq: effectiveLotId } },
+            { product_id: { _eq: productId } },
+            { batch_no: { _eq: cleanBatchNo } },
+          ],
+        }),
+        fields: "inventory_lot_id,lot_id",
+        limit: "1",
+      }).toString();
+
+      const conflictRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id: number }> }>(
+        `${DIRECTUS_URL}/items/mm_inventory_lots?${conflictQueryStr}`
+      ).catch(() => ({ data: [] }));
+
+      if (conflictRes.data && conflictRes.data.length > 0 && conflictRes.data[0].inventory_lot_id) {
+        return {
+          inventory_lot_id: Number(conflictRes.data[0].inventory_lot_id),
+          lot_id: Number(conflictRes.data[0].lot_id || effectiveLotId),
+        };
+      }
+      throw createErr;
     }
+    throw new Error(`Failed to create inventory lot record for batch "${cleanBatchNo}".`);
   } catch (err) {
     console.error("Error in syncInventoryLotBatch:", err);
+    throw err;
   }
-
-  return null;
 }
 const SPRING_API_URL = process.env.SPRING_API_BASE_URL;
 
@@ -797,9 +896,40 @@ export const stockAdjustmentService = {
         const resolvedUnitId = item.unit_id ? Number(item.unit_id) : (productUnitMap.get(Number(item.product_id)) || null);
         
         let resolvedInventoryLotId = item.inventory_lot_id ? Number(item.inventory_lot_id) : null;
+        let resolvedLotId = item.lot_id ? Number(item.lot_id) : null;
+
+        if (resolvedInventoryLotId) {
+          const cleanBatch = item.batch_no ? String(item.batch_no).trim() : "";
+          const filterArr: Record<string, unknown>[] = [
+            { inventory_lot_id: { _eq: resolvedInventoryLotId } },
+            { product_id: { _eq: Number(item.product_id) } },
+          ];
+          if (cleanBatch) {
+            filterArr.push({ batch_no: { _eq: cleanBatch } });
+          }
+          const queryStr = new URLSearchParams({
+            filter: JSON.stringify({ _and: filterArr }),
+            fields: "inventory_lot_id,lot_id",
+            limit: "1",
+          }).toString();
+
+          const verifyRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id?: number }> }>(
+            `${DIRECTUS_URL}/items/mm_inventory_lots?${queryStr}`
+          ).catch(() => ({ data: [] }));
+
+          if (verifyRes.data && verifyRes.data.length > 0) {
+            resolvedInventoryLotId = verifyRes.data[0].inventory_lot_id || resolvedInventoryLotId;
+            if (!resolvedLotId && verifyRes.data[0].lot_id) {
+              resolvedLotId = Number(verifyRes.data[0].lot_id);
+            }
+          } else {
+            resolvedInventoryLotId = null;
+          }
+        }
+
         if (!resolvedInventoryLotId && item.batch_no) {
-          resolvedInventoryLotId = await syncInventoryLotBatch({
-            lot_id: item.lot_id,
+          const syncRes = await syncInventoryLotBatch({
+            lot_id: resolvedLotId || item.lot_id,
             product_id: Number(item.product_id),
             batch_no: item.batch_no,
             branch_id: Number(header.branch_id),
@@ -809,7 +939,23 @@ export const stockAdjustmentService = {
             inventory_condition: item.inventory_condition || item.qa_status,
             doc_no: String(header.doc_no || ""),
             userId: payload.userId,
+            type: (item.type as string) || (header.type as string) || null,
           });
+          if (syncRes) {
+            resolvedInventoryLotId = syncRes.inventory_lot_id;
+            if (!resolvedLotId && syncRes.lot_id) {
+              resolvedLotId = syncRes.lot_id;
+            }
+          }
+        }
+
+        if (!resolvedLotId && header.branch_id) {
+          const lotRes = await directusFetch<{ data: Array<{ lot_id: number }> }>(
+            `${DIRECTUS_URL}/items/mm_lots?filter={"branch_id":{"_eq":${header.branch_id}}}&limit=1&fields=lot_id`
+          ).catch(() => ({ data: [] }));
+          if (lotRes.data && lotRes.data.length > 0) {
+            resolvedLotId = lotRes.data[0].lot_id;
+          }
         }
 
         return {
@@ -817,7 +963,7 @@ export const stockAdjustmentService = {
           stock_adjustment_id: headerId,
           product_id: Number(item.product_id),
           inventory_lot_id: resolvedInventoryLotId || null,
-          lot_id: item.lot_id ? Number(item.lot_id) : null,
+          lot_id: resolvedLotId ? Number(resolvedLotId) : (item.lot_id ? Number(item.lot_id) : null),
           batch_no: item.batch_no || null,
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
@@ -1014,9 +1160,40 @@ export const stockAdjustmentService = {
         const resolvedUnitId = item.unit_id ? Number(item.unit_id) : (productUnitMap.get(Number(item.product_id)) || null);
         
         let resolvedInventoryLotId = item.inventory_lot_id ? Number(item.inventory_lot_id) : null;
+        let resolvedLotId = item.lot_id ? Number(item.lot_id) : null;
+
+        if (resolvedInventoryLotId) {
+          const cleanBatch = item.batch_no ? String(item.batch_no).trim() : "";
+          const filterArr: Record<string, unknown>[] = [
+            { inventory_lot_id: { _eq: resolvedInventoryLotId } },
+            { product_id: { _eq: Number(item.product_id) } },
+          ];
+          if (cleanBatch) {
+            filterArr.push({ batch_no: { _eq: cleanBatch } });
+          }
+          const queryStr = new URLSearchParams({
+            filter: JSON.stringify({ _and: filterArr }),
+            fields: "inventory_lot_id,lot_id",
+            limit: "1",
+          }).toString();
+
+          const verifyRes = await directusFetch<{ data: Array<{ inventory_lot_id: number; lot_id?: number }> }>(
+            `${DIRECTUS_URL}/items/mm_inventory_lots?${queryStr}`
+          ).catch(() => ({ data: [] }));
+
+          if (verifyRes.data && verifyRes.data.length > 0) {
+            resolvedInventoryLotId = verifyRes.data[0].inventory_lot_id || resolvedInventoryLotId;
+            if (!resolvedLotId && verifyRes.data[0].lot_id) {
+              resolvedLotId = Number(verifyRes.data[0].lot_id);
+            }
+          } else {
+            resolvedInventoryLotId = null;
+          }
+        }
+
         if (!resolvedInventoryLotId && item.batch_no) {
-          resolvedInventoryLotId = await syncInventoryLotBatch({
-            lot_id: item.lot_id,
+          const syncRes = await syncInventoryLotBatch({
+            lot_id: resolvedLotId || item.lot_id,
             product_id: Number(item.product_id),
             batch_no: item.batch_no,
             branch_id: Number(payload.header.branch_id),
@@ -1026,7 +1203,23 @@ export const stockAdjustmentService = {
             inventory_condition: item.inventory_condition || item.qa_status,
             doc_no: String(payload.header.doc_no || ""),
             userId: payload.userId,
+            type: (item.type as string) || (payload.header?.type as string) || null,
           });
+          if (syncRes) {
+            resolvedInventoryLotId = syncRes.inventory_lot_id;
+            if (!resolvedLotId && syncRes.lot_id) {
+              resolvedLotId = syncRes.lot_id;
+            }
+          }
+        }
+
+        if (!resolvedLotId && payload.header.branch_id) {
+          const lotRes = await directusFetch<{ data: Array<{ lot_id: number }> }>(
+            `${DIRECTUS_URL}/items/mm_lots?filter={"branch_id":{"_eq":${payload.header.branch_id}}}&limit=1&fields=lot_id`
+          ).catch(() => ({ data: [] }));
+          if (lotRes.data && lotRes.data.length > 0) {
+            resolvedLotId = lotRes.data[0].lot_id;
+          }
         }
 
         return {
@@ -1034,7 +1227,7 @@ export const stockAdjustmentService = {
           stock_adjustment_id: id,
           product_id: Number(item.product_id),
           inventory_lot_id: resolvedInventoryLotId || null,
-          lot_id: item.lot_id ? Number(item.lot_id) : null,
+          lot_id: resolvedLotId ? Number(resolvedLotId) : (item.lot_id ? Number(item.lot_id) : null),
           batch_no: item.batch_no || null,
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
@@ -1141,7 +1334,7 @@ export const stockAdjustmentService = {
         const items = itemsRes.data || [];
         for (const item of items) {
           if (item.batch_no) {
-            const batchId = await syncInventoryLotBatch({
+            const syncRes = await syncInventoryLotBatch({
               lot_id: item.lot_id,
               product_id: Number(item.product_id),
               batch_no: item.batch_no,
@@ -1152,13 +1345,18 @@ export const stockAdjustmentService = {
               inventory_condition: item.inventory_condition,
               doc_no: header.doc_no,
               userId: userId || item.created_by,
+              type: item.type || header.type || null,
             });
 
-            if (batchId && item.inventory_lot_id !== batchId) {
+            const batchId = syncRes?.inventory_lot_id || null;
+            const lotId = syncRes?.lot_id || null;
+
+            if (batchId && (item.inventory_lot_id !== batchId || (!item.lot_id && lotId))) {
               await directusFetch(`${DIRECTUS_URL}/items/mm_stock_adjustment/${item.id}`, {
                 method: "PATCH",
                 body: JSON.stringify({
                   inventory_lot_id: batchId,
+                  ...(lotId ? { lot_id: lotId } : {}),
                   updated_by: userId || null,
                   updated_at: nowPHT,
                   date_updated: nowPHT,
