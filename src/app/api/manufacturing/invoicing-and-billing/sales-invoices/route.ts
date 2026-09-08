@@ -195,7 +195,6 @@ export async function GET(request: Request) {
         const invoices: SalesInvoiceHeader[] = invoicesJson.data || [];
 
         // 2. Fetch Salesmen
-        const salesmanIds = [...new Set(invoices.map((inv) => inv.salesman_id).filter((id): id is number => !!id))];
         let salesmanMap = new Map<number, DirectusSalesman>();
         let salesmanList: { id: number; salesman_code: string; salesman_name: string }[] = [];
 

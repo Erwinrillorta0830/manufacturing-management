@@ -75,9 +75,6 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
         editedDetails.isActive !== undefined ? editedDetails.isActive : selectedProduct.isActive
     );
 
-    const createdAt = selectedProduct.created_at || "Unavailable";
-    const lastModified = selectedProduct.updated_at || "Not modified since creation";
-
     React.useEffect(() => {
         queueMicrotask(() => {
             setImagePreview(null);

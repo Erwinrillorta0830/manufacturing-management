@@ -13,7 +13,6 @@ import {
     Check,
     ChevronsUpDown,
     Download,
-    Printer,
     FileSpreadsheet,
     User,
     Calendar,
@@ -130,10 +129,6 @@ export default function SalesInvoicesModule() {
         ? invoices.find((i) => i.invoice_id === selectedInvoiceId) ?? null
         : null;
 
-    const handlePrintReport = () => {
-        window.print();
-    };
-
     const clearFilters = () => {
         setSearch("");
         setStatusFilter("All");
@@ -245,6 +240,7 @@ export default function SalesInvoicesModule() {
                                 <button
                                     role="combobox"
                                     aria-expanded={salesmanComboboxOpen}
+                                    aria-controls="salesman-combobox-list"
                                     className="flex w-full items-center justify-between rounded-xl border bg-background px-3 py-2 text-xs font-medium hover:bg-muted/50 focus:outline-none focus:border-primary transition-all"
                                 >
                                     <div className="flex items-center gap-2 truncate">
@@ -257,7 +253,7 @@ export default function SalesInvoicesModule() {
                             <PopoverContent className="w-64 p-0 z-50" align="end">
                                 <Command>
                                     <CommandInput placeholder="Search salesman..." className="h-8 text-xs" />
-                                    <CommandList>
+                                    <CommandList id="salesman-combobox-list">
                                         <CommandEmpty className="py-2 text-center text-xs text-muted-foreground">
                                             No salesman found.
                                         </CommandEmpty>
@@ -311,6 +307,7 @@ export default function SalesInvoicesModule() {
                                 <button
                                     role="combobox"
                                     aria-expanded={statusComboboxOpen}
+                                    aria-controls="status-combobox-list"
                                     className="flex w-full items-center justify-between rounded-xl border bg-background px-3 py-2 text-xs font-medium hover:bg-muted/50 focus:outline-none focus:border-primary transition-all"
                                 >
                                     <div className="flex items-center gap-2 truncate">
@@ -326,7 +323,7 @@ export default function SalesInvoicesModule() {
                             <PopoverContent className="w-48 p-0 z-50" align="end">
                                 <Command>
                                     <CommandInput placeholder="Search status..." className="h-8 text-xs" />
-                                    <CommandList>
+                                    <CommandList id="status-combobox-list">
                                         <CommandEmpty className="py-2 text-center text-xs text-muted-foreground">
                                             No status found.
                                         </CommandEmpty>

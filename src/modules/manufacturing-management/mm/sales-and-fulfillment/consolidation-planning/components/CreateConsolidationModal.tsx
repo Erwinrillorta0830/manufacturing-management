@@ -51,7 +51,65 @@ interface Props {
 }
 
 type AllocationMode = "auto" | "manual";
-type ModalStep = 1 | 2 | 3;
+function computeAggregatedProducts(
+    candidates: CandidateInvoice[],
+    selectedIds: Set<number>
+) {
+    const selected = candidates.filter((c) => selectedIds.has(c.invoiceId));
+    const agg = new Map<
+        number,
+        {
+            productId: number;
+            productName: string;
+            productCode: string;
+            totalQuantity: number;
+            invoiceIds: number[];
+            versionNames: string[];
+        }
+    >();
+
+    for (const inv of selected) {
+        for (const p of inv.products) {
+            const existing = agg.get(p.productId);
+            const version = p.versionName || "Unversioned";
+            if (!existing) {
+                agg.set(p.productId, {
+                    productId: p.productId,
+                    productName: p.productName,
+                    productCode: p.productCode,
+                    totalQuantity: p.quantity,
+                    invoiceIds: [inv.invoiceId],
+                    versionNames: [version],
+                });
+            } else {
+                agg.set(p.productId, {
+                    ...existing,
+                    totalQuantity: existing.totalQuantity + p.quantity,
+                    invoiceIds: existing.invoiceIds.includes(inv.invoiceId)
+                        ? existing.invoiceIds
+                        : [...existing.invoiceIds, inv.invoiceId],
+                    versionNames: existing.versionNames.includes(version)
+                        ? existing.versionNames
+                        : [...existing.versionNames, version],
+                });
+            }
+        }
+    }
+
+    return Array.from(agg.values())
+        .map((e) => ({
+            productId: e.productId,
+            productName: e.productName,
+            productCode: e.productCode,
+            totalQuantity: e.totalQuantity,
+            invoiceCount: e.invoiceIds.length,
+            versionLabel:
+                e.versionNames.length > 1
+                    ? "Multiple versions"
+                    : e.versionNames[0] || "Not assigned",
+        }))
+        .sort((a, b) => a.productName.localeCompare(b.productName));
+}
 
 export default function CreateConsolidationModal({
     isOpen,
@@ -382,44 +440,7 @@ export default function CreateConsolidationModal({
         setExpandedStep3ProdIds(new Set());
     };
 
-    const aggregatedProducts = useMemo(() => {
-        const selected = candidates.filter((c) => selectedIds.has(c.invoiceId));
-        const versionSets = new Map<number, Set<string>>();
-        const agg = new Map<
-            number,
-            { quantity: number; invoiceCount: Set<number>; productName: string; productCode: string }
-        >();
-        for (const inv of selected) {
-            for (const p of inv.products) {
-                if (!agg.has(p.productId)) {
-                    agg.set(p.productId, {
-                        quantity: 0,
-                        invoiceCount: new Set(),
-                        productName: p.productName,
-                        productCode: p.productCode,
-                    });
-                }
-                if (!versionSets.has(p.productId)) versionSets.set(p.productId, new Set());
-                const entry = agg.get(p.productId)!;
-                entry.quantity += p.quantity;
-                entry.invoiceCount.add(inv.invoiceId);
-                versionSets.get(p.productId)!.add(p.versionName || "Unversioned");
-            }
-        }
-        return Array.from(agg.entries())
-            .map(([productId, e]) => ({
-                productId,
-                productName: e.productName,
-                productCode: e.productCode,
-                totalQuantity: e.quantity,
-                invoiceCount: e.invoiceCount.size,
-                versionLabel:
-                    versionSets.get(productId)!.size > 1
-                        ? "Multiple versions"
-                        : versionSets.get(productId)!.values().next().value || "Not assigned",
-            }))
-            .sort((a, b) => a.productName.localeCompare(b.productName));
-    }, [candidates, selectedIds]);
+    const aggregatedProducts = computeAggregatedProducts(candidates, selectedIds);
 
     // Lookup map for invoice allocation breakdown
     const invoiceBreakdownMap = useMemo(() => {

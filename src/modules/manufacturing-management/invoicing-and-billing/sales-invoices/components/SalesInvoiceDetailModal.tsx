@@ -1,20 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     X,
-    Printer,
     Building2,
     Calendar,
-    FileText,
     Receipt,
     Loader2,
-    DollarSign,
-    User,
-    Clock,
-    CheckCircle2,
-    AlertCircle,
-    Hash,
 } from "lucide-react";
 import { SalesInvoiceHeader, SalesInvoiceDetail } from "../types";
 
@@ -33,6 +26,8 @@ export default function SalesInvoiceDetailModal({
     onClose,
     loadingDetails,
 }: SalesInvoiceDetailModalProps) {
+    const [now] = useState(() => Date.now());
+
     if (!isOpen || !invoice) return null;
 
     const netAmount = Number(invoice.net_amount);
@@ -45,13 +40,9 @@ export default function SalesInvoiceDetailModal({
         if (!invoice.invoice_date) return "N/A";
         const invDate = new Date(invoice.invoice_date).getTime();
         if (isNaN(invDate)) return "N/A";
-        const diffDays = Math.floor((Date.now() - invDate) / (1000 * 60 * 60 * 24));
+        const diffDays = Math.floor((now - invDate) / (1000 * 60 * 60 * 24));
         return diffDays < 0 ? "0 Days" : `${diffDays} Day${diffDays === 1 ? "" : "s"}`;
     })();
-
-    const handlePrint = () => {
-        window.print();
-    };
 
     return (
         <AnimatePresence>

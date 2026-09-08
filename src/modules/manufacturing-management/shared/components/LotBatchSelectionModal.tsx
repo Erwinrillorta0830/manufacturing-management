@@ -1482,18 +1482,6 @@ export function LotBatchSelectionModal({
                           <div className="w-80">
                             {(() => {
                               const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
-                              const compatibleLots = lots.filter((l) => {
-                                if (l.status && l.status !== 'ACTIVE') return false;
-                                const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
-                                if (!isUomMatch) return false;
-                                const lComp = checkLotCompatibility(Number(l.lot_id));
-                                if (!lComp.isCompatible) return false;
-                                const lotIsBad = isBadStockLot(l);
-                                if (groupIsBad && !lotIsBad) return false;
-                                if (!groupIsBad && lotIsBad) return false;
-                                return true;
-                              });
-
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
@@ -2034,9 +2022,6 @@ export function LotBatchSelectionModal({
                         {group.batches.map((batch, bIdx) => {
                           const existingOnhand = getExistingBatchOnhand(Number(group.lot_id), batch.batch_no);
                           const isDeficit = existingOnhand && Number(existingOnhand.onhandQuantity) < 0;
-                          const deficitQty = isDeficit ? Number(existingOnhand.onhandQuantity) : 0;
-                          const allocQty = Number(batch.quantity || 0);
-                          const netDeficit = isDeficit ? deficitQty + allocQty : 0;
 
                           return (
                             <div
