@@ -18,8 +18,10 @@ export async function POST(request: Request) {
         const collectionData = {
             salesman_id: payload.salesmanId,
             collected_by: payload.collectedBy,
+            encoder_id: payload.encoderId || payload.collectedBy,
             collection_receipt_no: payload.crNo,
             collection_date: payload.collectionDate,
+            date_posted: null,
             remarks: payload.remarks,
             isPosted: false,
             isCancelled: false,

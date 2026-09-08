@@ -23,6 +23,7 @@ export async function GET(request: Request) {
         const customerCodesParam = searchParams.get("customerCodes");
         const customerNamesParam = searchParams.get("customerNames");
         const salesmanId = searchParams.get("salesmanId");
+        const currentPouchId = searchParams.get("currentPouchId");
 
         if (!customerCodesParam && !customerNamesParam) {
             return NextResponse.json([], { headers: noCacheHeaders });
@@ -99,6 +100,24 @@ export async function GET(request: Request) {
             status: string;
         };
 
+        const memoIds = memos.map((m: MemoRecord) => m.id).filter(Boolean);
+        const currentPouchMemoUsageMap = new Map<number, number>();
+
+        if (currentPouchId && memoIds.length > 0) {
+            try {
+                const colMemosRes = await fetch(`${DIRECTUS_URL}/items/collection_memos?filter[collection_id][_eq]=${currentPouchId}&filter[memo_id][_in]=${memoIds.join(",")}&fields=memo_id,amount`, { headers, cache: "no-store" });
+                if (colMemosRes.ok) {
+                    const colMemosData = (await colMemosRes.json()).data || [];
+                    colMemosData.forEach((item: { memo_id: number; amount?: number }) => {
+                        const amt = Number(item.amount) || 0;
+                        currentPouchMemoUsageMap.set(item.memo_id, (currentPouchMemoUsageMap.get(item.memo_id) || 0) + amt);
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to fetch current pouch collection_memos:", err);
+            }
+        }
+
         const mappedMemos = memos
             .filter((m: MemoRecord) => {
                 // VERY STRICT IN-MEMORY FIREWALL
@@ -117,7 +136,10 @@ export async function GET(request: Request) {
                 const customer = (customerIdVal !== undefined && customerIdVal !== null ? customerMap.get(Number(customerIdVal)) : undefined) || {};
                 
                 const amount = Number(m.amount) || 0;
-                const appliedAmount = Number(m.applied_amount) || 0;
+                const totalAppliedInDb = Number(m.applied_amount) || 0;
+                const currentPouchUsage = currentPouchMemoUsageMap.get(m.id) || 0;
+                // Exclude current pouch's allocation from prior applied amount so the UI starting capacity isn't double-deducted
+                const priorExternalApplied = Math.max(0, totalAppliedInDb - currentPouchUsage);
 
                 return {
                     id: m.id,
@@ -126,7 +148,7 @@ export async function GET(request: Request) {
                     customerCode: customer.customer_code || m.customer_reference || fallbackCode,
                     customerName: customer.customer_name,
                     amount: amount,
-                    appliedAmount: appliedAmount,
+                    appliedAmount: priorExternalApplied,
                     status: m.status
                 };
             })

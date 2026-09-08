@@ -700,8 +700,9 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                                 <>
                                 {filteredCredits.map(c => {
                                     const used = c.originalAmount > 0 ? getUsedAmount(c.id) : 0;
-                                    const remaining = getSourceAllocationCapacity(c.originalAmount, used);
-                                    const isExhausted = c.originalAmount > 0 && remaining <= 0;
+                                    const startingCapacity = c.unappliedAmount !== undefined ? c.unappliedAmount : c.originalAmount;
+                                    const remaining = getSourceAllocationCapacity(startingCapacity, used);
+                                    const isExhausted = startingCapacity > 0 && remaining <= 0;
                                     return (
                                         <div key={`source-${c.id}`} className={`p-2 rounded-md border shadow-sm transition-all group ${isExhausted ? 'bg-muted/30 border-dashed opacity-60' : 'bg-background border-border border-l-[3px] border-l-purple-500'}`}>
                                             <div className="flex justify-between items-start mb-1">

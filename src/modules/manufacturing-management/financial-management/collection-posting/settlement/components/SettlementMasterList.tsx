@@ -38,7 +38,7 @@ export default function SettlementMasterList() {
     const [collectorFilter, setCollectorFilter] = useState("all");
     const [collectorOpen, setCollectorOpen] = useState(false);
 
-    const [sortField, setSortField] = useState("collectionDate");
+    const [sortField, setSortField] = useState("encodedDate");
     const [sortDirection, setSortDirection] = useState("desc");
 
     const [page, setPage] = useState(1);

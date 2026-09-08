@@ -196,7 +196,9 @@ export function ReviewSheet({
                 existing.appliedAmount += amt;
                 existing.allocations.push(a);
                 existing.invoiceNo = existing.invoiceNo || a.invoiceNo;
-                existing.customerName = existing.customerName || a.customerName || "No Assigned Customer";
+                if (!existing.customerName || existing.customerName === "Unknown" || existing.customerName === "No Assigned Customer") {
+                    existing.customerName = a.customerName || existing.customerName || "No Assigned Customer";
+                }
                 existing.grossAmount ??= finiteNonNegative(a.grossAmount);
                 existing.originalAmount ??= finiteNonNegative(a.originalAmount);
                 existing.prePouchRemainingBalance ??= finiteNonNegative(a.remainingBalance);
