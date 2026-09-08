@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
+import { mmLotId, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -481,9 +481,11 @@ export async function POST(request: Request) {
                     if (qty <= 0) return;
 
                     const batchNumber = String(lot.batch_no || lot.lot_number || item.batch_no || "LOT-STAGING").trim();
-                    const relatedLotId = typeof (lot.mm_lot_id ?? lot.lot_id) === "object"
-                        ? Number((lot.mm_lot_id ?? lot.lot_id)?.lot_id || 0)
-                        : Number(lot.mm_lot_id || lot.lot_id || item.mm_lot_id || item.lot_id || 0);
+                    const relatedLotId = mmLotId(lot.mm_lot_id)
+                        ?? mmLotId(lot.lot_id)
+                        ?? mmLotId(item.mm_lot_id)
+                        ?? mmLotId(item.lot_id)
+                        ?? 0;
                     const consumedLotId = relatedLotId || await (async () => {
                         const unitOfMeasureId = await resolveProductUnitId(rawProductId);
                         return (await resolveOrCreateMmLot({
@@ -619,8 +621,15 @@ export async function POST(request: Request) {
                                 }).catch(() => {});
                             }
 
-                            // Deduct from inventory_movements ledger by lotNo
-                            await logConsumageAndMovement(portion, { batch_no: lotNo });
+                            // Preserve the exact lot selected during planning. The
+                            // reservation row is authoritative; using only the
+                            // batch number can resolve to a different MM lot when
+                            // multiple lots share the same batch number.
+                            await logConsumageAndMovement(portion, {
+                                batch_no: lotNo,
+                                mm_lot_id: resRow.mm_lot_id,
+                                lot_id: resRow.lot_id
+                            });
                             remainingToConsume -= portion;
                         }
 

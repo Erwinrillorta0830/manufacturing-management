@@ -102,11 +102,30 @@ export interface LotBalanceSnapshot {
     batchNo: string;
     onHandBefore: number;
     reservedQuantity: number;
+    legacyReservedQuantity: number;
+    protectedAllocationQuantity: number;
+    protectedAllocations: ProtectedAllocation[];
+    protectedAllocationResolutionComplete: boolean;
     availableQuantity: number;
     onHandAfter: number;
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
+}
+
+export type ProtectedAllocationSource =
+    | "SALES_ORDER"
+    | "SALES_INVOICE"
+    | "JOB_ORDER_MATERIAL"
+    | "STOCK_TRANSFER"
+    | "LOT_TRANSFER";
+
+export interface ProtectedAllocation {
+    source: ProtectedAllocationSource;
+    allocationId: number;
+    quantity: number;
+    status: string;
+    reference: string | null;
 }
 
 export interface LotTransferPreview {

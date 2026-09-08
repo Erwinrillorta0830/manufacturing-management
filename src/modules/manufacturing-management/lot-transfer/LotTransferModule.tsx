@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
-import type { BatchOption, LotTransferMode } from "./types";
+import type { BatchOption, LotBalanceSnapshot, LotTransferMode } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
@@ -74,6 +74,28 @@ function FieldLabel({ children, required = false }: { children: ReactNode; requi
 
 function EmptyState({ message }: { message: string }) {
     return <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{message}</div>;
+}
+
+function ProtectedAllocationBreakdown({ snapshot }: { snapshot?: LotBalanceSnapshot }) {
+    if (!snapshot) return null;
+    const sourceLabels: Record<string, string> = {
+        SALES_ORDER: "Sales order",
+        SALES_INVOICE: "Sales invoice",
+        JOB_ORDER_MATERIAL: "Job-order material",
+        STOCK_TRANSFER: "Stock transfer",
+        LOT_TRANSFER: "Lot transfer"
+    };
+    return <div className="mt-1 text-xs">
+        <p>Reserved for availability: <strong>{formatQuantity(snapshot.reservedQuantity)}</strong></p>
+        <p className="text-muted-foreground">Explicit allocations: {formatQuantity(snapshot.protectedAllocationQuantity)}</p>
+        {snapshot.legacyReservedQuantity > 0 && <p className="text-muted-foreground">Legacy aggregate: {formatQuantity(snapshot.legacyReservedQuantity)}</p>}
+        {snapshot.protectedAllocations.length > 0 && <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            {snapshot.protectedAllocations.map((allocation) => <li key={`${allocation.source}-${allocation.allocationId}`}>
+                {sourceLabels[allocation.source] || allocation.source}: {formatQuantity(allocation.quantity)}{allocation.reference ? ` (${allocation.reference})` : ""}
+            </li>)}
+        </ul>}
+        {!snapshot.protectedAllocationResolutionComplete && <p role="alert" className="mt-1 font-medium text-red-700 dark:text-red-300">Some protected allocation identities require reconciliation.</p>}
+    </div>;
 }
 
 function ErrorBanner({ message }: { message: string | null }) {
@@ -275,7 +297,21 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 <p className="mt-1 text-xs text-muted-foreground">
                     {controller.draftValidationMessage || (controller.isDraftFormComplete ? "Server validation will run shortly." : "Complete the branch, product, lot, batch, quantity, and reason fields to run all checks.")}
                 </p>
-                {controller.draftValidationIsCurrent && controller.preview && <div className="mt-3"><Checks preview={controller.preview} /></div>}
+                {controller.draftValidationIsCurrent && controller.preview && <>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-lg border bg-muted/20 p-3 text-xs">
+                            <strong>Source availability</strong>
+                            <p className="mt-1">On-hand: {formatQuantity(controller.preview.source.onHandBefore)} | Available: {formatQuantity(controller.preview.source.availableQuantity)}</p>
+                            <ProtectedAllocationBreakdown snapshot={controller.preview.source} />
+                        </div>
+                        <div className="rounded-lg border bg-muted/20 p-3 text-xs">
+                            <strong>Destination occupancy</strong>
+                            <p className="mt-1">On-hand: {formatQuantity(controller.preview.target.onHandBefore)} | After: {formatQuantity(controller.preview.target.onHandAfter)}</p>
+                            <ProtectedAllocationBreakdown snapshot={controller.preview.target} />
+                        </div>
+                    </div>
+                    <div className="mt-3"><Checks preview={controller.preview} /></div>
+                </>}
             </div>
             {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
             <div className="mt-4 flex flex-wrap justify-end gap-2">
@@ -340,7 +376,7 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
             {!record ? <EmptyState message="Select a Submitted request to review its QA checks." /> : <>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)}</span></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">QA validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{notice}</div>}
@@ -376,7 +412,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
             {!record ? <EmptyState message="Select an Approved request to post its paired inventory movements." /> : <>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Approved {formatDate(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)}</span></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source OUT</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | After: {formatQuantity(preview?.source.onHandAfter)}</p><p className="text-xs">Movement: {record.sourceMovementId || "Not posted"}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target IN</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><p className="text-xs">Movement: {record.targetMovementId || "Not posted"}</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source OUT</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | After: {formatQuantity(preview?.source.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Movement: {record.sourceMovementId || "Not posted"}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target IN</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Movement: {record.targetMovementId || "Not posted"}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
