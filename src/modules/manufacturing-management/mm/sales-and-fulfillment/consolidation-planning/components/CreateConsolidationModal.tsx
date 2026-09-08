@@ -51,6 +51,7 @@ interface Props {
 }
 
 type AllocationMode = "auto" | "manual";
+type ModalStep = 1 | 2 | 3;
 function computeAggregatedProducts(
     candidates: CandidateInvoice[],
     selectedIds: Set<number>
