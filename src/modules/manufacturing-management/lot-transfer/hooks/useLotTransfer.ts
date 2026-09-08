@@ -10,6 +10,7 @@ import {
     fetchLotTransfers,
     fetchLots,
     fetchProducts,
+    postLotTransfer,
     previewLotTransfer,
     rejectLotTransfer,
     submitLotTransfer,
@@ -79,11 +80,11 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setIsLoading(true);
         try {
             const response = await fetchLotTransfers({
-                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : undefined,
+                status: mode === "request" ? "Draft" : mode === "approval" ? "Submitted" : mode === "posting" ? "Approved" : undefined,
                 branchId: userBranchId || undefined
             });
             const nextRecords = mode === "summary"
-                ? response.data.filter((record) => record.status === "Approved" || record.status === "Rejected")
+                ? response.data.filter((record) => record.status === "Posted" || record.status === "Rejected")
                 : response.data;
             setRecords(nextRecords);
             setTotalCount(mode === "summary" ? nextRecords.length : response.totalCount);
@@ -156,7 +157,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setError(null);
         if (record.sourceLotId > 0) void loadBatchesForLot(record.sourceLotId);
         if (record.targetLotId > 0 && record.targetLotId !== record.sourceLotId) void loadBatchesForLot(record.targetLotId);
-        if (mode === "approval") {
+        if (mode === "approval" || mode === "posting") {
             setIsActionLoading(true);
             try {
                 setPreview(await previewLotTransfer(record.id));
@@ -316,6 +317,24 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [refresh, selectedId]);
 
+    const post = useCallback(async () => {
+        if (!selectedId) return null;
+        setIsActionLoading(true);
+        try {
+            const result = await postLotTransfer(selectedId);
+            setSelectedRecord(result.transfer);
+            setPreview(result.preview);
+            await refresh();
+            setError(null);
+            return result.transfer;
+        } catch (postError) {
+            setError(postError instanceof Error ? postError.message : "Unable to post the lot-transfer request.");
+            return null;
+        } finally {
+            setIsActionLoading(false);
+        }
+    }, [refresh, selectedId]);
+
     const reject = useCallback(async (rejectionReason: string, qaEvidence?: string) => {
         if (!selectedId) return null;
         setIsActionLoading(true);
@@ -382,6 +401,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         deleteDraft,
         submit,
         approve,
+        post,
         reject,
         refresh,
         isLoading,

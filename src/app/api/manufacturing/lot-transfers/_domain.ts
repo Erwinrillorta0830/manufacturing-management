@@ -11,7 +11,7 @@ const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
 const MM_LOT_CANONICAL_REFERENCE_CODE = "MM_LOT_CANONICAL_REFERENCE_REQUIRED";
 const LOT_TRANSFER_SAME_LOT_CODE = "LOT_TRANSFER_SAME_LOT_NOT_ALLOWED";
 
-export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"] as const;
+export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Posted", "Rejected"] as const;
 export type LotTransferStatus = (typeof LOT_TRANSFER_STATUSES)[number];
 
 type RecordValue = Record<string, unknown>;
@@ -74,6 +74,9 @@ export interface LotTransferRecord {
     approvedBy: number | null;
     approvedByName: string | null;
     approvedAt: string | null;
+    postedBy: number | null;
+    postedByName: string | null;
+    postedAt: string | null;
     rejectedBy: number | null;
     rejectedByName: string | null;
     rejectedAt: string | null;
@@ -120,6 +123,7 @@ export interface LotTransferPreview {
     transferId: number;
     requestNo: string;
     canApprove: boolean;
+    canPost: boolean;
     checks: ValidationCheck[];
     source: LotBalanceSnapshot;
     target: LotBalanceSnapshot;
@@ -171,7 +175,7 @@ const rejectionSchema = z.object({
     qaEvidence: z.string().trim().max(5000).optional()
 }).strict();
 
-const approvalSchema = z.object({
+const postingSchema = z.object({
     idempotencyKey: z.string().trim().min(8).max(150)
 }).strict();
 
@@ -199,10 +203,10 @@ export function parseRejection(body: unknown): { rejectionReason: string; qaEvid
     return result.data;
 }
 
-export function parseApproval(body: unknown): { idempotencyKey: string } {
-    const result = approvalSchema.safeParse(body);
+export function parsePosting(body: unknown): { idempotencyKey: string } {
+    const result = postingSchema.safeParse(body);
     if (!result.success) {
-        throw new LotTransferError(400, "A unique approval operation key is required.", result.error.flatten().fieldErrors);
+        throw new LotTransferError(400, "A unique posting operation key is required.", result.error.flatten().fieldErrors);
     }
     return result.data;
 }
@@ -649,6 +653,7 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         : "Draft";
     const requestedByValue = row.requested_by;
     const approvedByValue = row.approved_by;
+    const postedByValue = row.posted_by;
     const rejectedByValue = row.rejected_by;
 
     return {
@@ -672,6 +677,9 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         approvedBy: relationId(approvedByValue, ["user_id"]),
         approvedByName: relationName(approvedByValue, ["name", "user_name", "user_fname", "email"]),
         approvedAt: nullableString(row.approved_at),
+        postedBy: relationId(postedByValue, ["user_id"]),
+        postedByName: relationName(postedByValue, ["name", "user_name", "user_fname", "email"]),
+        postedAt: nullableString(row.posted_at),
         rejectedBy: relationId(rejectedByValue, ["user_id"]),
         rejectedByName: relationName(rejectedByValue, ["name", "user_name", "user_fname", "email"]),
         rejectedAt: nullableString(row.rejected_at),
@@ -1006,6 +1014,7 @@ export async function buildLotTransferPreview(record: LotTransferRecord, options
         transferId: record.id,
         requestNo: record.requestNo,
         canApprove: checks.every((item) => item.passed),
+        canPost: checks.every((item) => item.passed),
         checks,
         source: snapshot({
             lotId: record.sourceLotId,
@@ -1164,7 +1173,7 @@ async function restoreTargetExpiryUpdate(update: TargetExpiryUpdate): Promise<vo
     }
 }
 
-function storedApprovedPreview(record: LotTransferRecord): LotTransferPreview {
+function storedPostedPreview(record: LotTransferRecord): LotTransferPreview {
     const sourceBefore = record.sourceBalanceBefore ?? 0;
     const targetBefore = record.targetBalanceBefore ?? 0;
     const sourceAfter = record.sourceBalanceAfter ?? sourceBefore - record.quantity;
@@ -1172,8 +1181,9 @@ function storedApprovedPreview(record: LotTransferRecord): LotTransferPreview {
     return {
         transferId: record.id,
         requestNo: record.requestNo,
-        canApprove: true,
-        checks: [check("posted", "Approved movement pair", true, "The approved source OUT and target IN references are stored on the audit record.")],
+        canApprove: false,
+        canPost: false,
+        checks: [check("posted", "Posted movement pair", true, "The source OUT and target IN references are stored on the posted audit record.")],
         source: {
             ...snapshot({
                 lotId: record.sourceLotId,
@@ -1222,24 +1232,74 @@ function storedApprovedPreview(record: LotTransferRecord): LotTransferPreview {
     };
 }
 
-export async function approveLotTransfer(id: number, idempotencyKey: string, actorUserId: number | null): Promise<{ record: LotTransferRecord; preview: LotTransferPreview; idempotent: boolean }> {
+export async function approveLotTransfer(id: number, actorUserId: number | null): Promise<{ record: LotTransferRecord; preview: LotTransferPreview; idempotent: boolean }> {
     const record = await getLotTransfer(id);
+    if (record.status === "Posted") {
+        throw new LotTransferError(409, "Posted lot-transfer requests cannot be approved again.");
+    }
     if (record.status === "Approved") {
-        return { record, preview: storedApprovedPreview(record), idempotent: true };
+        return { record, preview: await buildLotTransferPreview(record), idempotent: true };
     }
     if (record.status !== "Submitted") {
         throw new LotTransferError(409, `Only Submitted requests can be approved. Current status: ${record.status}.`);
     }
+
+    assertDifferentLotIds(record.sourceLotId, record.targetLotId);
+    const preview = await buildLotTransferPreview(record);
+    if (!preview.canApprove) {
+        throw new LotTransferError(409, "The lot-transfer request failed the required QA checks.", {
+            failedChecks: preview.checks.filter((item) => !item.passed)
+        });
+    }
+
+    const approvedAt = new Date().toISOString();
+    const persisted = await mutateDirectus(
+        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
+        "PATCH",
+        {
+            status: "Approved",
+            approved_by: actorUserId || 1,
+            approved_at: approvedAt,
+            effective_expiry_date: preview.effectiveExpiryDate,
+            source_unit_cost: preview.source.unitCost,
+            target_unit_cost: preview.target.unitCost,
+            source_movement_id: null,
+            target_movement_id: null,
+            source_balance_before: null,
+            source_balance_after: null,
+            target_balance_before: null,
+            target_balance_after: null,
+            idempotency_key: null,
+            posting_started_at: null,
+            reconciliation_required: false,
+            posting_error: null,
+            updated_at: approvedAt
+        },
+        "Lot-transfer approval"
+    );
+    const finalRecord = persisted ? mapTransferRow(persisted) : await getLotTransfer(id);
+    if (finalRecord.status !== "Approved" || finalRecord.sourceMovementId !== null || finalRecord.targetMovementId !== null) {
+        throw new LotTransferError(503, "Lot-transfer approval was not durably finalized without posting inventory.");
+    }
+    return { record: finalRecord, preview, idempotent: false };
+}
+
+export async function postLotTransfer(id: number, idempotencyKey: string, actorUserId: number | null): Promise<{ record: LotTransferRecord; preview: LotTransferPreview; idempotent: boolean }> {
+    const record = await getLotTransfer(id);
+    if (record.status === "Posted") {
+        return { record, preview: storedPostedPreview(record), idempotent: true };
+    }
+    if (record.status !== "Approved") {
+        throw new LotTransferError(409, `Only Approved requests can be posted. Current status: ${record.status}.`);
+    }
     assertDifferentLotIds(record.sourceLotId, record.targetLotId);
     if (record.postingStartedAt && record.idempotencyKey && record.idempotencyKey !== idempotencyKey) {
-        throw new LotTransferError(409, "Another approval operation is already in progress for this request.");
+        throw new LotTransferError(409, "Another posting operation is already in progress for this request.");
     }
 
     let claimOwned = false;
     let reconciliationRequired = false;
     const createdMovementIds: number[] = [];
-    let sourceMovementId = 0;
-    let targetMovementId = 0;
     let preview: LotTransferPreview | null = null;
     let targetExpiryUpdate: TargetExpiryUpdate | null = null;
 
@@ -1249,49 +1309,54 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
             `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
             "PATCH",
             { idempotency_key: idempotencyKey, posting_started_at: startedAt, posting_error: null, reconciliation_required: false, updated_at: startedAt },
-            "Lot-transfer approval claim"
+            "Lot-transfer posting claim"
         );
 
         const claimedRecord = await getLotTransfer(id);
-        if (claimedRecord.status === "Approved") {
-            return { record: claimedRecord, preview: storedApprovedPreview(claimedRecord), idempotent: true };
+        if (claimedRecord.status === "Posted") {
+            return { record: claimedRecord, preview: storedPostedPreview(claimedRecord), idempotent: true };
         }
-        if (claimedRecord.idempotencyKey !== idempotencyKey) {
-            throw new LotTransferError(409, "Another approval operation is already in progress for this request.");
+        if (claimedRecord.status !== "Approved" || claimedRecord.idempotencyKey !== idempotencyKey) {
+            throw new LotTransferError(409, "Another posting operation is already in progress for this request.");
         }
         claimOwned = true;
 
         const existingMovements = await findTransferMovements(id, claimedRecord.requestNo);
         const sourceMatches = existingMovements.filter((row) => isTransferMovement(row, claimedRecord, "source"));
         const targetMatches = existingMovements.filter((row) => isTransferMovement(row, claimedRecord, "target"));
-        if (sourceMatches.length > 1 || targetMatches.length > 1) {
+        if (sourceMatches.length > 1 || targetMatches.length > 1 || (existingMovements.length > 0 && !(sourceMatches.length === 1 && targetMatches.length === 1))) {
             reconciliationRequired = true;
-            throw new LotTransferError(503, "More than one movement exists for a lot-transfer side; reconciliation is required.");
+            throw new LotTransferError(503, "An incomplete or duplicate lot-transfer movement pair exists; reconciliation is required.");
         }
 
         if (sourceMatches.length === 1 && targetMatches.length === 1) {
-            const sourceExistingId = movementId(sourceMatches[0]);
-            const targetExistingId = movementId(targetMatches[0]);
-            if (!sourceExistingId || !targetExistingId) {
+            const sourceMovementId = movementId(sourceMatches[0]);
+            const targetMovementId = movementId(targetMatches[0]);
+            if (!sourceMovementId || !targetMovementId) {
                 reconciliationRequired = true;
                 throw new LotTransferError(503, "Existing lot-transfer movements have no durable IDs; reconciliation is required.");
             }
             preview = await buildLotTransferPreview(claimedRecord, { excludeTransferMovements: true });
+            if (!preview.canPost) {
+                throw new LotTransferError(409, "The lot-transfer request failed the required posting checks.", {
+                    failedChecks: preview.checks.filter((item) => !item.passed)
+                });
+            }
             targetExpiryUpdate = await planTargetExpiryUpdate(claimedRecord, preview.effectiveExpiryDate);
             if (targetExpiryUpdate) await applyTargetExpiryUpdate(targetExpiryUpdate);
-            const approvedAt = new Date().toISOString();
+            const postedAt = new Date().toISOString();
             const persisted = await mutateDirectus(
                 `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
                 "PATCH",
                 {
-                    status: "Approved",
-                    approved_by: actorUserId || 1,
-                    approved_at: approvedAt,
+                    status: "Posted",
+                    posted_by: actorUserId || 1,
+                    posted_at: postedAt,
                     effective_expiry_date: preview.effectiveExpiryDate,
                     source_unit_cost: preview.source.unitCost,
                     target_unit_cost: preview.target.unitCost,
-                    source_movement_id: sourceExistingId,
-                    target_movement_id: targetExistingId,
+                    source_movement_id: sourceMovementId,
+                    target_movement_id: targetMovementId,
                     source_balance_before: preview.source.onHandBefore,
                     source_balance_after: preview.source.onHandAfter,
                     target_balance_before: preview.target.onHandBefore,
@@ -1299,32 +1364,21 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
                     posting_started_at: null,
                     reconciliation_required: false,
                     posting_error: null,
-                    updated_at: approvedAt
+                    updated_at: postedAt
                 },
-                "Lot-transfer recovered approval finalization"
+                "Lot-transfer recovered posting finalization"
             );
             const finalRecord = persisted ? mapTransferRow(persisted) : await getLotTransfer(id);
-            if (finalRecord.status !== "Approved" || finalRecord.sourceMovementId !== sourceExistingId || finalRecord.targetMovementId !== targetExistingId) {
+            if (finalRecord.status !== "Posted" || finalRecord.sourceMovementId !== sourceMovementId || finalRecord.targetMovementId !== targetMovementId) {
                 reconciliationRequired = true;
-                throw new LotTransferError(503, "Recovered lot-transfer movements could not be durably finalized.");
+                throw new LotTransferError(503, "Recovered lot-transfer movements could not be durably finalized as Posted.");
             }
             return { record: finalRecord, preview, idempotent: true };
         }
 
-        if (existingMovements.length > 0) {
-            reconciliationRequired = true;
-            for (const existingMovement of existingMovements) {
-                const existingId = movementId(existingMovement);
-                if (existingId) await deleteInventoryMovement(existingId);
-            }
-            const remaining = await findTransferMovements(id, claimedRecord.requestNo);
-            if (remaining.length > 0) throw new LotTransferError(503, "A partial lot-transfer movement could not be removed; reconciliation is required.");
-            reconciliationRequired = false;
-        }
-
         preview = await buildLotTransferPreview(claimedRecord);
-        if (!preview.canApprove) {
-            throw new LotTransferError(409, "The lot-transfer request failed the required QA checks.", {
+        if (!preview.canPost) {
+            throw new LotTransferError(409, "The lot-transfer request failed the required posting checks.", {
                 failedChecks: preview.checks.filter((item) => !item.passed)
             });
         }
@@ -1362,9 +1416,9 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
             manufacturing_date: preview.target.manufacturingDate,
             quantity: claimedRecord.quantity
         };
-        sourceMovementId = await createInventoryMovement(sourceMovementPayload);
+        const sourceMovementId = await createInventoryMovement(sourceMovementPayload);
         createdMovementIds.push(sourceMovementId);
-        targetMovementId = await createInventoryMovement(targetMovementPayload);
+        const targetMovementId = await createInventoryMovement(targetMovementPayload);
         createdMovementIds.push(targetMovementId);
         const verified = await verifyInventoryMovements([sourceMovementId, targetMovementId]);
         const verifiedIds = new Set(verified.map((row) => relationId(row.movement_id, ["movement_id"]) || relationId(row.id, ["id"])));
@@ -1375,14 +1429,14 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
         targetExpiryUpdate = await planTargetExpiryUpdate(claimedRecord, preview.effectiveExpiryDate);
         if (targetExpiryUpdate) await applyTargetExpiryUpdate(targetExpiryUpdate);
 
-        const approvedAt = new Date().toISOString();
+        const postedAt = new Date().toISOString();
         const persisted = await mutateDirectus(
             `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
             "PATCH",
             {
-                status: "Approved",
-                approved_by: actor,
-                approved_at: approvedAt,
+                status: "Posted",
+                posted_by: actor,
+                posted_at: postedAt,
                 effective_expiry_date: preview.effectiveExpiryDate,
                 source_unit_cost: preview.source.unitCost,
                 target_unit_cost: preview.target.unitCost,
@@ -1396,13 +1450,13 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
                 idempotency_key: idempotencyKey,
                 reconciliation_required: false,
                 posting_error: null,
-                updated_at: approvedAt
+                updated_at: postedAt
             },
-            "Lot-transfer approval finalization"
+            "Lot-transfer posting finalization"
         );
         const finalRecord = persisted ? mapTransferRow(persisted) : await getLotTransfer(id);
-        if (finalRecord.status !== "Approved" || finalRecord.sourceMovementId !== sourceMovementId || finalRecord.targetMovementId !== targetMovementId) {
-            throw new LotTransferError(503, "Lot-transfer approval was not durably finalized.");
+        if (finalRecord.status !== "Posted" || finalRecord.sourceMovementId !== sourceMovementId || finalRecord.targetMovementId !== targetMovementId) {
+            throw new LotTransferError(503, "Lot-transfer posting was not durably finalized.");
         }
         return { record: finalRecord, preview, idempotent: false };
     } catch (error) {
@@ -1421,7 +1475,7 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
                 compensationFailures.push(compensationError instanceof Error ? compensationError.message : String(compensationError));
             }
         }
-        const errorText = error instanceof Error ? error.message : "Unknown lot-transfer approval failure";
+        const errorText = error instanceof Error ? error.message : "Unknown lot-transfer posting failure";
         if (claimOwned) {
             await mutateDirectus(
                 `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
@@ -1432,7 +1486,7 @@ export async function approveLotTransfer(id: number, idempotencyKey: string, act
                     reconciliation_required: reconciliationRequired || compensationFailures.length > 0,
                     updated_at: new Date().toISOString()
                 },
-                "Lot-transfer approval failure audit"
+                "Lot-transfer posting failure audit"
             ).catch(() => undefined);
         }
         if (reconciliationRequired || compensationFailures.length > 0) {
