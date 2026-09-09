@@ -46,6 +46,10 @@ function branchLabel(branchId: number, branches: LotTransferController["branches
     return branch.branchCode ? `${branch.branchName} (${branch.branchCode})` : branch.branchName;
 }
 
+function lotLabel(lotId: number, lots: LotOption[]) {
+    return lots.find((lot) => lot.lotId === lotId)?.lotName || `Lot #${lotId}`;
+}
+
 function formatQuantity(value: number | null | undefined) {
     if (value === null || value === undefined || !Number.isFinite(value)) return "-";
     return new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(value);
@@ -130,18 +134,19 @@ function ErrorBanner({ message }: { message: string | null }) {
     );
 }
 
-function RequestList({ controller, onCreate, onEdit, onDelete }: {
+function RequestList({ controller, onCreate, onEdit, onViewStatus, onDelete }: {
     controller: LotTransferController;
     onCreate: () => void;
     onEdit: (record: LotTransferController["records"][number]) => void;
+    onViewStatus: (record: LotTransferController["records"][number]) => void;
     onDelete: (record: LotTransferController["records"][number]) => void;
 }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-drafts-heading">
             <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                    <h2 id="lot-transfer-drafts-heading" className="font-semibold">Draft requests</h2>
-                    <p className="text-xs text-muted-foreground">Only Draft records can be changed or submitted.</p>
+                    <h2 id="lot-transfer-drafts-heading" className="font-semibold">Lot transfer requests</h2>
+                    <p className="text-xs text-muted-foreground">All workflow records remain visible with their current status. Only Draft records can be changed or submitted.</p>
                 </div>
                 <div className="flex gap-2">
                     <Button type="button" size="sm" onClick={onCreate}>New Request</Button>
@@ -151,7 +156,7 @@ function RequestList({ controller, onCreate, onEdit, onDelete }: {
                     </Button>
                 </div>
             </div>
-            {controller.records.length === 0 ? <EmptyState message="No Draft lot-transfer requests found." /> : (
+            {controller.records.length === 0 ? <EmptyState message="No lot-transfer requests found." /> : (
                 <div className="overflow-x-auto rounded-lg border">
                     <table className="w-full min-w-[720px] text-left text-sm">
                         <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
@@ -167,10 +172,10 @@ function RequestList({ controller, onCreate, onEdit, onDelete }: {
                             {controller.records.map((record) => (
                                 <tr key={record.id} className={controller.selectedId === record.id ? "bg-primary/5" : ""}>
                                     <td className="px-3 py-2.5 font-semibold">{record.requestNo}<br /><StatusBadge status={record.status} /><br /><span className="text-xs font-normal text-muted-foreground">Transfer: {formatDate(record.transferDate)} · {uomLabel(record.unitId, controller.lots)} · {record.lineCount} line(s)</span></td>
-                                    <td className="px-3 py-2.5">Lot #{record.sourceLotId}<br /><span className="text-xs text-muted-foreground">{record.sourceBatchNo}</span></td>
-                                    <td className="px-3 py-2.5">Lot #{record.targetLotId}<br /><span className="text-xs text-muted-foreground">{record.targetBatchNo}</span></td>
+                                    <td className="px-3 py-2.5">{lotLabel(record.sourceLotId, controller.lots)}<br /><span className="text-xs text-muted-foreground">{record.sourceBatchNo}</span></td>
+                                    <td className="px-3 py-2.5">{lotLabel(record.targetLotId, controller.lots)}<br /><span className="text-xs text-muted-foreground">{record.targetBatchNo}</span></td>
                                     <td className="px-3 py-2.5 font-medium">{formatQuantity(record.totalQuantity)}</td>
-                                    <td className="px-3 py-2.5"><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={() => onEdit(record)}>Edit</Button><Button type="button" variant="destructive" size="sm" onClick={() => onDelete(record)} disabled={controller.isActionLoading}><Trash2 />Delete</Button></div></td>
+                                    <td className="px-3 py-2.5"><div className="flex flex-wrap gap-2">{record.status === "Draft" ? <><Button type="button" variant="outline" size="sm" onClick={() => onEdit(record)}>Edit</Button><Button type="button" variant="destructive" size="sm" onClick={() => onDelete(record)} disabled={controller.isActionLoading}><Trash2 />Delete</Button></> : <Button type="button" variant="outline" size="sm" onClick={() => onViewStatus(record)}>View status</Button>}</div></td>
                                 </tr>
                             ))}
                         </tbody>
@@ -231,6 +236,12 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
     );
     const selectedTargetLot = targetLots.find((lot) => String(lot.lotId) === form.targetLotId);
     const targetCapacityConfigured = !selectedTargetLot || selectedTargetLot.maxBatchCapacity > 0;
+    const totalQuantity = form.details.reduce((sum, detail) => sum + (Number(detail.quantity) || 0), 0);
+    const currentPreview = controller.draftValidationIsCurrent ? controller.preview : null;
+    const destinationCapacity = currentPreview?.targetLotCapacity ?? (selectedTargetLot && selectedTargetLot.maxBatchCapacity > 0 ? selectedTargetLot.maxBatchCapacity : null);
+    const destinationOccupiedBefore = currentPreview?.targetLotOccupiedBefore;
+    const projectedDestinationOccupancy = destinationOccupiedBefore === undefined ? null : destinationOccupiedBefore + totalQuantity;
+    const projectedDestinationRemaining = destinationCapacity === null || projectedDestinationOccupancy === null ? null : destinationCapacity - projectedDestinationOccupancy;
 
     const handleSave = async () => {
         const saved = await controller.saveDraft();
@@ -300,13 +311,18 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                                 <label><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceRows} value={detail.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "source", value)} disabled={!form.sourceLotId || !detail.productId} source /></label>
                                 <label><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetRows} value={detail.targetInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "target", value)} disabled={!form.targetLotId || !detail.productId} source={false} /></label>
                             </div>
-                            {(sourceBatch || targetBatch) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-4"><span>Source available<br /><strong>{formatQuantity(sourceBatch?.quantity)}</strong></span><span>Target on hand<br /><strong>{formatQuantity(targetBatch?.quantity)}</strong></span><span>Source expiry<br /><strong>{formatDate(sourceBatch?.expirationDate)}</strong></span><span>Target expiry<br /><strong>{formatDate(targetBatch?.expirationDate)}</strong></span></div>}
+                            {(sourceBatch || targetBatch || linePreview) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-4"><span>Source available<br /><strong>{formatQuantity(linePreview?.source.availableQuantity ?? sourceBatch?.quantity)}</strong></span><span>Target on hand<br /><strong>{formatQuantity(linePreview?.target.onHandBefore ?? targetBatch?.quantity)}</strong></span><span>Source expiry<br /><strong>{formatDate(linePreview?.source.expiryDate ?? sourceBatch?.expirationDate)}</strong></span><span>Target expiry<br /><strong>{formatDate(linePreview?.target.expiryDate ?? targetBatch?.expirationDate)}</strong></span></div>}
                             <label className="mt-3 block"><FieldLabel>Line remarks</FieldLabel><textarea className={textAreaClassName} value={detail.lineRemarks} onChange={(event) => controller.updateDetail(index, { lineRemarks: event.currentTarget.value })} placeholder="Optional line-specific context..." /></label>
                             {linePreview && <div className="mt-3 space-y-1">{linePreview.checks.filter((check) => !check.passed).map((check) => <p key={check.key} role="alert" className="text-xs font-medium text-red-700 dark:text-red-300">{check.label}: {check.message}</p>)}</div>}
                         </div>;
                     })}
                 </div>
-                <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{form.details.length} line(s)</span><span>Total quantity: <strong className="text-foreground">{formatQuantity(form.details.reduce((sum, detail) => sum + (Number(detail.quantity) || 0), 0))}</strong></span></div>
+                <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{form.details.length} line(s)</span><span>Total quantity: <strong className="text-foreground">{formatQuantity(totalQuantity)}</strong></span></div>
+                <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-2 text-xs sm:grid-cols-3" aria-label="Aggregate destination capacity summary">
+                    <span>Aggregate incoming<br /><strong className="text-foreground">{formatQuantity(totalQuantity)}</strong></span>
+                    <span>Destination capacity<br /><strong className="text-foreground">{formatQuantity(destinationCapacity)}</strong></span>
+                    <span>Projected destination occupancy<br /><strong className={projectedDestinationRemaining !== null && projectedDestinationRemaining < 0 ? "text-red-700 dark:text-red-300" : "text-foreground"}>{projectedDestinationOccupancy === null ? "Validate to calculate" : `${formatQuantity(projectedDestinationOccupancy)}${projectedDestinationRemaining === null ? "" : ` (${formatQuantity(projectedDestinationRemaining)} remaining)`}`}</strong></span>
+                </div>
             </div>
             <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground"><strong className="text-foreground">Live server validation</strong><br />Each product, batch, source availability, repeated-source aggregate, destination capacity, UOM, expiry, QA, and allergen check runs against the current detail lines. Save and submission require a complete detail set; submission is blocked when any line fails.</div>
             <label className="mt-4 block"><FieldLabel required>Transfer reason</FieldLabel><textarea className={textAreaClassName} value={form.reason} onChange={(event) => controller.setField("reason", event.currentTarget.value)} placeholder="Explain why the stock is being moved..." /></label>
@@ -368,8 +384,8 @@ function ApprovalQueue({ controller, onReview }: {
 }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-approval-queue-heading">
-            <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-approval-queue-heading" className="font-semibold">QA approval queue</h2><p className="text-xs text-muted-foreground">A request must pass every server check before approval. Approval does not change inventory.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer requests are waiting for QA approval." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">Lot #{row.sourceLotId} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> Lot #{row.targetLotId} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
+            <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-approval-queue-heading" className="font-semibold">Lot transfer QA status</h2><p className="text-xs text-muted-foreground">All transfer statuses remain visible. Submitted requests can be approved or rejected; other statuses are read-only.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
+            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records found." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
         </section>
     );
 }
@@ -396,11 +412,11 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
     };
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-qa-review-heading">
-            {!record ? <EmptyState message="Select a Submitted request to review its QA checks." /> : <>
+            {!record ? <EmptyState message="Select a transfer request to review its status and QA checks." /> : <>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
-                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>{lotLabel(record.sourceLotId, controller.lots)} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>{lotLabel(record.targetLotId, controller.lots)} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">QA validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{notice}</div>}
@@ -416,8 +432,8 @@ function PostingQueue({ controller, onReview }: {
 }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-posting-queue-heading">
-            <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-posting-queue-heading" className="font-semibold">Posting queue</h2><p className="text-xs text-muted-foreground">Approved transfers are ready for inventory posting.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
-            {controller.records.length === 0 ? <EmptyState message="No approved lot-transfer requests are ready for posting." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">Lot #{row.sourceLotId} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> Lot #{row.targetLotId} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
+            <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-posting-queue-heading" className="font-semibold">Lot transfer posting status</h2><p className="text-xs text-muted-foreground">All transfer statuses remain visible. Approved requests can be posted; other statuses are read-only.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
+            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records found." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
         </section>
     );
 }
@@ -433,11 +449,11 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
 
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-posting-review-heading">
-            {!record ? <EmptyState message="Select an Approved request to post its paired inventory movements." /> : <>
+            {!record ? <EmptyState message="Select a transfer request to review its status and posting details." /> : <>
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDate(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
-                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source OUT</p><strong>Lot #{record.sourceLotId} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | After: {formatQuantity(preview?.source.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Movement: {record.sourceMovementId || "Not posted"}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target IN</p><strong>Lot #{record.targetLotId} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Movement: {record.targetMovementId || "Not posted"}</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source OUT</p><strong>{lotLabel(record.sourceLotId, controller.lots)} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | After: {formatQuantity(preview?.source.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Movement: {record.sourceMovementId || "Not posted"}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target IN</p><strong>{lotLabel(record.targetLotId, controller.lots)} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Movement: {record.targetMovementId || "Not posted"}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
@@ -539,7 +555,7 @@ function SummaryTable({ controller, onView }: {
         <section className={panelClassName} aria-labelledby="lot-transfer-summary-heading">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 id="lot-transfer-summary-heading" className="font-semibold">Master LOT Transfer Summary</h2><p className="text-xs text-muted-foreground">Searchable audit history for lot-transfer lifecycle records.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} />Refresh</Button></div>
             <SummaryReportFilters controller={controller} />
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records match the selected report filters." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDate(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">Lot #{row.sourceLotId} -&gt; Lot #{row.targetLotId}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
+            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records match the selected report filters." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDate(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
         </section>
     );
 }
@@ -556,6 +572,7 @@ function SummaryAudit({ controller }: { controller: LotTransferController }) {
 export default function LotTransferModule({ mode, userBranchId }: LotTransferModuleProps) {
     const controller = useLotTransfer({ mode, userBranchId });
     const [requestDialogOpen, setRequestDialogOpen] = useState(false);
+    const [requestStatusDialogOpen, setRequestStatusDialogOpen] = useState(false);
     const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
     const [postingDialogOpen, setPostingDialogOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
@@ -563,6 +580,11 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
 
     const closeRequestDialog = () => {
         setRequestDialogOpen(false);
+        controller.clearSelection();
+    };
+
+    const closeRequestStatusDialog = () => {
+        setRequestStatusDialogOpen(false);
         controller.clearSelection();
     };
 
@@ -574,6 +596,11 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
     const openRequestEditor = async (record: LotTransferController["records"][number]) => {
         await controller.selectRecord(record);
         setRequestDialogOpen(true);
+    };
+
+    const openRequestStatus = async (record: LotTransferController["records"][number]) => {
+        await controller.selectRecord(record);
+        setRequestStatusDialogOpen(true);
     };
 
     const handleDeleteRequest = async (record: LotTransferController["records"][number]) => {
@@ -616,7 +643,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
             <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2"><ArrowRightLeft className="h-5 w-5 text-primary" /><h1 className="text-xl font-semibold tracking-tight">{title}</h1></div><p className="mt-1 text-sm text-muted-foreground">QA-gated movement of an existing inventory batch between storage lots.</p></div></div>
             <ErrorBanner message={controller.error} />
             {controller.isLookupLoading && <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">Loading branch, product, lot, and batch options...</div>}
-            {mode === "request" && <RequestList controller={controller} onCreate={openNewRequest} onEdit={(record) => void openRequestEditor(record)} onDelete={(record) => void handleDeleteRequest(record)} />}
+            {mode === "request" && <RequestList controller={controller} onCreate={openNewRequest} onEdit={(record) => void openRequestEditor(record)} onViewStatus={(record) => void openRequestStatus(record)} onDelete={(record) => void handleDeleteRequest(record)} />}
             {mode === "approval" && <ApprovalQueue controller={controller} onReview={(record) => void openApprovalReview(record)} />}
             {mode === "posting" && <PostingQueue controller={controller} onReview={(record) => void openPostingReview(record)} />}
             {mode === "summary" && <SummaryTable controller={controller} onView={(record) => void openSummaryAudit(record)} />}
@@ -627,6 +654,15 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogDescription>Enter the source and target batch details, then save the request before submitting it for QA approval.</DialogDescription>
                     </DialogHeader>
                     <RequestEditor controller={controller} onClose={closeRequestDialog} />
+                </DialogContent>
+            </Dialog>}
+            {mode === "request" && <Dialog open={requestStatusDialogOpen} onOpenChange={(open) => open ? setRequestStatusDialogOpen(true) : closeRequestStatusDialog()}>
+                <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Lot transfer status</DialogTitle>
+                        <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
+                    </DialogHeader>
+                    <SummaryAudit controller={controller} />
                 </DialogContent>
             </Dialog>}
             {mode === "approval" && <Dialog open={approvalDialogOpen} onOpenChange={(open) => open ? setApprovalDialogOpen(true) : closeApprovalDialog()}>
