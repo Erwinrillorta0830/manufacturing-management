@@ -5,6 +5,7 @@ import {
     AlertTriangle,
     ArrowRight,
     ArrowRightLeft,
+    Ban,
     CheckCircle2,
     ClipboardCheck,
     Eye,
@@ -71,12 +72,73 @@ function statusClass(status: string) {
     if (status === "Posted") return "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300";
     if (status === "Approved") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     if (status === "Rejected") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
+    if (status === "Cancelled") return "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200";
     if (status === "Submitted") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
     return "bg-muted text-muted-foreground";
 }
 
 function StatusBadge({ status }: { status: string }) {
     return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass(status)}`}>{status}</span>;
+}
+
+function canCancelTransfer(status: LotTransferStatus) {
+    return status === "Draft" || status === "Submitted" || status === "Approved" || status === "Rejected";
+}
+
+function CancelTransferAction({
+    controller,
+    record,
+    onSuccess
+}: {
+    controller: LotTransferController;
+    record: LotTransferController["records"][number];
+    onSuccess?: () => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState("");
+    const [localError, setLocalError] = useState<string | null>(null);
+
+    if (!canCancelTransfer(record.status)) return null;
+
+    const handleCancel = async () => {
+        const cleanReason = reason.trim();
+        if (!cleanReason) {
+            setLocalError("A cancellation reason is required.");
+            return;
+        }
+        setLocalError(null);
+        const cancelled = await controller.cancel(record.id, cleanReason);
+        if (!cancelled) {
+            setLocalError("The transfer could not be cancelled. Review the page error and retry if appropriate.");
+            return;
+        }
+        setReason("");
+        setOpen(false);
+        onSuccess?.();
+    };
+
+    return <>
+        <Button type="button" variant="destructive" size="sm" onClick={() => { setLocalError(null); setOpen(true); }} disabled={controller.isActionLoading}>
+            <Ban />Cancel transfer
+        </Button>
+        <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) { setReason(""); setLocalError(null); } }}>
+            <DialogContent className="max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>Cancel {record.requestNo}?</DialogTitle>
+                    <DialogDescription>This preserves the transfer audit record and does not create inventory movements. Posted transfers cannot be cancelled.</DialogDescription>
+                </DialogHeader>
+                {localError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{localError}</div>}
+                <label>
+                    <FieldLabel required>Cancellation reason</FieldLabel>
+                    <textarea className={textAreaClassName} value={reason} onChange={(event) => setReason(event.currentTarget.value)} maxLength={5000} placeholder="Explain why this transfer is being cancelled..." />
+                </label>
+                <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep request</Button>
+                    <Button type="button" variant="destructive" onClick={() => void handleCancel()} disabled={controller.isActionLoading}><Ban />{controller.isActionLoading ? "Cancelling..." : "Cancel transfer"}</Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    </>;
 }
 
 function FieldLabel({ children, required = false }: { children: ReactNode; required?: boolean }) {
@@ -356,6 +418,7 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
             <div className="mt-4 flex flex-wrap justify-end gap-2">
                 <Button type="button" variant="outline" onClick={onClose} disabled={controller.isActionLoading}>Cancel</Button>
                 <Button type="button" variant="outline" onClick={() => { controller.clearSelection(); setNotice(null); }} disabled={controller.isActionLoading}><XCircle />Clear</Button>
+                {controller.selectedRecord && <CancelTransferAction controller={controller} record={controller.selectedRecord} onSuccess={onClose} />}
                 {controller.selectedId && controller.selectedRecord?.status === "Draft" && <Button type="button" variant="destructive" onClick={() => void handleDelete()} disabled={controller.isActionLoading}><Trash2 />Delete Draft</Button>}
                 <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={controller.isActionLoading || controller.isLookupLoading || !controller.isDraftFormComplete}><Save />Save Draft</Button>
                 <Button type="button" onClick={() => void handleSubmit()} disabled={controller.isActionLoading || !controller.selectedId || controller.selectedRecord?.status !== "Draft" || !controller.draftValidationIsCurrent || controller.draftValidationStatus !== "valid" || !controller.preview?.canApprove}><Send />Submit for QA</Button>
@@ -421,6 +484,7 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{notice}</div>}
                 {record.status === "Submitted" && <><label className="mt-4 block"><FieldLabel>Rejection reason</FieldLabel><textarea className={textAreaClassName} value={rejectionReason} onChange={(event) => setRejectionReason(event.currentTarget.value)} placeholder="Required when rejecting..." /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="destructive" onClick={() => void handleReject()} disabled={controller.isActionLoading}><XCircle />Reject</Button><Button type="button" onClick={() => void handleApprove()} disabled={controller.isActionLoading || !preview?.canApprove}><ShieldCheck />Approve</Button></div></>}
+                <div className="mt-4 flex justify-end"><CancelTransferAction controller={controller} record={record} /></div>
             </>}
         </section>
     );
@@ -457,7 +521,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
-                {record.status === "Approved" && <div className="mt-4 flex justify-end"><Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button></div>}
+                <div className="mt-4 flex justify-end gap-2"><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
             </>}
         </section>
     );
@@ -483,7 +547,7 @@ function SummaryReportFilters({ controller }: { controller: LotTransferControlle
     const { reportFilters } = controller;
     const allStatusesSelected = reportFilters.statuses.length === 0;
     const setFilter = controller.setReportFilter;
-    const statusOptions: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected"];
+    const statusOptions: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled"];
     const productOptions = controller.products.map((product) => ({
         value: String(product.productId),
         label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}`
@@ -560,11 +624,11 @@ function SummaryTable({ controller, onView }: {
     );
 }
 
-function SummaryAudit({ controller }: { controller: LotTransferController }) {
+function SummaryAudit({ controller, allowCancel = false }: { controller: LotTransferController; allowCancel?: boolean }) {
     const record = controller.selectedRecord;
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
-            {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <><div className="mb-4 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-audit-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Read-only audit details</p></div><StatusBadge status={record.status} /></div><LineSummary record={record} controller={controller} /><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-xs text-muted-foreground">Transfer date</dt><dd className="font-semibold">{formatDate(record.transferDate)}</dd></div><div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div><div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>{record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}</dl><div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>{record.rejectionReason && <><strong className="mt-3 block">Rejection reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.rejectionReason}</p></>}{record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}</div></>}
+            {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <><div className="mb-4 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-audit-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Read-only audit details</p></div><StatusBadge status={record.status} /></div><LineSummary record={record} controller={controller} /><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-xs text-muted-foreground">Transfer date</dt><dd className="font-semibold">{formatDate(record.transferDate)}</dd></div><div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div><div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDate(record.cancelledAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>{record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}</dl><div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>{record.rejectionReason && <><strong className="mt-3 block">Rejection reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.rejectionReason}</p></>}{record.cancellationReason && <><strong className="mt-3 block">Cancellation reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.cancellationReason}</p></>}{record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}</div>{allowCancel && <div className="mt-4 flex justify-end"><CancelTransferAction controller={controller} record={record} /></div>}</>}
         </section>
     );
 }
@@ -662,7 +726,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogTitle>Lot transfer status</DialogTitle>
                         <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
                     </DialogHeader>
-                    <SummaryAudit controller={controller} />
+                    <SummaryAudit controller={controller} allowCancel />
                 </DialogContent>
             </Dialog>}
             {mode === "approval" && <Dialog open={approvalDialogOpen} onOpenChange={(open) => open ? setApprovalDialogOpen(true) : closeApprovalDialog()}>

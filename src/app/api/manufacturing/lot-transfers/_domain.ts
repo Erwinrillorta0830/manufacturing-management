@@ -11,7 +11,7 @@ const MM_INVENTORY_LOT_COLLECTION = "mm_inventory_lots";
 const MM_LOT_CANONICAL_REFERENCE_CODE = "MM_LOT_CANONICAL_REFERENCE_REQUIRED";
 const LOT_TRANSFER_SAME_LOT_CODE = "LOT_TRANSFER_SAME_LOT_NOT_ALLOWED";
 
-export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Posted", "Rejected"] as const;
+export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled"] as const;
 export type LotTransferStatus = (typeof LOT_TRANSFER_STATUSES)[number];
 
 type RecordValue = Record<string, unknown>;
@@ -121,6 +121,10 @@ export interface LotTransferRecord {
     rejectedByName: string | null;
     rejectedAt: string | null;
     rejectionReason: string | null;
+    cancelledBy: number | null;
+    cancelledByName: string | null;
+    cancelledAt: string | null;
+    cancellationReason: string | null;
     qaEvidence: string | null;
     effectiveExpiryDate: string | null;
     sourceUnitCost: number | null;
@@ -309,6 +313,10 @@ const rejectionSchema = z.object({
     qaEvidence: z.string().trim().max(5000).optional()
 }).strict();
 
+const cancellationSchema = z.object({
+    cancellationReason: z.string().trim().min(1, "A cancellation reason is required.").max(5000)
+}).strict();
+
 const postingSchema = z.object({
     idempotencyKey: z.string().trim().min(8).max(150)
 }).strict();
@@ -333,6 +341,14 @@ export function parseRejection(body: unknown): { rejectionReason: string; qaEvid
     const result = rejectionSchema.safeParse(body);
     if (!result.success) {
         throw new LotTransferError(400, "A rejection reason is required.", result.error.flatten().fieldErrors);
+    }
+    return result.data;
+}
+
+export function parseCancellation(body: unknown): { cancellationReason: string } {
+    const result = cancellationSchema.safeParse(body);
+    if (!result.success) {
+        throw new LotTransferError(400, "A cancellation reason is required.", result.error.flatten().fieldErrors);
     }
     return result.data;
 }
@@ -1213,6 +1229,7 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
     const approvedByValue = row.approved_by;
     const postedByValue = row.posted_by;
     const rejectedByValue = row.rejected_by;
+    const cancelledByValue = row.cancelled_by;
 
     return {
         id: transferId(row),
@@ -1245,6 +1262,10 @@ function mapTransferRow(row: RecordValue): LotTransferRecord {
         rejectedByName: relationName(rejectedByValue, ["name", "user_name", "user_fname", "email"]),
         rejectedAt: nullableString(row.rejected_at),
         rejectionReason: nullableString(row.rejection_reason),
+        cancelledBy: relationId(cancelledByValue, ["user_id"]) || null,
+        cancelledByName: relationName(cancelledByValue, ["name", "user_name", "user_fname", "email"]),
+        cancelledAt: nullableString(row.cancelled_at),
+        cancellationReason: nullableString(row.cancellation_reason),
         qaEvidence: nullableString(row.qa_evidence),
         effectiveExpiryDate: nullableString(row.effective_expiry_date),
         sourceUnitCost: nullableNumeric(row.source_unit_cost),
@@ -1426,6 +1447,10 @@ function transientRecordFromInput(input: LotTransferInput, transferUnitId: numbe
         rejectedByName: null,
         rejectedAt: null,
         rejectionReason: null,
+        cancelledBy: null,
+        cancelledByName: null,
+        cancelledAt: null,
+        cancellationReason: null,
         qaEvidence: null,
         effectiveExpiryDate: null,
         sourceUnitCost: null,
@@ -2821,6 +2846,52 @@ export async function rejectLotTransfer(id: number, rejectionReason: string, qaE
         "Lot-transfer rejection"
     );
     return row ? hydrateTransferRecord(mapTransferRow(row)) : getLotTransfer(id);
+}
+
+export async function cancelLotTransfer(id: number, cancellationReason: string, actorUserId: number | null): Promise<LotTransferRecord> {
+    const record = await getLotTransfer(id);
+    const cancelledBy = requireSessionUserId(actorUserId, "cancel a lot-transfer request");
+    if (record.status === "Cancelled") return record;
+    if (!["Draft", "Submitted", "Approved", "Rejected"].includes(record.status)) {
+        throw new LotTransferError(409, `Only unposted lot-transfer requests can be cancelled. Current status: ${record.status}.`);
+    }
+
+    const reason = cancellationReason.trim();
+    if (!reason) throw new LotTransferError(400, "A cancellation reason is required.");
+    if (reason.length > 5000) throw new LotTransferError(400, "The cancellation reason must be 5000 characters or fewer.");
+
+    const persistedMovementIds = [
+        record.sourceMovementId,
+        record.targetMovementId,
+        ...record.details.flatMap((detail) => [detail.sourceMovementId, detail.targetMovementId])
+    ].filter((movementIdValue): movementIdValue is number => Boolean(movementIdValue && movementIdValue > 0));
+    if (persistedMovementIds.length > 0) {
+        throw new LotTransferError(409, "This lot-transfer request has inventory movement references and cannot be cancelled.");
+    }
+
+    const existingMovements = await findTransferMovements(id, record.requestNo);
+    if (existingMovements.length > 0) {
+        throw new LotTransferError(409, "This lot-transfer request already has inventory movements and cannot be cancelled.");
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const row = await mutateDirectus(
+        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
+        "PATCH",
+        {
+            status: "Cancelled",
+            cancelled_by: cancelledBy,
+            cancelled_at: cancelledAt,
+            cancellation_reason: reason,
+            updated_at: cancelledAt
+        },
+        "Lot-transfer cancellation"
+    );
+    const finalRecord = row ? await hydrateTransferRecord(mapTransferRow(row)) : await getLotTransfer(id);
+    if (finalRecord.status !== "Cancelled" || !finalRecord.cancelledAt || finalRecord.cancelledBy !== cancelledBy || finalRecord.cancellationReason !== reason) {
+        throw new LotTransferError(503, "Lot-transfer cancellation was not durably finalized.");
+    }
+    return finalRecord;
 }
 
 export function failedPreviewChecks(preview: LotTransferPreview): ValidationCheck[] {
