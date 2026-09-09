@@ -4,6 +4,7 @@ import type {
     LotOption,
     LotTransfer,
     LotTransferForm,
+    LotTransferFormDetail,
     LotTransferPreview,
     ProductOption,
     UserOption
@@ -64,6 +65,8 @@ export async function fetchLotTransfers(options: {
     search?: string;
     requestedFrom?: string;
     requestedTo?: string;
+    transferDateFrom?: string;
+    transferDateTo?: string;
     productId?: number;
     sourceLotId?: number;
     targetLotId?: number;
@@ -80,6 +83,8 @@ export async function fetchLotTransfers(options: {
     if (options.search?.trim()) params.set("search", options.search.trim());
     if (options.requestedFrom) params.set("requestedFrom", options.requestedFrom);
     if (options.requestedTo) params.set("requestedTo", options.requestedTo);
+    if (options.transferDateFrom) params.set("transferDateFrom", options.transferDateFrom);
+    if (options.transferDateTo) params.set("transferDateTo", options.transferDateTo);
     if (options.productId && options.productId > 0) params.set("productId", String(options.productId));
     if (options.sourceLotId && options.sourceLotId > 0) params.set("sourceLotId", String(options.sourceLotId));
     if (options.targetLotId && options.targetLotId > 0) params.set("targetLotId", String(options.targetLotId));
@@ -143,15 +148,20 @@ export async function deleteLotTransfer(id: number): Promise<void> {
 function toPayload(form: LotTransferForm) {
     return {
         branchId: Number(form.branchId),
-        productId: Number(form.productId),
         sourceLotId: Number(form.sourceLotId),
-        sourceInventoryLotId: Number(form.sourceInventoryLotId),
-        sourceBatchNo: form.sourceBatchNo,
         targetLotId: Number(form.targetLotId),
-        targetInventoryLotId: Number(form.targetInventoryLotId),
-        targetBatchNo: form.targetBatchNo,
-        quantity: Number(form.quantity),
-        reason: form.reason
+        reason: form.reason,
+        details: form.details.map((detail: LotTransferFormDetail, index) => ({
+            detailId: detail.detailId,
+            lineNo: detail.lineNo || index + 1,
+            productId: Number(detail.productId),
+            sourceInventoryLotId: Number(detail.sourceInventoryLotId),
+            sourceBatchNo: detail.sourceBatchNo,
+            targetInventoryLotId: Number(detail.targetInventoryLotId),
+            targetBatchNo: detail.targetBatchNo,
+            quantity: Number(detail.quantity),
+            lineRemarks: detail.lineRemarks
+        }))
     };
 }
 

@@ -8,6 +8,8 @@ export interface LotTransferReportFilters {
     branchId: string;
     requestedFrom: string;
     requestedTo: string;
+    transferDateFrom: string;
+    transferDateTo: string;
     productId: string;
     sourceLotId: string;
     targetLotId: string;
@@ -29,6 +31,8 @@ export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
     branchId: "",
     requestedFrom: "",
     requestedTo: "",
+    transferDateFrom: "",
+    transferDateTo: "",
     productId: "",
     sourceLotId: "",
     targetLotId: "",
@@ -45,6 +49,7 @@ export interface LotTransfer {
     status: LotTransferStatus;
     branchId: number;
     productId: number;
+    unitId: number | null;
     sourceLotId: number;
     sourceInventoryLotId: number;
     sourceBatchNo: string;
@@ -56,6 +61,8 @@ export interface LotTransfer {
     requestedBy: number | null;
     requestedByName: string | null;
     requestedAt: string | null;
+    transferDate: string | null;
+    submittedBy: number | null;
     submittedAt: string | null;
     approvedBy: number | null;
     approvedByName: string | null;
@@ -78,11 +85,43 @@ export interface LotTransfer {
     targetBalanceBefore: number | null;
     targetBalanceAfter: number | null;
     idempotencyKey: string | null;
+    reversalOfId: number | null;
     postingStartedAt: string | null;
     reconciliationRequired: boolean;
     postingError: string | null;
     createdAt: string | null;
     updatedAt: string | null;
+    details: LotTransferDetail[];
+    lineCount: number;
+    totalQuantity: number;
+}
+
+export interface LotTransferDetail {
+    detailId: number | null;
+    lineNo: number;
+    productId: number;
+    sourceInventoryLotId: number;
+    sourceBatchNo: string;
+    targetInventoryLotId: number;
+    targetBatchNo: string;
+    quantity: number;
+    lineRemarks: string;
+    sourceManufacturingDate: string | null;
+    sourceExpiryDate: string | null;
+    targetManufacturingDate: string | null;
+    targetExpiryDate: string | null;
+    sourceUnitCost: number | null;
+    targetUnitCost: number | null;
+    sourceBalanceBefore: number | null;
+    sourceBalanceAfter: number | null;
+    targetBalanceBefore: number | null;
+    targetBalanceAfter: number | null;
+    sourceMovementId: number | null;
+    targetMovementId: number | null;
+    validationStatus: string | null;
+    validationError: string | null;
+    postingError: string | null;
+    reconciliationRequired: boolean;
 }
 
 export interface ProductOption {
@@ -193,30 +232,52 @@ export interface LotTransferPreview {
         targetInventoryLotId: number;
         targetBatchNo: string;
     };
+    linePreviews: LotTransferLinePreview[];
+    totalQuantity: number;
+}
+
+export interface LotTransferLinePreview {
+    detailId: number | null;
+    lineNo: number;
+    productId: number;
+    quantity: number;
+    lineRemarks: string;
+    checks: ValidationCheck[];
+    source: LotBalanceSnapshot;
+    target: LotBalanceSnapshot;
+    sourceLotCapacity: number | null;
+    sourceLotOccupiedBefore: number;
+    targetLotCapacity: number | null;
+    targetLotOccupiedBefore: number;
+    targetLotCapacityRemaining: number | null;
+    effectiveExpiryDate: string | null;
+    movementPreview: LotTransferPreview["movementPreview"];
 }
 
 export interface LotTransferForm {
     branchId: string;
-    productId: string;
     sourceLotId: string;
+    targetLotId: string;
+    reason: string;
+    details: LotTransferFormDetail[];
+}
+
+export interface LotTransferFormDetail {
+    detailId?: number;
+    lineNo: number;
+    productId: string;
     sourceInventoryLotId: string;
     sourceBatchNo: string;
-    targetLotId: string;
     targetInventoryLotId: string;
     targetBatchNo: string;
     quantity: string;
-    reason: string;
+    lineRemarks: string;
 }
 
 export const EMPTY_LOT_TRANSFER_FORM: LotTransferForm = {
     branchId: "",
-    productId: "",
     sourceLotId: "",
-    sourceInventoryLotId: "",
-    sourceBatchNo: "",
     targetLotId: "",
-    targetInventoryLotId: "",
-    targetBatchNo: "",
-    quantity: "",
-    reason: ""
+    reason: "",
+    details: []
 };

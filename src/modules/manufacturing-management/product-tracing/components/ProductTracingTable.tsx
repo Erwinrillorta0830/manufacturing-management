@@ -578,6 +578,11 @@ export function ProductTracingTable({
                                                     <span className="text-[10px] font-mono text-muted-foreground/60 block">
                                                         {row.movementKey}
                                                     </span>
+                                                    {row.transactionType?.startsWith("LOT_TRANSFER") && row.referenceDetailId && (
+                                                        <span className="text-[10px] font-mono text-primary/70 block">
+                                                            Line detail: {row.referenceDetailId}
+                                                        </span>
+                                                    )}
                                                 </TableCell>
 
                                                 {/* Type & Module */}

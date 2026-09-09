@@ -23,11 +23,14 @@ import type {
     BranchOption,
     LotOption,
     LotTransfer,
+    LotTransferDetail,
     LotTransferForm,
+    LotTransferFormDetail,
     LotTransferMode,
     LotTransferPreview,
     ProductOption,
     LotTransferReportFilters,
+    LotTransferStatus,
     UserOption
 } from "../types";
 import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
@@ -37,25 +40,53 @@ interface UseLotTransferOptions {
     userBranchId?: number | null;
 }
 
+const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected"];
+
 function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): LotTransferForm {
+    const details = record.details?.length > 0 ? record.details : [{
+        detailId: null,
+        lineNo: 1,
+        productId: record.productId,
+        sourceInventoryLotId: record.sourceInventoryLotId,
+        sourceBatchNo: record.sourceBatchNo,
+        targetInventoryLotId: record.targetInventoryLotId,
+        targetBatchNo: record.targetBatchNo,
+        quantity: record.quantity,
+        lineRemarks: ""
+    } as LotTransferDetail];
     return {
         branchId: String(record.branchId || fallbackBranchId || ""),
-        productId: String(record.productId || ""),
         sourceLotId: String(record.sourceLotId || ""),
-        sourceInventoryLotId: String(record.sourceInventoryLotId || ""),
-        sourceBatchNo: record.sourceBatchNo,
         targetLotId: String(record.targetLotId || ""),
-        targetInventoryLotId: String(record.targetInventoryLotId || ""),
-        targetBatchNo: record.targetBatchNo,
-        quantity: String(record.quantity || ""),
-        reason: record.reason
+        reason: record.reason,
+        details: details.map((detail) => ({
+            detailId: detail.detailId || undefined,
+            lineNo: detail.lineNo,
+            productId: String(detail.productId || ""),
+            sourceInventoryLotId: String(detail.sourceInventoryLotId || ""),
+            sourceBatchNo: detail.sourceBatchNo,
+            targetInventoryLotId: String(detail.targetInventoryLotId || ""),
+            targetBatchNo: detail.targetBatchNo,
+            quantity: String(detail.quantity || ""),
+            lineRemarks: detail.lineRemarks || ""
+        }))
     };
 }
 
 function initialForm(userBranchId?: number | null): LotTransferForm {
     return {
         ...emptyForm,
-        branchId: userBranchId && userBranchId > 0 ? String(userBranchId) : ""
+        branchId: userBranchId && userBranchId > 0 ? String(userBranchId) : "",
+        details: [{
+            lineNo: 1,
+            productId: "",
+            sourceInventoryLotId: "",
+            sourceBatchNo: "",
+            targetInventoryLotId: "",
+            targetBatchNo: "",
+            quantity: "",
+            lineRemarks: ""
+        }]
     };
 }
 
@@ -70,14 +101,15 @@ function formKey(form: LotTransferForm): string {
 function isCompleteDraftForm(form: LotTransferForm): boolean {
     return Boolean(
         Number(form.branchId) > 0
-        && Number(form.productId) > 0
         && Number(form.sourceLotId) > 0
-        && Number(form.sourceInventoryLotId) > 0
-        && form.sourceBatchNo.trim()
         && Number(form.targetLotId) > 0
-        && Number(form.targetInventoryLotId) > 0
-        && form.targetBatchNo.trim()
-        && Number(form.quantity) > 0
+        && form.details.length > 0
+        && form.details.every((detail) => Number(detail.productId) > 0
+            && Number(detail.sourceInventoryLotId) > 0
+            && detail.sourceBatchNo.trim()
+            && Number(detail.targetInventoryLotId) > 0
+            && detail.targetBatchNo.trim()
+            && Number(detail.quantity) > 0)
         && form.reason.trim()
     );
 }
@@ -130,13 +162,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const refresh = useCallback(async () => {
         setIsLoading(true);
         try {
-            const workflowStatuses = mode === "request"
-                ? ["Draft"]
-                : mode === "approval"
-                    ? ["Submitted"]
-                    : mode === "posting"
-                        ? ["Approved"]
-                        : appliedReportFilters.statuses;
+            const workflowStatuses = mode === "summary"
+                ? appliedReportFilters.statuses
+                : WORKFLOW_VISIBLE_STATUSES;
             const report = mode === "summary" ? appliedReportFilters : null;
             const response = await fetchLotTransfers({
                 status: workflowStatuses,
@@ -144,6 +172,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
                 search: report?.search,
                 requestedFrom: report?.requestedFrom,
                 requestedTo: report?.requestedTo,
+                transferDateFrom: report?.transferDateFrom,
+                transferDateTo: report?.transferDateTo,
                 productId: report?.productId ? Number(report.productId) : undefined,
                 sourceLotId: report?.sourceLotId ? Number(report.sourceLotId) : undefined,
                 targetLotId: report?.targetLotId ? Number(report.targetLotId) : undefined,
@@ -263,7 +293,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setError(null);
         if (record.sourceLotId > 0) void loadBatchesForLot(record.sourceLotId);
         if (record.targetLotId > 0 && record.targetLotId !== record.sourceLotId) void loadBatchesForLot(record.targetLotId);
-        if (mode === "approval" || mode === "posting") {
+        const shouldLoadPreview = (mode === "approval" && record.status === "Submitted")
+            || (mode === "posting" && record.status === "Approved");
+        if (shouldLoadPreview) {
             setIsActionLoading(true);
             try {
                 setPreview(await previewLotTransfer(record.id));
@@ -280,11 +312,13 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         updateForm((current) => ({
             ...current,
             sourceLotId: lotId,
-            sourceInventoryLotId: "",
-            sourceBatchNo: "",
-            targetLotId: current.targetLotId === lotId ? "" : current.targetLotId,
-            targetInventoryLotId: current.targetLotId === lotId ? "" : current.targetInventoryLotId,
-            targetBatchNo: current.targetLotId === lotId ? "" : current.targetBatchNo
+            details: current.details.map((detail) => ({
+                ...detail,
+                sourceInventoryLotId: "",
+                sourceBatchNo: "",
+                targetInventoryLotId: "",
+                targetBatchNo: ""
+            }))
         }));
         if (form.targetLotId === lotId) setError("Source and destination lot IDs must be different.");
         void loadBatchesForLot(Number(lotId));
@@ -295,8 +329,11 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             updateForm((current) => ({
                 ...current,
                 targetLotId: "",
-                targetInventoryLotId: "",
-                targetBatchNo: ""
+                details: current.details.map((detail) => ({
+                    ...detail,
+                    targetInventoryLotId: "",
+                    targetBatchNo: ""
+                }))
             }));
             setError("Source and destination lot IDs must be different.");
             return;
@@ -304,42 +341,62 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         updateForm((current) => ({
             ...current,
             targetLotId: lotId,
-            targetInventoryLotId: "",
-            targetBatchNo: ""
+            details: current.details.map((detail) => ({
+                ...detail,
+                targetInventoryLotId: "",
+                targetBatchNo: ""
+            }))
         }));
         void loadBatchesForLot(Number(lotId));
     }, [form.sourceLotId, loadBatchesForLot, updateForm]);
 
-    const handleProductChange = useCallback((productId: string) => {
+    const updateDetail = useCallback((index: number, patch: Partial<LotTransferFormDetail>) => {
         updateForm((current) => ({
             ...current,
-            productId,
-            sourceLotId: "",
-            sourceInventoryLotId: "",
-            sourceBatchNo: "",
-            targetLotId: "",
-            targetInventoryLotId: "",
-            targetBatchNo: ""
+            details: current.details.map((detail, detailIndex) => detailIndex === index ? { ...detail, ...patch } : detail)
         }));
     }, [updateForm]);
 
-    const handleBatchChange = useCallback((side: "source" | "target", inventoryLotId: string) => {
-        const lotId = Number(side === "source" ? form.sourceLotId : form.targetLotId);
-        const batch = (batchesByLot[lotId] || []).find((row) => String(row.batchId) === inventoryLotId);
-        if (!batch) {
-            updateForm((current) => ({
-                ...current,
-                [side === "source" ? "sourceInventoryLotId" : "targetInventoryLotId"]: inventoryLotId,
-                [side === "source" ? "sourceBatchNo" : "targetBatchNo"]: ""
-            }));
-            return;
-        }
+    const addDetail = useCallback(() => {
         updateForm((current) => ({
             ...current,
-            [side === "source" ? "sourceInventoryLotId" : "targetInventoryLotId"]: String(batch.batchId),
-            [side === "source" ? "sourceBatchNo" : "targetBatchNo"]: batch.batchNumber
+            details: [...current.details, {
+                lineNo: current.details.length + 1,
+                productId: "",
+                sourceInventoryLotId: "",
+                sourceBatchNo: "",
+                targetInventoryLotId: "",
+                targetBatchNo: "",
+                quantity: "",
+                lineRemarks: ""
+            }]
         }));
-    }, [batchesByLot, form.sourceLotId, form.targetLotId, updateForm]);
+    }, [updateForm]);
+
+    const removeDetail = useCallback((index: number) => {
+        updateForm((current) => ({
+            ...current,
+            details: current.details.filter((_, detailIndex) => detailIndex !== index).map((detail, detailIndex) => ({ ...detail, lineNo: detailIndex + 1 }))
+        }));
+    }, [updateForm]);
+
+    const handleProductChange = useCallback((productId: string, index = 0) => {
+        updateDetail(index, {
+            productId,
+            sourceInventoryLotId: "",
+            sourceBatchNo: "",
+            targetInventoryLotId: "",
+            targetBatchNo: ""
+        });
+    }, [updateDetail]);
+
+    const handleBatchChange = useCallback((index: number, side: "source" | "target", inventoryLotId: string) => {
+        const lotId = Number(side === "source" ? form.sourceLotId : form.targetLotId);
+        const batch = (batchesByLot[lotId] || []).find((row) => String(row.batchId) === inventoryLotId);
+        updateDetail(index, side === "source"
+            ? { sourceInventoryLotId: inventoryLotId, sourceBatchNo: batch?.batchNumber || "" }
+            : { targetInventoryLotId: inventoryLotId, targetBatchNo: batch?.batchNumber || "" });
+    }, [batchesByLot, form.sourceLotId, form.targetLotId, updateDetail]);
 
     const saveDraft = useCallback(async () => {
         if (hasSameLotSelection(form)) {
@@ -480,14 +537,16 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [refresh, selectedId]);
 
     const sourceBatches = useMemo(() => {
+        const detail = form.details[0];
         const rows = batchesByLot[Number(form.sourceLotId)] || [];
-        return rows.filter((row) => !form.productId || row.productId === Number(form.productId));
-    }, [batchesByLot, form.productId, form.sourceLotId]);
+        return rows.filter((row) => !detail?.productId || row.productId === Number(detail.productId));
+    }, [batchesByLot, form.details, form.sourceLotId]);
 
     const targetBatches = useMemo(() => {
+        const detail = form.details[0];
         const rows = batchesByLot[Number(form.targetLotId)] || [];
-        return rows.filter((row) => !form.productId || row.productId === Number(form.productId));
-    }, [batchesByLot, form.productId, form.targetLotId]);
+        return rows.filter((row) => !detail?.productId || row.productId === Number(detail.productId));
+    }, [batchesByLot, form.details, form.targetLotId]);
 
     return {
         userBranchId,
@@ -501,6 +560,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         lots,
         branches,
         users,
+        batchesByLot,
+        loadBatchesForLot,
         sourceBatches,
         targetBatches,
         draftValidationStatus,
@@ -525,6 +586,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setAppliedReportFilters(nextFilters);
         },
         setField,
+        updateDetail,
+        addDetail,
+        removeDetail,
         handleProductChange,
         handleSourceLotChange,
         handleTargetLotChange,
