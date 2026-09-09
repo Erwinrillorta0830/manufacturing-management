@@ -188,7 +188,7 @@ async function resolveVersions(
         ...overrides.map((override) => Number(override.version_id)),
         ...extraVersionIds
     ].filter(Boolean))];
-    const versionParams = new URLSearchParams({ fields: "version_id,product_id,version_name,status", limit: "-1" });
+    const versionParams = new URLSearchParams({ fields: "version_id,product_id,version_name,status,is_primary", limit: "-1" });
     if (overrideVersionIds.length > 0) {
         versionParams.set("filter[_or][0][version_id][_in]", overrideVersionIds.join(","));
         versionParams.set("filter[_or][1][product_id][_in]", productIds.join(","));

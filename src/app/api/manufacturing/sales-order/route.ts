@@ -61,7 +61,7 @@ async function resolveCustomerProductVersions(customerId: number, productIds: nu
     )];
 
     const versionParams = new URLSearchParams({
-        fields: "version_id,product_id,version_name,status",
+        fields: "version_id,product_id,version_name,status,is_primary",
         limit: "-1"
     });
     if (overrideVersionIds.length > 0) {
