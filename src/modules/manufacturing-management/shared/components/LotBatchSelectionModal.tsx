@@ -658,20 +658,9 @@ export function LotBatchSelectionModal({
           const targetClass = resolveProductClassification(productType, productCategory || categoryName, productCode, productName);
           const preferBad = initialValues?.qa_status && initialValues.qa_status !== 'GOOD';
 
-          const isLotMatchingUom = (l?: MMLot | null) => {
-            if (!l) return false;
-            const lId = l.unit_id ? Number(l.unit_id) : null;
-            const lName = l.unit_name ? String(l.unit_name).trim().toLowerCase() : null;
-            const tId = productUomId ? Number(productUomId) : null;
-            const tName = productUomName ? String(productUomName).trim().toLowerCase() : null;
-            if (lId && tId) return lId === tId;
-            if (lName && tName) return lName === tName;
-            return false;
-          };
-
           const compatibleLot = (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (!isLotMatchingUom(l)) return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
             const lotIsBad = isBadStockLot(l);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
@@ -681,16 +670,16 @@ export function LotBatchSelectionModal({
             return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (!isLotMatchingUom(l)) return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
             const lotIsBad = isBadStockLot(l);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
             return true;
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (!isLotMatchingUom(l)) return false;
+            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
             return true;
-          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
+          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id)) : undefined) || lotsData?.[0];
 
           const hydrated = initialLotAllocations.map((g) => {
             let matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === Number(g.lot_id));
@@ -792,7 +781,7 @@ export function LotBatchSelectionModal({
 
         const compatibleLot = (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (!isLotMatchingUom(l)) return false;
+          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
           const lotIsBad = isBadStockLot(l);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
@@ -802,16 +791,16 @@ export function LotBatchSelectionModal({
           return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (!isLotMatchingUom(l)) return false;
+          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
           const lotIsBad = isBadStockLot(l);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
           return true;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (!isLotMatchingUom(l)) return false;
+          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
           return true;
-        });
+        }) || lotsData?.[0];
 
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
@@ -840,29 +829,6 @@ export function LotBatchSelectionModal({
               ],
             },
           ]);
-        } else {
-          setLotGroups([
-            {
-              lot_id: 0,
-              lot_name: '',
-              max_batch_capacity: 10,
-              unit_id: productUomId ? Number(productUomId) : null,
-              unit_name: productUomName || null,
-              allocated_quantity: 0,
-              active_batch_count: 0,
-              current_stock_quantity: 0,
-              batches: [
-                {
-                  batch_no: initialValues?.batch_no || '',
-                  manufacturing_date: initialValues?.manufacturing_date || '',
-                  expiry_date: initialValues?.expiry_date || '',
-                  quantity: 0,
-                  qa_status: 'GOOD',
-                },
-              ],
-            },
-          ]);
-        }
           if (initialValues?.manufacturing_date || initialValues?.expiry_date) {
             setToolbarDates({
               0: {
@@ -1522,21 +1488,11 @@ export function LotBatchSelectionModal({
                                   .filter(Boolean)
                               );
                               const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
-                              const isLotMatchingUom = (l?: MMLot | null) => {
-                                if (!l) return false;
-                                const lId = l.unit_id ? Number(l.unit_id) : null;
-                                const lName = l.unit_name ? String(l.unit_name).trim().toLowerCase() : null;
-                                const tId = productUomId ? Number(productUomId) : null;
-                                const tName = productUomName ? String(productUomName).trim().toLowerCase() : null;
-                                if (lId && tId) return lId === tId;
-                                if (lName && tName) return lName === tName;
-                                return false;
-                              };
-
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 if (otherSelectedLotIds.has(Number(l.lot_id))) return false;
-                                if (!isLotMatchingUom(l)) return false;
+                                const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
+                                if (!isUomMatch) return false;
                                 const lotIsBad = isBadStockLot(l);
                                 if (groupIsBad && !lotIsBad) return false;
                                 if (!groupIsBad && lotIsBad) return false;
@@ -1547,6 +1503,7 @@ export function LotBatchSelectionModal({
                                 <>
                                   <SearchableSelect
                                     options={optionsLots.map((l) => {
+                                      const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
                                       const lComp = checkLotCompatibility(Number(l.lot_id));
                                       const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
                                       const lotIsBad = isBadStockLot(l);
@@ -1561,7 +1518,10 @@ export function LotBatchSelectionModal({
                                       let tag = '';
                                       let tagClassName = '';
 
-                                      if (!lComp.isCompatible) {
+                                      if (!isUomMatch) {
+                                        tag = '[UOM Mismatch]';
+                                        tagClassName = 'text-rose-600 dark:text-rose-400 font-semibold';
+                                      } else if (!lComp.isCompatible) {
                                         tag = lStored?.is_draft_allocation
                                           ? `[Type Mismatch: Form Draft (${lComp.storedLabel})]`
                                           : `[Type Mismatch: Warehouse (${lComp.storedLabel})]`;
