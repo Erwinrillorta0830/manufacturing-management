@@ -88,11 +88,6 @@ export default function WarehouseRackView({
         }));
     };
 
-    const hasUnassignedBatches = React.useMemo(() => {
-        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
-        return batches.some((b) => Number(b.quantity || 0) !== 0 && (!b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId))));
-    }, [batches, lots]);
-
     const fefoMap = React.useMemo(() => {
         return getFefoPriorityMap(batches, selectedProductId);
     }, [batches, selectedProductId]);
@@ -187,7 +182,7 @@ export default function WarehouseRackView({
         });
 
         return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
-    }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, searchQuery, selectedProductId, hasUnassignedBatches]);
+    }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, searchQuery, selectedProductId]);
 
     const expectedSkeletonCount = React.useMemo(() => {
         if (Array.isArray(selectedLotId)) {
