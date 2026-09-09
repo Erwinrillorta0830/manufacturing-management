@@ -1,10 +1,30 @@
 import React, { useState } from "react";
+import { motion } from "framer-motion";
 import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp, Building2, AlertTriangle } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+const containerVariants = {
+    hidden: { opacity: 0 },
+    show: {
+        opacity: 1,
+        transition: {
+            staggerChildren: 0.06
+        }
+    }
+};
+
+const itemVariants = {
+    hidden: { opacity: 0, y: 15 },
+    show: {
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.25, ease: "easeOut" as const }
+    }
+};
 
 interface WarehouseRackViewProps {
     lots: Lot[];
@@ -14,8 +34,8 @@ interface WarehouseRackViewProps {
     selectedProductType?: string | "ALL";
     selectedUomId?: number | "ALL";
     selectedProductId?: number | "ALL";
-    selectedLotId?: number | "ALL";
-    selectedBatchId?: number | "ALL";
+    selectedLotId?: number | "ALL" | number[];
+    selectedBatchId?: number | "ALL" | number[];
     searchQuery?: string;
     onEditLot?: (lot: Lot) => void;
     onAddBatchToLot?: (lotId: number) => void;
@@ -40,6 +60,25 @@ export default function WarehouseRackView({
     onViewLotMovements
 }: WarehouseRackViewProps) {
     const [expandedLots, setExpandedLots] = useState<Record<number, boolean>>({});
+    const [isFilteringTransition, setIsFilteringTransition] = useState(false);
+
+    const isSingleLotSelected = React.useMemo(() => {
+        if (Array.isArray(selectedLotId)) {
+            return selectedLotId.length === 1;
+        }
+        return selectedLotId !== "ALL" && String(selectedLotId) !== "";
+    }, [selectedLotId]);
+
+    React.useEffect(() => {
+        // Only trigger skeleton loading transition when exactly 1 lot is selected
+        if (isSingleLotSelected) {
+            setIsFilteringTransition(true);
+            const timer = setTimeout(() => setIsFilteringTransition(false), 220);
+            return () => clearTimeout(timer);
+        } else {
+            setIsFilteringTransition(false);
+        }
+    }, [selectedLotId, isSingleLotSelected]);
 
     const toggleExpandLot = (lotId: number) => {
         setExpandedLots((prev) => ({
@@ -61,7 +100,14 @@ export default function WarehouseRackView({
             baseLots = baseLots.filter((lot) => Number(lot.uomId) === Number(selectedUomId));
         }
         if (selectedLotId !== "ALL") {
-            baseLots = baseLots.filter((lot) => Number(lot.lotId) === Number(selectedLotId));
+            if (Array.isArray(selectedLotId)) {
+                if (selectedLotId.length > 0) {
+                    const selectedSet = new Set(selectedLotId.map(Number));
+                    baseLots = baseLots.filter((lot) => selectedSet.has(Number(lot.lotId)));
+                }
+            } else {
+                baseLots = baseLots.filter((lot) => Number(lot.lotId) === Number(selectedLotId));
+            }
         }
 
         const query = (searchQuery || "").toLowerCase().trim();
@@ -82,8 +128,16 @@ export default function WarehouseRackView({
             }
 
             if (selectedBatchId !== "ALL") {
-                const hasBatch = lotBatches.some((b) => Number(b.batchId) === Number(selectedBatchId));
-                if (!hasBatch) return false;
+                if (Array.isArray(selectedBatchId)) {
+                    if (selectedBatchId.length > 0) {
+                        const batchSet = new Set(selectedBatchId.map(Number));
+                        const hasBatch = lotBatches.some((b) => batchSet.has(Number(b.batchId)));
+                        if (!hasBatch) return false;
+                    }
+                } else {
+                    const hasBatch = lotBatches.some((b) => Number(b.batchId) === Number(selectedBatchId));
+                    if (!hasBatch) return false;
+                }
             }
 
             if (query) {
@@ -104,13 +158,17 @@ export default function WarehouseRackView({
         return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
     }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, searchQuery, selectedProductId]);
 
-    if (loading) {
-        return (
-            <div className="flex flex-col items-center justify-center p-20 gap-3 text-muted-foreground bg-card rounded-xl border border-border">
-                <Loader2 className="h-7 w-7 animate-spin text-primary" />
-                <span className="text-sm font-semibold">Loading Warehouse Storage Racks...</span>
-            </div>
-        );
+    const expectedSkeletonCount = React.useMemo(() => {
+        if (Array.isArray(selectedLotId)) {
+            if (selectedLotId.length > 0) return selectedLotId.length;
+        } else if (selectedLotId !== "ALL" && String(selectedLotId) !== "") {
+            return 1;
+        }
+        return Math.min(lots.length || 6, 6);
+    }, [selectedLotId, lots.length]);
+
+    if (loading || isFilteringTransition) {
+        return <WarehouseRackSkeleton count={expectedSkeletonCount} />;
     }
 
     if (lots.length === 0) {
@@ -130,13 +188,13 @@ export default function WarehouseRackView({
         selectedProductType !== "ALL" ||
         selectedUomId !== "ALL" ||
         selectedProductId !== "ALL" ||
-        selectedLotId !== "ALL" ||
-        selectedBatchId !== "ALL" ||
+        (Array.isArray(selectedLotId) ? selectedLotId.length > 0 : selectedLotId !== "ALL") ||
+        (Array.isArray(selectedBatchId) ? selectedBatchId.length > 0 : selectedBatchId !== "ALL") ||
         !!searchQuery.trim();
 
     if (sortedLots.length === 0 && hasActiveFilter) {
         return (
-            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground bg-card rounded-xl border border-border">
+            <div className="flex flex-col items-center justify-center p-16 text-center border-2 border-dashed border-border/80 rounded-2xl bg-card/50">
                 <Boxes className="h-14 w-14 text-muted-foreground/30 mb-3" />
                 <span className="text-base font-bold text-foreground">No Storage Racks Matching Selected Filters</span>
                 <p className="text-xs max-w-sm mt-1">
@@ -148,7 +206,12 @@ export default function WarehouseRackView({
 
     return (
         <TooltipProvider>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <motion.div
+                variants={containerVariants}
+                initial="hidden"
+                animate="show"
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
+            >
                 {sortedLots.map((lot) => {
                     const rawLotBatches = batches.filter((b) => {
                         if (Number(b.lotId) !== Number(lot.lotId)) return false;
@@ -163,8 +226,12 @@ export default function WarehouseRackView({
                         if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
                             return false;
                         }
-                        if (selectedBatchId !== "ALL" && Number(b.batchId) !== Number(selectedBatchId)) {
-                            return false;
+                        if (selectedBatchId !== "ALL") {
+                            if (Array.isArray(selectedBatchId)) {
+                                if (selectedBatchId.length > 0 && !selectedBatchId.includes(Number(b.batchId))) return false;
+                            } else if (Number(b.batchId) !== Number(selectedBatchId)) {
+                                return false;
+                            }
                         }
                         if (searchQuery.trim()) {
                             const q = searchQuery.toLowerCase().trim();
@@ -237,8 +304,9 @@ export default function WarehouseRackView({
                     })();
 
                     return (
-                        <div
+                        <motion.div
                             key={lot.lotId}
+                            variants={itemVariants}
                             className="group relative flex flex-col rounded-xl border border-border/80 bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
                         >
                             {/* Metallic Industrial Rack Header */}
@@ -367,7 +435,7 @@ export default function WarehouseRackView({
                                 ) : (
                                     <div className="flex flex-col gap-2">
                                         <div className={`grid grid-cols-1 gap-2 ${isExpanded ? "max-h-[380px] overflow-y-auto pr-1" : ""}`}>
-                                            {visibleBatches.map((batch) => {
+                                            {visibleBatches.map((batch, bIdx) => {
                                                 const statusConfig = getStatusConfig(batch.status);
                                                 const fefoInfo = fefoMap.get(batch.batchId);
                                                 const isNegative = batch.quantity < 0;
@@ -376,8 +444,11 @@ export default function WarehouseRackView({
                                                     : (batch.qaStatus === "EXPIRED" || batch.status === "EXPIRED");
 
                                                 return (
-                                                    <div
+                                                    <motion.div
                                                         key={batch.batchId}
+                                                        initial={{ opacity: 0, x: -15 }}
+                                                        animate={{ opacity: 1, x: 0 }}
+                                                        transition={{ duration: 0.2, delay: bIdx * 0.04, ease: "easeOut" as const }}
                                                         onClick={() => onViewBatchMovements?.(batch)}
                                                         title="Click to view batch movement history & audit trail"
                                                         className={`group/box relative flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer ${
@@ -473,7 +544,7 @@ export default function WarehouseRackView({
                                                                 </Tooltip>
                                                             )}
                                                         </div>
-                                                    </div>
+                                                    </motion.div>
                                                 );
                                             })}
                                         </div>
@@ -507,10 +578,10 @@ export default function WarehouseRackView({
                                 {/* <span>Shelf Ref: #{lot.lotId}</span> */}
                                 <span>By: {lot.createdBy || "System"}</span>
                             </div>
-                        </div>
+                        </motion.div>
                     );
                 })}
-            </div>
+            </motion.div>
         </TooltipProvider>
     );
 }
@@ -555,3 +626,65 @@ function getStatusConfig(status: BatchStatus) {
             };
     }
 }
+
+export function WarehouseRackSkeleton({ count = 6 }: { count?: number }) {
+    const itemsCount = Math.max(1, Math.min(12, count));
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {Array.from({ length: itemsCount }).map((_, i) => (
+                <div
+                    key={i}
+                    className="flex flex-col rounded-xl border border-border/80 bg-card shadow-sm overflow-hidden animate-pulse"
+                >
+                    {/* Rack Header Skeleton */}
+                    <div className="p-4 border-b border-border/60 bg-muted/20 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />
+                                <div className="h-5 w-32 bg-muted-foreground/20 rounded" />
+                            </div>
+                            <div className="h-7 w-7 rounded-lg bg-muted-foreground/20" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="h-4 w-12 bg-muted-foreground/20 rounded" />
+                            <div className="h-4 w-28 bg-muted-foreground/20 rounded" />
+                            <div className="h-4 w-20 bg-muted-foreground/20 rounded" />
+                        </div>
+                        {/* Occupancy bar */}
+                        <div className="space-y-1 pt-1">
+                            <div className="flex justify-between">
+                                <div className="h-3 w-20 bg-muted-foreground/20 rounded" />
+                                <div className="h-3 w-10 bg-muted-foreground/20 rounded" />
+                            </div>
+                            <div className="h-2 w-full bg-muted-foreground/20 rounded-full" />
+                        </div>
+                    </div>
+
+                    {/* Shelf Content (3 batch items placeholder) */}
+                    <div className="p-4 space-y-2.5 flex-1 bg-muted/5">
+                        <div className="h-3 w-24 bg-muted-foreground/20 rounded mb-3" />
+                        {[1, 2, 3].map((b) => (
+                            <div key={b} className="p-2.5 rounded-lg border border-border/40 bg-card/60 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <div className="h-4 w-28 bg-muted-foreground/20 rounded" />
+                                    <div className="h-4 w-16 bg-muted-foreground/20 rounded-full" />
+                                </div>
+                                <div className="h-3.5 w-3/4 bg-muted-foreground/15 rounded" />
+                                <div className="flex justify-between pt-1">
+                                    <div className="h-3 w-20 bg-muted-foreground/15 rounded" />
+                                    <div className="h-3.5 w-16 bg-muted-foreground/20 rounded" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="px-4 py-2 border-t border-border/50 bg-card flex justify-end">
+                        <div className="h-3 w-20 bg-muted-foreground/20 rounded" />
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+

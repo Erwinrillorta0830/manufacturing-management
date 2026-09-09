@@ -1,4 +1,5 @@
 import React from "react";
+import { motion } from "framer-motion";
 import { Search, Pencil, Loader2, Boxes, ChevronsLeft, ChevronsRight, Plus, Building2 } from "lucide-react";
 import { Lot } from "../types";
 import {
@@ -106,13 +107,16 @@ export default function LotTable({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedLots.map((lot) => {
+                            {paginatedLots.map((lot, idx) => {
                                 const unitLabel = lot.uomShortcut || lot.uomName || "";
                                 return (
-                                    <TableRow
+                                    <motion.tr
                                         key={lot.lotId}
+                                        initial={{ opacity: 0, y: 15 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.2, delay: idx * 0.04, ease: "easeOut" as const }}
                                         onClick={() => onViewBatches?.(lot)}
-                                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                                        className="cursor-pointer hover:bg-muted/50 transition-colors border-b border-border"
                                     >
                                         <TableCell className="font-medium">{lot.displayNumber}</TableCell>
                                         <TableCell className="font-semibold text-foreground" title={lot.lotName}>
@@ -165,7 +169,7 @@ export default function LotTable({
                                                 </div>
                                             </TableCell>
                                         )}
-                                    </TableRow>
+                                    </motion.tr>
                                 );
                             })}
                         </TableBody>

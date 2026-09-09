@@ -44,8 +44,8 @@ interface InventoryMovementTableProps {
     onDirectionFilterChange: (val: "ALL" | "IN" | "OUT") => void;
     transactionTypeFilter: string;
     onTransactionTypeFilterChange: (val: string) => void;
-    lotFilter: number | "ALL";
-    onLotFilterChange: (val: number | "ALL") => void;
+    lotFilter: number | "ALL" | number[];
+    onLotFilterChange: (val: number | "ALL" | number[]) => void;
     productFilter?: number | "ALL";
     onProductFilterChange?: (val: number | "ALL") => void;
     availableTransactionTypes: string[];
@@ -312,9 +312,16 @@ export default function InventoryMovementTable({
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-muted text-foreground uppercase border border-border">
-                                                {m.transactionType || m.sourceModule || "MOVEMENT"}
-                                            </span>
+                                            <div className="flex flex-col items-start gap-0.5">
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-muted text-foreground uppercase border border-border">
+                                                    {(m.transactionType || m.sourceModule || "MOVEMENT").replace(/_/g, " ")}
+                                                </span>
+                                                {m.stockType && (
+                                                    <span className="text-[9px] font-semibold text-muted-foreground uppercase px-1">
+                                                        {m.stockType}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="font-semibold text-xs text-foreground">
                                             {resolvedLotName}
@@ -372,9 +379,16 @@ export default function InventoryMovementTable({
                                                 : "-"}
                                         </TableCell>
                                         <TableCell>
-                                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border bg-muted text-muted-foreground border-border">
-                                                {m.inventoryCondition || "GOOD"}
-                                            </span>
+                                            <div className="flex flex-col items-start gap-0.5">
+                                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border bg-muted text-muted-foreground border-border">
+                                                    {m.inventoryCondition || "GOOD"}
+                                                </span>
+                                                {m.sourceStatus && (
+                                                    <span className="text-[9px] font-bold text-sky-600 dark:text-sky-400 uppercase px-1">
+                                                        {m.sourceStatus}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                                             {m.transactionDate ? m.transactionDate.replace("T", " ").slice(0, 19) : (m.postedAt ? m.postedAt.replace("T", " ").slice(0, 19) : "-")}

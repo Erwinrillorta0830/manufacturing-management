@@ -23,8 +23,8 @@ import { resolveProductClassification } from "@/modules/manufacturing-management
 export function useBatchRegistration(
     lots: Lot[],
     selectedProductId: number | "ALL" = "ALL",
-    selectedLotId: number | "ALL" = "ALL",
-    selectedBatchId: number | "ALL" = "ALL",
+    selectedLotId: number | "ALL" | number[] = "ALL",
+    selectedBatchId: number | "ALL" | number[] = "ALL",
     globalSearchQuery: string = "",
     selectedBranchId: number | "ALL" = "ALL",
     selectedProductType: string | "ALL" = "ALL",
@@ -381,9 +381,13 @@ export function useBatchRegistration(
                 }
             }
             const matchesProduct = selectedProductId === "ALL" || Number(b.productId) === Number(selectedProductId);
-            const matchesGlobalLot = selectedLotId === "ALL" || Number(b.lotId) === Number(selectedLotId);
+            const matchesGlobalLot = Array.isArray(selectedLotId)
+                ? (selectedLotId.length === 0 || selectedLotId.includes(Number(b.lotId)))
+                : (selectedLotId === "ALL" || Number(b.lotId) === Number(selectedLotId));
             const matchesLocalLot = selectedLotFilter === "ALL" || Number(b.lotId) === Number(selectedLotFilter);
-            const matchesBatch = selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId);
+            const matchesBatch = Array.isArray(selectedBatchId)
+                ? (selectedBatchId.length === 0 || selectedBatchId.includes(Number(b.batchId)))
+                : (selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId));
             const matchesStatus =
                 statusFilter === "ALL" ||
                 (statusFilter === "NEGATIVE"
@@ -436,8 +440,8 @@ export function useBatchRegistration(
         const isAllTypes = selectedProductType === "ALL";
         const isAllUoms = selectedUomId === "ALL";
         const isAllProducts = selectedProductId === "ALL";
-        const isAllLots = selectedLotId === "ALL";
-        const isAllBatches = selectedBatchId === "ALL";
+        const isAllLots = Array.isArray(selectedLotId) ? selectedLotId.length === 0 : selectedLotId === "ALL";
+        const isAllBatches = Array.isArray(selectedBatchId) ? selectedBatchId.length === 0 : selectedBatchId === "ALL";
         const globalQuery = globalSearchQuery.toLowerCase().trim();
 
         const targetBatches = batches.filter((b) => {
@@ -461,8 +465,16 @@ export function useBatchRegistration(
                 }
             }
             if (!isAllProducts && Number(b.productId) !== Number(selectedProductId)) return false;
-            if (!isAllLots && Number(b.lotId) !== Number(selectedLotId)) return false;
-            if (!isAllBatches && Number(b.batchId) !== Number(selectedBatchId)) return false;
+            if (!isAllLots) {
+                if (Array.isArray(selectedLotId)) {
+                    if (!selectedLotId.includes(Number(b.lotId))) return false;
+                } else if (Number(b.lotId) !== Number(selectedLotId)) return false;
+            }
+            if (!isAllBatches) {
+                if (Array.isArray(selectedBatchId)) {
+                    if (!selectedBatchId.includes(Number(b.batchId))) return false;
+                } else if (Number(b.batchId) !== Number(selectedBatchId)) return false;
+            }
             if (globalQuery) {
                 const matches =
                     b.batchNumber.toLowerCase().includes(globalQuery) ||

@@ -182,66 +182,116 @@ async function getSpringAuth(explicitToken?: string): Promise<{ token: string; c
 }
 
 function normalizeMovement(raw: MmInventoryMovement): NormalizedMmInventoryMovement {
+    const movementKey = textValue(raw.movementKey ?? raw.movement_key);
     const movementId = numericValue(raw.movementId ?? raw.movement_id);
     const transactionTypeId = numericValue(raw.transactionTypeId ?? raw.transaction_type_id);
     const versionId = numericValue(raw.versionId ?? raw.version_id);
+    const transactionType = textValue(raw.transactionType ?? raw.transaction_type) || "MOVEMENT";
+    const movementDirection = textValue(raw.movementDirection ?? raw.movement_direction) || "IN";
+    const sourceModule = textValue(raw.sourceModule ?? raw.source_module) || "";
     const referenceId = numericValue(raw.referenceId ?? raw.reference_id ?? raw.source_document_id);
     const referenceDetailId = numericValue(raw.referenceDetailId ?? raw.reference_detail_id);
+    const referenceNo = textValue(raw.referenceNo ?? raw.reference_no ?? raw.source_document_no) || "";
+    const transactionDate = textValue(raw.transactionDate ?? raw.transaction_date) || textValue(raw.postedAt ?? raw.posted_at) || "";
+    const postedAt = textValue(raw.postedAt ?? raw.posted_at);
+    const postedBy = numericValue(raw.postedBy ?? raw.posted_by);
     const branchId = numericValue(raw.branchId ?? raw.branch_id);
     const inventoryLotId = numericValue(raw.inventoryLotId ?? raw.inventory_lot_id);
     const mmLotId = numericValue(raw.mmLotId ?? raw.mm_lot_id ?? raw.lotId ?? raw.lot_id);
-    const productId = numericValue(raw.productId ?? raw.product_id);
+    const productId = numericValue(raw.productId ?? raw.product_id) || 0;
+    const productCode = textValue(raw.productCode ?? raw.product_code) || "";
+    const productName = textValue(raw.productName ?? raw.product_name) || "";
     const productTypeId = numericValue(raw.productTypeId ?? raw.product_type_id);
+    const productTypeName = textValue(raw.productTypeName ?? raw.product_type_name);
     const unitId = numericValue(raw.unitId ?? raw.unit_id);
-    const postedBy = numericValue(raw.postedBy ?? raw.posted_by);
+    const batchNo = textValue(raw.batchNo ?? raw.batch_no) || "";
+    const manufacturingDate = textValue(raw.manufacturingDate ?? raw.manufacturing_date);
+    const expirationDate = textValue(raw.expirationDate ?? raw.expiration_date ?? raw.expiryDate ?? raw.expiry_date);
+    const inventoryCondition = textValue(raw.inventoryCondition ?? raw.inventory_condition) || "GOOD";
     const quantityIn = numericOrZero(raw.quantityIn ?? raw.quantity_in);
     const quantityOut = numericOrZero(raw.quantityOut ?? raw.quantity_out);
-    const batchNo = textValue(raw.batchNo ?? raw.batch_no);
-    const sourceDocumentNo = textValue(raw.referenceNo ?? raw.reference_no ?? raw.source_document_no);
-    const createdAt = textValue(raw.transactionDate ?? raw.transaction_date) || textValue(raw.postedAt ?? raw.posted_at);
-    const manufacturingDate = textValue(raw.manufacturingDate ?? raw.manufacturing_date);
-    const expiryDate = textValue(raw.expirationDate ?? raw.expiration_date ?? raw.expiryDate ?? raw.expiry_date);
+    const unitCost = numericOrZero(raw.unitCost ?? raw.unit_cost);
+    const differenceCost = numericOrZero(raw.differenceCost ?? raw.difference_cost);
     const remarks = textValue(raw.remarks);
+    const stockType = textValue(raw.stockType ?? raw.stock_type);
+    const sourceStatus = textValue(raw.sourceStatus ?? raw.source_status);
 
     return {
         ...raw,
+        movementKey,
+        movement_key: movementKey,
         movementId,
-        transactionTypeId,
-        versionId,
-        referenceId,
-        referenceDetailId,
-        branchId,
-        inventoryLotId,
-        mmLotId,
-        lotId: mmLotId,
-        productId,
-        productTypeId,
-        unitId,
-        postedBy,
-        quantityIn,
-        quantityOut,
-        batchNo,
-        referenceNo: sourceDocumentNo,
-        manufacturingDate,
-        expirationDate: expiryDate,
-        remarks,
-        quantity: quantityIn - quantityOut,
         movement_id: movementId,
+        transactionTypeId,
         transaction_type_id: transactionTypeId,
+        versionId,
         version_id: versionId,
-        source_document_id: referenceId,
-        source_document_no: sourceDocumentNo,
-        product_id: productId,
+        transactionType,
+        transaction_type: transactionType,
+        movementDirection,
+        movement_direction: movementDirection,
+        sourceModule,
+        source_module: sourceModule,
+        referenceId,
+        reference_id: referenceId,
+        referenceDetailId,
+        reference_detail_id: referenceDetailId,
+        referenceNo,
+        reference_no: referenceNo,
+        transactionDate,
+        transaction_date: transactionDate,
+        postedAt,
+        posted_at: postedAt,
+        postedBy,
+        posted_by: postedBy,
+        branchId,
         branch_id: branchId,
+        inventoryLotId,
         inventory_lot_id: inventoryLotId,
+        mmLotId,
         mm_lot_id: mmLotId,
+        lotId: mmLotId,
+        lot_id: mmLotId,
+        productId,
+        product_id: productId,
+        productCode,
+        product_code: productCode,
+        productName,
+        product_name: productName,
+        productTypeId,
+        product_type_id: productTypeId,
+        productTypeName,
+        product_type_name: productTypeName,
+        unitId,
+        unit_id: unitId,
+        batchNo,
         batch_no: batchNo,
-        expiry_date: expiryDate,
+        manufacturingDate,
         manufacturing_date: manufacturingDate,
-        created_at: createdAt,
-        created_by: postedBy,
+        expirationDate,
+        expiration_date: expirationDate,
+        expiryDate: expirationDate,
+        expiry_date: expirationDate,
+        inventoryCondition,
+        inventory_condition: inventoryCondition,
+        quantityIn,
         quantity_in: quantityIn,
+        quantityOut,
         quantity_out: quantityOut,
+        unitCost,
+        unit_cost: unitCost,
+        differenceCost,
+        difference_cost: differenceCost,
+        remarks,
+        stockType,
+        stock_type: stockType,
+        sourceStatus,
+        source_status: sourceStatus,
+        quantity: quantityIn - quantityOut,
+        source_document_id: referenceId,
+        source_document_no: referenceNo,
+        created_at: transactionDate,
+        created_by: postedBy,
         id: movementId
     };
 }
@@ -309,9 +359,31 @@ export async function fetchMmInventoryMovements(
     }
 
     if (!response.ok) {
-        const detail = responseText.trim().slice(0, 500);
+        let cleanDetail = "";
+        try {
+            const parsed = JSON.parse(responseText.trim());
+            if (parsed && typeof parsed === "object") {
+                const message = parsed.message || parsed.error || parsed.detail;
+                if (message) {
+                    cleanDetail = String(message);
+                }
+            }
+        } catch {
+            cleanDetail = responseText.trim();
+        }
+
+        cleanDetail = cleanDetail
+            .replace(/,\s*"path":\s*"[^"]*"/g, "")
+            .replace(/"path":\s*"[^"]*"/g, "")
+            .replace(/https?:\/\/[^\s]+/g, "")
+            .trim();
+
+        const formattedError = cleanDetail
+            ? `Inventory movement request failed with HTTP ${response.status}: ${cleanDetail}`
+            : `Inventory movement request failed with HTTP ${response.status}.`;
+
         throw new MmInventoryMovementError(
-            `Spring inventory movement request failed with HTTP ${response.status}${detail ? `: ${detail}` : "."}`,
+            formattedError,
             response.status >= 400 && response.status < 600 ? response.status : 502
         );
     }
