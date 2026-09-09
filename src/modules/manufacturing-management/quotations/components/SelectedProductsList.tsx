@@ -49,6 +49,9 @@ export function SelectedProductsList({
                 .then(res => res.ok ? res.json() : [])
                 .then(data => {
                     const sorted = [...data].sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+                        const isPrimaryA = a.is_primary === true || a.is_primary === 1 || Number(a.is_primary) === 1 ? 1 : 0;
+                        const isPrimaryB = b.is_primary === true || b.is_primary === 1 || Number(b.is_primary) === 1 ? 1 : 0;
+                        if (isPrimaryA !== isPrimaryB) return isPrimaryB - isPrimaryA;
                         const timeA = a.created_at ? new Date(a.created_at as string).getTime() : 0;
                         const timeB = b.created_at ? new Date(b.created_at as string).getTime() : 0;
                         if (timeA !== timeB) return timeB - timeA;
