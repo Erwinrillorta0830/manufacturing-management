@@ -7,7 +7,9 @@ import type {
     LotTransferFormDetail,
     LotTransferPreview,
     ProductOption,
-    UserOption
+    UserOption,
+    LotTransferStatus,
+    LotTransferStatusHistory
 } from "../types";
 
 interface ApiEnvelope<T> {
@@ -122,6 +124,26 @@ export async function fetchLotTransferUsers(): Promise<UserOption[]> {
 export async function fetchLotTransfer(id: number): Promise<LotTransfer> {
     const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}`);
     return unwrap(payload);
+}
+
+export async function fetchLotTransferStatusHistory(id: number): Promise<LotTransferStatusHistory[]> {
+    const payload = await requestJson<ApiEnvelope<LotTransferStatusHistory[]>>(`/api/manufacturing/lot-transfers/${id}/status-history`);
+    const rows = unwrap(payload);
+    return (Array.isArray(rows) ? rows : []).map((row) => {
+        const raw = row as unknown as Record<string, unknown>;
+        const oldStatus = raw.oldStatus ?? raw.old_status;
+        const newStatus = raw.newStatus ?? raw.new_status;
+        return {
+            id: numberValue(row.id ?? raw.lot_transfer_status_history_id),
+            lotTransferId: numberValue(row.lotTransferId ?? raw.lot_transfer_id),
+            oldStatus: typeof oldStatus === "string" && oldStatus ? oldStatus as LotTransferStatus : null,
+            newStatus: String(newStatus || "Draft") as LotTransferStatus,
+            changedBy: numberValue(row.changedBy ?? raw.changed_by) || null,
+            changedByName: stringValue(row.changedByName ?? raw.changed_by_name) || null,
+            changedAt: stringValue(row.changedAt ?? raw.changed_at),
+            remarks: stringValue(row.remarks)
+        };
+    }).filter((row) => row.id > 0 && row.lotTransferId === id && row.changedAt && row.newStatus);
 }
 
 export async function createLotTransfer(form: LotTransferForm): Promise<LotTransfer> {

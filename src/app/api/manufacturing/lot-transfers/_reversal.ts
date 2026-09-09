@@ -42,6 +42,7 @@ import { storedPostedPreview } from "./_destination-batch-posting";
 import { buildLotTransferPreview, recordForDetail } from "./_preview";
 import { requireSessionUserId } from "./_session";
 import { getLotTransfer } from "./_queries";
+import { appendStatusHistory, deleteLotTransferStatusHistory, transitionLotTransferStatus } from "./_status-history";
 import {
     movementId,
     movementTransactionTypeId,
@@ -178,6 +179,7 @@ async function deleteTransferHeaderAndDetails(id: number): Promise<void> {
         const detailId = rowId(row, ["lot_transfer_detail_id", "id"]);
         if (detailId > 0) await deleteTransferDetail(detailId);
     }
+    await deleteLotTransferStatusHistory(id);
     await mutateDirectus(`/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`, "DELETE", undefined, "Lot-transfer reversal header compensation");
 }
 
@@ -322,6 +324,14 @@ export async function reverseLotTransfer(
             if (!reversalId) throw new LotTransferError(503, "Directus did not return the created reversal transfer ID.");
             createdHeader = true;
             reversal = await getLotTransfer(reversalId);
+            await appendStatusHistory({
+                transferId: reversal.id,
+                oldStatus: null,
+                newStatus: "Draft",
+                changedBy: actor,
+                changedAt: reversal.createdAt || reversal.requestedAt || undefined,
+                remarks: `Reversal draft created for ${original.requestNo}.`
+            });
         }
 
         if (!reversal || reversal.status !== "Draft" || reversal.reversalOfId !== original.id) {
@@ -446,10 +456,14 @@ export async function reverseLotTransfer(
 
         const reversedAt = new Date().toISOString();
         const singleLine = pairs.length === 1 ? pairs[0] : null;
-        await mutateDirectus(
-            `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(reversal.id))}`,
-            "PATCH",
-            {
+        const transition = await transitionLotTransferStatus({
+            transferId: reversal.id,
+            expectedOldStatus: "Draft",
+            newStatus: "Reversed",
+            changedBy: actor,
+            changedAt: reversedAt,
+            remarks: `Reversed: ${reason}`,
+            patch: {
                 status: "Reversed",
                 posted_by: actor,
                 posted_at: reversedAt,
@@ -471,10 +485,31 @@ export async function reverseLotTransfer(
                 posting_error: null,
                 updated_at: reversedAt
             },
-            "Lot-transfer reversal finalization"
-        );
+            rollbackPatch: {
+                status: "Draft",
+                posted_by: reversal.postedBy,
+                posted_at: reversal.postedAt,
+                reversed_by: reversal.reversedBy,
+                reversed_at: reversal.reversedAt,
+                reversal_reason: reversal.reversalReason,
+                effective_expiry_date: reversal.effectiveExpiryDate,
+                source_unit_cost: reversal.sourceUnitCost,
+                target_unit_cost: reversal.targetUnitCost,
+                source_movement_id: reversal.sourceMovementId,
+                target_movement_id: reversal.targetMovementId,
+                source_balance_before: reversal.sourceBalanceBefore,
+                source_balance_after: reversal.sourceBalanceAfter,
+                target_balance_before: reversal.targetBalanceBefore,
+                target_balance_after: reversal.targetBalanceAfter,
+                posting_started_at: reversal.postingStartedAt,
+                idempotency_key: reversal.idempotencyKey,
+                reconciliation_required: reversal.reconciliationRequired,
+                posting_error: reversal.postingError
+            },
+            action: "reversal finalization"
+        });
         reversalFinalized = true;
-        const finalReversal = await getLotTransfer(reversal.id);
+        const finalReversal = transition.record;
         if (
             finalReversal.status !== "Reversed"
             || finalReversal.reversalOfId !== original.id

@@ -6,6 +6,17 @@ import type {
 export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"] as const;
 export type LotTransferStatus = (typeof LOT_TRANSFER_STATUSES)[number];
 
+export interface LotTransferStatusHistory {
+    id: number;
+    lotTransferId: number;
+    oldStatus: LotTransferStatus | null;
+    newStatus: LotTransferStatus;
+    changedBy: number | null;
+    changedByName: string | null;
+    changedAt: string;
+    remarks: string;
+}
+
 export interface LotTransferInput {
     branchId: number;
     sourceLotId: number;

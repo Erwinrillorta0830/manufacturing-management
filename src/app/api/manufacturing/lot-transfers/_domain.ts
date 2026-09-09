@@ -5,6 +5,7 @@ export {
     LOT_TRANSFER_COLLECTION,
     LOT_TRANSFER_DETAIL_COLLECTION,
     LOT_TRANSFER_EPSILON,
+    LOT_TRANSFER_STATUS_HISTORY_COLLECTION,
     LOT_TRANSFER_REVERSAL_SOURCE_OUT_TYPE,
     LOT_TRANSFER_REVERSAL_TARGET_IN_TYPE,
     LOT_TRANSFER_SOURCE_OUT_TYPE,
@@ -21,6 +22,7 @@ export type {
     LotTransferPatchInput,
     LotTransferPreview,
     LotTransferRecord,
+    LotTransferStatusHistory,
     LotTransferStatus,
     ProtectedAllocation,
     ProtectedAllocationSource,
@@ -30,6 +32,7 @@ export type {
 export { getSessionUserId, getSessionUserBranchId } from "./_session";
 export { getLotTransfer, listLotTransfers } from "./_queries";
 export type { LotTransferListOptions } from "./_queries";
+export { getLotTransferStatusHistory } from "./_status-history";
 export { createLotTransfer, deleteLotTransfer, updateLotTransfer } from "./_records";
 export {
     approveLotTransfer,

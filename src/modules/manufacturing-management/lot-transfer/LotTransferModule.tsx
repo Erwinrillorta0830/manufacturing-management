@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
-import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus } from "./types";
+import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
@@ -62,6 +62,12 @@ function formatDate(value: string | null | undefined) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
+
+function formatDateTime(value: string | null | undefined) {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
@@ -304,6 +310,39 @@ function ErrorBanner({ message }: { message: string | null }) {
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{message}</span>
+        </div>
+    );
+}
+
+function StatusHistoryTimeline({ controller, record }: { controller: LotTransferController; record: LotTransferController["records"][number] }) {
+    const renderEntry = (entry: LotTransferStatusHistory) => (
+        <li key={entry.id} className="rounded-lg border bg-background p-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+                <StatusBadge status={entry.oldStatus || "Created"} />
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                <StatusBadge status={entry.newStatus} />
+            </div>
+            <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-[auto_1fr] sm:gap-x-3">
+                <span>Changed by</span><strong className="text-foreground">{entry.changedByName || entry.changedBy || "System"}</strong>
+                <span>Changed at</span><strong className="text-foreground">{formatDateTime(entry.changedAt)}</strong>
+                <span>Remarks</span><span className="whitespace-pre-wrap text-foreground">{entry.remarks || "-"}</span>
+            </div>
+        </li>
+    );
+
+    return (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Status-change history">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-semibold">Status-change history</h3>
+                    <p className="text-xs text-muted-foreground">Append-only lifecycle events for this transfer.</p>
+                </div>
+                {controller.statusHistoryError && <Button type="button" variant="outline" size="sm" onClick={() => void controller.loadStatusHistory(record.id)} disabled={controller.statusHistoryLoading}>Retry</Button>}
+            </div>
+            {controller.statusHistoryLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading status history...</p>
+                : controller.statusHistoryError ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{controller.statusHistoryError}</p>
+                    : controller.statusHistory.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No status history is available.</p>
+                        : <ol className="mt-3 space-y-2">{controller.statusHistory.map(renderEntry)}</ol>}
         </div>
     );
 }
@@ -784,6 +823,7 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
                     {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
                 </div>
+                <StatusHistoryTimeline controller={controller} record={record} />
                 <div className="mt-4 flex justify-end gap-2">
                     <ReverseTransferAction controller={controller} record={record} />
                     {allowCancel && <CancelTransferAction controller={controller} record={record} />}
