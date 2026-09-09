@@ -897,14 +897,24 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
         product_id: { _eq: input.productId }
     });
     const lotTransferFilter = JSON.stringify({
-        _and: [
-            { source_lot_id: { _eq: input.lotId } },
-            { source_inventory_lot_id: { _eq: input.inventoryLotId } },
-            { status: { _in: ACTIVE_LOT_TRANSFER_STATUS_VALUES } }
-        ]
+        status: { _in: ACTIVE_LOT_TRANSFER_STATUS_VALUES }
     });
 
-    const [salesOrderRows, salesInvoiceRows, jobReservationRows, stockDetailRows, lotTransferRows] = await Promise.all([
+    const lotTransferDetailRowsPromise = (async () => {
+        try {
+            return await directusRows(
+                `/items/${LOT_TRANSFER_DETAIL_COLLECTION}?fields=lot_transfer_detail_id,lot_transfer_id,line_no,product_id,source_inventory_lot_id,source_batch_no,quantity&limit=-1`,
+                "Lot-transfer detail protected allocation lookup"
+            );
+        } catch (error) {
+            // Before the detail migration, active legacy headers remain the only
+            // available source of protected lot-transfer allocations.
+            if (error instanceof LotTransferError && [400, 404].includes(error.statusCode)) return [];
+            throw error;
+        }
+    })();
+
+    const [salesOrderRows, salesInvoiceRows, jobReservationRows, stockDetailRows, lotTransferRows, lotTransferDetailRows] = await Promise.all([
         directusRows(
             `/items/sales_order_reservation?filter=${encodeURIComponent(reservationFilter)}&fields=reservation_id,reserved_quantity,picked_quantity,status,sales_order_detail_id&limit=-1`,
             "Sales-order protected allocation lookup"
@@ -922,9 +932,10 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
             "Stock-transfer protected allocation lookup"
         ),
         directusRows(
-            `/items/${LOT_TRANSFER_COLLECTION}?filter=${encodeURIComponent(lotTransferFilter)}&fields=lot_transfer_id,request_no,status,source_lot_id,source_inventory_lot_id,source_batch_no,quantity&limit=-1`,
+            `/items/${LOT_TRANSFER_COLLECTION}?filter=${encodeURIComponent(lotTransferFilter)}&fields=lot_transfer_id,request_no,status,branch_id,product_id,source_lot_id,source_inventory_lot_id,source_batch_no,quantity&limit=-1`,
             "Lot-transfer protected allocation lookup"
-        )
+        ),
+        lotTransferDetailRowsPromise
     ]);
     const statusByMaterialId = await jobOrderStatusesForReservations(jobReservationRows);
 
@@ -1052,19 +1063,74 @@ async function protectedAllocationsForInventoryLot(input: ProtectedAllocationLoo
         });
     }
 
+    const detailsByTransferId = new Map<number, RecordValue[]>();
+    for (const row of lotTransferDetailRows) {
+        const transferId = rowId(row, ["lot_transfer_id"]);
+        if (transferId <= 0) continue;
+        const details = detailsByTransferId.get(transferId) || [];
+        details.push(row);
+        detailsByTransferId.set(transferId, details);
+    }
+
     for (const row of lotTransferRows) {
         const allocationId = rowId(row, ["lot_transfer_id"]);
         if (allocationId === input.excludeLotTransferId) continue;
-        const quantity = Math.max(0, numeric(row.quantity));
-        if (quantity <= 0) continue;
         if (allocationId <= 0) {
             unresolved.push("A lot-transfer allocation has no resolvable request identity.");
             continue;
         }
-        if (normalizedBatch(row.source_batch_no) !== batchKey) {
-            unresolved.push(`Lot-transfer allocation ${allocationId} does not have the exact source batch identity.`);
+        const headerBranchId = relationId(firstValue(row, ["branch_id"]), ["branch_id", "id"]);
+        if (headerBranchId <= 0) {
+            unresolved.push(`Lot-transfer allocation ${allocationId} has no exact source branch identity.`);
             continue;
         }
+        if (headerBranchId !== input.branchId) continue;
+
+        const detailRows = detailsByTransferId.get(allocationId) || [];
+        if (detailRows.length > 0) {
+            for (const detail of detailRows) {
+                const quantity = Math.max(0, numeric(detail.quantity));
+                if (quantity <= 0) continue;
+                const detailId = rowId(detail, ["lot_transfer_detail_id", "id"]);
+                const detailProductId = productId(detail);
+                const detailInventoryLotId = rowId(detail, ["source_inventory_lot_id", "inventory_lot_id"]);
+                const detailBatch = normalizedBatch(detail.source_batch_no);
+                if (detailId <= 0 || detailProductId <= 0 || detailInventoryLotId <= 0 || !detailBatch) {
+                    unresolved.push(`Lot-transfer allocation ${allocationId} has a detail line without exact source identity.`);
+                    continue;
+                }
+                if (
+                    detailProductId !== input.productId
+                    || relationId(firstValue(row, ["source_lot_id"]), ["lot_id", "id"]) !== input.lotId
+                    || detailInventoryLotId !== input.inventoryLotId
+                    || detailBatch !== batchKey
+                ) continue;
+                appendProtectedAllocation(allocationRows, seen, {
+                    source: "LOT_TRANSFER",
+                    allocationId: detailId,
+                    quantity,
+                    status: stringValue(row.status),
+                    reference: nullableString(firstValue(row, ["request_no"]))
+                        ? `${nullableString(firstValue(row, ["request_no"]))} line ${numeric(detail.line_no) || "?"}`
+                        : `Transfer ${allocationId} line ${numeric(detail.line_no) || "?"}`
+                });
+            }
+            continue;
+        }
+
+        // Legacy single-line headers have no detail identity. Keep them
+        // protected when their header aliases exactly match the source batch.
+        const quantity = Math.max(0, numeric(row.quantity));
+        const sourceLotId = relationId(firstValue(row, ["source_lot_id"]), ["lot_id", "id"]);
+        const sourceInventoryLotId = rowId(row, ["source_inventory_lot_id", "inventory_lot_id"]);
+        const sourceBatch = normalizedBatch(row.source_batch_no);
+        const legacyProductId = productId(row);
+        if (quantity <= 0) continue;
+        if (legacyProductId <= 0 || sourceLotId <= 0 || sourceInventoryLotId <= 0 || !sourceBatch) {
+            unresolved.push(`Lot-transfer allocation ${allocationId} has no exact legacy source identity.`);
+            continue;
+        }
+        if (legacyProductId !== input.productId || sourceLotId !== input.lotId || sourceInventoryLotId !== input.inventoryLotId || sourceBatch !== batchKey) continue;
         appendProtectedAllocation(allocationRows, seen, {
             source: "LOT_TRANSFER",
             allocationId,
@@ -1468,22 +1534,26 @@ async function replaceTransferDetails(transferIdValue: number, details: LotTrans
         "Existing lot-transfer detail lookup"
     );
     const createdIds: number[] = [];
+    const deletedRows: RecordValue[] = [];
     try {
         for (const row of existing) {
             const id = rowId(row, ["lot_transfer_detail_id", "id"]);
-            if (id > 0) await deleteTransferDetail(id);
+            if (id <= 0) continue;
+            await deleteTransferDetail(id);
+            deletedRows.push(row);
         }
         for (let index = 0; index < details.length; index += 1) {
             const row = await createTransferDetail(transferIdValue, details[index], index);
             const id = rowId(row, ["lot_transfer_detail_id", "id"]);
-            if (id > 0) createdIds.push(id);
+            if (id <= 0) throw new LotTransferError(502, "Directus did not return the created lot-transfer detail identity.");
+            createdIds.push(id);
         }
     } catch (error) {
         for (const id of createdIds.reverse()) await deleteTransferDetail(id).catch(() => undefined);
-        for (let index = 0; index < existing.length; index += 1) {
+        for (let index = 0; index < deletedRows.length; index += 1) {
             await createTransferDetail(transferIdValue, {
-                ...mapTransferDetail(existing[index], index + 1),
-                lineNo: numeric(existing[index].line_no) || index + 1
+                ...mapTransferDetail(deletedRows[index], numeric(deletedRows[index].line_no) || index + 1),
+                lineNo: numeric(deletedRows[index].line_no) || index + 1
             }, index).catch(() => undefined);
         }
         throw error;
@@ -2211,14 +2281,11 @@ export async function submitLotTransfer(id: number, actorUserId: number | null):
 export async function previewLotTransferInput(input: LotTransferInput): Promise<LotTransferPreview> {
     assertDifferentLotIds(input.sourceLotId, input.targetLotId);
     const details = normalizedDetails(input);
-    const unitIds = await Promise.all(details.map(async (detail) => requireMatchingTransferUnitId(await assertCanonicalLotReferences({
-        sourceLotId: input.sourceLotId,
-        sourceInventoryLotId: detail.sourceInventoryLotId,
-        targetLotId: input.targetLotId,
-        targetInventoryLotId: detail.targetInventoryLotId
-    }))));
-    const transferUnitId = unitIds.every((unit) => unit === unitIds[0]) ? unitIds[0] : null;
-    return buildLotTransferPreview(transientRecordFromInput({ ...input, details }, transferUnitId));
+    // Draft preflight must return the full line-level validation matrix, including
+    // failed canonical/UOM checks, so the editor can show the affected line and
+    // keep submission disabled instead of turning a validation result into a
+    // generic request error.
+    return buildLotTransferPreview(transientRecordFromInput({ ...input, details }, null));
 }
 
 async function createInventoryMovement(payload: RecordValue): Promise<number> {

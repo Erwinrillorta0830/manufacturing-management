@@ -30,6 +30,7 @@ import type {
     LotTransferPreview,
     ProductOption,
     LotTransferReportFilters,
+    LotTransferStatus,
     UserOption
 } from "../types";
 import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
@@ -38,6 +39,8 @@ interface UseLotTransferOptions {
     mode: LotTransferMode;
     userBranchId?: number | null;
 }
+
+const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected"];
 
 function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): LotTransferForm {
     const details = record.details?.length > 0 ? record.details : [{
@@ -159,13 +162,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const refresh = useCallback(async () => {
         setIsLoading(true);
         try {
-            const workflowStatuses = mode === "request"
-                ? ["Draft"]
-                : mode === "approval"
-                    ? ["Submitted"]
-                    : mode === "posting"
-                        ? ["Approved"]
-                        : appliedReportFilters.statuses;
+            const workflowStatuses = mode === "summary"
+                ? appliedReportFilters.statuses
+                : WORKFLOW_VISIBLE_STATUSES;
             const report = mode === "summary" ? appliedReportFilters : null;
             const response = await fetchLotTransfers({
                 status: workflowStatuses,
@@ -294,7 +293,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setError(null);
         if (record.sourceLotId > 0) void loadBatchesForLot(record.sourceLotId);
         if (record.targetLotId > 0 && record.targetLotId !== record.sourceLotId) void loadBatchesForLot(record.targetLotId);
-        if (mode === "approval" || mode === "posting") {
+        const shouldLoadPreview = (mode === "approval" && record.status === "Submitted")
+            || (mode === "posting" && record.status === "Approved");
+        if (shouldLoadPreview) {
             setIsActionLoading(true);
             try {
                 setPreview(await previewLotTransfer(record.id));
