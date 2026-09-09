@@ -242,23 +242,33 @@ export function CreateSalesOrderModal({
         Promise.all(productIds.map(async productId => {
             try {
                 const response = await fetch(`/api/manufacturing/finished-goods/versions?productId=${productId}`, {
-                    signal: controller.signal
+                    signal: controller.signal,
+                    cache: "no-store"
                 });
                 if (!response.ok) return [productId, { status: "unavailable" }] as const;
                 const versionsData = await response.json();
-                const activeVersions = versionsData.filter((v: any) => v.status === "Active" || v.is_active);
+                const activeVersions = versionsData
+                    .filter((v: any) => v.status === "Active" || v.is_active)
+                    .sort((a: any, b: any) => {
+                        const isPriA = a.is_primary === true || a.is_primary === 1 || String(a.is_primary) === "1" || Number(a.is_primary) === 1 ? 1 : 0;
+                        const isPriB = b.is_primary === true || b.is_primary === 1 || String(b.is_primary) === "1" || Number(b.is_primary) === 1 ? 1 : 0;
+                        if (isPriA !== isPriB) return isPriB - isPriA;
+                        return Number(b.version_id) - Number(a.version_id);
+                    });
                 const overrideVersionId = customerOverrides[productId];
                 const overrideVersion = overrideVersionId
                     ? activeVersions.find((version: any) => Number(version.version_id) === overrideVersionId)
                     : null;
+                const primaryVersion = activeVersions.find((version: any) => version.is_primary === true || version.is_primary === 1 || String(version.is_primary) === "1" || Number(version.is_primary) === 1);
                 const standardVersion = activeVersions.find((version: any) => (
                     isStandardBOMVersion(version)
                 ));
                 const matchedVersion = overrideVersion
+                    || primaryVersion
                     || standardVersion
                     || activeVersions[0];
                 if (!matchedVersion) return [productId, { status: "unavailable" }] as const;
-                const suffix = overrideVersion ? "Override" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
+                const suffix = overrideVersion ? "Override" : primaryVersion === matchedVersion ? "Primary" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
                 return [productId, {
                     status: "resolved",
                     label: `${matchedVersion.version_name} (${suffix})`,
@@ -1047,7 +1057,7 @@ export function CreateSalesOrderModal({
                                                                     >
                                                                         {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
                                                                             <option key={v.version_id} value={v.version_id}>
-                                                                                {v.version_name} {Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}
+                                                                                {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}
                                                                             </option>
                                                                         ))}
                                                                     </select>
