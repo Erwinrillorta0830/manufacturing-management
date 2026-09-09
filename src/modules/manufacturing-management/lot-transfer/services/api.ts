@@ -7,12 +7,15 @@ import type {
     LotTransferFormDetail,
     LotTransferPreview,
     ProductOption,
-    UserOption
+    UserOption,
+    LotTransferStatus,
+    LotTransferStatusHistory
 } from "../types";
 
 interface ApiEnvelope<T> {
     success?: boolean;
     data?: T;
+    original?: LotTransfer;
     totalCount?: number;
     preview?: LotTransferPreview;
     idempotent?: boolean;
@@ -123,6 +126,26 @@ export async function fetchLotTransfer(id: number): Promise<LotTransfer> {
     return unwrap(payload);
 }
 
+export async function fetchLotTransferStatusHistory(id: number): Promise<LotTransferStatusHistory[]> {
+    const payload = await requestJson<ApiEnvelope<LotTransferStatusHistory[]>>(`/api/manufacturing/lot-transfers/${id}/status-history`);
+    const rows = unwrap(payload);
+    return (Array.isArray(rows) ? rows : []).map((row) => {
+        const raw = row as unknown as Record<string, unknown>;
+        const oldStatus = raw.oldStatus ?? raw.old_status;
+        const newStatus = raw.newStatus ?? raw.new_status;
+        return {
+            id: numberValue(row.id ?? raw.lot_transfer_status_history_id),
+            lotTransferId: numberValue(row.lotTransferId ?? raw.lot_transfer_id),
+            oldStatus: typeof oldStatus === "string" && oldStatus ? oldStatus as LotTransferStatus : null,
+            newStatus: String(newStatus || "Draft") as LotTransferStatus,
+            changedBy: numberValue(row.changedBy ?? raw.changed_by) || null,
+            changedByName: stringValue(row.changedByName ?? raw.changed_by_name) || null,
+            changedAt: stringValue(row.changedAt ?? raw.changed_at),
+            remarks: stringValue(row.remarks)
+        };
+    }).filter((row) => row.id > 0 && row.lotTransferId === id && row.changedAt && row.newStatus);
+}
+
 export async function createLotTransfer(form: LotTransferForm): Promise<LotTransfer> {
     const payload = await requestJson<ApiEnvelope<LotTransfer>>("/api/manufacturing/lot-transfers", {
         method: "POST",
@@ -157,8 +180,8 @@ function toPayload(form: LotTransferForm) {
             productId: Number(detail.productId),
             sourceInventoryLotId: Number(detail.sourceInventoryLotId),
             sourceBatchNo: detail.sourceBatchNo,
-            targetInventoryLotId: Number(detail.targetInventoryLotId),
-            targetBatchNo: detail.targetBatchNo,
+            ...(Number(detail.targetInventoryLotId) > 0 ? { targetInventoryLotId: Number(detail.targetInventoryLotId) } : {}),
+            ...(detail.targetBatchNo.trim() ? { targetBatchNo: detail.targetBatchNo.trim() } : {}),
             quantity: Number(detail.quantity),
             lineRemarks: detail.lineRemarks
         }))
@@ -233,6 +256,26 @@ export async function cancelLotTransfer(id: number, cancellationReason: string):
         body: JSON.stringify({ cancellationReason })
     });
     return unwrap(payload);
+}
+
+export async function reverseLotTransfer(id: number, reversalReason: string): Promise<{ transfer: LotTransfer; original: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
+    const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `lot-transfer-reversal-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/reverse`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify({ reversalReason, idempotencyKey })
+    });
+    if (!payload.data || !payload.original || !payload.preview) {
+        throw new Error("Reversal response did not include the original and reversal audit results.");
+    }
+    return {
+        transfer: payload.data,
+        original: payload.original,
+        preview: payload.preview,
+        idempotent: Boolean(payload.idempotent)
+    };
 }
 
 export async function fetchProducts(): Promise<ProductOption[]> {

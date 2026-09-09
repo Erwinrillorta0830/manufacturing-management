@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { LotTransferError } from "./_domain";
+import { LotTransferError } from "./_errors";
 
 export async function readJson(request: Request): Promise<unknown> {
     try {

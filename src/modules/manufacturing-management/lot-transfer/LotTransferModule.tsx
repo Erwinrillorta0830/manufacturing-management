@@ -15,6 +15,7 @@ import {
     Send,
     ShieldCheck,
     Trash2,
+    Undo2,
     Upload,
     XCircle
 } from "lucide-react";
@@ -22,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
-import type { BatchOption, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus } from "./types";
+import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
 
 interface LotTransferModuleProps {
     mode: LotTransferMode;
@@ -63,6 +64,12 @@ function formatDate(value: string | null | undefined) {
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
+function formatDateTime(value: string | null | undefined) {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
     if (!unitId) return "Not recorded";
     return lots.find((lot) => lot.uomId === unitId)?.uomName || `UOM #${unitId}`;
@@ -73,6 +80,7 @@ function statusClass(status: string) {
     if (status === "Approved") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     if (status === "Rejected") return "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300";
     if (status === "Cancelled") return "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200";
+    if (status === "Reversed") return "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300";
     if (status === "Submitted") return "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300";
     return "bg-muted text-muted-foreground";
 }
@@ -83,6 +91,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function canCancelTransfer(status: LotTransferStatus) {
     return status === "Draft" || status === "Submitted" || status === "Approved" || status === "Rejected";
+}
+
+function canReverseTransfer(record: LotTransferController["records"][number]) {
+    return record.status === "Posted" && !record.linkedReversalId;
 }
 
 function CancelTransferAction({
@@ -141,6 +153,63 @@ function CancelTransferAction({
     </>;
 }
 
+function ReverseTransferAction({
+    controller,
+    record,
+    onSuccess
+}: {
+    controller: LotTransferController;
+    record: LotTransferController["records"][number];
+    onSuccess?: () => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const [reason, setReason] = useState("");
+    const [localError, setLocalError] = useState<string | null>(null);
+
+    if (!canReverseTransfer(record)) return null;
+
+    const handleReverse = async () => {
+        const cleanReason = reason.trim();
+        if (!cleanReason) {
+            setLocalError("A reversal reason is required.");
+            return;
+        }
+        setLocalError(null);
+        const reversed = await controller.reverse(record.id, cleanReason);
+        if (!reversed) {
+            setLocalError("The transfer could not be reversed. Review the page error and retry if appropriate.");
+            return;
+        }
+        setReason("");
+        setOpen(false);
+        onSuccess?.();
+    };
+
+    return <>
+        <Button type="button" variant="outline" size="sm" onClick={() => { setLocalError(null); setOpen(true); }} disabled={controller.isActionLoading}>
+            <Undo2 />Reverse transfer
+        </Button>
+        <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) { setReason(""); setLocalError(null); } }}>
+            <DialogContent className="max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>Reverse {record.requestNo}?</DialogTitle>
+                    <DialogDescription>The posted transfer remains immutable. This creates one linked Reversed record with compensating movements from the posted destination back to the posted source.</DialogDescription>
+                </DialogHeader>
+                {localError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{localError}</div>}
+                <label>
+                    <FieldLabel required>Reversal reason</FieldLabel>
+                    <textarea className={textAreaClassName} value={reason} onChange={(event) => setReason(event.currentTarget.value)} maxLength={5000} placeholder="Explain why the posted transfer must be fully reversed..." />
+                </label>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">The server revalidates destination availability, source capacity, UOM, QA, and every original movement pair before posting the reversal.</div>
+                <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={controller.isActionLoading}>Keep posted</Button>
+                    <Button type="button" onClick={() => void handleReverse()} disabled={controller.isActionLoading}><Undo2 />{controller.isActionLoading ? "Reversing..." : "Reverse transfer"}</Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    </>;
+}
+
 function FieldLabel({ children, required = false }: { children: ReactNode; required?: boolean }) {
     return <span className="mb-1.5 block text-xs font-semibold text-muted-foreground">{children}{required ? " *" : ""}</span>;
 }
@@ -186,12 +255,94 @@ function LineSummary({ record, controller }: { record: LotTransferController["re
     </div>;
 }
 
+function DestinationBatchAudit({ record }: { record: LotTransferController["records"][number] }) {
+    if (record.status !== "Posted" && record.status !== "Reversed") return null;
+
+    const lines = record.details.length > 0
+        ? record.details.map((detail) => ({
+            lineNo: detail.lineNo,
+            batchNo: detail.targetBatchNo,
+            inventoryLotId: detail.targetInventoryLotId,
+            action: detail.destinationBatchAction
+        }))
+        : [{
+            lineNo: 1,
+            batchNo: record.targetBatchNo,
+            inventoryLotId: record.targetInventoryLotId,
+            action: null
+        }];
+
+    return (
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-sm dark:border-blue-900 dark:bg-blue-950/20" aria-label="Destination batch resolution audit">
+            <strong>Destination batch resolution</strong>
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {lines.map((line) => {
+                    const actionLabel = line.action === "CREATE"
+                        ? "Created on posting"
+                        : line.action === "MERGE"
+                            ? "Merged into existing batch"
+                            : "Resolution action not recorded";
+                    return <p key={line.lineNo}><span className="font-semibold text-foreground">Line {line.lineNo}:</span> {line.batchNo || "-"} · Inventory-lot ID {line.inventoryLotId || "-"} · {actionLabel}</p>;
+                })}
+            </div>
+        </div>
+    );
+}
+
+function DestinationBatchPlan({ preview }: { preview: LotTransferController["preview"] }) {
+    if (!preview) return null;
+    return (
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3 text-sm dark:border-blue-900 dark:bg-blue-950/20" aria-label="Destination batch resolution plan">
+            <strong>Destination batch resolution plan</strong>
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {preview.linePreviews.map((line) => {
+                    const action: DestinationBatchResolutionAction = line.destinationBatchResolution.action;
+                    return <p key={line.lineNo}><span className="font-semibold text-foreground">Line {line.lineNo}:</span> {line.destinationBatchResolution.batchNo || "-"} · {action === "CREATE" ? "Create on posting" : "Merge existing batch"}{line.destinationBatchResolution.inventoryLotId ? ` · Existing inventory-lot ID ${line.destinationBatchResolution.inventoryLotId}` : ""}</p>;
+                })}
+            </div>
+        </div>
+    );
+}
+
 function ErrorBanner({ message }: { message: string | null }) {
     if (!message) return null;
     return (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{message}</span>
+        </div>
+    );
+}
+
+function StatusHistoryTimeline({ controller, record }: { controller: LotTransferController; record: LotTransferController["records"][number] }) {
+    const renderEntry = (entry: LotTransferStatusHistory) => (
+        <li key={entry.id} className="rounded-lg border bg-background p-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+                <StatusBadge status={entry.oldStatus || "Created"} />
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                <StatusBadge status={entry.newStatus} />
+            </div>
+            <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-[auto_1fr] sm:gap-x-3">
+                <span>Changed by</span><strong className="text-foreground">{entry.changedByName || entry.changedBy || "System"}</strong>
+                <span>Changed at</span><strong className="text-foreground">{formatDateTime(entry.changedAt)}</strong>
+                <span>Remarks</span><span className="whitespace-pre-wrap text-foreground">{entry.remarks || "-"}</span>
+            </div>
+        </li>
+    );
+
+    return (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Status-change history">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-semibold">Status-change history</h3>
+                    <p className="text-xs text-muted-foreground">Append-only lifecycle events for this transfer.</p>
+                </div>
+                {controller.statusHistoryError && <Button type="button" variant="outline" size="sm" onClick={() => void controller.loadStatusHistory(record.id)} disabled={controller.statusHistoryLoading}>Retry</Button>}
+            </div>
+            {controller.statusHistoryLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading status history...</p>
+                : controller.statusHistoryError ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{controller.statusHistoryError}</p>
+                    : controller.statusHistory.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No status history is available.</p>
+                        : <ol className="mt-3 space-y-2">{controller.statusHistory.map(renderEntry)}</ol>}
         </div>
     );
 }
@@ -361,19 +512,18 @@ function RequestEditor({ controller, onClose }: { controller: LotTransferControl
                 <div className="space-y-3">
                     {form.details.map((detail, index) => {
                         const sourceRows = (controller.batchesByLot[Number(form.sourceLotId)] || []).filter((batch) => batch.productId === Number(detail.productId) && (batch.quantity > 0 || String(batch.batchId) === detail.sourceInventoryLotId));
-                        const targetRows = (controller.batchesByLot[Number(form.targetLotId)] || []).filter((batch) => batch.productId === Number(detail.productId) && (batch.status.toUpperCase() === "ACTIVE" || String(batch.batchId) === detail.targetInventoryLotId));
                         const sourceBatch = sourceRows.find((batch) => String(batch.batchId) === detail.sourceInventoryLotId);
-                        const targetBatch = targetRows.find((batch) => String(batch.batchId) === detail.targetInventoryLotId);
                         const linePreview = controller.preview?.linePreviews.find((line) => line.lineNo === detail.lineNo);
+                        const destinationResolution = linePreview?.destinationBatchResolution;
                         return <div key={detail.detailId || `new-${detail.lineNo}`} className="rounded-lg border bg-muted/10 p-3">
                             <div className="mb-3 flex items-center justify-between gap-2"><strong className="text-sm">Line {detail.lineNo}</strong><Button type="button" variant="ghost" size="sm" onClick={() => controller.removeDetail(index)} disabled={form.details.length === 1}><Trash2 />Remove</Button></div>
                             <div className="grid gap-3 lg:grid-cols-2">
                                 <label><FieldLabel required>Product</FieldLabel><LotTransferSearchableSelect value={detail.productId} onValueChange={(value) => controller.handleProductChange(value, index)} options={controller.products.map((product) => ({ value: String(product.productId), label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}` }))} placeholder="Select product..." className={selectClassName} /></label>
                                 <label><FieldLabel required>Quantity</FieldLabel><input className={inputClassName} type="number" min="0.000001" step="any" value={detail.quantity} onChange={(event) => controller.updateDetail(index, { quantity: event.currentTarget.value })} placeholder="Enter quantity" /></label>
                                 <label><FieldLabel required>Source batch</FieldLabel><BatchSelect batches={sourceRows} value={detail.sourceInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "source", value)} disabled={!form.sourceLotId || !detail.productId} source /></label>
-                                <label><FieldLabel required>Target batch</FieldLabel><BatchSelect batches={targetRows} value={detail.targetInventoryLotId} onChange={(value) => controller.handleBatchChange(index, "target", value)} disabled={!form.targetLotId || !detail.productId} source={false} /></label>
+                                <div className="rounded-md border bg-background px-3 py-2 text-sm"><FieldLabel>Destination batch</FieldLabel><strong>{destinationResolution?.batchNo || sourceBatch?.batchNumber || "Derived from source batch"}</strong><p className="mt-1 text-xs text-muted-foreground">{destinationResolution?.action === "MERGE" ? "Merge existing compatible batch on posting." : destinationResolution?.action === "CREATE" ? "Create this batch on posting." : "The server will match or create this batch during posting."}</p></div>
                             </div>
-                            {(sourceBatch || targetBatch || linePreview) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-4"><span>Source available<br /><strong>{formatQuantity(linePreview?.source.availableQuantity ?? sourceBatch?.quantity)}</strong></span><span>Target on hand<br /><strong>{formatQuantity(linePreview?.target.onHandBefore ?? targetBatch?.quantity)}</strong></span><span>Source expiry<br /><strong>{formatDate(linePreview?.source.expiryDate ?? sourceBatch?.expirationDate)}</strong></span><span>Target expiry<br /><strong>{formatDate(linePreview?.target.expiryDate ?? targetBatch?.expirationDate)}</strong></span></div>}
+                            {(sourceBatch || linePreview) && <div className="mt-3 grid gap-2 rounded-md bg-background p-2 text-xs sm:grid-cols-4"><span>Source available<br /><strong>{formatQuantity(linePreview?.source.availableQuantity ?? sourceBatch?.quantity)}</strong></span><span>Destination on hand<br /><strong>{formatQuantity(linePreview?.target.onHandBefore)}</strong></span><span>Source expiry<br /><strong>{formatDate(linePreview?.source.expiryDate ?? sourceBatch?.expirationDate)}</strong></span><span>Destination expiry<br /><strong>{formatDate(linePreview?.target.expiryDate ?? destinationResolution?.expiryDate)}</strong></span></div>}
                             <label className="mt-3 block"><FieldLabel>Line remarks</FieldLabel><textarea className={textAreaClassName} value={detail.lineRemarks} onChange={(event) => controller.updateDetail(index, { lineRemarks: event.currentTarget.value })} placeholder="Optional line-specific context..." /></label>
                             {linePreview && <div className="mt-3 space-y-1">{linePreview.checks.filter((check) => !check.passed).map((check) => <p key={check.key} role="alert" className="text-xs font-medium text-red-700 dark:text-red-300">{check.label}: {check.message}</p>)}</div>}
                         </div>;
@@ -479,6 +629,7 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
+                <DestinationBatchPlan preview={preview} />
                 <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source</p><strong>{lotLabel(record.sourceLotId, controller.lots)} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | Available: {formatQuantity(preview?.source.availableQuantity)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Expiry: {formatDate(preview?.source.expiryDate)}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target</p><strong>{lotLabel(record.targetLotId, controller.lots)} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Effective expiry: {formatDate(preview?.effectiveExpiryDate)}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">QA validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
@@ -517,11 +668,12 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDate(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
+                <DestinationBatchAudit record={record} />
                 <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Source OUT</p><strong>{lotLabel(record.sourceLotId, controller.lots)} | {record.sourceBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.source.onHandBefore)} | After: {formatQuantity(preview?.source.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.source} /><p className="text-xs">Movement: {record.sourceMovementId || "Not posted"}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-xs font-semibold text-muted-foreground">Target IN</p><strong>{lotLabel(record.targetLotId, controller.lots)} | {record.targetBatchNo}</strong><p className="mt-1 text-xs">Before: {formatQuantity(preview?.target.onHandBefore)} | After: {formatQuantity(preview?.target.onHandAfter)}</p><ProtectedAllocationBreakdown snapshot={preview?.target} /><p className="text-xs">Movement: {record.targetMovementId || "Not posted"}</p></div></div>
                 <div className="mt-4"><h3 className="mb-2 text-sm font-semibold">Posting validation</h3><Checks preview={preview} /></div>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p></div>
                 {notice && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
-                <div className="mt-4 flex justify-end gap-2"><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
+                <div className="mt-4 flex justify-end gap-2"><ReverseTransferAction controller={controller} record={record} /><CancelTransferAction controller={controller} record={record} />{record.status === "Approved" && <Button type="button" onClick={() => void handlePost()} disabled={controller.isActionLoading || !preview?.canPost}><Upload />Post transfer</Button>}</div>
             </>}
         </section>
     );
@@ -547,7 +699,7 @@ function SummaryReportFilters({ controller }: { controller: LotTransferControlle
     const { reportFilters } = controller;
     const allStatusesSelected = reportFilters.statuses.length === 0;
     const setFilter = controller.setReportFilter;
-    const statusOptions: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled"];
+    const statusOptions: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"];
     const productOptions = controller.products.map((product) => ({
         value: String(product.productId),
         label: `${product.productName}${product.skuCode ? ` | ${product.skuCode}` : ""}`
@@ -628,7 +780,55 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
     const record = controller.selectedRecord;
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
-            {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <><div className="mb-4 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-audit-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Read-only audit details</p></div><StatusBadge status={record.status} /></div><LineSummary record={record} controller={controller} /><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-xs text-muted-foreground">Transfer date</dt><dd className="font-semibold">{formatDate(record.transferDate)}</dd></div><div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div><div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div><div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div><div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div><div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDate(record.cancelledAt)}</dd></div><div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>{record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}</dl><div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm"><strong>Reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>{record.rejectionReason && <><strong className="mt-3 block">Rejection reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.rejectionReason}</p></>}{record.cancellationReason && <><strong className="mt-3 block">Cancellation reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.cancellationReason}</p></>}{record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}</div>{allowCancel && <div className="mt-4 flex justify-end"><CancelTransferAction controller={controller} record={record} /></div>}</>}
+            {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                        <h2 id="lot-transfer-audit-heading" className="font-semibold">{record.requestNo}</h2>
+                        <p className="text-xs text-muted-foreground">Read-only audit details</p>
+                    </div>
+                    <StatusBadge status={record.status} />
+                </div>
+                {record.reversalOfId !== null && <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-200">
+                    This is a linked reversal of transfer #{record.reversalOfId}. The compensating movements are shown below.
+                </div>}
+                {record.linkedReversalId !== null && <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-200">
+                    Reversed by {record.linkedReversalRequestNo || `transfer #${record.linkedReversalId}`} ({record.linkedReversalStatus || "Reversal pending"}).
+                </div>}
+                <LineSummary record={record} controller={controller} />
+                <DestinationBatchAudit record={record} />
+                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div><dt className="text-xs text-muted-foreground">Transfer date</dt><dd className="font-semibold">{formatDate(record.transferDate)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">UOM</dt><dd className="font-semibold">{uomLabel(record.unitId, controller.lots)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Source movement</dt><dd className="font-semibold">{record.sourceMovementId || "Not posted"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Target movement</dt><dd className="font-semibold">{record.targetMovementId || "Not posted"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Source balance</dt><dd>{formatQuantity(record.sourceBalanceBefore)} -&gt; {formatQuantity(record.sourceBalanceAfter)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDate(record.cancelledAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>
+                    {record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDate(record.reversedAt)}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{record.reversedByName || record.reversedBy || "System"}</dd></div>}
+                </dl>
+                <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
+                    <strong>Reason</strong>
+                    <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>
+                    {record.rejectionReason && <><strong className="mt-3 block">Rejection reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.rejectionReason}</p></>}
+                    {record.cancellationReason && <><strong className="mt-3 block">Cancellation reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.cancellationReason}</p></>}
+                    {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
+                    {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
+                </div>
+                <StatusHistoryTimeline controller={controller} record={record} />
+                <div className="mt-4 flex justify-end gap-2">
+                    <ReverseTransferAction controller={controller} record={record} />
+                    {allowCancel && <CancelTransferAction controller={controller} record={record} />}
+                </div>
+            </>}
         </section>
     );
 }
@@ -715,7 +915,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                 <DialogContent className="max-h-[90vh] w-[95vw] overflow-y-auto sm:w-[90vw] sm:max-w-6xl">
                     <DialogHeader>
                         <DialogTitle>Lot transfer request</DialogTitle>
-                        <DialogDescription>Enter the source and target batch details, then save the request before submitting it for QA approval.</DialogDescription>
+                        <DialogDescription>Select the source batch and save the request; the destination batch is matched or created when the transfer is posted.</DialogDescription>
                     </DialogHeader>
                     <RequestEditor controller={controller} onClose={closeRequestDialog} />
                 </DialogContent>
