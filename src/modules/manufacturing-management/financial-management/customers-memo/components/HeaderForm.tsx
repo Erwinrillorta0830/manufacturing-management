@@ -12,13 +12,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface HeaderFormProps {
-    suppliers: Supplier[];
+    suppliers?: Supplier[];
     customers: Customer[];
     salesmen: Salesman[];
     coas: ChartOfAccount[];
 
-    selectedSupplier: string;
-    onSupplierChange: (val: string) => void;
+    selectedSupplier?: string;
+    onSupplierChange?: (val: string) => void;
 
     selectedCustomer: string;
     onCustomerChange: (val: string) => void;
@@ -44,8 +44,7 @@ interface HeaderFormProps {
 }
 
 export const HeaderForm = React.memo(function HeaderForm({
-    suppliers, customers, salesmen, coas,
-    selectedSupplier, onSupplierChange,
+    customers, salesmen, coas,
     selectedCustomer, onCustomerChange,
     selectedSalesman, onSalesmanChange,
     selectedCOA, onCOAChange,
@@ -55,10 +54,6 @@ export const HeaderForm = React.memo(function HeaderForm({
     reason, onReasonChange,
 }: HeaderFormProps) {
     // Memoize options for search performance
-    const supplierOptions = useMemo(() =>
-        suppliers.map(s => ({ value: String(s.id), label: s.supplier_name })),
-        [suppliers]);
-
     const customerOptions = useMemo(() =>
         customers.map(c => {
             const address = [c.brgy, c.city].filter(Boolean).join(", ");
@@ -129,16 +124,6 @@ export const HeaderForm = React.memo(function HeaderForm({
                     {/* Primary Relations */}
                     <div className="space-y-6">
                         <div className="space-y-1.5">
-                            <Label htmlFor="supplier" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Supplier Relationship <span className="text-red-500">*</span></Label>
-                            <SearchableSelect
-                                options={supplierOptions}
-                                value={selectedSupplier}
-                                onValueChange={onSupplierChange}
-                                placeholder="Select Supplier..."
-                            />
-                        </div>
-
-                        <div className="space-y-1.5">
                             <Label htmlFor="customer" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Target Customer <span className="text-red-500">*</span></Label>
                             <SearchableSelect
                                 options={customerOptions}
@@ -192,11 +177,12 @@ export const HeaderForm = React.memo(function HeaderForm({
                                 placeholder="Select GL Account..."
                             />
                         </div>
+                    </div>
 
-                        <div className="space-y-1.5">
-                            <Label htmlFor="reason" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Reason / Description</Label>
-                            <Input id="reason" className="h-10 text-xs" placeholder="Describe the purpose of this memo..." value={reason} onChange={e => onReasonChange(e.target.value)} />
-                        </div>
+                    {/* Reason / Description Bottom Row */}
+                    <div className="md:col-span-2 space-y-1.5 pt-2 border-t border-muted/50">
+                        <Label htmlFor="reason" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/70">Reason / Description</Label>
+                        <Input id="reason" className="h-10 text-xs" placeholder="Describe the purpose of this memo..." value={reason} onChange={e => onReasonChange(e.target.value)} />
                     </div>
                 </div>
             </CardContent>

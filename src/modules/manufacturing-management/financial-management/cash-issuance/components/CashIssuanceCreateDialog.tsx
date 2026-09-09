@@ -15,8 +15,7 @@ import {
 } from "../types";
 import { disbursementProvider } from "../providers/fetchProvider";
 import { toast } from "sonner";
-import { AddPayeeModal } from "@/modules/manufacturing-management/financial-management/payee-registration/components/modals/add-payee-modal";
-import type { Payee } from "@/modules/manufacturing-management/financial-management/payee-registration/types/payee.schema";
+import { AddPayeeModal } from "./modals/add-payee-modal";
 import { formatCurrency } from "../utils/disbursement-utils";
 import { VoucherDetailsSection } from "./VoucherDetailsSection";
 import { PayablesSection } from "./PayablesSection";
@@ -100,7 +99,7 @@ export function CashIssuanceCreateDialog({
     const [payments, setPayments] = useState<PaymentLine[]>([]);
     const [banks, setBanks] = useState<BankAccountDto[]>([]);
     const [paymentValidationErrors, setPaymentValidationErrors] = useState<Set<string>>(new Set());
-    const [payableValidationErrors, setPayableValidationErrors] = useState<Set<string>>(new Set());
+    const [, setPayableValidationErrors] = useState<Set<string>>(new Set());
 
     const [suppliers, setSuppliers] = useState<SupplierDto[]>([]);
     const [coas, setCoas] = useState<COADto[]>([]);
@@ -127,7 +126,7 @@ export function CashIssuanceCreateDialog({
     const [departmentId, setDepartmentId] = useState<number | "">("");
     const [supportingDocumentsUrl, setSupportingDocumentsUrl] = useState("");
     const [uploadingFile, setUploadingFile] = useState(false);
-    const [divisions, setDivisions] = useState<DivisionDto[]>([]);
+    const [, setDivisions] = useState<DivisionDto[]>([]);
     const [departments, setDepartments] = useState<DepartmentDto[]>([]);
 
     const [poSearchQuery, setPoSearchQuery] = useState("");
@@ -215,6 +214,27 @@ export function CashIssuanceCreateDialog({
 
         return errors;
     }, [memos, payables]);
+
+    const existingPoReferences = useMemo(() => {
+        const refs = new Set<string>();
+        payables.forEach((p) => {
+            if (p.referenceNo) {
+                // referenceNo is usually `${po.poNo} / ${po.receiptNo}` or contains poNo
+                const parts = p.referenceNo.split(" / ");
+                parts.forEach((part) => refs.add(part.trim().toLowerCase()));
+            }
+        });
+        return refs;
+    }, [payables]);
+
+    const availableUnpaidPos = useMemo(() => {
+        return unpaidPos.filter((po) => {
+            const poNoLower = po.poNo.trim().toLowerCase();
+            const receiptNoLower = po.receiptNo ? po.receiptNo.trim().toLowerCase() : "";
+            const baseRefLower = `${poNoLower} / ${receiptNoLower}`;
+            return !existingPoReferences.has(poNoLower) && !existingPoReferences.has(baseRefLower);
+        });
+    }, [unpaidPos, existingPoReferences]);
 
     const isNonTradeVoucher = transactionTypeId === 2;
     const payeeSupplierType = isNonTradeVoucher ? "NON-TRADE" : "TRADE";
@@ -346,7 +366,7 @@ export function CashIssuanceCreateDialog({
         const requestId = memoRequestIdRef.current;
         setLoadingMemos(true);
 
-        disbursementProvider.getSupplierMemos(Number(payeeId), controller.signal)
+        disbursementProvider.getSupplierMemos(Number(payeeId), editData?.id, controller.signal)
             .then((fetchedMemos) => {
                 if (controller.signal.aborted || requestId !== memoRequestIdRef.current) return;
                 setMemos(fetchedMemos);
@@ -361,10 +381,11 @@ export function CashIssuanceCreateDialog({
             });
 
         return () => controller.abort();
-    }, [open, payeeId]);
+    }, [open, payeeId, editData?.id]);
 
     const handleAddPayable = useCallback(() => setPayables((prev) => [...prev, { referenceNo: "", date: today, amount: 0, remarks: "", divisionId: undefined }]), [today]);
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const handleDivisionSelect = useCallback((index: number, divisionId?: number) => {
         const nextPayables = [...payables];
         nextPayables[index] = { ...nextPayables[index], divisionId };
@@ -416,7 +437,7 @@ export function CashIssuanceCreateDialog({
         }));
     }, [memos]);
 
-    const handlePayeeCreated = useCallback(async (createdPayee?: Payee) => {
+    const handlePayeeCreated = useCallback(async (createdPayee?: SupplierDto) => {
         try {
             const refreshed = await disbursementProvider.getSuppliers(payeeSupplierType);
             const nextSuppliers = Array.isArray(refreshed) ? refreshed : [];
@@ -672,7 +693,7 @@ export function CashIssuanceCreateDialog({
 
     const paymentCoaOptions = useMemo(() => coas.filter(isPaymentCOA).map((coa) => ({
         value: coa.coaId,
-        label: `${coa.glCode || "NO-CODE"} - ${coa.accountTitle || "Unknown"}`,
+        label: coa.accountTitle || "Unknown",
     })), [coas]);
 
     const handleAddPayment = useCallback(() => {
@@ -757,20 +778,7 @@ export function CashIssuanceCreateDialog({
     };
 
     const validatePayables = () => {
-        const errors = new Set<string>();
-        const invalidRows: number[] = [];
-
-        payables.forEach((line, index) => {
-            if (!isPopulatedPayableLine(line) || isValidDivisionId(line.divisionId)) return;
-            errors.add(`${index}:divisionId`);
-            invalidRows.push(index + 1);
-        });
-
-        setPayableValidationErrors(errors);
-        if (invalidRows.length > 0) {
-            toast.error(`Cost Division is required on payable row${invalidRows.length === 1 ? "" : "s"} ${invalidRows.join(", ")}.`);
-            return false;
-        }
+        setPayableValidationErrors(new Set());
         return true;
     };
 
@@ -910,7 +918,6 @@ export function CashIssuanceCreateDialog({
                                     payables={payables}
                                     setPayables={setPayables}
                                     coas={coas}
-                                    divisions={divisions}
                                     isPayableOrExpenseCOA={isPayableOrExpenseCOA}
                                     totalAmount={totalAmount}
                                     payeeId={payeeId}
@@ -922,8 +929,6 @@ export function CashIssuanceCreateDialog({
                                     memoReferences={memoReferences}
                                     memoSupplierMismatchIndices={memoSupplierMismatchIndices}
                                     memoAmountErrors={memoAmountErrors}
-                                    divisionValidationErrors={payableValidationErrors}
-                                    onDivisionSelect={handleDivisionSelect}
                                     disabled={isPayablesLocked}
                                     isAddDisabled={!departmentId}
                                     fillHeight={!isPaymentEditorEnabled}
@@ -1026,7 +1031,7 @@ export function CashIssuanceCreateDialog({
                                         Records...</TableCell></TableRow>
                                 ) : poLoadError ? (
                                     handlePendingRecordsError
-                                ) : unpaidPos.filter(po =>
+                                ) : availableUnpaidPos.filter(po =>
                                     po.poNo.toLowerCase().includes(poSearchQuery.toLowerCase()) ||
                                     (po.receiptNo && po.receiptNo.toLowerCase().includes(poSearchQuery.toLowerCase()))
                                 ).length === 0 ? (
@@ -1034,7 +1039,7 @@ export function CashIssuanceCreateDialog({
                                         className="h-24 text-center text-sm font-medium text-muted-foreground">No
                                         matching records found.</TableCell></TableRow>
                                 ) : (
-                                    unpaidPos.filter(po =>
+                                    availableUnpaidPos.filter(po =>
                                         po.poNo.toLowerCase().includes(poSearchQuery.toLowerCase()) ||
                                         (po.receiptNo && po.receiptNo.toLowerCase().includes(poSearchQuery.toLowerCase()))
                                     ).map(po => (

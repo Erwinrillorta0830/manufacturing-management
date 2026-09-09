@@ -10,7 +10,7 @@ import { CashIssuanceDashboardTab } from "./components/CashIssuanceDashboardTab"
 import { Disbursement } from "./types";
 import { disbursementProvider } from "./providers/fetchProvider";
 import { SearchableDropdown } from "./components/SearchableDropdown";
-import { AddPayeeModal } from "@/modules/manufacturing-management/financial-management/payee-registration/components/modals/add-payee-modal";
+import { AddPayeeModal } from "./components/modals/add-payee-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

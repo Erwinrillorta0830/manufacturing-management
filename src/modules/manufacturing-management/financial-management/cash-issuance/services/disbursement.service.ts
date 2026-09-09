@@ -38,8 +38,8 @@ import {
 } from "@/app/api/manufacturing/financial-management/cash-issuance/disbursements/_payable-split-integrity";
 import { acquireMemoCapLock, validateSupplierMemoCaps, refreshSupplierMemoStatuses } from "@/app/api/manufacturing/financial-management/cash-issuance/disbursements/_memo-cap-integrity";
 import { isPettyCashBankAccount, validatePaymentLine } from "@/app/api/manufacturing/financial-management/cash-issuance/disbursements/_payment-method";
-import { findMissingPayableDateError } from "./disbursement.helpers";
 import { isPaymentAllocationScope, resolveDisbursementUpdateStatus } from "@/modules/manufacturing-management/financial-management/cash-issuance/utils/update-scope";
+import { getNowInPhtISO } from "../utils/pht-time";
 
 function normalizePage(value: string | null) {
     const parsed = Number(value);
@@ -183,34 +183,32 @@ export class DisbursementService {
         try {
             const transactionTypeId = Number(body.transactionTypeId) as 1 | 2;
             if (transactionTypeId !== 1 && transactionTypeId !== 2) throw new Error("Transaction Type must be Trade (1) or Non-Trade (2).");
-            
+
             const requestedPayables = (body.payables || []) as PayableInput[];
             const requestedPayments = (body.payments || []) as PaymentInput[];
             const missingPrincipalDivisionError = findMissingVatPrincipalDivisionError(requestedPayables);
             if (missingPrincipalDivisionError) throw new Error(missingPrincipalDivisionError);
-            
+
             const normalizedPayables = normalizeVatSplitDivisions(requestedPayables);
             const payableLinesInput = normalizedPayables.filter((line) =>
                 !!line.coaId || (line.amount != null && Number(line.amount) !== 0) || (line.referenceNo && line.referenceNo.trim() !== "")
             );
-            
+
             const missingPayableDivisionError = findMissingPayableDivisionError(payableLinesInput);
             if (missingPayableDivisionError) throw new Error(missingPayableDivisionError);
-            
-            const missingPayableDateError = findMissingPayableDateError(payableLinesInput);
-            if (missingPayableDateError) throw new Error(missingPayableDateError);
-            
+
+
             const paymentLinesInput = requestedPayments.filter((line) =>
                 !!line.coaId || (line.amount != null && Number(line.amount) !== 0) || (line.checkNo != null && String(line.checkNo).trim() !== "")
             );
-            
+
             const [coaMap, bankMap] = await Promise.all([getCoaMap(), getBankMap()]);
             for (let index = 0; index < paymentLinesInput.length; index++) {
                 const line = paymentLinesInput[index];
                 const validationError = validatePaymentLine(line, coaMap.get(Number(line.coaId)), bankMap.get(Number(line.bankId)));
                 if (validationError) throw new Error(`Payment row ${index + 1} is invalid: ${validationError}`);
             }
-            
+
             const normalizedPaymentLines = paymentLinesInput.map((line) =>
                 isPettyCashBankAccount(bankMap.get(Number(line.bankId))) ? { ...line, checkNo: "" } : line
             );
@@ -243,6 +241,7 @@ export class DisbursementService {
 
             releaseDocumentNumberLock = await acquireDocumentNumberLock(transactionTypeId);
             let createRes: { data: DisbursementRow } | undefined;
+            const nowPhtISO = getNowInPhtISO();
             for (let attempt = 0; attempt < 16; attempt++) {
                 const docNoForCreation = await findNextAvailableDocumentNumber(transactionTypeId, directusFetch);
                 const headerPayload = {
@@ -253,6 +252,8 @@ export class DisbursementService {
                     fund_source_id: body.fundSourceId ? Number(body.fundSourceId) : null,
                     supporting_documents_url: cleanSupportingDocsUrl(body.supportingDocumentsUrl),
                     status: "Draft", approver_id: null, date_approved: null,
+                    date_created: nowPhtISO,
+                    date_updated: nowPhtISO,
                 };
                 try {
                     createRes = await directusFetch<{ data: DisbursementRow }>("/items/disbursement", { method: "POST", body: JSON.stringify(headerPayload) });
@@ -271,14 +272,16 @@ export class DisbursementService {
             const payableLines = payableLinesInput.map((line) => ({
                 disbursement_id: persistedId, division_id: line.divisionId ? Number(line.divisionId) : null,
                 reference_no: line.referenceNo || "", date: line.date, coa_id: line.coaId ? Number(line.coaId) : null,
-                amount: Number(line.amount) || 0, remarks: line.remarks || ""
+                amount: Number(line.amount) || 0, remarks: line.remarks || "",
+                date_created: nowPhtISO,
             }));
 
             const paymentLines = normalizedPaymentLines.map((line) => {
                 const payload: Record<string, unknown> = {
                     disbursement_id: persistedId, coa_id: line.coaId ? Number(line.coaId) : null,
                     bank_id: line.bankId ? Number(line.bankId) : null, check_no: line.checkNo || "",
-                    date: line.date, amount: Number(line.amount) || 0, remarks: line.remarks || ""
+                    date: line.date, amount: Number(line.amount) || 0, remarks: line.remarks || "",
+                    date_created: nowPhtISO,
                 };
                 if (line.releasedDate != null && line.releasedDate !== "") payload.released_date = line.releasedDate;
                 return payload;
@@ -321,7 +324,7 @@ export class DisbursementService {
         let releaseMemoCapLock: (() => void) | undefined;
         try {
             const isPaymentAllocationUpdate = isPaymentAllocationScope(body.scope || "");
-            
+
             if (isPaymentAllocationUpdate) {
                 const unexpectedFields = [
                     "docNo", "transactionTypeId", "payeeId", "remarks", "totalAmount",
@@ -354,8 +357,6 @@ export class DisbursementService {
             const missingPayableDivisionError = isPaymentAllocationUpdate ? null : findMissingPayableDivisionError(payableLinesInput);
             if (missingPayableDivisionError) throw new Error(missingPayableDivisionError);
 
-            const missingPayableDateError = isPaymentAllocationUpdate ? null : findMissingPayableDateError(payableLinesInput);
-            if (missingPayableDateError) throw new Error(missingPayableDateError);
 
             const paymentLinesInput = hasPaymentPatch ? requestedPayments.filter((line) =>
                 !!line.coaId || (line.amount != null && Number(line.amount) !== 0) || (line.checkNo != null && String(line.checkNo).trim() !== "")
@@ -375,7 +376,7 @@ export class DisbursementService {
             const currentDisReq = await directusFetch<{ data: DisbursementRow }>(`/items/disbursement/${id}`);
             if (!currentDisReq?.data) throw new Error("Disbursement not found");
             const currentDis = currentDisReq.data;
-            
+
             const transactionTypeId = requestedTransactionTypeId ?? resolveTransactionTypeId(currentDis.transaction_type, currentDis.doc_no);
             if (transactionTypeId === null) throw new Error("Transaction Type is missing. Repair the voucher before updating it.");
             if (currentDis.status === "Submitted") throw new Error("Submitted vouchers are locked and cannot be edited.");
@@ -387,7 +388,7 @@ export class DisbursementService {
             const currentLineItems = await getLineItems([id]);
             const currentPayables = currentLineItems.payables.get(id) || [];
             const currentPayments = currentLineItems.payments.get(id) || [];
-            
+
             const currentPayeeId = currentDis.payee && typeof currentDis.payee === "object" && "id" in currentDis.payee
                 ? Number(currentDis.payee.id)
                 : Number(currentDis.payee);
@@ -400,7 +401,7 @@ export class DisbursementService {
                 }
                 const effectivePaymentTotal = normalizedPaymentLines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
                 const currentTotalAmount = Number(currentDis.total_amount) || 0;
-                
+
                 if (effectivePaymentTotal > currentTotalAmount + 0.01) {
                     throw new Error(`Payments total ${effectivePaymentTotal.toFixed(2)} exceeds voucher total ${currentTotalAmount.toFixed(2)}.`);
                 }
@@ -410,9 +411,11 @@ export class DisbursementService {
                     await directusFetch("/items/disbursement_payments", { method: "DELETE", body: JSON.stringify(paymentIds) });
                 }
 
+                const paymentAllocationNowPhtISO = getNowInPhtISO();
                 const paymentLines = normalizedPaymentLines.map(line => ({
                     disbursement_id: id, coa_id: line.coaId ? Number(line.coaId) : null, bank_id: line.bankId ? Number(line.bankId) : null,
                     check_no: line.checkNo || "", date: line.date, amount: Number(line.amount) || 0, remarks: line.remarks || "",
+                    date_created: paymentAllocationNowPhtISO,
                     ...(line.releasedDate != null && line.releasedDate !== "" ? { released_date: line.releasedDate } : {}),
                 }));
 
@@ -437,7 +440,7 @@ export class DisbursementService {
                     })),
                     payments: normalizedPaymentLines,
                 });
-                
+
                 const actualCanonical = canonicalizePersistedDisbursement(currentDis, verifiedPaymentItems.payables.get(id) || [], verifiedPaymentItems.payments.get(id) || []);
                 if (actualCanonical !== expectedCanonical) throw new Error("Payment allocation update failed integrity verification.");
 
@@ -532,6 +535,7 @@ export class DisbursementService {
             }
 
             const calculatedPaidAmount = effectivePaymentLines.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+            const updateNowPhtISO = getNowInPhtISO();
 
             const headerPayload = {
                 transaction_type: transactionTypeId, payee: Number(body.payeeId), remarks: body.remarks || "",
@@ -540,6 +544,7 @@ export class DisbursementService {
                 fund_source_id: body.fundSourceId ? Number(body.fundSourceId) : null,
                 supporting_documents_url: cleanSupportingDocsUrl(body.supportingDocumentsUrl), status: newStatus,
                 approver_id: approverId, date_approved: dateApproved,
+                date_updated: updateNowPhtISO,
             };
 
             const updateRes = await directusFetch<{ data: DisbursementRow }>(`/items/disbursement/${id}`, {
@@ -550,7 +555,8 @@ export class DisbursementService {
             const payableLines = normalizedPayables.filter((line) => !!line.coaId || (line.amount != null && Number(line.amount) !== 0) || (line.referenceNo && line.referenceNo.trim() !== ""))
                 .map((line) => ({
                     disbursement_id: id, division_id: line.divisionId ? Number(line.divisionId) : null, reference_no: line.referenceNo || "",
-                    date: line.date, coa_id: line.coaId ? Number(line.coaId) : null, amount: Number(line.amount) || 0, remarks: line.remarks || ""
+                    date: line.date, coa_id: line.coaId ? Number(line.coaId) : null, amount: Number(line.amount) || 0, remarks: line.remarks || "",
+                    date_created: updateNowPhtISO,
                 }));
 
             const paymentLines = hasPaymentPatch ? normalizedPaymentLines
@@ -558,7 +564,8 @@ export class DisbursementService {
                 .map((line) => {
                     const payload: Record<string, unknown> = {
                         disbursement_id: id, coa_id: line.coaId ? Number(line.coaId) : null, bank_id: line.bankId ? Number(line.bankId) : null,
-                        check_no: line.checkNo || "", date: line.date, amount: Number(line.amount) || 0, remarks: line.remarks || ""
+                        check_no: line.checkNo || "", date: line.date, amount: Number(line.amount) || 0, remarks: line.remarks || "",
+                        date_created: updateNowPhtISO,
                     };
                     if (line.releasedDate != null && line.releasedDate !== "") payload.released_date = line.releasedDate;
                     return payload;
@@ -598,7 +605,7 @@ export class DisbursementService {
 
         await directusFetch(`/items/disbursement/${id}`, {
             method: "PATCH",
-            body: JSON.stringify({ is_deleted: 1, deleted_at: new Date().toISOString(), deleted_by: currentUserId, status: "Deleted" })
+            body: JSON.stringify({ is_deleted: 1, deleted_at: getNowInPhtISO(), deleted_by: currentUserId, status: "Deleted" })
         });
 
         if (memoPayeeId) {

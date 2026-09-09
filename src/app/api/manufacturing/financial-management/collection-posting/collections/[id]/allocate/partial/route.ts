@@ -13,12 +13,13 @@ if (DIRECTUS_STATIC_TOKEN) {
 async function deleteByCollectionId(collectionName: string, id: string) {
     // 1. Fetch existing IDs matching the collection_id
     const getRes = await fetch(`${DIRECTUS_URL}/items/${collectionName}?filter[collection_id][_eq]=${id}&fields=id`, {
-        headers
+        headers,
+        cache: "no-store"
     });
     if (!getRes.ok) return;
     
     const data = await getRes.json();
-    const ids = data.data?.map((item: Record<string, unknown>) => item.id) || [];
+    const ids = (data.data || []).map((item: Record<string, unknown>) => item.id).filter(Boolean);
     
     // 2. Delete if IDs exist
     if (ids.length > 0) {
@@ -110,12 +111,16 @@ export async function POST(
             }
         }
 
+        // Collect and aggregate RETURN allocations by (return_no, invoice_no) to satisfy UNIQUE constraint
+        const returnAmountMap = new Map<string, { returnNo: number; invoiceNo: number; amount: number }>();
+        const memoAmountMap = new Map<number, number>();
+
         for (const alloc of allocations) {
             if (alloc.amountApplied <= 0) continue; // Skip zero allocations
 
             const type = alloc.allocationType;
 
-            if (["CASH", "CHECK", "ADJUSTMENT", "EWT"].includes(type)) {
+            if (["CASH", "CHECK", "ADJUSTMENT", "EWT", "MEMO"].includes(type)) {
                 invoicesPayload.push({
                     collection_id: id,
                     invoice_id: alloc.invoiceId,
@@ -123,27 +128,46 @@ export async function POST(
                     type: type,
                     source_temp_id: tempIdToDbIdMap[alloc.sourceTempId] || alloc.sourceTempId
                 });
-            } else if (type === "MEMO") {
+            }
+            
+            if (type === "MEMO") {
                 const memoId = parseInt(alloc.sourceTempId.replace(/\D/g, ""), 10);
                 if (!isNaN(memoId)) {
-                    memosPayload.push({
-                        collection_id: id,
-                        memo_id: memoId,
-                        amount: alloc.amountApplied
-                    });
+                    memoAmountMap.set(memoId, (memoAmountMap.get(memoId) || 0) + alloc.amountApplied);
                 }
             } else if (type === "RETURN") {
                 const returnNo = parseInt(alloc.sourceTempId.replace(/\D/g, ""), 10);
-                if (!isNaN(returnNo)) {
-                    returnsPayload.push({
-                        collection_id: id,
-                        return_no: returnNo,
-                        invoice_no: alloc.invoiceId,
-                        linked_by: linkedBy,
-                        amount: alloc.amountApplied
-                    });
+                if (!isNaN(returnNo) && alloc.invoiceId) {
+                    const key = `${returnNo}-${alloc.invoiceId}`;
+                    const existing = returnAmountMap.get(key);
+                    if (existing) {
+                        existing.amount += alloc.amountApplied;
+                    } else {
+                        returnAmountMap.set(key, { returnNo, invoiceNo: alloc.invoiceId, amount: alloc.amountApplied });
+                    }
                 }
             }
+        }
+
+        for (const item of returnAmountMap.values()) {
+            returnsPayload.push({
+                collection_id: id,
+                return_no: item.returnNo,
+                invoice_no: item.invoiceNo,
+                linked_by: linkedBy,
+                amount: item.amount
+            });
+        }
+
+        const phDate = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace("T", " ");
+
+        for (const [memoId, amount] of memoAmountMap.entries()) {
+            memosPayload.push({
+                collection_id: id,
+                memo_id: memoId,
+                amount: amount,
+                date_linked: phDate
+            });
         }
 
         // 3. Batch Insert to Directus
@@ -163,6 +187,44 @@ export async function POST(
                 body: JSON.stringify(memosPayload)
             });
             if (!res.ok) throw new Error(`Failed to insert collection_memos: ${await res.text()}`);
+
+            // Update customers_memo applied_amount and status
+            for (const memoItem of memosPayload) {
+                const memoId = memoItem.memo_id as number;
+                try {
+                    const memoRes = await fetch(`${DIRECTUS_URL}/items/customers_memo/${memoId}?fields=id,amount,applied_amount,status`, { headers });
+                    if (memoRes.ok) {
+                        const memoData = await memoRes.json();
+                        const memo = memoData.data;
+                        if (memo) {
+                            const colMemosRes = await fetch(`${DIRECTUS_URL}/items/collection_memos?filter[memo_id][_eq]=${memoId}&fields=amount`, { headers });
+                            let totalApplied = 0;
+                            if (colMemosRes.ok) {
+                                const colMemosData = await colMemosRes.json();
+                                totalApplied = (colMemosData.data || []).reduce((sum: number, item: { amount?: number }) => sum + (Number(item.amount) || 0), 0);
+                            } else {
+                                totalApplied = (Number(memo.applied_amount) || 0) + Number(memoItem.amount);
+                            }
+
+                            const origAmount = Number(memo.amount) || 0;
+                            const newStatus = totalApplied >= (origAmount - 0.009) ? "APPLIED" : (totalApplied > 0 ? "PARTIALLY APPLIED" : memo.status);
+
+                            const phDate = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace("T", " ");
+                            await fetch(`${DIRECTUS_URL}/items/customers_memo/${memoId}`, {
+                                method: "PATCH",
+                                headers,
+                                body: JSON.stringify({
+                                    applied_amount: totalApplied,
+                                    status: newStatus,
+                                    updated_at: phDate
+                                })
+                            });
+                        }
+                    }
+                } catch (memoErr) {
+                    console.warn(`Failed to update customers_memo ${memoId}:`, memoErr);
+                }
+            }
         }
 
         if (returnsPayload.length > 0) {

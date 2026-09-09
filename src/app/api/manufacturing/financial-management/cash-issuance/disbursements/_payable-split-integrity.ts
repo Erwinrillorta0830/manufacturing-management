@@ -51,45 +51,18 @@ export function normalizeVatSplitDivisions<T extends PayableSplitInput>(lines: T
     });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function findMissingVatPrincipalDivisionError(lines: PayableSplitInput[]) {
-    const principals = findPrincipalByReference(lines);
-
-    for (const line of lines) {
-        const referenceNo = normalizedReference(line.referenceNo);
-        if (!referenceNo || !isVatChildLine(line)) continue;
-
-        const principal = principals.get(referenceNo);
-        if (principal && normalizedDivisionId(principal.divisionId) === undefined && normalizedDivisionId(line.divisionId) !== undefined) {
-            return `Cost Division must be selected on the principal VAT line before saving ${referenceNo}.`;
-        }
-    }
-
     return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function findMissingPayableDivisionError(lines: PayableSplitInput[]) {
-    const invalidIndex = lines.findIndex((line) => normalizedDivisionId(line.divisionId) === undefined);
-    return invalidIndex >= 0
-        ? `Cost Division is required on payable row ${invalidIndex + 1}.`
-        : null;
-}
-
-export function findVatSplitDivisionError(lines: PayableSplitInput[]) {
-    const principals = findPrincipalByReference(lines);
-
-    for (const line of lines) {
-        const referenceNo = normalizedReference(line.referenceNo);
-        if (!referenceNo || !isVatChildLine(line)) continue;
-
-        const principal = principals.get(referenceNo);
-        if (!principal) continue;
-
-        const principalDivisionId = normalizedDivisionId(principal.divisionId);
-        const childDivisionId = normalizedDivisionId(line.divisionId);
-        if (principalDivisionId === undefined || childDivisionId !== principalDivisionId) {
-            return `Cost Division must match the principal VAT line for ${referenceNo}.`;
-        }
-    }
-
     return null;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function findVatSplitDivisionError(lines: PayableSplitInput[]) {
+    return null;
+}
+

@@ -294,10 +294,13 @@ async function fetchMemoUsage(
     return usageByReference;
 }
 
-export async function getSupplierMemoBalances(supplierId: number): Promise<SupplierMemoBalance[]> {
+export async function getSupplierMemoBalances(
+    supplierId: number,
+    excludeDisbursementId?: number,
+): Promise<SupplierMemoBalance[]> {
     const memos = await fetchMemosForSupplier(supplierId);
     const references = memos.map((memo) => memo.memo_number).filter(Boolean);
-    const usageByReference = await fetchMemoUsage(references);
+    const usageByReference = await fetchMemoUsage(references, excludeDisbursementId);
     return memos.map((memo) => memoBalance(memo, usageByReference.get(memo.memo_number) || {
         appliedAmount: 0,
         blockingDisbursements: [],

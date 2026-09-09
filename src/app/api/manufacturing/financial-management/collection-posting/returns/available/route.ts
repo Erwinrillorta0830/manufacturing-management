@@ -17,6 +17,7 @@ export async function GET(request: Request) {
         const customerCodes = searchParams.get("customerCodes");
         const customerNames = searchParams.get("customerNames");
         const salesmanId = searchParams.get("salesmanId");
+        const currentPouchId = searchParams.get("currentPouchId");
         
         // Reject outright if we lack any customer context to prevent dumping all records
         if (!customerCodes && !customerNames) {
@@ -91,28 +92,65 @@ export async function GET(request: Request) {
             status: string;
         };
 
+        const normalizedValidCodes = validCustomerCodes.map(c => c.trim().toUpperCase());
+        const normalizedSearchTerms = searchTerms.map(s => s.trim().toUpperCase());
+
+        const returnIds = rawReturns.map((r: ReturnRecord) => r.return_id).filter(Boolean);
+        const appliedReturnsMap = new Map<number, number>();
+
+        if (returnIds.length > 0) {
+            try {
+                const appliedRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice_sales_return?filter[return_no][_in]=${returnIds.join(",")}&limit=-1&fields=return_no,collection_id,amount`, { headers, cache: "no-store" });
+                if (appliedRes.ok) {
+                    const appliedData = (await appliedRes.json()).data || [];
+                    appliedData.forEach((item: { return_no: number; collection_id?: number | string; amount?: number }) => {
+                        const colIdStr = item.collection_id != null ? String(item.collection_id) : "";
+                        if (currentPouchId && colIdStr === String(currentPouchId)) {
+                            // Skip current pouch's allocations in DB since current pouch allocations are tracked dynamically in UI
+                            return;
+                        }
+                        const amt = Number(item.amount) || 0;
+                        appliedReturnsMap.set(item.return_no, (appliedReturnsMap.get(item.return_no) || 0) + amt);
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to fetch sales_invoice_sales_return applications:", err);
+            }
+        }
+
         const mappedReturns = rawReturns
             .filter((ret: ReturnRecord) => {
-                // VERY STRICT IN-MEMORY FIREWALL
-                // Ensure Directus didn't dump unassigned returns due to _in array parsing flaws
                 if (salesmanId && String(ret.salesman_id) !== String(salesmanId)) return false;
                 
-                if (validCustomerCodes.length > 0) {
-                    return Boolean(ret.customer_code) && validCustomerCodes.includes(String(ret.customer_code).trim());
+                const codeUpper = (ret.customer_code || "").trim().toUpperCase();
+                const nameUpper = (ret.customer_name || "").trim().toUpperCase();
+
+                if (normalizedValidCodes.length > 0 || normalizedSearchTerms.length > 0) {
+                    const matchCode = codeUpper && (normalizedValidCodes.includes(codeUpper) || normalizedSearchTerms.includes(codeUpper));
+                    const matchName = nameUpper && normalizedSearchTerms.includes(nameUpper);
+                    return matchCode || matchName;
                 }
                 
                 return false;
             })
-            .map((ret: ReturnRecord) => ({
-                id: ret.return_id,
-                returnNumber: ret.return_number,
-                customerCode: ret.customer_code,
-                customerName: ret.customer_name || "",
-                totalAmount: Number(ret.total_amount) || 0,
-                availableAmount: Number(ret.total_amount) || 0,
-                isApplied: ret.isApplied === 1 || ret.isApplied === true || ret.status === 'Applied',
-                status: ret.status
-            }));
+            .map((ret: ReturnRecord) => {
+                const totalAmt = Number(ret.total_amount) || 0;
+                const priorExternalApplied = appliedReturnsMap.get(ret.return_id) || 0;
+                const availableAmt = Math.max(0, totalAmt - priorExternalApplied);
+                const isFullyApplied = ret.isApplied === 1 || ret.isApplied === true || ret.status === 'Applied' || availableAmt <= 0.009;
+
+                return {
+                    id: ret.return_id,
+                    returnNumber: ret.return_number,
+                    customerCode: ret.customer_code,
+                    customerName: ret.customer_name || "",
+                    totalAmount: totalAmt,
+                    availableAmount: availableAmt,
+                    isApplied: isFullyApplied,
+                    status: isFullyApplied ? 'Applied' : ret.status
+                };
+            })
+            .filter((ret: { availableAmount: number }) => ret.availableAmount > 0.009);
 
         return NextResponse.json({
             content: mappedReturns,

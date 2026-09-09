@@ -244,12 +244,18 @@ function normalizeMemoData(m: any) {
     const isObj = (val: any) => val && typeof val === 'object';
     
     let created_at = m.created_at;
-    if (created_at) {
-        if (!created_at.includes('T') && !created_at.includes('Z')) {
-            created_at = created_at.replace(' ', 'T') + '+08:00';
-        } else if (created_at.includes('T') && !created_at.endsWith('Z') && !created_at.includes('+')) {
-            created_at = created_at + '+08:00';
+    if (created_at && typeof created_at === 'string') {
+        let raw = created_at.trim();
+        if (raw.endsWith('Z')) {
+            raw = raw.slice(0, -1);
         }
+        if (!raw.includes('T')) {
+            raw = raw.replace(' ', 'T');
+        }
+        if (!raw.includes('+') && !raw.includes('-')) {
+            raw = raw + '+08:00';
+        }
+        created_at = raw;
     }
 
     return {
@@ -674,6 +680,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
     try {
         const DIRECTUS_URL = getDirectusBase();
+        const userId = decodeUserIdFromJwtCookie(req);
         const body = await req.json();
         const { id, ids, status } = body;
 
@@ -681,28 +688,34 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "Status required" }, { status: 400 });
         }
 
+        const phNow = getPhTimestamp();
+        const updateData: Record<string, unknown> = {
+            status,
+            isPending: false,
+            updated_at: phNow
+        };
+
+        if (status === "APPROVED") {
+            if (userId) {
+                updateData.approved_by = userId;
+            }
+            updateData.approved_at = phNow;
+        }
+
         if (ids && Array.isArray(ids)) {
-            // Bulk update status and ensure isPending stays 0
+            // Bulk update status and approval metadata
             await directusFetch(`${DIRECTUS_URL}/items/customers_memo`, {
                 method: "PATCH",
                 body: JSON.stringify({ 
                     keys: ids,
-                    data: {
-                        status,
-                        isPending: false,
-                        updated_at: getPhTimestamp()
-                    }
+                    data: updateData
                 }),
             });
         } else if (id) {
-            // Single update status and ensure isPending stays 0
+            // Single update status and approval metadata
             await directusFetch(`${DIRECTUS_URL}/items/customers_memo/${id}`, {
                 method: "PATCH",
-                body: JSON.stringify({ 
-                    status,
-                    isPending: false,
-                    updated_at: getPhTimestamp()
-                }),
+                body: JSON.stringify(updateData),
             });
         } else {
             return NextResponse.json({ error: "ID or IDs required" }, { status: 400 });

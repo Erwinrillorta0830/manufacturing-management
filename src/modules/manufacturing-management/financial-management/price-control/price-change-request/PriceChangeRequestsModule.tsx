@@ -8,7 +8,7 @@ export default function PriceChangeRequestsModule() {
   return (
     <Card className="rounded-2xl shadow-sm">
       <CardHeader className="pb-3">
-        <CardTitle className="text-xl">Price Change Approvals</CardTitle>
+        <CardTitle className="text-xl">Price Change Approval</CardTitle>
       </CardHeader>
       <CardContent>
         <PriceChangeRequestsView />

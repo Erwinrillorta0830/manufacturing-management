@@ -1,4 +1,4 @@
-// src/app/api/product-pricing/lookups/route.ts
+// src/app/api/product-pricing-request/lookups/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 import {

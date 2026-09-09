@@ -1,4 +1,4 @@
-// src/app/api/fm/product-pricing/printables/route.ts
+// src/app/api/fm/product-pricing-request/printables/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 import {

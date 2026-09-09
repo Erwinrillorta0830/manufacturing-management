@@ -37,6 +37,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         return NextResponse.json({ message: "A valid supplier ID is required." }, { status: 400 });
     }
 
+    const searchParams = request.nextUrl.searchParams;
+    const excludeDisbursementIdParam = searchParams.get("excludeDisbursementId");
+    const excludeDisbursementId = excludeDisbursementIdParam ? Number(excludeDisbursementIdParam) : undefined;
+
     try {
         const queryParams = new URLSearchParams({
             filter: JSON.stringify({
@@ -59,7 +63,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         if (!directusRes.ok) throw new Error(await directusRes.text());
         const rawData = ((await directusRes.json()).data || []) as DirectusMemo[];
-        const balances = await getSupplierMemoBalances(supplierId);
+        const balances = await getSupplierMemoBalances(supplierId, excludeDisbursementId);
         const balanceMap = new Map(balances.map((balance) => [balance.id, balance]));
 
         // Extract COA IDs

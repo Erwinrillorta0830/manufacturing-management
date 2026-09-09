@@ -107,7 +107,7 @@ export default async function Page() {
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block" />
                                 <BreadcrumbItem>
-                                    <BreadcrumbPage>Product Printables</BreadcrumbPage>
+                                    <BreadcrumbPage>Product Pricing Masterlist</BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
                         </Breadcrumb>

@@ -1,4 +1,4 @@
-// src/modules/supply-chain-management/product-pricing-management/product-pricing/providers/pricingApi.ts
+// src/modules/supply-chain-management/product-pricing-request-management/product-pricing-request/providers/pricingApi.ts
 import type {
     Brand,
     Category,

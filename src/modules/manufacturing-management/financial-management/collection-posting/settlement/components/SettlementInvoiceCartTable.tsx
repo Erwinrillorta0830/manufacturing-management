@@ -235,12 +235,15 @@ export default function SettlementInvoiceCartTable({
                                     <TableCell className="text-right align-top py-2 pr-4">
                                         <div className={`font-mono font-black text-xs leading-none ${appliedSession > 0 ? 'text-emerald-600' : 'text-muted-foreground'}`}>{appliedSession > 0 ? `₱${appliedSession.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "—"}</div>
                                         <div className="mt-1 flex flex-col gap-0.5">
-                                            {invoiceAllocations.map((alloc, idx) => (
-                                                <div key={`alloc-${inv.id}-${alloc.sourceTempId}-${idx}`} className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest flex gap-1 justify-end leading-none">
-                                                    <span>{combinedSources.find(w => w.id === alloc.sourceTempId)?.type || 'ADJ'}:</span>
-                                                    <span className="text-foreground font-mono">₱{alloc.amountApplied.toLocaleString()}</span>
-                                                </div>
-                                            ))}
+                                            {invoiceAllocations.map((alloc, idx) => {
+                                                const sourceType = combinedSources.find(w => w.id === alloc.sourceTempId)?.type || alloc.allocationType;
+                                                return (
+                                                    <div key={`alloc-${inv.id}-${alloc.sourceTempId}-${idx}`} className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest flex gap-1 justify-end leading-none">
+                                                        <span>{sourceType}:</span>
+                                                        <span className="text-foreground font-mono">₱{alloc.amountApplied.toLocaleString()}</span>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </TableCell>
                                 </TableRow>

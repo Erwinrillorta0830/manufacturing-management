@@ -1,4 +1,4 @@
-// src/modules/supply-chain-management/product-pricing-management/product-pricing/utils/printPdf.ts
+// src/modules/supply-chain-management/product-pricing-request-management/product-pricing-request/utils/printPdf.ts
 import jsPDF from "jspdf";
 
 import type { MatrixRow, Unit, PriceType } from "../types";

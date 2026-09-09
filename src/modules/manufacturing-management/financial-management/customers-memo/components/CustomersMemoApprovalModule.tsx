@@ -24,13 +24,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
     fetchMemosByStatus,
-    fetchSuppliers,
     fetchCustomers,
     fetchSalesmen,
     bulkApproveMemos
 } from "../service";
-import { MemoApprovalRow, Supplier, Customer, Salesman } from "../types";
+import { MemoApprovalRow, Customer, Salesman } from "../types";
 import { ApprovalDetailModal } from "./ApprovalDetailModal";
+import { formatPhDateTime } from "../utils/dateUtils";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { SearchableSelect } from "./SearchableSelect";
@@ -59,12 +59,10 @@ export default function CustomersMemoApprovalModule() {
     const [searchQuery, setSearchQuery] = useState("");
 
     // Lookup Data
-    const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [salesmen, setSalesmen] = useState<Salesman[]>([]);
 
     // Filter State
-    const [filterSupplier, setFilterSupplier] = useState<string>("");
     const [filterCustomer, setFilterCustomer] = useState<string>("");
     const [filterSalesman, setFilterSalesman] = useState<string>("");
     const [activeTab, setActiveTab] = useState<"all" | "credit" | "debit">("all");
@@ -84,14 +82,12 @@ export default function CustomersMemoApprovalModule() {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [memoData, supplierData, customerData, salesmanData] = await Promise.all([
+            const [memoData, customerData, salesmanData] = await Promise.all([
                 fetchMemosByStatus("FOR APPROVAL"),
-                fetchSuppliers(),
                 fetchCustomers(),
                 fetchSalesmen()
             ]);
             setMemos(memoData);
-            setSuppliers(supplierData);
             setCustomers(customerData);
             setSalesmen(salesmanData);
             setSelectedIds(new Set()); // Clear selection on reload
@@ -111,18 +107,17 @@ export default function CustomersMemoApprovalModule() {
             m.memo_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
             (m.customer_id?.customer_name || "").toLowerCase().includes(searchQuery.toLowerCase());
 
-        const matchesSupplier = !filterSupplier || String(m.supplier_id?.id || "") === filterSupplier;
         const matchesCustomer = !filterCustomer || String(m.customer_id?.id || "") === filterCustomer;
         const matchesSalesman = !filterSalesman || String(m.salesman_id?.id || "") === filterSalesman;
         const matchesTab = activeTab === "all" || (activeTab === "credit" && m.type === 1) || (activeTab === "debit" && m.type === 2);
 
-        return matchesSearch && matchesSupplier && matchesCustomer && matchesSalesman && matchesTab;
+        return matchesSearch && matchesCustomer && matchesSalesman && matchesTab;
     });
 
     // Reset page to 1 when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchQuery, filterSupplier, filterCustomer, filterSalesman, activeTab]);
+    }, [searchQuery, filterCustomer, filterSalesman, activeTab]);
 
     // Pagination Logic
     const totalPages = Math.ceil(filteredMemos.length / pageSize);
@@ -130,7 +125,6 @@ export default function CustomersMemoApprovalModule() {
 
     const resetFilters = () => {
         setSearchQuery("");
-        setFilterSupplier("");
         setFilterCustomer("");
         setFilterSalesman("");
         setActiveTab("all");
@@ -305,19 +299,6 @@ export default function CustomersMemoApprovalModule() {
 
                 <div className="flex-1 min-w-[200px]">
                     <SearchableSelect
-                        placeholder="Filter by Supplier"
-                        options={suppliers.map(s => ({
-                            value: String(s.id),
-                            label: s.supplier_name,
-                            subLabel: s.supplier_shortcut || ""
-                        }))}
-                        value={filterSupplier}
-                        onValueChange={setFilterSupplier}
-                    />
-                </div>
-
-                <div className="flex-1 min-w-[200px]">
-                    <SearchableSelect
                         placeholder="Filter by Salesman"
                         options={salesmen.map(s => ({
                             value: String(s.id),
@@ -346,7 +327,7 @@ export default function CustomersMemoApprovalModule() {
                     value={filteredMemos.length}
                     icon={Clock}
                     color="amber"
-                    trend={searchQuery || filterCustomer || filterSupplier || filterSalesman ? "Filtered Set" : "Memos Pending"}
+                    trend={searchQuery || filterCustomer || filterSalesman ? "Filtered Set" : "Memos Pending"}
                 />
                 <StatsCard
                     label="Backlog Value"
@@ -446,7 +427,7 @@ export default function CustomersMemoApprovalModule() {
                                                 </span>
                                                 <div className="flex items-center gap-2">
                                                     <Badge variant="outline" className="text-[9px] font-black uppercase tracking-widest border-slate-200 text-slate-500 bg-white">
-                                                        {new Date(memo.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                                                        {formatPhDateTime(memo.created_at)}
                                                     </Badge>
                                                     <Badge variant="secondary" className={cn(
                                                         "text-[9px] font-black uppercase tracking-widest",
