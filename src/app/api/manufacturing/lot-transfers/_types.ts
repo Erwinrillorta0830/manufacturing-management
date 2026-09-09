@@ -1,50 +1,76 @@
-export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected" | "Cancelled" | "Reversed";
-export type DestinationBatchResolutionAction = "MERGE" | "CREATE";
+import type {
+    DestinationBatchResolution,
+    DestinationBatchResolutionAction
+} from "./_destination-batch";
 
-export type LotTransferMode = "request" | "approval" | "posting" | "summary";
+export const LOT_TRANSFER_STATUSES = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"] as const;
+export type LotTransferStatus = (typeof LOT_TRANSFER_STATUSES)[number];
 
-export interface LotTransferReportFilters {
-    search: string;
-    statuses: LotTransferStatus[];
-    branchId: string;
-    requestedFrom: string;
-    requestedTo: string;
-    transferDateFrom: string;
-    transferDateTo: string;
-    productId: string;
-    sourceLotId: string;
-    targetLotId: string;
+export interface LotTransferInput {
+    branchId: number;
+    sourceLotId: number;
+    targetLotId: number;
+    reason: string;
+    details: LotTransferDetailInput[];
+}
+
+export interface LotTransferDetailInput {
+    detailId?: number;
+    lineNo?: number;
+    productId: number;
+    sourceInventoryLotId: number;
     sourceBatchNo: string;
+    targetInventoryLotId?: number;
+    targetBatchNo?: string;
+    quantity: number;
+    lineRemarks?: string;
+}
+
+export interface LotTransferPatchInput {
+    branchId?: number;
+    sourceLotId?: number;
+    targetLotId?: number;
+    reason?: string;
+    details?: LotTransferDetailInput[];
+    // Flat fields remain accepted temporarily for clients that have not migrated.
+    productId?: number;
+    sourceInventoryLotId?: number;
+    sourceBatchNo?: string;
+    targetInventoryLotId?: number;
+    targetBatchNo?: string;
+    quantity?: number;
+}
+
+export interface LotTransferDetail {
+    detailId: number | null;
+    lineNo: number;
+    productId: number;
+    sourceInventoryLotId: number;
+    sourceBatchNo: string;
+    targetInventoryLotId: number | null;
     targetBatchNo: string;
-    requestedBy: string;
-    approvedBy: string;
-    postedBy: string;
+    quantity: number;
+    lineRemarks: string;
+    sourceManufacturingDate: string | null;
+    sourceExpiryDate: string | null;
+    targetManufacturingDate: string | null;
+    targetExpiryDate: string | null;
+    sourceUnitCost: number | null;
+    targetUnitCost: number | null;
+    sourceBalanceBefore: number | null;
+    sourceBalanceAfter: number | null;
+    targetBalanceBefore: number | null;
+    targetBalanceAfter: number | null;
+    sourceMovementId: number | null;
+    targetMovementId: number | null;
+    validationStatus: string | null;
+    validationError: string | null;
+    postingError: string | null;
+    reconciliationRequired: boolean;
+    destinationBatchAction: DestinationBatchResolutionAction | null;
 }
 
-export interface UserOption {
-    id: number;
-    name: string;
-}
-
-export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
-    search: "",
-    statuses: ["Posted", "Rejected", "Cancelled", "Reversed"],
-    branchId: "",
-    requestedFrom: "",
-    requestedTo: "",
-    transferDateFrom: "",
-    transferDateTo: "",
-    productId: "",
-    sourceLotId: "",
-    targetLotId: "",
-    sourceBatchNo: "",
-    targetBatchNo: "",
-    requestedBy: "",
-    approvedBy: "",
-    postedBy: ""
-};
-
-export interface LotTransfer {
+export interface LotTransferRecord {
     id: number;
     requestNo: string;
     status: LotTransferStatus;
@@ -112,81 +138,26 @@ export interface LotTransfer {
     totalQuantity: number;
 }
 
-export interface LotTransferDetail {
-    detailId: number | null;
-    lineNo: number;
-    productId: number;
-    sourceInventoryLotId: number;
-    sourceBatchNo: string;
-    targetInventoryLotId: number | null;
-    targetBatchNo: string;
-    quantity: number;
-    lineRemarks: string;
-    sourceManufacturingDate: string | null;
-    sourceExpiryDate: string | null;
-    targetManufacturingDate: string | null;
-    targetExpiryDate: string | null;
-    sourceUnitCost: number | null;
-    targetUnitCost: number | null;
-    sourceBalanceBefore: number | null;
-    sourceBalanceAfter: number | null;
-    targetBalanceBefore: number | null;
-    targetBalanceAfter: number | null;
-    sourceMovementId: number | null;
-    targetMovementId: number | null;
-    validationStatus: string | null;
-    validationError: string | null;
-    postingError: string | null;
-    reconciliationRequired: boolean;
-    destinationBatchAction: DestinationBatchResolutionAction | null;
-}
-
-export interface ProductOption {
-    productId: number;
-    productName: string;
-    skuCode: string;
-    unitCost: number;
-}
-
-export interface LotOption {
-    lotId: number;
-    lotName: string;
-    branchId: number;
-    uomId: number | null;
-    uomName: string;
-    maxBatchCapacity: number;
-    status: string;
-}
-
-export interface BatchOption {
-    batchId: number;
-    batchNumber: string;
-    lotId: number;
-    lotName: string;
-    branchId: number;
-    productId: number;
-    productName: string;
-    quantity: number;
-    unitCost: number;
-    uomId: number | null;
-    uomName: string;
-    manufacturingDate: string;
-    expirationDate: string;
-    qaStatus: string;
-    status: string;
-}
-
-export interface BranchOption {
-    id: number;
-    branchName: string;
-    branchCode: string;
-}
-
 export interface ValidationCheck {
     key: string;
     label: string;
     passed: boolean;
     message: string;
+}
+
+export type ProtectedAllocationSource =
+    | "SALES_ORDER"
+    | "SALES_INVOICE"
+    | "JOB_ORDER_MATERIAL"
+    | "STOCK_TRANSFER"
+    | "LOT_TRANSFER";
+
+export interface ProtectedAllocation {
+    source: ProtectedAllocationSource;
+    allocationId: number;
+    quantity: number;
+    status: string;
+    reference: string | null;
 }
 
 export interface LotBalanceSnapshot {
@@ -204,21 +175,6 @@ export interface LotBalanceSnapshot {
     unitCost: number | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
-}
-
-export type ProtectedAllocationSource =
-    | "SALES_ORDER"
-    | "SALES_INVOICE"
-    | "JOB_ORDER_MATERIAL"
-    | "STOCK_TRANSFER"
-    | "LOT_TRANSFER";
-
-export interface ProtectedAllocation {
-    source: ProtectedAllocationSource;
-    allocationId: number;
-    quantity: number;
-    status: string;
-    reference: string | null;
 }
 
 export interface LotTransferPreview {
@@ -272,45 +228,3 @@ export interface LotTransferLinePreview {
     destinationBatchResolution: DestinationBatchResolution;
     movementPreview: LotTransferPreview["movementPreview"];
 }
-
-export interface DestinationBatchResolution {
-    action: DestinationBatchResolutionAction;
-    valid: boolean;
-    inventoryLotId: number | null;
-    lotId: number;
-    productId: number;
-    batchNo: string;
-    manufacturingDate: string | null;
-    expiryDate: string | null;
-    qaStatus: string;
-    unitCost: number | null;
-    message: string;
-}
-
-export interface LotTransferForm {
-    branchId: string;
-    sourceLotId: string;
-    targetLotId: string;
-    reason: string;
-    details: LotTransferFormDetail[];
-}
-
-export interface LotTransferFormDetail {
-    detailId?: number;
-    lineNo: number;
-    productId: string;
-    sourceInventoryLotId: string;
-    sourceBatchNo: string;
-    targetInventoryLotId: string;
-    targetBatchNo: string;
-    quantity: string;
-    lineRemarks: string;
-}
-
-export const EMPTY_LOT_TRANSFER_FORM: LotTransferForm = {
-    branchId: "",
-    sourceLotId: "",
-    targetLotId: "",
-    reason: "",
-    details: []
-};

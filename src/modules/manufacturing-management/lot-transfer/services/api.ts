@@ -158,8 +158,8 @@ function toPayload(form: LotTransferForm) {
             productId: Number(detail.productId),
             sourceInventoryLotId: Number(detail.sourceInventoryLotId),
             sourceBatchNo: detail.sourceBatchNo,
-            targetInventoryLotId: Number(detail.targetInventoryLotId),
-            targetBatchNo: detail.targetBatchNo,
+            ...(Number(detail.targetInventoryLotId) > 0 ? { targetInventoryLotId: Number(detail.targetInventoryLotId) } : {}),
+            ...(detail.targetBatchNo.trim() ? { targetBatchNo: detail.targetBatchNo.trim() } : {}),
             quantity: Number(detail.quantity),
             lineRemarks: detail.lineRemarks
         }))
