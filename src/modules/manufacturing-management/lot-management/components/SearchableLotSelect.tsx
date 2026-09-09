@@ -59,9 +59,10 @@ export function SearchableLotSelect<T extends number[] | number | "ALL" | "" = n
         if (!query) return lots;
         return lots.filter((l) => {
             const nameMatch = l.lotName?.toLowerCase().includes(query);
+            const branchMatch = l.branchName?.toLowerCase().includes(query) || l.branchCode?.toLowerCase().includes(query);
             const uomMatch = l.uomName?.toLowerCase().includes(query) || l.uomShortcut?.toLowerCase().includes(query);
             const idMatch = String(l.lotId).includes(query);
-            return nameMatch || uomMatch || idMatch;
+            return nameMatch || branchMatch || uomMatch || idMatch;
         });
     }, [lots, searchQuery]);
 
