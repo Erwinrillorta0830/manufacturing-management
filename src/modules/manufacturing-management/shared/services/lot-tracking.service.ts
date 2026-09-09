@@ -869,7 +869,10 @@ export function resolveProductClassification(
     if (typeName.includes("packag") || typeName.includes("container") || typeName.includes("bottle") || typeName === "pkg" || typeName.includes("wrapper") || typeName.includes("cap") || typeName.includes("box")) {
       return { code: "PKG", label: "Packaging" };
     }
-    if (typeName.includes("finish") || typeName.includes("commercial") || typeName === "fg" || typeName.includes("merchandise")) {
+    if (typeName.includes("trade") || typeName.includes("merchandise") || typeName === "tg") {
+      return { code: "OTHER", label: "Traded Good" };
+    }
+    if (typeName.includes("finish") || typeName.includes("commercial") || typeName === "fg") {
       return { code: "FG", label: "Finished Good" };
     }
   }
@@ -880,6 +883,9 @@ export function resolveProductClassification(
     : String(categoryName || "");
   const catLower = cat.toLowerCase();
   if (catLower) {
+    if (catLower.includes("trade") || catLower.includes("trading") || catLower.includes("merchandise")) {
+      return { code: "OTHER", label: "Traded Good" };
+    }
     if (catLower.includes("bihon") || catLower.includes("canton") || catLower.includes("noodle") || catLower.includes("pasta") || catLower.includes("finish") || catLower.includes("commercial") || catLower.includes("fg")) {
       return { code: "FG", label: "Finished Good" };
     }
@@ -893,6 +899,9 @@ export function resolveProductClassification(
 
   // 4. Product Code Prefix / Pattern check
   const codeLower = String(productCode || "").toLowerCase();
+  if (codeLower.startsWith("tg-") || codeLower.startsWith("tg_") || codeLower.startsWith("trade-") || codeLower.startsWith("trade_")) {
+    return { code: "OTHER", label: "Traded Good" };
+  }
   if (codeLower.startsWith("rm-") || codeLower.startsWith("rm_") || codeLower.startsWith("raw-") || codeLower.startsWith("raw_")) {
     return { code: "RM", label: "Raw Material" };
   }
@@ -905,6 +914,9 @@ export function resolveProductClassification(
 
   // 5. Product Name Keyword check
   const nameLower = String(productName || "").toLowerCase();
+  if (nameLower.includes("traded") || nameLower.includes("trading")) {
+    return { code: "OTHER", label: "Traded Good" };
+  }
   if (nameLower.includes("bihon") || nameLower.includes("canton") || nameLower.includes("noodle") || nameLower.includes("pasta") || nameLower.includes("finished") || nameLower.includes("commercial") || nameLower.includes("premium golden") || nameLower.includes("golden bihon")) {
     return { code: "FG", label: "Finished Good" };
   }

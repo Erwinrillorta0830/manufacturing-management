@@ -49,8 +49,8 @@ export default function LotManagementModule() {
     const [selectedProductType, setSelectedProductType] = useState<string | "ALL">("ALL");
     const [selectedUomId, setSelectedUomId] = useState<number | "ALL">("ALL");
     const [selectedProductId, setSelectedProductId] = useState<number | "ALL">("ALL");
-    const [selectedLotId, setSelectedLotId] = useState<number | "ALL">("ALL");
-    const [selectedBatchId, setSelectedBatchId] = useState<number | "ALL">("ALL");
+    const [selectedLotIds, setSelectedLotIds] = useState<number[]>([]);
+    const [selectedBatchIds, setSelectedBatchIds] = useState<number[]>([]);
     const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
     const {
@@ -70,8 +70,8 @@ export default function LotManagementModule() {
     } = useBatchRegistration(
         lots,
         selectedProductId,
-        selectedLotId,
-        selectedBatchId,
+        selectedLotIds,
+        selectedBatchIds,
         globalSearchQuery,
         selectedBranchId,
         selectedProductType,
@@ -100,8 +100,8 @@ export default function LotManagementModule() {
         resetFilters: resetMovementFilters
     } = useInventoryMovements(
         selectedProductId,
-        selectedLotId,
-        selectedBatchId,
+        selectedLotIds,
+        selectedBatchIds,
         globalSearchQuery,
         selectedBranchId,
         selectedProductType,
@@ -211,20 +211,20 @@ export default function LotManagementModule() {
             if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
                 return false;
             }
-            if (selectedLotId !== "ALL" && Number(b.lotId) !== Number(selectedLotId)) {
+            if (selectedLotIds.length > 0 && !selectedLotIds.includes(Number(b.lotId))) {
                 return false;
             }
             return true;
         });
-    }, [batches, lots, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotId]);
+    }, [batches, lots, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotIds]);
 
     const hasAnyFilterActive =
         selectedBranchId !== "ALL" ||
         selectedProductType !== "ALL" ||
         selectedUomId !== "ALL" ||
         selectedProductId !== "ALL" ||
-        selectedLotId !== "ALL" ||
-        selectedBatchId !== "ALL" ||
+        selectedLotIds.length > 0 ||
+        selectedBatchIds.length > 0 ||
         globalSearchQuery.trim() !== "";
 
     const handleResetAllFilters = () => {
@@ -232,8 +232,8 @@ export default function LotManagementModule() {
         setSelectedProductType("ALL");
         setSelectedUomId("ALL");
         setSelectedProductId("ALL");
-        setSelectedLotId("ALL");
-        setSelectedBatchId("ALL");
+        setSelectedLotIds([]);
+        setSelectedBatchIds([]);
         setGlobalSearchQuery("");
     };
 
@@ -256,8 +256,8 @@ export default function LotManagementModule() {
             );
             baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));
         }
-        if (selectedLotId !== "ALL") {
-            baseLots = baseLots.filter((l) => Number(l.lotId) === Number(selectedLotId));
+        if (selectedLotIds.length > 0) {
+            baseLots = baseLots.filter((l) => selectedLotIds.includes(Number(l.lotId)));
         }
         if (selectedProductId !== "ALL") {
             const relevantLotIds = new Set(
@@ -267,11 +267,13 @@ export default function LotManagementModule() {
             );
             baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));
         }
-        if (selectedBatchId !== "ALL") {
-            const batch = batches.find((b) => Number(b.batchId) === Number(selectedBatchId));
-            if (batch) {
-                baseLots = baseLots.filter((l) => Number(l.lotId) === Number(batch.lotId));
-            }
+        if (selectedBatchIds.length > 0) {
+            const allowedLotIds = new Set(
+                batches
+                    .filter((b) => selectedBatchIds.includes(Number(b.batchId)))
+                    .map((b) => Number(b.lotId))
+            );
+            baseLots = baseLots.filter((l) => allowedLotIds.has(Number(l.lotId)));
         }
         if (globalSearchQuery.trim()) {
             const q = globalSearchQuery.toLowerCase().trim();
@@ -288,7 +290,7 @@ export default function LotManagementModule() {
             });
         }
         return baseLots;
-    }, [filteredLots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotId, selectedBatchId, globalSearchQuery]);
+    }, [filteredLots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotIds, selectedBatchIds, globalSearchQuery]);
 
     if (!mounted) {
         return (
@@ -405,11 +407,13 @@ export default function LotManagementModule() {
                                 value={selectedBranchId}
                                 onValueChange={(val) => {
                                     setSelectedBranchId(val);
-                                    if (val !== "ALL" && selectedLotId !== "ALL") {
-                                        const currentLot = lots.find((l) => Number(l.lotId) === Number(selectedLotId));
-                                        if (currentLot && Number(currentLot.branchId) !== Number(val)) {
-                                            setSelectedLotId("ALL");
-                                        }
+                                    if (val !== "ALL" && selectedLotIds.length > 0) {
+                                        setSelectedLotIds((prev) =>
+                                            prev.filter((id) => {
+                                                const currentLot = lots.find((l) => Number(l.lotId) === Number(id));
+                                                return currentLot && Number(currentLot.branchId) === Number(val);
+                                            })
+                                        );
                                     }
                                 }}
                                 allowAll={true}
@@ -449,11 +453,13 @@ export default function LotManagementModule() {
                                 value={selectedUomId}
                                 onValueChange={(val) => {
                                     setSelectedUomId(val);
-                                    if (val !== "ALL" && selectedLotId !== "ALL") {
-                                        const currentLot = lots.find((l) => Number(l.lotId) === Number(selectedLotId));
-                                        if (currentLot && Number(currentLot.uomId) !== Number(val)) {
-                                            setSelectedLotId("ALL");
-                                        }
+                                    if (val !== "ALL" && selectedLotIds.length > 0) {
+                                        setSelectedLotIds((prev) =>
+                                            prev.filter((id) => {
+                                                const currentLot = lots.find((l) => Number(l.lotId) === Number(id));
+                                                return currentLot && Number(currentLot.uomId) === Number(val);
+                                            })
+                                        );
                                     }
                                 }}
                                 allowAll={true}
@@ -482,9 +488,16 @@ export default function LotManagementModule() {
                         <div className="w-full">
                             <SearchableLotSelect
                                 lots={availableLotsForSelect}
-                                value={selectedLotId}
+                                value={selectedLotIds}
+                                loading={loadingLots}
                                 onValueChange={(val) => {
-                                    setSelectedLotId(val);
+                                    if (Array.isArray(val)) {
+                                        setSelectedLotIds(val);
+                                    } else if (val === "ALL" || String(val) === "") {
+                                        setSelectedLotIds([]);
+                                    } else {
+                                        setSelectedLotIds([Number(val)]);
+                                    }
                                 }}
                                 allowAll={true}
                                 placeholder="All Storage Lots"
@@ -496,9 +509,16 @@ export default function LotManagementModule() {
                         <div className="w-full">
                             <SearchableBatchSelect
                                 batches={availableBatchesForSelect}
-                                value={selectedBatchId}
+                                value={selectedBatchIds}
+                                loading={loadingBatches}
                                 onValueChange={(val) => {
-                                    setSelectedBatchId(val);
+                                    if (Array.isArray(val)) {
+                                        setSelectedBatchIds(val);
+                                    } else if (val === "ALL" || String(val) === "") {
+                                        setSelectedBatchIds([]);
+                                    } else {
+                                        setSelectedBatchIds([Number(val)]);
+                                    }
                                 }}
                                 allowAll={true}
                                 allLabel="All Batches"
@@ -519,8 +539,8 @@ export default function LotManagementModule() {
                         selectedProductType={selectedProductType}
                         selectedUomId={selectedUomId}
                         selectedProductId={selectedProductId}
-                        selectedLotId={selectedLotId}
-                        selectedBatchId={selectedBatchId}
+                        selectedLotId={selectedLotIds}
+                        selectedBatchId={selectedBatchIds}
                         searchQuery={globalSearchQuery}
                         onViewBatchMovements={handleOpenBatchAudit}
                         onViewLotMovements={handleViewLotMovements}

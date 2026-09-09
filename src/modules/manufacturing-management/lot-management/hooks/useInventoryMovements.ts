@@ -6,8 +6,8 @@ import { resolveProductClassification } from "@/modules/manufacturing-management
 
 export function useInventoryMovements(
     selectedProductId: number | "ALL" = "ALL",
-    selectedLotId: number | "ALL" = "ALL",
-    selectedBatchId: number | "ALL" = "ALL",
+    selectedLotId: number | "ALL" | number[] = "ALL",
+    selectedBatchId: number | "ALL" | number[] = "ALL",
     globalSearchQuery: string = "",
     selectedBranchId: number | "ALL" = "ALL",
     selectedProductType: string | "ALL" = "ALL",
@@ -21,7 +21,7 @@ export function useInventoryMovements(
     const [movementSearchQuery, setMovementSearchQuery] = useState("");
     const [directionFilter, setDirectionFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
     const [transactionTypeFilter, setTransactionTypeFilter] = useState<string>("ALL");
-    const [customLotFilter, setCustomLotFilter] = useState<number | "ALL" | null>(null);
+    const [customLotFilter, setCustomLotFilter] = useState<number | "ALL" | number[] | null>(null);
     const [customProductFilter, setCustomProductFilter] = useState<number | "ALL" | null>(null);
 
     useEffect(() => {
@@ -40,7 +40,7 @@ export function useInventoryMovements(
     const setProductFilter = (val: number | "ALL") => setCustomProductFilter(val);
 
     const lotFilter = customLotFilter !== null ? customLotFilter : selectedLotId;
-    const setLotFilter = (val: number | "ALL") => setCustomLotFilter(val);
+    const setLotFilter = (val: number | "ALL" | number[]) => setCustomLotFilter(val);
 
     const loadMovements = useCallback(async () => {
         setLoadingMovements(true);
@@ -135,7 +135,9 @@ export function useInventoryMovements(
 
                 // Storage Lot filter
                 if (lotFilter !== "ALL") {
-                    if (Number(m.mmLotId ?? m.lotId) !== Number(lotFilter)) return false;
+                    if (Array.isArray(lotFilter)) {
+                        if (lotFilter.length > 0 && !lotFilter.includes(Number(m.mmLotId ?? m.lotId))) return false;
+                    } else if (Number(m.mmLotId ?? m.lotId) !== Number(lotFilter)) return false;
                 }
 
                 // Product filter
@@ -145,7 +147,9 @@ export function useInventoryMovements(
 
                 // Batch filter
                 if (selectedBatchId !== "ALL") {
-                    if (Number(m.inventoryLotId ?? m.batchId) !== Number(selectedBatchId)) return false;
+                    if (Array.isArray(selectedBatchId)) {
+                        if (selectedBatchId.length > 0 && !selectedBatchId.includes(Number(m.inventoryLotId ?? m.batchId))) return false;
+                    } else if (Number(m.inventoryLotId ?? m.batchId) !== Number(selectedBatchId)) return false;
                 }
 
                 const matchesText = (query: string) => {

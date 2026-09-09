@@ -45,6 +45,7 @@ export interface BatchComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  title?: string;
 }
 
 export function BatchCombobox({
@@ -56,6 +57,7 @@ export function BatchCombobox({
   placeholder = 'Search or select batch...',
   disabled = false,
   className,
+  title,
 }: BatchComboboxProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -176,6 +178,7 @@ export function BatchCombobox({
           ref={inputRef}
           value={value}
           disabled={disabled}
+          title={title || value || placeholder}
           onChange={(e) => {
             const val = e.target.value;
             // Safeguard: Check if typed text matches an existing batch record
@@ -228,6 +231,7 @@ export function BatchCombobox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
+          title={title || value || placeholder}
           className={cn(
             'w-full justify-between text-left font-normal h-9 px-2.5 text-xs bg-background hover:bg-muted/30 border-input cursor-pointer gap-2',
             !value && 'text-muted-foreground',
@@ -235,7 +239,7 @@ export function BatchCombobox({
             className
           )}
         >
-          <div className="flex items-center gap-1.5 min-w-0 flex-1 truncate">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 truncate" title={title || value || placeholder}>
             <Tag className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <span className="truncate font-semibold text-foreground">
               {value || placeholder}
