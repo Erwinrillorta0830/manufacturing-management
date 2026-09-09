@@ -1,4 +1,4 @@
-export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected" | "Cancelled";
+export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected" | "Cancelled" | "Reversed";
 
 export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
@@ -27,7 +27,7 @@ export interface UserOption {
 
 export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
     search: "",
-    statuses: ["Posted", "Rejected", "Cancelled"],
+    statuses: ["Posted", "Rejected", "Cancelled", "Reversed"],
     branchId: "",
     requestedFrom: "",
     requestedTo: "",
@@ -90,6 +90,17 @@ export interface LotTransfer {
     targetBalanceAfter: number | null;
     idempotencyKey: string | null;
     reversalOfId: number | null;
+    reversalReason: string | null;
+    reversedBy: number | null;
+    reversedByName: string | null;
+    reversedAt: string | null;
+    linkedReversalId: number | null;
+    linkedReversalRequestNo: string | null;
+    linkedReversalStatus: LotTransferStatus | null;
+    linkedReversalReason: string | null;
+    linkedReversalBy: number | null;
+    linkedReversalByName: string | null;
+    linkedReversalAt: string | null;
     postingStartedAt: string | null;
     reconciliationRequired: boolean;
     postingError: string | null;

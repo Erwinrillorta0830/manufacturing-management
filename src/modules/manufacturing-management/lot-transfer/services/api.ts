@@ -13,6 +13,7 @@ import type {
 interface ApiEnvelope<T> {
     success?: boolean;
     data?: T;
+    original?: LotTransfer;
     totalCount?: number;
     preview?: LotTransferPreview;
     idempotent?: boolean;
@@ -233,6 +234,26 @@ export async function cancelLotTransfer(id: number, cancellationReason: string):
         body: JSON.stringify({ cancellationReason })
     });
     return unwrap(payload);
+}
+
+export async function reverseLotTransfer(id: number, reversalReason: string): Promise<{ transfer: LotTransfer; original: LotTransfer; preview: LotTransferPreview; idempotent: boolean }> {
+    const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `lot-transfer-reversal-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/reverse`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify({ reversalReason, idempotencyKey })
+    });
+    if (!payload.data || !payload.original || !payload.preview) {
+        throw new Error("Reversal response did not include the original and reversal audit results.");
+    }
+    return {
+        transfer: payload.data,
+        original: payload.original,
+        preview: payload.preview,
+        idempotent: Boolean(payload.idempotent)
+    };
 }
 
 export async function fetchProducts(): Promise<ProductOption[]> {
