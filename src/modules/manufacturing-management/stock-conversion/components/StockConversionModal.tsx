@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -128,6 +129,8 @@ export function StockConversionModal({
   // Allocation Mode: AUTO (FEFO) vs MANUAL for source stock
   const [allocationMode, setAllocationMode] = useState<"AUTO" | "MANUAL">("AUTO");
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
+  const [showExpired, setShowExpired] = useState<boolean>(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState<boolean>(false);
 
   // Target Product Classification (RM, PKG, FG, OTHER)
   const targetClassification = useMemo(() => {
@@ -179,6 +182,7 @@ export function StockConversionModal({
         setManualAllocations({});
         setTargetLotGroups([]);
         setToolbarDates({});
+        setHasAttemptedSubmit(false);
       }, 0);
 
       // Load branch lots & live source batch on-hand balances
@@ -193,19 +197,40 @@ export function StockConversionModal({
             setRawBranchOnhand(allBranchOnhand || []);
             setRawBranchInvLots(invLotsData || []);
 
-            // Compute current stock for every lot in the branch
+            // Compute current stock for every lot in the branch (excluding negative quantities)
             const lotStockMap = new Map<number, number>();
             (allBranchOnhand || []).forEach((b) => {
               const lId = Number(b.mmLotId || 0);
-              if (lId > 0) {
-                lotStockMap.set(lId, (lotStockMap.get(lId) || 0) + Number(b.onhandQuantity || 0));
+              const qty = Number(b.onhandQuantity || 0);
+              if (lId > 0 && qty > 0) {
+                lotStockMap.set(lId, (lotStockMap.get(lId) || 0) + qty);
               }
             });
 
-            const enrichedLots: MMLot[] = (lotsData || []).map((l) => ({
-              ...l,
-              current_stock_quantity: lotStockMap.get(Number(l.lot_id)) || 0,
-            }));
+            const enrichedLots: MMLot[] = (lotsData || []).map((l) => {
+              const rawStock = lotStockMap.has(Number(l.lot_id))
+                ? (lotStockMap.get(Number(l.lot_id)) || 0)
+                : Number(l.current_stock_quantity || 0);
+              return {
+                ...l,
+                current_stock_quantity: Math.max(0, rawStock),
+              };
+            });
+            setLots(enrichedLots);
+
+            setTargetLotGroups((prev) =>
+              prev.map((g) => {
+                if (!g.lot_id) return g;
+                const match = enrichedLots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+                if (!match) return g;
+                return {
+                  ...g,
+                  lot_name: match.lot_name,
+                  max_batch_capacity: Number(match.max_batch_capacity || 0),
+                  current_stock_quantity: Math.max(0, Number(match.current_stock_quantity || 0)),
+                };
+              })
+            );
 
             // Filter onhand data for this specific source product
             const onhandData = (allBranchOnhand || []).filter(
@@ -341,11 +366,96 @@ export function StockConversionModal({
       ((Number(targetUnit.conversionFactor) || 0) <= 0 || (Number(product?.conversionFactor) || 0) <= 0)
   );
 
+  const todayStr = getPhCurrentTimestamp().substring(0, 10);
+
+  // Helper to check if a batch is expired relative to current system date
+  const isBatchExpired = useCallback(
+    (expiryDateStr?: string | null) => {
+      if (!expiryDateStr) return false;
+      const exp = new Date(expiryDateStr);
+      if (isNaN(exp.getTime())) return false;
+      const today = new Date(todayStr);
+      today.setHours(0, 0, 0, 0);
+      exp.setHours(0, 0, 0, 0);
+      return exp.getTime() < today.getTime();
+    },
+    [todayStr]
+  );
+
+  // Handle toggling Show Expired (clears manual allocations on expired batches when toggled off)
+  const handleToggleShowExpired = (checked: boolean) => {
+    setShowExpired(checked);
+    if (!checked) {
+      setManualAllocations((prev) => {
+        const next = { ...prev };
+        sourceBatches.forEach((b) => {
+          if (isBatchExpired(b.expiry_date)) {
+            delete next[b.inventory_lot_id];
+          }
+        });
+        return next;
+      });
+    }
+  };
+
+  // Filtered batches visible for manual allocation based on showExpired toggle
+  const visibleSourceBatches = useMemo(() => {
+    if (showExpired) return sourceBatches;
+    return sourceBatches.filter((b) => !isBatchExpired(b.expiry_date));
+  }, [sourceBatches, showExpired, isBatchExpired]);
+
   // Compute Source FEFO Allocation Plan
+  // Always prioritizes valid unexpired stock first. Expired stock is only allocated if non-expired stock is exhausted.
   const fefoPlan = useMemo(() => {
     if (!sourceBatches.length || !qtyToConvert) return null;
-    return allocateStockSync(sourceBatches, Number(qtyToConvert), { strategy: "FEFO" });
-  }, [sourceBatches, qtyToConvert]);
+    const requestedQty = Number(qtyToConvert);
+    if (requestedQty <= 0) return null;
+
+    // 1. Separate non-expired and expired batches
+    const nonExpiredBatches = sourceBatches.filter((b) => !isBatchExpired(b.expiry_date));
+    const expiredBatches = sourceBatches.filter((b) => isBatchExpired(b.expiry_date));
+
+    // 2. First attempt to fulfill requested quantity using ONLY non-expired batches
+    const nonExpiredPlan = allocateStockSync(nonExpiredBatches, requestedQty, {
+      strategy: "FEFO",
+      includeExpired: false,
+    });
+
+    const nonExpiredAllocated = nonExpiredPlan.totalAllocated;
+    const remainingShortfall = requestedQty - nonExpiredAllocated;
+
+    // 3. If non-expired stock is sufficient, do not include any expired batches
+    if (remainingShortfall <= 0 || expiredBatches.length === 0) {
+      return {
+        ...nonExpiredPlan,
+        nonExpiredAllocated,
+        expiredAllocated: 0,
+        usedExpiredStock: false,
+      };
+    }
+
+    // 4. If no more non-expired pcs to auto allocate, allocate remaining shortfall from expired batches
+    const expiredPlan = allocateStockSync(expiredBatches, remainingShortfall, {
+      strategy: "FEFO",
+      includeExpired: true,
+    });
+
+    const expiredAllocated = expiredPlan.totalAllocated;
+    const combinedAllocations = [...nonExpiredPlan.allocations, ...expiredPlan.allocations];
+    const totalAllocated = nonExpiredAllocated + expiredAllocated;
+
+    return {
+      strategy: "FEFO" as const,
+      totalRequested: requestedQty,
+      totalAllocated,
+      isFullyAllocated: totalAllocated >= requestedQty,
+      allocations: combinedAllocations,
+      unallocatedBatches: expiredPlan.unallocatedBatches,
+      nonExpiredAllocated,
+      expiredAllocated,
+      usedExpiredStock: expiredAllocated > 0,
+    };
+  }, [sourceBatches, qtyToConvert, isBatchExpired]);
 
   // Synchronize manual allocations when FEFO plan changes and in AUTO mode
   const populateManualFromFefo = () => {
@@ -355,13 +465,24 @@ export function StockConversionModal({
         initialMap[a.inventory_lot_id] = a.allocated_quantity;
       });
       setManualAllocations(initialMap);
+      if (fefoPlan.usedExpiredStock) {
+        setShowExpired(true);
+      }
     }
   };
 
   // Active allocations for source stock based on mode
   const activeAllocations = useMemo(() => {
     if (allocationMode === "AUTO") {
-      return fefoPlan?.allocations || [];
+      return (fefoPlan?.allocations || []).map((a) => ({
+        inventory_lot_id: a.inventory_lot_id,
+        lot_id: a.lot_id,
+        lot_name: a.lot_name,
+        batch_no: a.batch_no,
+        allocated_quantity: a.allocated_quantity,
+        expiry_date: a.expiry_date,
+        manufacturing_date: a.manufacturing_date,
+      }));
     }
     return sourceBatches
       .filter((b) => (manualAllocations[b.inventory_lot_id] || 0) > 0)
@@ -372,6 +493,7 @@ export function StockConversionModal({
         batch_no: b.batch_no,
         allocated_quantity: manualAllocations[b.inventory_lot_id] || 0,
         expiry_date: b.expiry_date,
+        manufacturing_date: b.manufacturing_date,
       }));
   }, [allocationMode, fefoPlan, sourceBatches, manualAllocations]);
 
@@ -390,8 +512,6 @@ export function StockConversionModal({
     return "";
   }, [activeAllocations]);
 
-  const todayStr = getPhCurrentTimestamp().substring(0, 10);
-
   // Live total available stock
   const totalAvailableStock = useMemo(() => {
     if (liveProductQty !== null) return liveProductQty;
@@ -401,29 +521,112 @@ export function StockConversionModal({
     return Number(product?.quantity) || 0;
   }, [liveProductQty, sourceBatches, product?.quantity]);
 
-  // ── Initialize Target Lot Groups (without auto-fill or auto-selection) ──
-  if (wholeUnits > 0 && lots.length > 0 && targetLotGroups.length === 0) {
-    setTargetLotGroups([
-      {
-        lot_id: 0,
-        lot_name: "",
-        max_batch_capacity: 10,
-        unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
-        unit_name: targetUnit?.name || null,
-        current_stock_quantity: 0,
-        allocated_quantity: 0,
-        batches: [
+  // ── Auto-split Target Batches & Cascade MFG / EXP Dates from Source Allocations ──
+  useEffect(() => {
+    if (wholeUnits <= 0) {
+      setTargetLotGroups((prev) => (prev.length > 0 ? [] : prev));
+      return;
+    }
+
+    const sourceFactor = Number(product?.conversionFactor) || 1;
+    const targetFactor = Number(targetUnit?.conversionFactor) || 1;
+    const stepInSource = targetFactor / sourceFactor;
+
+    setTargetLotGroups((prev) => {
+      // Only auto-split if user hasn't created multiple lot groups (single lot group)
+      if (prev.length > 1) return prev;
+
+      const currentGroup = prev[0];
+      const existingBatches = currentGroup?.batches || [];
+
+      let splits: BatchRowAllocation[] = [];
+
+      if (activeAllocations.length > 0) {
+        let remainingTargetQty = wholeUnits;
+        activeAllocations.forEach((alloc, idx) => {
+          if (remainingTargetQty <= 0) return;
+
+          let splitQty = 0;
+          if (idx === activeAllocations.length - 1) {
+            splitQty = remainingTargetQty;
+          } else if (stepInSource > 0) {
+            splitQty = Math.min(
+              remainingTargetQty,
+              Math.floor((alloc.allocated_quantity || 0) / stepInSource)
+            );
+          } else {
+            splitQty = remainingTargetQty;
+          }
+          remainingTargetQty -= splitQty;
+
+          const existingB = existingBatches[idx];
+          const mfgDate = alloc.manufacturing_date?.substring(0, 10) || todayStr;
+          const expDate = alloc.expiry_date?.substring(0, 10) || null;
+
+          splits.push({
+            batch_no: existingB?.batch_no || "",
+            quantity: splitQty,
+            manufacturing_date: mfgDate,
+            expiry_date: expDate,
+            qa_status: existingB?.qa_status || "GOOD",
+          });
+        });
+
+        if (remainingTargetQty > 0 && splits.length > 0) {
+          splits[splits.length - 1].quantity += remainingTargetQty;
+        }
+      } else {
+        splits = [
           {
-            batch_no: "",
-            quantity: 0,
+            batch_no: existingBatches[0]?.batch_no || "",
+            quantity: wholeUnits,
             manufacturing_date: todayStr,
             expiry_date: defaultExpDate || null,
-            qa_status: "GOOD",
+            qa_status: existingBatches[0]?.qa_status || "GOOD",
           },
-        ],
-      },
-    ]);
-  }
+        ];
+      }
+
+      // Check if splits actually changed to avoid unnecessary re-renders
+      const hasChanged =
+        prev.length === 0 ||
+        existingBatches.length !== splits.length ||
+        existingBatches.some((eb, i) => {
+          const s = splits[i];
+          return (
+            eb.quantity !== s.quantity ||
+            eb.manufacturing_date !== s.manufacturing_date ||
+            eb.expiry_date !== s.expiry_date
+          );
+        });
+
+      if (!hasChanged) return prev;
+
+      const currentGroupLot = currentGroup?.lot_id ? lots.find((l) => Number(l.lot_id) === Number(currentGroup.lot_id)) : undefined;
+      return [
+        {
+          lot_id: currentGroup?.lot_id || 0,
+          lot_name: currentGroupLot?.lot_name || currentGroup?.lot_name || "",
+          max_batch_capacity: Number(currentGroupLot?.max_batch_capacity ?? currentGroup?.max_batch_capacity ?? 0),
+          unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
+          unit_name: targetUnit?.name || null,
+          current_stock_quantity: Math.max(0, Number(currentGroupLot?.current_stock_quantity ?? currentGroup?.current_stock_quantity ?? 0)),
+          allocated_quantity: wholeUnits,
+          batches: splits,
+        },
+      ];
+    });
+  }, [
+    activeAllocations,
+    wholeUnits,
+    product?.conversionFactor,
+    targetUnit?.conversionFactor,
+    targetUnit?.unitId,
+    targetUnit?.name,
+    todayStr,
+    defaultExpDate,
+    lots,
+  ]);
 
   // Total allocated across all target lot groups and batches
   const totalTargetAllocated = useMemo(() => {
@@ -438,6 +641,13 @@ export function StockConversionModal({
 
   // ── Target Multi-Lot & Multi-Batch Mutation Handlers ──────────────
 
+  const handleSelectTargetUnit = (newUnitId: number) => {
+    if (newUnitId === selectedTargetUnit) return;
+    setSelectedTargetUnit(newUnitId);
+    setTargetLotGroups([]);
+    setToolbarDates({});
+  };
+
   const handleAddLotGroup = () => {
     if (lots.length === 0) return;
 
@@ -446,7 +656,7 @@ export function StockConversionModal({
       {
         lot_id: 0,
         lot_name: "",
-        max_batch_capacity: 10,
+        max_batch_capacity: 0,
         unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
         unit_name: targetUnit?.name || null,
         current_stock_quantity: 0,
@@ -480,10 +690,10 @@ export function StockConversionModal({
           ...g,
           lot_id: matchedLot.lot_id,
           lot_name: matchedLot.lot_name,
-          max_batch_capacity: matchedLot.max_batch_capacity || 10,
+          max_batch_capacity: Number(matchedLot.max_batch_capacity || 0),
           unit_id: matchedLot.unit_id,
           unit_name: matchedLot.unit_name,
-          current_stock_quantity: matchedLot.current_stock_quantity || 0,
+          current_stock_quantity: Math.max(0, Number(matchedLot.current_stock_quantity || 0)),
         };
       })
     );
@@ -493,6 +703,8 @@ export function StockConversionModal({
     setTargetLotGroups((prev) =>
       prev.map((g, idx) => {
         if (idx !== gIdx) return g;
+        const nextBatchIdx = g.batches.length;
+        const matchedSource = activeAllocations[nextBatchIdx];
         return {
           ...g,
           batches: [
@@ -500,8 +712,8 @@ export function StockConversionModal({
             {
               batch_no: "",
               quantity: 0,
-              manufacturing_date: todayStr,
-              expiry_date: defaultExpDate || null,
+              manufacturing_date: matchedSource?.manufacturing_date?.substring(0, 10) || todayStr,
+              expiry_date: matchedSource?.expiry_date?.substring(0, 10) || defaultExpDate || null,
               qa_status: "GOOD",
             },
           ],
@@ -597,6 +809,153 @@ export function StockConversionModal({
     toast.success("Dates applied across all storage lots and batches");
   };
 
+  // Capacity-Aware Auto-Reallocate across all target lot groups
+  const handleReallocateLots = () => {
+    if (targetLotGroups.length === 0 || wholeUnits <= 0) return;
+
+    // Check if any lot card has no storage lot selected
+    const unselectedLotIndexes = targetLotGroups
+      .map((g, idx) => (!g.lot_id || Number(g.lot_id) === 0 ? idx + 1 : null))
+      .filter((val): val is number => val !== null);
+
+    if (unselectedLotIndexes.length > 0) {
+      toast.error(
+        `Please select a storage rack / lot first for Lot #${unselectedLotIndexes.join(", #")}`
+      );
+      return;
+    }
+
+    const sourceFactor = Number(product?.conversionFactor) || 1;
+    const targetFactor = Number(targetUnit?.conversionFactor) || 1;
+    const stepInSource = targetFactor / sourceFactor;
+
+    // 1. Build stream of target output splits from source allocations (with dates)
+    const stream: { quantity: number; mfgDate: string; expDate: string | null; qaStatus: QAStatus }[] = [];
+    if (activeAllocations.length > 0) {
+      let remainingTargetQty = wholeUnits;
+      activeAllocations.forEach((alloc, idx) => {
+        if (remainingTargetQty <= 0) return;
+        let splitQty = 0;
+        if (idx === activeAllocations.length - 1) {
+          splitQty = remainingTargetQty;
+        } else if (stepInSource > 0) {
+          splitQty = Math.min(
+            remainingTargetQty,
+            Math.floor((alloc.allocated_quantity || 0) / stepInSource)
+          );
+        } else {
+          splitQty = remainingTargetQty;
+        }
+        remainingTargetQty -= splitQty;
+
+        const mfgDate = alloc.manufacturing_date?.substring(0, 10) || todayStr;
+        const expDate = alloc.expiry_date?.substring(0, 10) || null;
+        if (splitQty > 0) {
+          stream.push({
+            quantity: splitQty,
+            mfgDate,
+            expDate,
+            qaStatus: "GOOD",
+          });
+        }
+      });
+      if (remainingTargetQty > 0 && stream.length > 0) {
+        stream[stream.length - 1].quantity += remainingTargetQty;
+      }
+    } else {
+      stream.push({
+        quantity: wholeUnits,
+        mfgDate: todayStr,
+        expDate: defaultExpDate || null,
+        qaStatus: "GOOD",
+      });
+    }
+
+    const remainingStream = stream.map((s) => ({ ...s }));
+
+    // 2. Distribute across targetLotGroups respecting each lot's available space
+    const updatedGroups = targetLotGroups.map((g, gIdx) => {
+      const isLastGroup = gIdx === targetLotGroups.length - 1;
+      const matchedLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+      const maxCap = Number(matchedLot?.max_batch_capacity ?? g.max_batch_capacity ?? 0);
+      const curStock = Math.max(0, Number(matchedLot?.current_stock_quantity ?? g.current_stock_quantity ?? 0));
+      const availableSpace = maxCap > 0 ? Math.max(0, maxCap - curStock) : Infinity;
+
+      let spaceForThisLot = availableSpace;
+      const lotBatches: BatchRowAllocation[] = [];
+      let totalLotAllocated = 0;
+
+      const existingBatchNos = (g.batches || []).map((b) => b.batch_no);
+
+      while (remainingStream.length > 0 && (spaceForThisLot > 0 || isLastGroup)) {
+        const currentItem = remainingStream[0];
+        if (currentItem.quantity <= 0) {
+          remainingStream.shift();
+          continue;
+        }
+
+        const canTake = isLastGroup
+          ? currentItem.quantity
+          : Math.min(spaceForThisLot, currentItem.quantity);
+
+        if (canTake <= 0) break;
+
+        const bIdx = lotBatches.length;
+        lotBatches.push({
+          batch_no: existingBatchNos[bIdx] || "",
+          quantity: canTake,
+          manufacturing_date: currentItem.mfgDate,
+          expiry_date: currentItem.expDate,
+          qa_status: currentItem.qaStatus,
+        });
+
+        totalLotAllocated += canTake;
+        if (spaceForThisLot !== Infinity) {
+          spaceForThisLot -= canTake;
+        }
+        currentItem.quantity -= canTake;
+
+        if (currentItem.quantity <= 0) {
+          remainingStream.shift();
+        }
+      }
+
+      if (lotBatches.length === 0) {
+        lotBatches.push({
+          batch_no: existingBatchNos[0] || "",
+          quantity: 0,
+          manufacturing_date: todayStr,
+          expiry_date: defaultExpDate || null,
+          qa_status: "GOOD",
+        });
+      }
+
+      return {
+        ...g,
+        lot_name: matchedLot?.lot_name || g.lot_name,
+        max_batch_capacity: maxCap,
+        current_stock_quantity: curStock,
+        allocated_quantity: totalLotAllocated,
+        batches: lotBatches,
+      };
+    });
+
+    setTargetLotGroups(updatedGroups);
+
+    const hasOverage = updatedGroups.some((g) => {
+      const matchedLot = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+      const cap = Number(matchedLot?.max_batch_capacity ?? g.max_batch_capacity ?? 0);
+      const cur = Math.max(0, Number(matchedLot?.current_stock_quantity ?? g.current_stock_quantity ?? 0));
+      return cap > 0 && (cur + g.allocated_quantity) > cap;
+    });
+
+    if (hasOverage) {
+      toast.info("Reallocated across lots. Some racks remain over capacity; consider assigning another storage lot.");
+    } else {
+      toast.success("Successfully reallocated across lots within capacity limits!");
+    }
+  };
+
   // ── Multi-Layer Validation Engine ─────────────────────────────────
   const validationErrors = useMemo(() => {
     const errs: string[] = [];
@@ -641,6 +1000,17 @@ export function StockConversionModal({
         }
       }
 
+      // Pre-calculate total allocated per lot ID across all targetLotGroups
+      const lotAllocationTotals = new Map<number, number>();
+      targetLotGroups.forEach((g) => {
+        const lId = Number(g.lot_id);
+        if (lId > 0) {
+          const gQty = (g.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
+          lotAllocationTotals.set(lId, (lotAllocationTotals.get(lId) || 0) + gQty);
+        }
+      });
+      const reportedCapacityLotIds = new Set<number>();
+
       // Per-Lot Validations
       targetLotGroups.forEach((group, gIdx) => {
         if (!group.lot_id || Number(group.lot_id) === 0) {
@@ -648,47 +1018,59 @@ export function StockConversionModal({
           return;
         }
 
-        const lotUomId = group.unit_id ? Number(group.unit_id) : null;
+        const lotObj = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
+        const lotName = lotObj?.lot_name || group.lot_name || `Lot #${gIdx + 1}`;
+        const lotUomId = lotObj?.unit_id ? Number(lotObj.unit_id) : (group.unit_id ? Number(group.unit_id) : null);
         const isUomMismatch = Boolean(lotUomId && targetUnit && Number(targetUnit.unitId) !== lotUomId);
         const groupQty = (group.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
-        const currentStock = Number(group.current_stock_quantity || 0);
-        const maxCap = Number(group.max_batch_capacity || 0);
-        const projectedStock = currentStock + groupQty;
+        const currentStock = Math.max(0, Number(lotObj?.current_stock_quantity ?? group.current_stock_quantity ?? 0));
+        const maxCap = Number(lotObj?.max_batch_capacity ?? group.max_batch_capacity ?? 0);
         const availableSpace = Math.max(0, maxCap - currentStock);
+
+        const totalAllocatedToLot = lotAllocationTotals.get(Number(group.lot_id)) || groupQty;
+        const totalProjectedStock = currentStock + totalAllocatedToLot;
+        const isMultiGroupForThisLot = targetLotGroups.filter((tg) => Number(tg.lot_id) === Number(group.lot_id)).length > 1;
 
         const lotStored = lotStoredSummaryMap.get(Number(group.lot_id));
         const typeCompat = checkLotProductTypeCompatibility(lotStored, targetClassification);
         if (typeCompat.isTypeMismatch) {
           const sourceKind = lotStored?.is_draft_allocation ? "Form Draft" : "Warehouse";
           errs.push(
-            `Lot #${gIdx + 1} (${group.lot_name}): Product Type Conflict! Storage rack currently holds ${sourceKind} (${lotStored?.primary_classification_label || "Other"}), but conversion output is "${targetClassification.label}". Cannot store conflicting product types together.`
+            `Lot #${gIdx + 1} (${lotName}): Product Type Conflict! Storage rack currently holds ${sourceKind} (${lotStored?.primary_classification_label || "Other"}), but conversion output is "${targetClassification.label}". Cannot store conflicting product types together.`
           );
         }
 
         if (isUomMismatch) {
-          errs.push(`Lot #${gIdx + 1} (${group.lot_name}): Unit Mismatch! Storage rack is designated for "${group.unit_name || `UOM #${lotUomId}`}", but conversion output is "${targetUnit?.name}".`);
+          errs.push(`Lot #${gIdx + 1} (${lotName}): Unit Mismatch! Storage rack is designated for "${lotObj?.unit_name || group.unit_name || `UOM #${lotUomId}`}", but conversion output is "${targetUnit?.name}".`);
         } else if (maxCap > 0) {
           if (currentStock >= maxCap && groupQty > 0) {
-            errs.push(`Lot #${gIdx + 1} (${group.lot_name}): Storage rack is already full (${currentStock.toLocaleString()} / ${maxCap.toLocaleString()} ${targetUnit?.name}). No additional quantity can be stored.`);
-          } else if (projectedStock > maxCap) {
-            const overage = projectedStock - maxCap;
-            errs.push(`Lot #${gIdx + 1} (${group.lot_name}): Allocating ${groupQty.toLocaleString()} ${targetUnit?.name} exceeds capacity! Current stock: ${currentStock.toLocaleString()} ${targetUnit?.name}, Max capacity: ${maxCap.toLocaleString()} ${targetUnit?.name}. Only ${availableSpace.toLocaleString()} ${targetUnit?.name} space remains (exceeded by ${overage.toLocaleString()} ${targetUnit?.name}).`);
+            errs.push(`Lot #${gIdx + 1} (${lotName}): Storage rack is already full (${currentStock.toLocaleString()} / ${maxCap.toLocaleString()} ${targetUnit?.name}). No additional quantity can be stored.`);
+          } else if (totalProjectedStock > maxCap) {
+            const overage = totalProjectedStock - maxCap;
+            if (isMultiGroupForThisLot) {
+              const lotId = Number(group.lot_id);
+              if (!reportedCapacityLotIds.has(lotId)) {
+                reportedCapacityLotIds.add(lotId);
+                errs.push(`Storage Rack "${lotName}": Combined allocation across lots (${totalAllocatedToLot.toLocaleString()} ${targetUnit?.name}) exceeds capacity! Current stock: ${currentStock.toLocaleString()} ${targetUnit?.name}, Max capacity: ${maxCap.toLocaleString()} ${targetUnit?.name}. Exceeded by ${overage.toLocaleString()} ${targetUnit?.name}.`);
+              }
+            } else {
+              errs.push(`Lot #${gIdx + 1} (${lotName}): Allocating ${groupQty.toLocaleString()} ${targetUnit?.name} exceeds capacity! Current stock: ${currentStock.toLocaleString()} ${targetUnit?.name}, Max capacity: ${maxCap.toLocaleString()} ${targetUnit?.name}. Only ${availableSpace.toLocaleString()} ${targetUnit?.name} space remains (exceeded by ${overage.toLocaleString()} ${targetUnit?.name}).`);
+            }
           }
         }
 
         // Bad Stock vs Standard Storage Rack Check
-        const lotObj = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
         const lotIsBad = isBadStockLot(lotObj);
 
         (group.batches || []).forEach((b, bIdx) => {
           const batchIsBad = b.qa_status && b.qa_status !== "GOOD";
           if (batchIsBad && !lotIsBad) {
             errs.push(
-              `Lot #${gIdx + 1} (${group.lot_name}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate bad/damaged stock (${b.qa_status}) into standard storage rack. Bad stock must be placed in a Bad Stock / Quarantine rack or branch.`
+              `Lot #${gIdx + 1} (${lotName}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate bad/damaged stock (${b.qa_status}) into standard storage rack. Bad stock must be placed in a Bad Stock / Quarantine rack or branch.`
             );
           } else if (!batchIsBad && lotIsBad) {
             errs.push(
-              `Lot #${gIdx + 1} (${group.lot_name}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate GOOD stock into a Bad Stock / Quarantine storage rack. Only DAMAGED, QUARANTINED, or EXPIRED stock can be allocated here.`
+              `Lot #${gIdx + 1} (${lotName}), Batch #${bIdx + 1} (${b.batch_no || "Unassigned"}): Cannot allocate GOOD stock into a Bad Stock / Quarantine storage rack. Only DAMAGED, QUARANTINED, or EXPIRED stock can be allocated here.`
             );
           }
         });
@@ -744,8 +1126,17 @@ export function StockConversionModal({
   if (!product) return null;
 
   const handleConfirm = () => {
-    if (isValid && qtyToConvert && targetUnit && wholeUnits > 0) {
-      const sourceSummary = activeAllocations
+    setHasAttemptedSubmit(true);
+
+    if (!isValid || !qtyToConvert || !targetUnit || wholeUnits <= 0) {
+      const firstError = validationErrors[0] || "Please check and complete all required fields.";
+      toast.error("Cannot confirm conversion", {
+        description: firstError,
+      });
+      return;
+    }
+
+    const sourceSummary = activeAllocations
         .map((a) => `${a.batch_no} (${a.allocated_quantity} ${product.currentUnit})`)
         .join(", ");
 
@@ -781,7 +1172,6 @@ export function StockConversionModal({
           };
         }),
       });
-    }
   };
 
   const getConversionRatioInfo = (targetUom: UnitTarget) => {
@@ -857,19 +1247,41 @@ export function StockConversionModal({
               <Label htmlFor="qtyToConvert" className="text-xs font-semibold text-foreground flex items-center gap-2">
                 Quantity to Convert *
               </Label>
-              <Input
-                id="qtyToConvert"
-                type="number"
-                min={1}
-                max={totalAvailableStock}
-                value={qtyToConvert}
-                onChange={(e) => {
-                  const val = e.target.value ? Number(e.target.value) : "";
-                  setQtyToConvert(val);
-                }}
-                placeholder="Enter quantity to convert..."
-                className="h-11 text-sm font-bold"
-              />
+              {(() => {
+                const isQtyMissing = hasAttemptedSubmit && (!qtyToConvert || Number(qtyToConvert) <= 0);
+                const isQtyExceeded = hasAttemptedSubmit && Number(qtyToConvert) > totalAvailableStock;
+                const isQtyErr = isQtyMissing || isQtyExceeded;
+
+                return (
+                  <>
+                    <Input
+                      id="qtyToConvert"
+                      type="number"
+                      min={1}
+                      max={totalAvailableStock}
+                      value={qtyToConvert}
+                      onChange={(e) => {
+                        const val = e.target.value ? Number(e.target.value) : "";
+                        setQtyToConvert(val);
+                      }}
+                      placeholder="Enter quantity to convert..."
+                      className={`h-11 text-sm font-bold ${
+                        isQtyErr ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5" : ""
+                      }`}
+                    />
+                    {isQtyMissing && (
+                      <span className="text-[11px] text-destructive font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 shrink-0" /> Quantity to convert is required.
+                      </span>
+                    )}
+                    {isQtyExceeded && (
+                      <span className="text-[11px] text-destructive font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 shrink-0" /> Quantity exceeds available stock ({totalAvailableStock} {product.currentUnit}s).
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
 
@@ -885,6 +1297,12 @@ export function StockConversionModal({
                 </span>
               )}
             </div>
+            {hasAttemptedSubmit && !selectedTargetUnit && (
+              <div className="p-2.5 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive font-bold flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Please select a target packaging unit (UOM) below.</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {product.availableUnits?.map((u, idx) => {
                 const ratioInfo = getConversionRatioInfo(u);
@@ -901,7 +1319,7 @@ export function StockConversionModal({
                         ? "border-border/50 bg-muted/20 opacity-70 hover:opacity-100"
                         : "border-border bg-card hover:border-primary/40 hover:bg-muted/30"
                     }`}
-                    onClick={() => setSelectedTargetUnit(u.unitId)}
+                    onClick={() => handleSelectTargetUnit(u.unitId)}
                   >
                     <div className="font-bold flex items-center justify-between text-xs text-foreground gap-2">
                       <span className="truncate flex items-center gap-1.5">
@@ -1079,67 +1497,125 @@ export function StockConversionModal({
                   <Clock className="w-3.5 h-3.5 text-primary" /> Source Batch Allocation (Consuming {qtyToConvert} {product.currentUnit})
                 </Label>
 
-                {/* Mode Selector Tabs */}
-                <div className="flex items-center gap-1 bg-background border border-border p-0.5 rounded-lg shadow-sm">
-                  <button
-                    type="button"
-                    onClick={() => setAllocationMode("AUTO")}
-                    className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all flex items-center gap-1.5 ${
-                      allocationMode === "AUTO"
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <Sparkles className="w-3 h-3" /> Auto (FEFO)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      populateManualFromFefo();
-                      setAllocationMode("MANUAL");
-                    }}
-                    className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all flex items-center gap-1.5 ${
-                      allocationMode === "MANUAL"
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <SlidersHorizontal className="w-3 h-3" /> Manual Selection
-                  </button>
+                {/* Mode Selector Tabs & Show Expired Toggle */}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {/* Show Expired Toggle */}
+                  <div className="flex items-center gap-2 px-2.5 py-1 bg-background border border-border rounded-lg shadow-xs">
+                    <Switch
+                      id="toggle-show-expired"
+                      size="sm"
+                      checked={showExpired}
+                      onCheckedChange={handleToggleShowExpired}
+                    />
+                    <Label
+                      htmlFor="toggle-show-expired"
+                      className="text-[11px] font-bold text-muted-foreground cursor-pointer select-none flex items-center gap-1"
+                    >
+                      {showExpired && <AlertTriangle className="w-3 h-3 text-amber-500" />}
+                      <span>Show Expired</span>
+                    </Label>
+                  </div>
+
+                  {/* Mode Selector Tabs */}
+                  <div className="flex items-center gap-1 bg-background border border-border p-0.5 rounded-lg shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => setAllocationMode("AUTO")}
+                      className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all flex items-center gap-1.5 ${
+                        allocationMode === "AUTO"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Sparkles className="w-3 h-3" /> Auto (FEFO)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        populateManualFromFefo();
+                        setAllocationMode("MANUAL");
+                      }}
+                      className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all flex items-center gap-1.5 ${
+                        allocationMode === "MANUAL"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3 h-3" /> Manual Selection
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* AUTO FEFO VIEW */}
               {allocationMode === "AUTO" ? (
                 <div className="space-y-2 pt-1">
+                  {fefoPlan && fefoPlan.usedExpiredStock && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5 animate-in fade-in">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <div className="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                          <span>Expired Stock Used in Auto Allocation</span>
+                          <Badge variant="outline" className="text-[9px] bg-amber-500/20 text-amber-800 dark:text-amber-300 border-amber-500/40 font-mono">
+                            +{fefoPlan.expiredAllocated} {product.currentUnit} Expired
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-amber-800/90 dark:text-amber-300/90">
+                          {fefoPlan.nonExpiredAllocated > 0
+                            ? `Non-expired stock was insufficient (allocated ${fefoPlan.nonExpiredAllocated} ${product.currentUnit}). To fulfill the requested ${qtyToConvert} ${product.currentUnit}(s), ${fefoPlan.expiredAllocated} ${product.currentUnit} of expired stock was automatically allocated.`
+                            : `No valid unexpired stock available. All ${fefoPlan.expiredAllocated} ${product.currentUnit} was automatically allocated from expired stock to fulfill the requested quantity.`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {fefoPlan && fefoPlan.allocations.length > 0 ? (
                     <div className="space-y-1.5">
-                      {fefoPlan.allocations.map((alloc, idx) => (
-                        <div
-                          key={`${alloc.inventory_lot_id}-${alloc.batch_no || ""}-${idx}`}
-                          className="flex items-center justify-between p-2.5 rounded-lg bg-card border border-border text-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-foreground">{alloc.batch_no}</span>
-                            <span className="text-[10px] text-muted-foreground">
-                              ({alloc.lot_name || `Lot #${alloc.lot_id}`})
-                            </span>
-                            {alloc.expiry_date && (
-                              <span className="text-[10px] text-emerald-600 font-mono">
-                                Exp: {alloc.expiry_date.substring(0, 10)}
+                      {fefoPlan.allocations.map((alloc, idx) => {
+                        const isExpired = isBatchExpired(alloc.expiry_date);
+                        return (
+                          <div
+                            key={`${alloc.inventory_lot_id}-${alloc.batch_no || ""}-${idx}`}
+                            className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
+                              isExpired
+                                ? "bg-rose-500/10 border-rose-500/30 dark:bg-rose-950/20 ring-1 ring-rose-500/20"
+                                : "bg-card border-border"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-foreground">{alloc.batch_no}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                ({alloc.lot_name || `Lot #${alloc.lot_id}`})
                               </span>
-                            )}
+                              {alloc.expiry_date && (
+                                isExpired ? (
+                                  <Badge variant="destructive" className="text-[9px] py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/40 font-bold gap-1 animate-pulse">
+                                    <AlertTriangle className="w-2.5 h-2.5" />
+                                    Expired Stock Used ({alloc.expiry_date.substring(0, 10)})
+                                  </Badge>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                                    Exp: {alloc.expiry_date.substring(0, 10)}
+                                  </span>
+                                )
+                              )}
+                            </div>
+                            <div className="font-bold text-primary text-xs">
+                              Consume: {alloc.allocated_quantity} {product.currentUnit}
+                            </div>
                           </div>
-                          <div className="font-bold text-primary text-xs">
-                            Consume: {alloc.allocated_quantity} {product.currentUnit}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground italic p-2">
-                      No matching batches found for automatic allocation.
-                    </p>
+                    <div className="p-4 text-center text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border space-y-1">
+                      <p className="font-medium">No matching batches found for automatic allocation.</p>
+                      {!showExpired && (
+                        <p className="text-[11px] text-muted-foreground/80">
+                          If available stock is expired, toggle <strong>&ldquo;Show Expired&rdquo;</strong> to allow allocating expired batches.
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               ) : (
@@ -1159,35 +1635,52 @@ export function StockConversionModal({
                   </div>
 
                   <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                    {sourceBatches.map((batch, idx) => {
-                      const batchKey = batch.inventory_lot_id;
-                      const uniqueKey = `${batchKey}-${batch.batch_no || ""}-${idx}`;
-                      const allocated = manualAllocations[batchKey] || 0;
-                      const maxAvail = batch.available_quantity || 0;
+                    {visibleSourceBatches.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border">
+                        No active unexpired batches found. Turn on <strong>&ldquo;Show Expired&rdquo;</strong> to view and allocate expired inventory.
+                      </div>
+                    ) : (
+                      visibleSourceBatches.map((batch, idx) => {
+                        const batchKey = batch.inventory_lot_id;
+                        const uniqueKey = `${batchKey}-${batch.batch_no || ""}-${idx}`;
+                        const allocated = manualAllocations[batchKey] || 0;
+                        const maxAvail = batch.available_quantity || 0;
+                        const isExpired = isBatchExpired(batch.expiry_date);
 
-                      return (
-                        <div
-                          key={uniqueKey}
-                          className={`p-2.5 rounded-lg border transition-all flex items-center justify-between gap-3 text-xs ${
-                            allocated > 0 ? "bg-primary/5 border-primary/40" : "bg-card border-border"
-                          }`}
-                        >
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-bold text-foreground">{batch.batch_no}</span>
-                              <span className="text-[10px] text-muted-foreground">
-                                ({batch.lot_name || `Lot #${batch.lot_id}`})
-                              </span>
-                              <Badge variant="outline" className="text-[9px] py-0 h-4 bg-muted/40 font-mono">
-                                Available: {maxAvail} {product.currentUnit}
-                              </Badge>
+                        return (
+                          <div
+                            key={uniqueKey}
+                            className={`p-2.5 rounded-lg border transition-all flex items-center justify-between gap-3 text-xs ${
+                              isExpired
+                                ? (allocated > 0 ? "bg-rose-500/15 border-rose-500/50 ring-1 ring-rose-500/30" : "bg-rose-500/5 border-rose-500/25")
+                                : (allocated > 0 ? "bg-primary/5 border-primary/40" : "bg-card border-border")
+                            }`}
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-foreground">{batch.batch_no}</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  ({batch.lot_name || `Lot #${batch.lot_id}`})
+                                </span>
+                                <Badge variant="outline" className="text-[9px] py-0 h-4 bg-muted/40 font-mono">
+                                  Available: {maxAvail} {product.currentUnit}
+                                </Badge>
+                              </div>
+                              {batch.expiry_date && (
+                                isExpired ? (
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <Badge variant="destructive" className="text-[9px] py-0 h-4 bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/40 font-bold gap-1">
+                                      <AlertTriangle className="w-2.5 h-2.5" />
+                                      Expired: {batch.expiry_date.substring(0, 10)}
+                                    </Badge>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                                    Exp: {batch.expiry_date?.substring(0, 10)}
+                                  </span>
+                                )
+                              )}
                             </div>
-                            {batch.expiry_date ? (
-                              <span className="text-[10px] text-emerald-600 font-mono">
-                                Exp: {batch.expiry_date?.substring(0, 10)}
-                              </span>
-                            ) : null}
-                          </div>
 
                           <div className="flex items-center gap-2 shrink-0">
                             <div className="flex items-center gap-1">
@@ -1234,7 +1727,7 @@ export function StockConversionModal({
                           </div>
                         </div>
                       );
-                    })}
+                    }))}
                   </div>
                 </div>
               )}
@@ -1322,28 +1815,42 @@ export function StockConversionModal({
 
                 <div className="flex items-center gap-2 flex-wrap">
                   {targetLotGroups.length > 1 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        const firstGroupMfg =
-                          toolbarDates[0]?.mfg ??
-                          (targetLotGroups[0]?.batches[0]?.manufacturing_date
-                            ? String(targetLotGroups[0].batches[0].manufacturing_date).substring(0, 10)
-                            : todayStr);
-                        const firstGroupExp =
-                          toolbarDates[0]?.exp ??
-                          (targetLotGroups[0]?.batches[0]?.expiry_date
-                            ? String(targetLotGroups[0].batches[0].expiry_date).substring(0, 10)
-                            : (defaultExpDate || ""));
-                        handleApplyDatesToAllLots(firstGroupMfg, firstGroupExp);
-                      }}
-                      className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 shadow-xs cursor-pointer"
-                      title="Apply dates from first lot to all lots & batches"
-                    >
-                      Apply Dates to All Lots
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleReallocateLots}
+                        className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-background border-border shadow-xs hover:bg-muted cursor-pointer text-foreground"
+                        title="Reallocate target output quantity across lots according to each lot's capacity"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-primary" />
+                        Reallocate across Lots
+                      </Button>
+
+                      {/* <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          const firstGroupMfg =
+                            toolbarDates[0]?.mfg ??
+                            (targetLotGroups[0]?.batches[0]?.manufacturing_date
+                              ? String(targetLotGroups[0].batches[0].manufacturing_date).substring(0, 10)
+                              : todayStr);
+                          const firstGroupExp =
+                            toolbarDates[0]?.exp ??
+                            (targetLotGroups[0]?.batches[0]?.expiry_date
+                              ? String(targetLotGroups[0].batches[0].expiry_date).substring(0, 10)
+                              : (defaultExpDate || ""));
+                          handleApplyDatesToAllLots(firstGroupMfg, firstGroupExp);
+                        }}
+                        className="h-8 text-xs font-bold gap-1.5 shrink-0 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 shadow-xs cursor-pointer"
+                        title="Apply dates from first lot to all lots & batches"
+                      >
+                        Apply Dates to All Lots
+                      </Button> */}
+                    </>
                   )}
 
                   <Button
@@ -1362,23 +1869,29 @@ export function StockConversionModal({
               {/* TARGET LOT GROUPS LIST */}
               <div className="space-y-4">
                 {targetLotGroups.map((group, gIdx) => {
-                  const groupLot = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
+                  const isLotSelected = Boolean(group.lot_id && Number(group.lot_id) > 0);
+                  const groupLot = isLotSelected ? lots.find((l) => Number(l.lot_id) === Number(group.lot_id)) : undefined;
                   const lotUomId = groupLot?.unit_id ?? group.unit_id;
                   const isUomMismatch = Boolean(
-                    lotUomId &&
+                    isLotSelected &&
+                      lotUomId &&
                       targetUnit &&
                       Number(targetUnit.unitId) !== Number(lotUomId)
                   );
 
-                  const currentStockQty = Number(groupLot?.current_stock_quantity || group.current_stock_quantity || 0);
-                  const maxCap = Number(groupLot?.max_batch_capacity || group.max_batch_capacity || 0);
+                  const currentStockQty = isLotSelected ? Math.max(0, Number(groupLot?.current_stock_quantity || group.current_stock_quantity || 0)) : 0;
+                  const maxCap = isLotSelected ? Number(groupLot?.max_batch_capacity || group.max_batch_capacity || 0) : 0;
                   const groupAllocated = (group.batches || []).reduce((sum, b) => sum + Number(b.quantity || 0), 0);
-                  const projectedTotalStock = currentStockQty + groupAllocated;
-                  const availableSpace = Math.max(0, maxCap - currentStockQty);
-                  const isCapacityExceeded = maxCap > 0 && projectedTotalStock > maxCap;
-                  const isLotFull = maxCap > 0 && currentStockQty >= maxCap && groupAllocated > 0;
+                  const otherGroupsAllocatedForThisLot = targetLotGroups
+                    .filter((og, ogIdx) => ogIdx !== gIdx && isLotSelected && Number(og.lot_id) === Number(group.lot_id))
+                    .reduce((acc, og) => acc + (og.batches || []).reduce((s, b) => s + Number(b.quantity || 0), 0), 0);
+                  const effectiveAllocatedToLot = groupAllocated + otherGroupsAllocatedForThisLot;
+                  const projectedTotalStock = currentStockQty + effectiveAllocatedToLot;
+                  const availableSpace = isLotSelected && maxCap > 0 ? Math.max(0, maxCap - currentStockQty) : 0;
+                  const isCapacityExceeded = isLotSelected && maxCap > 0 && projectedTotalStock > maxCap;
+                  const isLotFull = isLotSelected && maxCap > 0 && currentStockQty >= maxCap && effectiveAllocatedToLot > 0;
                   const overage = Math.max(0, projectedTotalStock - maxCap);
-                  const lotCapacityUtilization = maxCap > 0 ? Math.min(100, Math.round((projectedTotalStock / maxCap) * 100)) : 0;
+                  const lotCapacityUtilization = isLotSelected && maxCap > 0 ? Math.min(100, Math.round((projectedTotalStock / maxCap) * 100)) : 0;
 
                   const lotStored = lotStoredSummaryMap.get(Number(group.lot_id));
                   const typeCompat = checkLotProductTypeCompatibility(lotStored, targetClassification);
@@ -1400,7 +1913,9 @@ export function StockConversionModal({
                           : isUomMismatch
                           ? "border-amber-400 dark:border-amber-700"
                           : isLotFull || isCapacityExceeded
-                          ? "border-destructive dark:border-destructive/80 ring-1 ring-destructive/20"
+                          ? hasAttemptedSubmit
+                            ? "border-destructive dark:border-destructive/80 ring-2 ring-destructive/50 bg-destructive/5"
+                            : "border-destructive dark:border-destructive/80 ring-1 ring-destructive/20"
                           : "border-border"
                       }`}
                     >
@@ -1414,11 +1929,22 @@ export function StockConversionModal({
                             <div className="w-72 sm:w-80">
                               {(() => {
                                 const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== "GOOD");
+                                const isLotSameUnit = (lot: MMLot) => {
+                                  const lUomId = lot.unit_id ? Number(lot.unit_id) : null;
+                                  const lUomName = lot.unit_name ? String(lot.unit_name).trim().toLowerCase() : null;
+                                  const targetId = targetUnit?.unitId ? Number(targetUnit.unitId) : null;
+                                  const targetName = targetUnit?.name ? String(targetUnit.name).trim().toLowerCase() : null;
+                                  // Unrestricted lot (no designated unit) can accept any unit
+                                  if (!lUomId && !lUomName) return true;
+                                  return Boolean(
+                                    (lUomId && targetId && lUomId === targetId) ||
+                                    (lUomName && targetName && lUomName === targetName)
+                                  );
+                                };
+
                                 const compatibleLots = lots.filter((lot) => {
                                   if (lot.status && lot.status !== "ACTIVE") return false;
-                                  const lUomId = lot.unit_id ? Number(lot.unit_id) : null;
-                                  const isUomMatch = !lUomId || (targetUnit && Number(targetUnit.unitId) === lUomId);
-                                  if (!isUomMatch) return false;
+                                  if (!isLotSameUnit(lot)) return false;
                                   const stored = lotStoredSummaryMap.get(Number(lot.lot_id));
                                   const tCompat = checkLotProductTypeCompatibility(stored, targetClassification);
                                   if (!tCompat.isCompatible) return false;
@@ -1428,73 +1954,86 @@ export function StockConversionModal({
                                   return true;
                                 });
 
-                                const optionsLots = (lots || []).filter(
-                                  (l) => (group.lot_id && Number(l.lot_id) === Number(group.lot_id)) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id)) || compatibleLots.length === 0
+                                const otherSelectedLotIds = new Set(
+                                  targetLotGroups
+                                    .filter((_, idx) => idx !== gIdx)
+                                    .map((og) => Number(og.lot_id))
+                                    .filter(Boolean)
                                 );
 
+                                const optionsLots = (lots || []).filter((l) => {
+                                  if (l.status && l.status !== "ACTIVE") return false;
+                                  if (group.lot_id && Number(l.lot_id) === Number(group.lot_id)) return true;
+                                  if (otherSelectedLotIds.has(Number(l.lot_id))) return false;
+                                  if (!isLotSameUnit(l)) return false;
+                                  return compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id));
+                                });
+
+                                const isLotMissing = hasAttemptedSubmit && (!group.lot_id || Number(group.lot_id) === 0);
+
                                 return (
-                                  <SearchableSelect
-                                    options={optionsLots.map((lot) => {
-                                      const lUomId = lot.unit_id ? Number(lot.unit_id) : null;
-                                      const lStock = Number(lot.current_stock_quantity || 0);
-                                      const lCap = Number(lot.max_batch_capacity || 0);
-                                      const isMism = Boolean(
-                                        lUomId &&
-                                          targetUnit &&
-                                          Number(targetUnit.unitId) !== lUomId
-                                      );
-                                      const isF = lCap > 0 && lStock >= lCap;
-                                      const stored = lotStoredSummaryMap.get(Number(lot.lot_id));
-                                      const tCompat = checkLotProductTypeCompatibility(stored, targetClassification);
-                                      const isTConflict = tCompat.isTypeMismatch;
-                                      const isDraft = stored?.is_draft_allocation;
-                                      const typeSourceLabel = isDraft ? "Form Draft" : "Warehouse";
-                                      const lotIsBad = isBadStockLot(lot);
+                                  <div className="space-y-1">
+                                    <SearchableSelect
+                                      options={optionsLots.map((lot) => {
+                                        const lStock = Math.max(0, Number(lot.current_stock_quantity || 0));
+                                        const lCap = Number(lot.max_batch_capacity || 0);
+                                        const isF = lCap > 0 && lStock >= lCap;
+                                        const stored = lotStoredSummaryMap.get(Number(lot.lot_id));
+                                        const tCompat = checkLotProductTypeCompatibility(stored, targetClassification);
+                                        const isTConflict = tCompat.isTypeMismatch;
+                                        const isDraft = stored?.is_draft_allocation;
+                                        const typeSourceLabel = isDraft ? "Form Draft" : "Warehouse";
+                                        const lotIsBad = isBadStockLot(lot);
 
-                                      let badgeText: string | undefined;
-                                      let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
+                                        let badgeText: string | undefined;
+                                        let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
 
-                                      if (isTConflict && stored) {
-                                        badgeText = `Type Mismatch: ${typeSourceLabel} (${stored.primary_classification_label})`;
-                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                      } else if (isMism) {
-                                        badgeText = `Unit Mismatch (${lot.unit_name || `UOM #${lUomId}`})`;
-                                        badgeClass = "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40 font-bold";
-                                      } else if (isF) {
-                                        badgeText = `Full (${lStock}/${lCap})`;
-                                        badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                      } else if (lotIsBad) {
-                                        badgeText = "Bad Stock / Quarantine";
-                                        badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
-                                      } else if (stored && !stored.is_empty && stored.primary_classification === targetClassification.code) {
-                                        badgeText = `Type: Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                        badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                      } else if (stored?.is_empty) {
-                                        badgeText = "Empty Lot";
-                                        badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                      } else if (lCap > 0) {
-                                        badgeText = `Stock: ${lStock}/${lCap} (${Math.round((lStock / lCap) * 100)}%)`;
-                                      }
+                                        if (isTConflict && stored) {
+                                          badgeText = `Type Mismatch: ${typeSourceLabel} (${stored.primary_classification_label})`;
+                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                        } else if (isF) {
+                                          badgeText = `Full (${lStock}/${lCap})`;
+                                          badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
+                                        } else if (lotIsBad) {
+                                          badgeText = "Bad Stock / Quarantine";
+                                          badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
+                                        } else if (stored && !stored.is_empty && stored.primary_classification === targetClassification.code) {
+                                          badgeText = `Type: Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
+                                          badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
+                                        } else if (stored?.is_empty) {
+                                          badgeText = "Empty Lot";
+                                          badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
+                                        } else if (lCap > 0) {
+                                          badgeText = `Stock: ${lStock}/${lCap} (${Math.round((lStock / lCap) * 100)}%)`;
+                                        }
 
-                                      const prefix = isTConflict ? "🚫 " : isMism ? "⚠️ " : isF ? "🚫 " : "";
-                                      const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                      const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
+                                        const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
+                                        const capStr = lCap ? ` (Cap: ${lCap})` : "";
+                                        const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
 
-                                      return {
-                                        value: String(lot.lot_id),
-                                        label: `${prefix}${lot.lot_name}${capStr}`,
-                                        subLabel: `Current Stock: ${lStock.toLocaleString()} ${lot.unit_name || targetUnit?.name || "units"}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                        badge: badgeText,
-                                        badgeClassName: badgeClass,
-                                      };
-                                    })}
-                                    value={group.lot_id ? String(group.lot_id) : ""}
-                                    onValueChange={(val) => handleChangeLot(gIdx, val)}
-                                    placeholder="Select Storage Rack / Lot..."
-                                    searchPlaceholder="Search lot name..."
-                                    emptyMessage="No compatible storage lots found for this UOM and product type."
-                                    className="h-8 text-xs font-bold"
-                                  />
+                                        return {
+                                          value: String(lot.lot_id),
+                                          label: `${prefix}${lot.lot_name}${capStr}`,
+                                          subLabel: `Current Stock: ${lStock.toLocaleString()} ${lot.unit_name || targetUnit?.name || "units"}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
+                                          badge: badgeText,
+                                          badgeClassName: badgeClass,
+                                        };
+                                      })}
+                                      value={group.lot_id ? String(group.lot_id) : ""}
+                                      onValueChange={(val) => handleChangeLot(gIdx, val)}
+                                      placeholder="Select Storage Rack / Lot..."
+                                      searchPlaceholder="Search lot name..."
+                                      emptyMessage="No compatible storage lots found for this UOM and product type."
+                                      className={`h-8 text-xs font-bold ${
+                                        isLotMissing ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5 text-destructive" : ""
+                                      }`}
+                                    />
+                                    {isLotMissing && (
+                                      <span className="text-[10px] text-destructive font-bold flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3 shrink-0" /> Storage Rack is required
+                                      </span>
+                                    )}
+                                  </div>
                                 );
                               })()}
                             </div>
@@ -1550,7 +2089,7 @@ export function StockConversionModal({
                               </Badge>
                             )}
 
-                            {!isUomMismatch && maxCap > 0 && (
+                            {!isUomMismatch && isLotSelected && maxCap > 0 && (
                               <Badge
                                 variant={isCapacityExceeded || isLotFull ? "destructive" : "secondary"}
                                 className="text-[9px] font-mono font-bold flex items-center gap-1"
@@ -1633,7 +2172,13 @@ export function StockConversionModal({
                             <div className="p-2 bg-card rounded-lg border border-border/60">
                               <span className="text-[9px] uppercase font-bold text-muted-foreground block">1. Current Stock</span>
                               <div className="text-xs font-mono font-bold text-foreground mt-0.5">
-                                {currentStockQty.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">{targetUnit.name}</span>
+                                {isLotSelected ? (
+                                  <>
+                                    {currentStockQty.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">{targetUnit.name}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground font-normal">—</span>
+                                )}
                               </div>
                             </div>
 
@@ -1646,21 +2191,43 @@ export function StockConversionModal({
 
                             <div className="p-2 bg-card rounded-lg border border-border/60">
                               <span className="text-[9px] uppercase font-bold text-muted-foreground block">3. Available Space</span>
-                              <div className={`text-xs font-mono font-bold mt-0.5 ${availableSpace <= 0 ? "text-destructive font-black" : "text-emerald-600 dark:text-emerald-400"}`}>
-                                {availableSpace.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">{targetUnit.name}</span>
+                              <div className={`text-xs font-mono font-bold mt-0.5 ${!isLotSelected ? "text-muted-foreground font-normal" : availableSpace <= 0 ? "text-destructive font-black" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                {isLotSelected ? (
+                                  maxCap > 0 ? (
+                                    <>
+                                      {availableSpace.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">{targetUnit.name}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground font-normal">Unlimited</span>
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground font-normal">—</span>
+                                )}
                               </div>
                             </div>
 
                             <div className={`p-2 rounded-lg border ${isCapacityExceeded ? "bg-destructive/10 border-destructive/30" : "bg-card border-border/60"}`}>
                               <span className="text-[9px] uppercase font-bold text-muted-foreground block">4. Projected Total</span>
                               <div className={`text-xs font-mono font-bold mt-0.5 ${isCapacityExceeded ? "text-destructive font-black" : "text-foreground"}`}>
-                                {projectedTotalStock.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">/ {maxCap.toLocaleString()}</span>
+                                {isLotSelected ? (
+                                  maxCap > 0 ? (
+                                    <>
+                                      {projectedTotalStock.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">/ {maxCap.toLocaleString()}</span>
+                                    </>
+                                  ) : (
+                                    <span>
+                                      {projectedTotalStock.toLocaleString()} <span className="text-[9px] font-normal text-muted-foreground">{targetUnit.name}</span>
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground font-normal">—</span>
+                                )}
                               </div>
                             </div>
                           </div>
 
                           {/* Dual-Segment Visual Capacity Meter */}
-                          {maxCap > 0 && (
+                          {isLotSelected && maxCap > 0 && (
                             <div className="space-y-1 pt-1">
                               <div className="w-full bg-muted rounded-full h-2 overflow-hidden border border-border/60 flex">
                                 <div
@@ -1689,21 +2256,21 @@ export function StockConversionModal({
                                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                                 <span>Exceeds capacity by {overage.toLocaleString()} {targetUnit.name}!</span>
                               </div>
-                              {availableSpace > 0 && (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (group.batches.length === 1) {
-                                      handleBatchChange(gIdx, 0, "quantity", availableSpace);
-                                    }
-                                  }}
-                                  className="h-6 px-2 text-[10px] font-bold border-destructive/40 hover:bg-destructive/20 text-destructive"
-                                >
-                                  Cap to Available Space ({availableSpace} {targetUnit.name})
-                                </Button>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {targetLotGroups.length > 1 && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleReallocateLots}
+                                    className="h-6 px-2 text-[10px] font-bold border-destructive/40 hover:bg-destructive/20 text-destructive gap-1"
+                                    title="Reallocate across all racks to prevent exceeding capacity"
+                                  >
+                                    <RotateCcw className="w-3 h-3" />
+                                    Reallocate Across Lots
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1713,7 +2280,7 @@ export function StockConversionModal({
                       <div className="p-3.5 space-y-2.5">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                            Batch Splits in {group.lot_name}
+                            Batch Splits in {group.lot_name || `Lot #${gIdx + 1}`}
                           </Label>
 
                           <div className="flex items-center gap-2 flex-wrap">
@@ -1807,84 +2374,122 @@ export function StockConversionModal({
                         </div>
 
                         <div className="space-y-2">
-                          {group.batches.map((batch, bIdx) => (
-                            <div
-                              key={`batch-row-${gIdx}-${bIdx}`}
-                              className="p-3 rounded-xl border border-border bg-card/60 flex flex-col md:flex-row items-stretch md:items-end gap-2.5 text-xs shadow-xs"
-                            >
-                              {/* Batch Number */}
-                              <div className="flex-1 min-w-[170px] space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">Batch No *</Label>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleBatchChange(gIdx, bIdx, "batch_no", generateBatchNo())}
-                                    className="text-[9px] text-primary hover:underline font-semibold"
-                                  >
-                                    Generate
-                                  </button>
+                          {group.batches.map((batch, bIdx) => {
+                            const isBatchNoMissing = hasAttemptedSubmit && (!batch.batch_no || String(batch.batch_no).trim() === "");
+                            const isBatchQtyInvalid = hasAttemptedSubmit && (!batch.quantity || Number(batch.quantity) <= 0);
+                            const isBatchMfgMissing = hasAttemptedSubmit && !batch.manufacturing_date;
+                            const isBatchExpMissing = hasAttemptedSubmit && !batch.expiry_date;
+
+                            return (
+                              <div
+                                key={`batch-row-${gIdx}-${bIdx}`}
+                                className={`p-3 rounded-xl border bg-card/60 flex flex-col md:flex-row items-stretch md:items-end gap-2.5 text-xs shadow-xs transition-all ${
+                                  isBatchNoMissing || isBatchQtyInvalid || isBatchMfgMissing || isBatchExpMissing
+                                    ? "border-destructive/40 ring-1 ring-destructive/20"
+                                    : "border-border"
+                                }`}
+                              >
+                                {/* Batch Number */}
+                                <div className="flex-1 min-w-[170px] space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <Label className="text-[10px] font-bold text-muted-foreground uppercase">Batch No *</Label>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleBatchChange(gIdx, bIdx, "batch_no", generateBatchNo())}
+                                      className="text-[9px] text-primary hover:underline font-semibold cursor-pointer"
+                                    >
+                                      Generate
+                                    </button>
+                                  </div>
+                                  <Input
+                                    value={batch.batch_no}
+                                    onChange={(e) => handleBatchChange(gIdx, bIdx, "batch_no", e.target.value)}
+                                    placeholder="Please enter batch no"
+                                    className={`h-8 text-xs font-mono font-medium ${
+                                      isBatchNoMissing ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5 text-destructive placeholder:text-destructive/60" : ""
+                                    }`}
+                                  />
+                                  {isBatchNoMissing && (
+                                    <span className="text-[9px] text-destructive font-bold flex items-center gap-1">
+                                      <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Batch number is required
+                                    </span>
+                                  )}
                                 </div>
-                                <Input
-                                  value={batch.batch_no}
-                                  onChange={(e) => handleBatchChange(gIdx, bIdx, "batch_no", e.target.value)}
-                                  placeholder="Please enter batch no"
-                                  className="h-8 text-xs font-mono font-medium"
-                                />
-                              </div>
 
-                              {/* Quantity */}
-                              <div className="w-28 shrink-0 space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase truncate">Qty ({targetUnit.name}) *</Label>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleFillBatch(gIdx, bIdx)}
-                                    className="text-[9px] text-primary hover:underline font-semibold"
-                                  >
-                                    Fill
-                                  </button>
+                                {/* Quantity */}
+                                <div className="w-28 shrink-0 space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <Label className="text-[10px] font-bold text-muted-foreground uppercase truncate">Qty ({targetUnit.name}) *</Label>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleFillBatch(gIdx, bIdx)}
+                                      className="text-[9px] text-primary hover:underline font-semibold cursor-pointer"
+                                    >
+                                      Fill
+                                    </button>
+                                  </div>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={batch.quantity === 0 || batch.quantity === undefined || batch.quantity === null ? "" : batch.quantity}
+                                    onFocus={(e) => e.target.select()}
+                                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      if (val === "") {
+                                        handleBatchChange(gIdx, bIdx, "quantity", 0);
+                                      } else {
+                                        const num = parseInt(val, 10);
+                                        handleBatchChange(gIdx, bIdx, "quantity", isNaN(num) ? 0 : Math.max(0, num));
+                                      }
+                                    }}
+                                    placeholder="0"
+                                    className={`h-8 text-xs font-bold font-mono ${
+                                      isBatchQtyInvalid ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5 text-destructive" : ""
+                                    }`}
+                                  />
+                                  {isBatchQtyInvalid && (
+                                    <span className="text-[9px] text-destructive font-bold flex items-center gap-1">
+                                      <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Qty must be &gt; 0
+                                    </span>
+                                  )}
                                 </div>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={batch.quantity === 0 || batch.quantity === undefined || batch.quantity === null ? "" : batch.quantity}
-                                  onFocus={(e) => e.target.select()}
-                                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === "") {
-                                      handleBatchChange(gIdx, bIdx, "quantity", 0);
-                                    } else {
-                                      const num = parseInt(val, 10);
-                                      handleBatchChange(gIdx, bIdx, "quantity", isNaN(num) ? 0 : Math.max(0, num));
-                                    }
-                                  }}
-                                  placeholder="0"
-                                  className="h-8 text-xs font-bold font-mono"
-                                />
-                              </div>
 
-                              {/* Manufacturing Date */}
-                              <div className="w-36 shrink-0 space-y-1">
-                                <Label className="text-[10px] font-bold text-muted-foreground uppercase block">Mfg Date *</Label>
-                                <Input
-                                  type="date"
-                                  value={batch.manufacturing_date || ""}
-                                  onChange={(e) => handleBatchChange(gIdx, bIdx, "manufacturing_date", e.target.value)}
-                                  className="h-8 text-xs"
-                                />
-                              </div>
+                                {/* Manufacturing Date */}
+                                <div className="w-36 shrink-0 space-y-1">
+                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase block">Mfg Date *</Label>
+                                  <Input
+                                    type="date"
+                                    value={batch.manufacturing_date || ""}
+                                    onChange={(e) => handleBatchChange(gIdx, bIdx, "manufacturing_date", e.target.value)}
+                                    className={`h-8 text-xs ${
+                                      isBatchMfgMissing ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5 text-destructive" : ""
+                                    }`}
+                                  />
+                                  {isBatchMfgMissing && (
+                                    <span className="text-[9px] text-destructive font-bold flex items-center gap-1">
+                                      <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Mfg date required
+                                    </span>
+                                  )}
+                                </div>
 
-                              {/* Expiration Date */}
-                              <div className="w-36 shrink-0 space-y-1">
-                                <Label className="text-[10px] font-bold text-muted-foreground uppercase block">Exp Date *</Label>
-                                <Input
-                                  type="date"
-                                  value={batch.expiry_date || ""}
-                                  onChange={(e) => handleBatchChange(gIdx, bIdx, "expiry_date", e.target.value)}
-                                  className="h-8 text-xs"
-                                />
-                              </div>
+                                {/* Expiration Date */}
+                                <div className="w-36 shrink-0 space-y-1">
+                                  <Label className="text-[10px] font-bold text-muted-foreground uppercase block">Exp Date *</Label>
+                                  <Input
+                                    type="date"
+                                    value={batch.expiry_date || ""}
+                                    onChange={(e) => handleBatchChange(gIdx, bIdx, "expiry_date", e.target.value)}
+                                    className={`h-8 text-xs ${
+                                      isBatchExpMissing ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5 text-destructive" : ""
+                                    }`}
+                                  />
+                                  {isBatchExpMissing && (
+                                    <span className="text-[9px] text-destructive font-bold flex items-center gap-1">
+                                      <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Exp date required
+                                    </span>
+                                  )}
+                                </div>
 
                               {/* QA Status */}
                               <div className="w-36 shrink-0 space-y-1">
@@ -1955,7 +2560,8 @@ export function StockConversionModal({
                                 )}
                               </div>
                             </div>
-                          ))}
+                          );
+                        })}
                         </div>
                       </div>
                     </div>
@@ -1999,8 +2605,8 @@ export function StockConversionModal({
           )}
 
           {/* VALIDATION ERROR ALERTS SUMMARY */}
-          {!isValid && validationErrors.length > 0 && selectedTargetUnit && qtyToConvert && (
-            <div className="bg-destructive/10 border border-destructive/30 rounded-xl p-3.5 text-xs text-destructive space-y-1.5">
+          {!isValid && validationErrors.length > 0 && (hasAttemptedSubmit || (selectedTargetUnit && qtyToConvert)) && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-xl p-3.5 text-xs text-destructive space-y-1.5 animate-in fade-in slide-in-from-bottom-2">
               <div className="flex items-center gap-1.5 font-bold">
                 <ShieldAlert className="w-4 h-4" />
                 <span>Conversion Requirements Incomplete:</span>
@@ -2030,7 +2636,6 @@ export function StockConversionModal({
             <Button
               size="sm"
               onClick={handleConfirm}
-              disabled={!isValid}
               className="text-xs gap-1.5 font-bold"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />

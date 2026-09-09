@@ -6,7 +6,7 @@ import {
   AllocationStrategy,
   QAStatus,
 } from "../types/lot-tracking.types";
-import { fetchInventoryLots, fetchBatchOnhand } from "./lot-tracking.service";
+import { fetchBatchOnhand, fetchInventoryMovements } from "./lot-tracking.service";
 
 /**
  * Calculates days remaining until expiration from today.
@@ -253,6 +253,7 @@ export async function allocateStock(params: {
     const onhandData = await fetchBatchOnhand({
       branchId: params.branchId,
       productId: params.productId,
+      token: params.options?.token,
     });
 
     if (onhandData && onhandData.length > 0) {
@@ -312,14 +313,46 @@ export async function allocateStock(params: {
     console.warn("[StockAllocation] fetchBatchOnhand warning:", err);
   }
 
-  // 2. Fallback to fetchInventoryLots if no live batches were found
+  // 2. Secondary check against movement ledger view (/api/mm-inventory-movements)
+  // Strictly NO Directus tables (mm_inventory_lots). Batches must only come from the three API views.
   if (liveBatches.length === 0) {
-    const rawLots = await fetchInventoryLots({
-      branchId: params.branchId,
-      productId: params.productId,
-      token: params.options?.token,
-    });
-    liveBatches = rawLots;
+    try {
+      const movements = await fetchInventoryMovements({
+        branchId: params.branchId,
+        productId: params.productId,
+      });
+      if (movements && movements.length > 0) {
+        const movBatchMap = new Map<string, { qty: number; lotId: number; invLotId?: number; mfgDate?: string | null; expDate?: string | null }>();
+        for (const m of movements) {
+          if (!m.batchNo) continue;
+          const key = m.batchNo.trim();
+          const current = movBatchMap.get(key) || { qty: 0, lotId: m.mmLotId || 0, invLotId: m.inventoryLotId, mfgDate: m.manufacturingDate, expDate: m.expirationDate };
+          const qtyIn = Number(m.quantityIn || 0);
+          const qtyOut = Number(m.quantityOut || 0);
+          current.qty += (qtyIn - qtyOut);
+          movBatchMap.set(key, current);
+        }
+        for (const [batchNo, info] of movBatchMap.entries()) {
+          if (info.qty > 0) {
+            liveBatches.push({
+              inventory_lot_id: info.invLotId || 0,
+              lot_id: info.lotId,
+              branch_id: params.branchId,
+              product_id: params.productId,
+              batch_no: batchNo,
+              manufacturing_date: info.mfgDate || null,
+              expiry_date: info.expDate || null,
+              qa_status: "GOOD",
+              status: "ACTIVE",
+              unit_cost: 0,
+              available_quantity: info.qty,
+            });
+          }
+        }
+      }
+    } catch (movErr) {
+      console.warn("[StockAllocation] fetchInventoryMovements fallback warning:", movErr);
+    }
   }
 
   return allocateStockSync(liveBatches, params.requestedQuantity, params.options);

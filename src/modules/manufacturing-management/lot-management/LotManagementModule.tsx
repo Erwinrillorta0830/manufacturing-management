@@ -18,6 +18,7 @@ import { SearchableBatchSelect } from "./components/SearchableBatchSelect";
 import { SearchableBranchSelect } from "./components/SearchableBranchSelect";
 import { SearchableProductTypeSelect } from "./components/SearchableProductTypeSelect";
 import { SearchableUomSelect } from "./components/SearchableUomSelect";
+import { SearchableStatusSelect } from "./components/SearchableStatusSelect";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { Batch, Lot, Branch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -48,6 +49,7 @@ export default function LotManagementModule() {
     const [selectedBranchId, setSelectedBranchId] = useState<number | "ALL">("ALL");
     const [selectedProductType, setSelectedProductType] = useState<string | "ALL">("ALL");
     const [selectedUomId, setSelectedUomId] = useState<number | "ALL">("ALL");
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState<string | "ALL">("ALL");
     const [selectedProductId, setSelectedProductId] = useState<number | "ALL">("ALL");
     const [selectedLotIds, setSelectedLotIds] = useState<number[]>([]);
     const [selectedBatchIds, setSelectedBatchIds] = useState<number[]>([]);
@@ -75,7 +77,8 @@ export default function LotManagementModule() {
         globalSearchQuery,
         selectedBranchId,
         selectedProductType,
-        selectedUomId
+        selectedUomId,
+        selectedStatusFilter
     );
 
     // Inventory Movements Hook
@@ -105,7 +108,8 @@ export default function LotManagementModule() {
         globalSearchQuery,
         selectedBranchId,
         selectedProductType,
-        selectedUomId
+        selectedUomId,
+        selectedStatusFilter
     );
 
     const [activeTab, setActiveTab] = useState<"rack-view" | "storage-lots" | "batch-table" | "movement-history">("rack-view");
@@ -237,6 +241,21 @@ export default function LotManagementModule() {
                     return false;
                 }
             }
+            if (selectedStatusFilter !== "ALL") {
+                const q = Number(b.quantity || 0);
+                const qa = String(b.qaStatus || "").toUpperCase();
+                const isNeg = selectedStatusFilter === "NEGATIVE";
+                const isExp = selectedStatusFilter === "EXPIRED";
+                const isQua = selectedStatusFilter === "QUARANTINED";
+                const isDam = selectedStatusFilter === "DAMAGED";
+                const isGood = selectedStatusFilter === "GOOD";
+
+                if (isNeg && q >= 0) return false;
+                if (isExp && qa !== "EXPIRED" && !(b.expirationDate && new Date(b.expirationDate).getTime() < Date.now())) return false;
+                if (isQua && qa !== "QUARANTINED") return false;
+                if (isDam && qa !== "DAMAGED") return false;
+                if (isGood && ((qa && qa !== "GOOD") || q <= 0)) return false;
+            }
             if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
                 return false;
             }
@@ -248,12 +267,13 @@ export default function LotManagementModule() {
             }
             return true;
         });
-    }, [batches, lots, selectedBranchId, selectedProductType, selectedUomId, selectedProductId, selectedLotIds]);
+    }, [batches, lots, selectedBranchId, selectedProductType, selectedUomId, selectedStatusFilter, selectedProductId, selectedLotIds]);
 
     const hasAnyFilterActive =
         selectedBranchId !== "ALL" ||
         selectedProductType !== "ALL" ||
         selectedUomId !== "ALL" ||
+        selectedStatusFilter !== "ALL" ||
         selectedProductId !== "ALL" ||
         selectedLotIds.length > 0 ||
         selectedBatchIds.length > 0 ||
@@ -263,6 +283,7 @@ export default function LotManagementModule() {
         setSelectedBranchId("ALL");
         setSelectedProductType("ALL");
         setSelectedUomId("ALL");
+        setSelectedStatusFilter("ALL");
         setSelectedProductId("ALL");
         setSelectedLotIds([]);
         setSelectedBatchIds([]);
@@ -433,8 +454,8 @@ export default function LotManagementModule() {
                         </div>
                     </div>
 
-                    {/* Filter Dropdowns Row: Branch, Product Type, UOM, Product, Lot, Batch */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-border/50">
+                    {/* Filter Dropdowns Row: 7 Equal Width Dropdowns */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 pt-2 border-t border-border/50">
                         {/* 1. Global Branch Select */}
                         <div className="w-full">
                             <SearchableBranchSelect
@@ -458,7 +479,17 @@ export default function LotManagementModule() {
                             />
                         </div>
 
-                        {/* 2. Global Product Type Select */}
+                        {/* 2. Global Status Select */}
+                        <div className="w-full">
+                            <SearchableStatusSelect
+                                value={selectedStatusFilter}
+                                onValueChange={(val) => setSelectedStatusFilter(val)}
+                                placeholder="All Statuses"
+                                className="h-8.5 bg-background shadow-2xs w-full"
+                            />
+                        </div>
+
+                        {/* 3. Global Product Type Select */}
                         <div className="w-full">
                             <SearchableProductTypeSelect
                                 value={selectedProductType}
@@ -481,7 +512,7 @@ export default function LotManagementModule() {
                             />
                         </div>
 
-                        {/* 3. Global UOM Select */}
+                        {/* 4. Global UOM Select */}
                         <div className="w-full">
                             <SearchableUomSelect
                                 uoms={uoms}
@@ -504,7 +535,7 @@ export default function LotManagementModule() {
                             />
                         </div>
 
-                        {/* 4. Global Product Select */}
+                        {/* 5. Global Product Select */}
                         <div className="w-full">
                             <SearchableProductSelect
                                 products={availableProductsForSelect}
@@ -519,7 +550,7 @@ export default function LotManagementModule() {
                             />
                         </div>
 
-                        {/* 5. Global Storage Lot Select */}
+                        {/* 6. Global Storage Lot Select */}
                         <div className="w-full">
                             <SearchableLotSelect
                                 lots={availableLotsForSelect}
@@ -540,7 +571,7 @@ export default function LotManagementModule() {
                             />
                         </div>
 
-                        {/* 6. Global Batch Select */}
+                        {/* 7. Global Batch Select */}
                         <div className="w-full">
                             <SearchableBatchSelect
                                 batches={availableBatchesForSelect}
@@ -576,6 +607,7 @@ export default function LotManagementModule() {
                         selectedProductId={selectedProductId}
                         selectedLotId={selectedLotIds}
                         selectedBatchId={selectedBatchIds}
+                        selectedStatusFilter={selectedStatusFilter}
                         searchQuery={globalSearchQuery}
                         onViewBatchMovements={handleOpenBatchAudit}
                         onViewLotMovements={handleViewLotMovements}

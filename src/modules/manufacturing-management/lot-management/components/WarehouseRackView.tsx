@@ -37,6 +37,7 @@ interface WarehouseRackViewProps {
     selectedProductId?: number | "ALL";
     selectedLotId?: number | "ALL" | number[];
     selectedBatchId?: number | "ALL" | number[];
+    selectedStatusFilter?: string | "ALL";
     searchQuery?: string;
     onEditLot?: (lot: Lot) => void;
     onAddBatchToLot?: (lotId: number) => void;
@@ -55,6 +56,7 @@ export default function WarehouseRackView({
     selectedProductId = "ALL",
     selectedLotId = "ALL",
     selectedBatchId = "ALL",
+    selectedStatusFilter = "ALL",
     searchQuery = "",
     onEditLot,
     onViewBatchMovements,
@@ -163,6 +165,26 @@ export default function WarehouseRackView({
                 }
             }
 
+            if (selectedStatusFilter !== "ALL") {
+                const isNegFilter = selectedStatusFilter === "NEGATIVE";
+                const isExpFilter = selectedStatusFilter === "EXPIRED";
+                const isQuaFilter = selectedStatusFilter === "QUARANTINED";
+                const isDamFilter = selectedStatusFilter === "DAMAGED";
+                const isGoodFilter = selectedStatusFilter === "GOOD";
+
+                const hasStatusMatch = lotBatches.some((b) => {
+                    const q = Number(b.quantity || 0);
+                    const qa = String(b.qaStatus || "").toUpperCase();
+                    if (isNegFilter) return q < 0;
+                    if (isExpFilter) return qa === "EXPIRED" || (b.expirationDate && new Date(b.expirationDate).getTime() < Date.now());
+                    if (isQuaFilter) return qa === "QUARANTINED";
+                    if (isDamFilter) return qa === "DAMAGED";
+                    if (isGoodFilter) return (qa === "GOOD" || !qa) && q > 0;
+                    return true;
+                });
+                if (!hasStatusMatch) return false;
+            }
+
             if (query) {
                 const lotNameMatches =
                     lot.lotName?.toLowerCase().includes(query) ||
@@ -182,7 +204,7 @@ export default function WarehouseRackView({
         });
 
         return sortLotsByFefoExpiry(matchingLots, batches, selectedProductId);
-    }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, searchQuery, selectedProductId]);
+    }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedLotId, selectedBatchId, selectedStatusFilter, searchQuery, selectedProductId]);
 
     const expectedSkeletonCount = React.useMemo(() => {
         if (Array.isArray(selectedLotId)) {
@@ -294,6 +316,23 @@ export default function WarehouseRackView({
                     );
                     const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
                     const isRackNegative = totalRackOccupancy < 0;
+
+                    const positiveStockQty = allLotBatches.reduce((sum, b) => {
+                        const q = Number(b.quantity) || 0;
+                        return q > 0 ? sum + q : sum;
+                    }, 0);
+
+                    const negativeStockQty = allLotBatches.reduce((sum, b) => {
+                        const q = Number(b.quantity) || 0;
+                        return q < 0 ? sum + Math.abs(q) : sum;
+                    }, 0);
+
+                    const cap = lot.maxBatchCapacity > 0 ? lot.maxBatchCapacity : 100;
+                    const scale = Math.max(cap, positiveStockQty + negativeStockQty);
+
+                    const negativePercent = Math.min(100, Math.round((negativeStockQty / scale) * 100));
+                    const positivePercent = Math.min(100 - negativePercent, Math.round((positiveStockQty / scale) * 100));
+
                     const capacityPercent = Math.max(
                         0,
                         Math.min(
@@ -309,7 +348,7 @@ export default function WarehouseRackView({
                         progressColorClass = "bg-amber-500";
                         progressBadgeClass = "text-amber-600 bg-amber-500/10 border-amber-500/20 font-bold";
                     } else if (isRackNegative) {
-                        progressColorClass = "bg-rose-500 animate-pulse";
+                        progressColorClass = "bg-emerald-500";
                         progressBadgeClass = "text-rose-600 bg-rose-500/15 border-rose-500/30 font-bold";
                     } else if (capacityPercent >= 90) {
                         progressColorClass = "bg-rose-500";
@@ -463,12 +502,21 @@ export default function WarehouseRackView({
                                             {isRackNegative ? "Deficit" : `${capacityPercent}%`}
                                         </span>
                                     </div>
-                                    <div className="h-2 w-full bg-muted/60 rounded-full overflow-hidden">
-                                        <div
-                                            className={`h-full transition-all duration-300 ${progressColorClass}`}
-                                            style={{ width: isRackNegative ? "100%" : `${capacityPercent}%` }}
-                                            title={isRackNegative ? `Stock Deficit: ${totalRackOccupancy.toLocaleString()} ${uomLabel}` : `${capacityPercent}% Occupied`}
-                                        />
+                                    <div className="h-2 w-full bg-muted/60 rounded-full overflow-hidden flex relative">
+                                        {negativeStockQty > 0 && (
+                                            <div
+                                                className="h-full bg-rose-500 transition-all duration-300 shrink-0"
+                                                style={{ width: `${negativePercent}%` }}
+                                                title={`Deficit / Negative Stock: -${negativeStockQty.toLocaleString()} ${uomLabel}`}
+                                            />
+                                        )}
+                                        {positiveStockQty > 0 && (
+                                            <div
+                                                className={cn("h-full transition-all duration-300 shrink-0", progressColorClass)}
+                                                style={{ width: `${positivePercent}%` }}
+                                                title={`Current Positive Stock: +${positiveStockQty.toLocaleString()} ${uomLabel}`}
+                                            />
+                                        )}
                                     </div>
                                 </div>
                             </div>

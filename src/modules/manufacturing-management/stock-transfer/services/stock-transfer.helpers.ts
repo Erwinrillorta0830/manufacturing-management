@@ -233,6 +233,8 @@ export function getLotAndBatchDisplayLines(item: {
 }): LotAndBatchDisplayLine[] {
   const result: LotAndBatchDisplayLine[] = [];
 
+  const isPhantom = (s: string) => !s || /^BATCH-\d+-\d{10,}$/.test(s.trim()) || s.trim() === 'N/A';
+
   if (item.lot_allocations && item.lot_allocations.length > 0) {
     for (const grp of item.lot_allocations) {
       const rawLotName = grp.lot_name || (grp.lot_id ? `Lot #${grp.lot_id}` : 'Lot');
@@ -241,23 +243,22 @@ export function getLotAndBatchDisplayLines(item: {
 
       if (grp.batches && grp.batches.length > 0) {
         for (const b of grp.batches) {
-          if (b.batch_no) {
-            const parts = b.batch_no.split(',').map((s) => s.trim()).filter(Boolean);
+          if (b.batch_no && !isPhantom(b.batch_no)) {
+            const parts = b.batch_no.split(',').map((s) => s.trim()).filter((s) => Boolean(s) && !isPhantom(s));
             batchNos.push(...parts);
           }
         }
       }
 
       const uniqueBatches = Array.from(new Set(batchNos));
-      const displayText = uniqueBatches.length > 0
-        ? `${lotName} ( ${uniqueBatches.join(', ')} )`
-        : lotName;
-
-      result.push({
-        lotName,
-        batchNos: uniqueBatches,
-        displayText,
-      });
+      if (uniqueBatches.length > 0) {
+        const displayText = `${lotName} ( ${uniqueBatches.join(', ')} )`;
+        result.push({
+          lotName,
+          batchNos: uniqueBatches,
+          displayText,
+        });
+      }
     }
   }
 
@@ -269,23 +270,17 @@ export function getLotAndBatchDisplayLines(item: {
     const lotName = rawLotName.trim();
     const batchNoStr = item.batch_no || '';
     const batchNos = batchNoStr
-      ? batchNoStr.split(',').map((s) => s.trim()).filter(Boolean)
+      ? batchNoStr.split(',').map((s) => s.trim()).filter((s) => Boolean(s) && !isPhantom(s))
       : [];
 
-    if (lotName) {
-      const displayText = batchNos.length > 0
+    if (batchNos.length > 0) {
+      const displayText = lotName
         ? `${lotName} ( ${batchNos.join(', ')} )`
-        : lotName;
+        : `( ${batchNos.join(', ')} )`;
       result.push({
         lotName,
         batchNos,
         displayText,
-      });
-    } else if (batchNos.length > 0) {
-      result.push({
-        lotName: '',
-        batchNos,
-        displayText: `( ${batchNos.join(', ')} )`,
       });
     }
   }

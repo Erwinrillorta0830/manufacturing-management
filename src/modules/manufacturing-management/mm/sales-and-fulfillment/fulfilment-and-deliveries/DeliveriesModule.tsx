@@ -426,7 +426,7 @@ export default function DeliveriesModule() {
                             >
                                 {records.map((record) => {
                                     const isExpanded = expandedRowIds.has(record.consolidator_id);
-                                    const isCleared = record.is_cleared;
+                                    const isCleared = record.is_cleared || record.status === "Completed" || record.status === "Delivered";
 
                                     return (
                                         <React.Fragment key={record.consolidator_id}>
@@ -454,9 +454,14 @@ export default function DeliveriesModule() {
 
                                                 {/* Consolidator No */}
                                                 <td className="p-3 font-black text-foreground">
-                                                    <div className="flex items-center gap-1.5">
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
                                                         <Truck className="h-3.5 w-3.5 text-primary" />
-                                                        {record.consolidator_no}
+                                                        <span>{record.consolidator_no}</span>
+                                                        {record.status === "Completed" && (
+                                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                                                                Completed
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
 

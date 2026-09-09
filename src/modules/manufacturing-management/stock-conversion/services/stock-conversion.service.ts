@@ -453,7 +453,44 @@ export const stockConversionService = {
     }
 
     // 3. Target Lot Capacity and UOM Validation Safeguards
-    if (payload.targetLotId) {
+    if (payload.targetAllocations && payload.targetAllocations.length > 0) {
+      // Multi-Lot Capacity Safeguards (validates actual allocation per rack)
+      const lotAllocTotals = new Map<number, number>();
+      payload.targetAllocations.forEach((g) => {
+        const lId = Number(g.lot_id);
+        if (lId > 0) {
+          const sumQty = (g.batches || []).reduce((acc, b) => acc + Number(b.quantity || 0), 0);
+          lotAllocTotals.set(lId, (lotAllocTotals.get(lId) || 0) + sumQty);
+        }
+      });
+
+      for (const [lotId, allocQty] of lotAllocTotals.entries()) {
+        if (allocQty <= 0) continue;
+        try {
+          const lotRes = await fetch(
+            `${DIRECTUS_API}/items/mm_lots/${lotId}?fields=lot_id,lot_name,unit_id,max_batch_capacity`,
+            { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
+          ).catch(() => null);
+          if (lotRes && lotRes.ok) {
+            const lotJson = await lotRes.json();
+            const targetLot = lotJson.data;
+            if (targetLot) {
+              const maxCap = Number(targetLot.max_batch_capacity || 0);
+              if (maxCap > 0 && allocQty > maxCap) {
+                throw new Error(
+                  `Target Lot Capacity Exceeded: Target storage rack "${targetLot.lot_name}" has a max capacity of ${maxCap}, but allocated quantity is ${allocQty}.`
+                );
+              }
+            }
+          }
+        } catch (lotErr) {
+          if (lotErr instanceof Error && lotErr.message.includes("Capacity Exceeded")) {
+            throw lotErr;
+          }
+        }
+      }
+    } else if (payload.targetLotId) {
+      // Legacy single-lot fallback
       try {
         const lotRes = await fetch(
           `${DIRECTUS_API}/items/mm_lots/${payload.targetLotId}?fields=lot_id,lot_name,unit_id,max_batch_capacity`,
@@ -584,9 +621,11 @@ export const stockConversionService = {
 
       if (cleanAllocations.length > 0) {
         for (const alloc of cleanAllocations) {
+          const resolvedLotId = alloc.lot_id ? Number(alloc.lot_id) : 1;
+          const resolvedInvLotId = alloc.inventory_lot_id ? Number(alloc.inventory_lot_id) : resolvedLotId;
+
           const outRes = await stockConversionRepo.createStockAdjustment({
             doc_no: docNo, 
-            stock_adjustment_id: headerId,
             product_id: payload.productId, 
             branch_id: payload.branchId, 
             type: "OUT", 
@@ -595,13 +634,13 @@ export const stockConversionService = {
             unit_cost: alloc.unit_cost ?? (payload.pricePerUnit || 0),
             inventory_condition: (alloc.qa_status as 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED') || "GOOD",
             source_type: "STOCK_CONVERSION",
-            inventory_lot_id: alloc.inventory_lot_id ? Number(alloc.inventory_lot_id) : null,
-            lot_id: alloc.lot_id ? Number(alloc.lot_id) : null,
+            inventory_lot_id: resolvedInvLotId,
+            lot_id: resolvedLotId,
             batch_no: alloc.batch_no || null,
             manufacturing_date: alloc.manufacturing_date || null,
             expiry_date: alloc.expiry_date || null,
-            created_by: payload.userId, 
-            updated_by: payload.userId, 
+            created_by: payload.userId || 1, 
+            updated_by: payload.userId || 1, 
             created_at: nowPHT,
             updated_at: nowPHT,
             date_created: nowPHT,
@@ -638,9 +677,11 @@ export const stockConversionService = {
           }
         }
 
+        const resolvedSrcLotId = srcLotId ? Number(srcLotId) : 1;
+        const resolvedSrcInvLotId = srcInvLotId ? Number(srcInvLotId) : resolvedSrcLotId;
+
         const outRes = await stockConversionRepo.createStockAdjustment({
           doc_no: docNo, 
-          stock_adjustment_id: headerId,
           product_id: payload.productId, 
           branch_id: payload.branchId, 
           type: "OUT", 
@@ -649,13 +690,13 @@ export const stockConversionService = {
           unit_cost: payload.pricePerUnit || 0,
           inventory_condition: "GOOD",
           source_type: "STOCK_CONVERSION",
-          inventory_lot_id: srcInvLotId ? Number(srcInvLotId) : null,
-          lot_id: srcLotId ? Number(srcLotId) : null,
+          inventory_lot_id: resolvedSrcInvLotId,
+          lot_id: resolvedSrcLotId,
           batch_no: payload.sourceBatchNo || null,
           manufacturing_date: srcMfgDate || null,
           expiry_date: srcExpDate || null,
-          created_by: payload.userId, 
-          updated_by: payload.userId, 
+          created_by: payload.userId || 1, 
+          updated_by: payload.userId || 1, 
           created_at: nowPHT,
           updated_at: nowPHT,
           date_created: nowPHT,
@@ -730,44 +771,30 @@ export const stockConversionService = {
           }
 
           if (!targetInventoryLotId) {
-            const batchPayload = {
-              lot_id: tBatch.lotId,
+            const batchPayload: Record<string, unknown> = {
+              lot_id: tBatch.lotId || 1,
               branch_id: payload.branchId,
               product_id: targetProductId,
               batch_no: tBatch.batchNo,
-              manufacturing_date: tBatch.manufacturingDate,
-              expiry_date: tBatch.expiryDate,
-              expiration_date: tBatch.expiryDate,
+              manufacturing_date: tBatch.manufacturingDate ? tBatch.manufacturingDate.substring(0, 10) : null,
+              expiry_date: tBatch.expiryDate ? tBatch.expiryDate.substring(0, 10) : null,
               unit_cost: Number(tBatch.unitCost || 0),
-              initial_quantity: Number(tBatch.quantity || 0),
-              current_quantity: Number(tBatch.quantity || 0),
-              available_quantity: Number(tBatch.quantity || 0),
               qa_status: tBatch.qaStatus || "GOOD",
               status: "ACTIVE",
               source_type: "STOCK_CONVERSION",
               source_reference: docNo,
               remarks: `Converted from ${sourceProdDesc} (${sourceBatchDesc || payload.sourceBatchNo || "Batch N/A"})`,
-              created_by: payload.userId || null,
-              updated_by: payload.userId || null,
+              created_by: payload.userId || 1,
+              updated_by: payload.userId || 1,
               created_at: nowPHT,
               updated_at: nowPHT,
-              date_created: nowPHT,
-              date_updated: nowPHT,
             };
 
-            let createRes = await fetch(`${DIRECTUS_API}/items/mm_inventory_lots`, {
+            const createRes = await fetch(`${DIRECTUS_API}/items/mm_inventory_lots`, {
               method: "POST",
               headers,
               body: JSON.stringify(batchPayload),
             }).catch(() => null);
-
-            if (!createRes || !createRes.ok) {
-              createRes = await fetch(`${DIRECTUS_API}/items/inventory_lots`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify(batchPayload),
-              }).catch(() => null);
-            }
 
             if (createRes && createRes.ok) {
               const createJson = await createRes.json();
@@ -775,17 +802,33 @@ export const stockConversionService = {
               targetInventoryLotId = Number(createdId);
               console.log(`[StockConversion] Created new target inventory lot: ${tBatch.batchNo} (ID: ${createdId})`);
             } else {
-              console.warn(`[StockConversion] Failed to create target inventory lot:`, await createRes?.text());
+              const errTxt = await createRes?.text().catch(() => "");
+              console.warn(`[StockConversion] Failed to create target inventory lot:`, errTxt);
+
+              // Fallback: Query if it already exists or fetch any existing inventory lot for this product
+              const fetchExisting = await fetch(
+                `${DIRECTUS_API}/items/mm_inventory_lots?filter[product_id][_eq]=${targetProductId}&filter[batch_no][_eq]=${encodeURIComponent(tBatch.batchNo)}&limit=1&fields=id,inventory_lot_id`,
+                { headers, cache: "no-store" }
+              ).catch(() => null);
+
+              if (fetchExisting && fetchExisting.ok) {
+                const existingJson = await fetchExisting.json();
+                if (existingJson.data && existingJson.data.length > 0) {
+                  targetInventoryLotId = Number(existingJson.data[0].inventory_lot_id || existingJson.data[0].id);
+                }
+              }
             }
           }
         } catch (err) {
           console.error("[StockConversion] Error syncing target batch:", err);
         }
 
+        const resolvedTargetLotId = tBatch.lotId || 1;
+        const resolvedTargetInvLotId = targetInventoryLotId || resolvedTargetLotId;
+
         // 4. Create the IN movement for this batch
         const inRes = await stockConversionRepo.createStockAdjustment({
           doc_no: docNo, 
-          stock_adjustment_id: headerId,
           product_id: targetProductId, 
           branch_id: payload.branchId, 
           type: "IN", 
@@ -794,13 +837,13 @@ export const stockConversionService = {
           unit_cost: tBatch.unitCost,
           inventory_condition: (tBatch.qaStatus as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD",
           source_type: "STOCK_CONVERSION",
-          lot_id: tBatch.lotId,
+          lot_id: resolvedTargetLotId,
           batch_no: tBatch.batchNo,
-          inventory_lot_id: targetInventoryLotId || null,
-          manufacturing_date: tBatch.manufacturingDate,
-          expiry_date: tBatch.expiryDate,
-          created_by: payload.userId, 
-          updated_by: payload.userId, 
+          inventory_lot_id: resolvedTargetInvLotId,
+          manufacturing_date: tBatch.manufacturingDate || null,
+          expiry_date: tBatch.expiryDate || null,
+          created_by: payload.userId || 1, 
+          updated_by: payload.userId || 1, 
           created_at: nowPHT,
           updated_at: nowPHT,
           date_created: nowPHT,

@@ -1095,7 +1095,7 @@ export async function GET(req: NextRequest) {
                             conFulfillmentStatus = "Unfulfilled / Returns";
                         } else if (hasAnyReturns) {
                             conFulfillmentStatus = "Fulfilled with Returns";
-                        } else if (con.status === "Delivered" || isAllDelivered) {
+                        } else if (con.status === "Completed" || con.status === "Delivered" || isAllDelivered) {
                             if (hasAnyConcerns) {
                                 conFulfillmentStatus = "Fulfilled with Concerns";
                             } else {
@@ -1116,11 +1116,11 @@ export async function GET(req: NextRequest) {
                             total_items: totalItemsCount,
                             total_amount: totalAmount,
                             fulfillment_status: conFulfillmentStatus,
-                            is_cleared: con.status === "Delivered" || isAllDelivered,
+                            is_cleared: con.status === "Completed" || con.status === "Delivered" || isAllDelivered,
                             orders: childOrders,
                         };
                     })
-                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Approved" || r.status === "Audited"));
+                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Completed" || r.status === "Approved" || r.status === "Audited"));
 
         // 12. Compute Overall Metrics across entire consolidations dataset
         const totalDispatched = records.length;
@@ -1606,12 +1606,12 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Update consolidator status to Delivered
+        // Update consolidator status to Completed
         await fetch(`${DIRECTUS_URL}/items/consolidator/${consolidator_id}`, {
             method: "PATCH",
             headers: directusHeaders,
             body: JSON.stringify({
-                status: "Delivered",
+                status: "Completed",
                 updated_at: phNow,
             }),
         }).catch((err) => console.warn(`[POST] Failed to update consolidator #${consolidator_id}:`, err));
