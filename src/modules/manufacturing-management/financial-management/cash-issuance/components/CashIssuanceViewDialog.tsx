@@ -162,7 +162,12 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
 
     const currentStepIndex = getVoucherStepIndex(disbursement.status);
     return (
-        <Sheet open={open} onOpenChange={(val) => { onOpenChange(val); setShowPrintOptions(false); if (!val) setStatusError(null); }}>
+        <Sheet open={open} onOpenChange={(val) => {
+            if (!val && loading) return;
+            onOpenChange(val);
+            setShowPrintOptions(false);
+            if (!val) setStatusError(null);
+        }}>
             <SheetContent className="sm:max-w-[1000px] w-full p-0 flex flex-col bg-background border-l border-border overflow-hidden shadow-2xl">
 
                 <SheetHeader className="p-6 border-b border-border bg-card shrink-0 shadow-sm relative z-10">

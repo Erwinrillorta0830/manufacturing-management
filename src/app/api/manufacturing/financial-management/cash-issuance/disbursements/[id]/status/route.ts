@@ -9,6 +9,7 @@ import { findVatSplitDivisionError } from "../../_payable-split-integrity";
 import { acquireMemoCapLock, refreshSupplierMemoStatuses, validateSupplierMemoCaps } from "../../_memo-cap-integrity";
 import { validatePaymentLine } from "../../_payment-method";
 import { hasDisbursementApprovalAccess } from "../../_approval-access";
+import { getNowInPhtISO } from "@/modules/manufacturing-management/financial-management/cash-issuance/utils/pht-time";
 
 export const runtime = "nodejs";
 
@@ -320,13 +321,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                     return NextResponse.json({ message: "Can only approve Submitted disbursements." }, { status: 400 });
                 }
                 approverId = currentUserId;
-                dateApproved = new Date().toISOString();
+                dateApproved = getNowInPhtISO();
                 break;
 
             case "Released":
             case "Partially Released": {
-                if (currentDis.status !== "Approved" && currentDis.status !== "Released" && currentDis.status !== "Partially Released") {
-                    return NextResponse.json({ message: "Can only release Approved or already Released disbursements." }, { status: 400 });
+                if (currentDis.status === "Released") {
+                    return NextResponse.json({ message: "Voucher check has already been fully released." }, { status: 400 });
+                }
+                if (currentDis.status !== "Approved" && currentDis.status !== "Partially Released") {
+                    return NextResponse.json({ message: "Can only release Approved or Partially Released disbursements." }, { status: 400 });
                 }
 
                 for (let index = 0; index < payments.length; index++) {
@@ -381,7 +385,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                                 keys: paymentIds,
                                 data: {
                                     // Removed released_by
-                                    released_date: new Date().toISOString()
+                                    released_date: getNowInPhtISO()
                                 }
                             })
                         });
@@ -412,7 +416,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                 }
                 isPosted = 1;
                 postedBy = currentUserId;
-                datePosted = new Date().toISOString();
+                datePosted = getNowInPhtISO();
                 // Sync PO statuses
                 await syncPurchaseOrderStatuses(currentDis, payables);
                 break;
@@ -437,7 +441,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             posted_by: postedBy,
             date_posted: datePosted,
             isPosted: isPosted,
-            // Removed obsolete fields
+            date_updated: getNowInPhtISO(),
             paid_amount: paidAmount
         };
 
