@@ -16,6 +16,7 @@ import {
     previewLotTransfer,
     previewLotTransferInput,
     rejectLotTransfer,
+    reverseLotTransfer,
     submitLotTransfer,
     updateLotTransfer
 } from "../services/api";
@@ -41,7 +42,7 @@ interface UseLotTransferOptions {
     userBranchId?: number | null;
 }
 
-const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled"];
+const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"];
 
 function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): LotTransferForm {
     const details = record.details?.length > 0 ? record.details : [{
@@ -556,6 +557,24 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [refresh, selectedId]);
 
+    const reverse = useCallback(async (id: number, reversalReason: string) => {
+        setIsActionLoading(true);
+        try {
+            const result = await reverseLotTransfer(id, reversalReason);
+            await refresh();
+            setSelectedId(result.transfer.id);
+            setSelectedRecord(result.transfer);
+            setPreview(result.preview);
+            setError(null);
+            return result.transfer;
+        } catch (reverseError) {
+            setError(reverseError instanceof Error ? reverseError.message : "Unable to reverse the lot-transfer request.");
+            return null;
+        } finally {
+            setIsActionLoading(false);
+        }
+    }, [refresh]);
+
     const sourceBatches = useMemo(() => {
         const detail = form.details[0];
         const rows = batchesByLot[Number(form.sourceLotId)] || [];
@@ -622,6 +641,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         post,
         reject,
         cancel,
+        reverse,
         refresh,
         isLoading,
         isLookupLoading,
