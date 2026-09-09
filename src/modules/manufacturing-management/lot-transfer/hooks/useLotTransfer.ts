@@ -109,8 +109,6 @@ function isCompleteDraftForm(form: LotTransferForm): boolean {
         && form.details.every((detail) => Number(detail.productId) > 0
             && Number(detail.sourceInventoryLotId) > 0
             && detail.sourceBatchNo.trim()
-            && Number(detail.targetInventoryLotId) > 0
-            && detail.targetBatchNo.trim()
             && Number(detail.quantity) > 0)
         && form.reason.trim()
     );
