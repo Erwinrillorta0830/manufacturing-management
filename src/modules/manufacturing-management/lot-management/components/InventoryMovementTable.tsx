@@ -278,9 +278,12 @@ export default function InventoryMovementTable({
                         <TableBody>
                             {paginatedMovements.map((m) => {
                                 const isDirectionIn = (m.movementDirection || "").toUpperCase() === "IN";
-                                const effectiveLotId = m.mmLotId ?? m.lotId;
+                                const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
+                                const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+                                const rawLotId = m.mmLotId ?? m.lotId;
+                                const effectiveLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
                                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(effectiveLotId));
-                                const resolvedLotName = m.lotName || matchedLot?.lotName || (effectiveLotId ? `Lot #${effectiveLotId}` : "-");
+                                const resolvedLotName = matchedLot?.lotName || (Number(effectiveLotId) === 0 ? "Unassigned / Pending Storage Rack (Ghost Rack)" : (m.lotName || `Lot #${effectiveLotId}`));
                                 const qty = isDirectionIn ? Number(m.quantityIn || 0) : Number(m.quantityOut || 0);
 
                                 return (

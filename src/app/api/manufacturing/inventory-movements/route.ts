@@ -19,7 +19,7 @@ function numberOrNull(value: string | null): number | null {
   const normalized = valueOrNull(value);
   if (!normalized) return null;
   const number = Number(normalized);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 
 export async function GET(req: Request) {
@@ -67,7 +67,15 @@ export async function GET(req: Request) {
     if (productTypeNumber) filtered = filtered.filter((movement) => Number(movement.productTypeId) === productTypeNumber);
     if (referenceNumber) filtered = filtered.filter((movement) => Number(movement.referenceId) === referenceNumber);
     if (productNumber) filtered = filtered.filter((movement) => Number(movement.productId) === productNumber);
-    if (lotNumber) filtered = filtered.filter((movement) => Number(movement.mmLotId ?? movement.mm_lot_id ?? movement.lotId ?? movement.lot_id) === lotNumber);
+    if (lotNumber !== null) {
+      filtered = filtered.filter((m) => {
+        const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
+        const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+        const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
+        const effectiveLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
+        return Number(effectiveLotId) === Number(lotNumber);
+      });
+    }
     if (mmLotNumber) filtered = filtered.filter((movement) => Number(movement.mmLotId ?? movement.mm_lot_id ?? movement.lotId ?? movement.lot_id) === mmLotNumber);
     if (inventoryLotNumber) filtered = filtered.filter((movement) => Number(movement.inventoryLotId ?? movement.inventory_lot_id) === inventoryLotNumber);
     if (transactionTypeNumber) filtered = filtered.filter((movement) => Number(movement.transactionTypeId) === transactionTypeNumber);

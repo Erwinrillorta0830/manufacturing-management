@@ -135,9 +135,14 @@ export function useInventoryMovements(
 
                 // Storage Lot filter
                 if (lotFilter !== "ALL") {
+                    const rawInvId = m.inventoryLotId ?? (m as { inventory_lot_id?: unknown }).inventory_lot_id;
+                    const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+                    const rawLotId = m.mmLotId ?? m.lotId;
+                    const mLotId = (hasInvId && rawLotId) ? Number(rawLotId) : 0;
+
                     if (Array.isArray(lotFilter)) {
-                        if (lotFilter.length > 0 && !lotFilter.includes(Number(m.mmLotId ?? m.lotId))) return false;
-                    } else if (Number(m.mmLotId ?? m.lotId) !== Number(lotFilter)) return false;
+                        if (lotFilter.length > 0 && !lotFilter.includes(mLotId)) return false;
+                    } else if (mLotId !== Number(lotFilter)) return false;
                 }
 
                 // Product filter

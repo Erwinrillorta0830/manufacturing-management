@@ -19,7 +19,7 @@ import { SearchableBranchSelect } from "./components/SearchableBranchSelect";
 import { SearchableProductTypeSelect } from "./components/SearchableProductTypeSelect";
 import { SearchableUomSelect } from "./components/SearchableUomSelect";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
-import { Batch, Lot } from "./types";
+import { Batch, Lot, Branch } from "./types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -149,7 +149,16 @@ export default function LotManagementModule() {
         loadMovements();
     };
 
-    // Cascaded available options for Product, Lot & Batch dropdowns
+    // Cascaded available options for Branch, Product, Lot & Batch dropdowns
+    const availableBranchesForSelect = useMemo(() => {
+        const ghostBranch: Branch = {
+            id: 0,
+            branchName: "System Virtual Rack",
+            branchCode: "GHOST"
+        };
+        return [ghostBranch, ...branches];
+    }, [branches]);
+
     const availableProductsForSelect = useMemo(() => {
         if (selectedProductType === "ALL") return products;
         return products.filter((p) => {
@@ -161,12 +170,31 @@ export default function LotManagementModule() {
     }, [products, selectedProductType]);
 
     const availableLotsForSelect = useMemo(() => {
-        let baseLots = lots;
+        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
+
+        const ghostLot: Lot = {
+            lotId: 0,
+            lotName: "Unassigned / Pending Storage Rack (Ghost Rack)",
+            branchId: 0,
+            branchName: "System Virtual Rack",
+            branchCode: "GHOST",
+            uomId: null,
+            uomName: "",
+            uomShortcut: "",
+            maxBatchCapacity: 999999,
+            status: "ACTIVE",
+            createdBy: "System Virtual",
+            updatedBy: "System Virtual",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        let baseLots = [ghostLot, ...lots];
+
         if (selectedBranchId !== "ALL") {
-            baseLots = baseLots.filter((l) => Number(l.branchId) === Number(selectedBranchId));
+            baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.branchId) === Number(selectedBranchId));
         }
         if (selectedUomId !== "ALL") {
-            baseLots = baseLots.filter((l) => Number(l.uomId) === Number(selectedUomId));
+            baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.uomId) === Number(selectedUomId));
         }
         if (selectedProductType !== "ALL") {
             const relevantLotIds = new Set(
@@ -175,20 +203,21 @@ export default function LotManagementModule() {
                         const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
                         return cls.code === selectedProductType;
                     })
-                    .map((b) => b.lotId)
+                    .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
             );
-            baseLots = baseLots.filter((l) => relevantLotIds.has(l.lotId));
+            baseLots = baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
         }
         if (selectedProductId === "ALL") return baseLots;
         const relevantLotIds = new Set(
             batches
                 .filter((b) => Number(b.productId) === Number(selectedProductId))
-                .map((b) => b.lotId)
+                .map((b) => (!b.lotId || !knownLotIds.has(Number(b.lotId)) ? 0 : Number(b.lotId)))
         );
-        return baseLots.filter((l) => relevantLotIds.has(l.lotId));
+        return baseLots.filter((l) => relevantLotIds.has(Number(l.lotId)));
     }, [lots, batches, selectedBranchId, selectedProductType, selectedUomId, selectedProductId]);
 
     const availableBatchesForSelect = useMemo(() => {
+        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
         return batches.filter((b) => {
             if (selectedBranchId !== "ALL") {
                 const matchedLot = lots.find((l) => Number(l.lotId) === Number(b.lotId));
@@ -211,8 +240,11 @@ export default function LotManagementModule() {
             if (selectedProductId !== "ALL" && Number(b.productId) !== Number(selectedProductId)) {
                 return false;
             }
-            if (selectedLotIds.length > 0 && !selectedLotIds.includes(Number(b.lotId))) {
-                return false;
+            if (selectedLotIds.length > 0) {
+                const bLotId = (!b.lotId || !knownLotIds.has(Number(b.lotId))) ? 0 : Number(b.lotId);
+                if (!selectedLotIds.includes(bLotId)) {
+                    return false;
+                }
             }
             return true;
         });
@@ -278,7 +310,10 @@ export default function LotManagementModule() {
         if (globalSearchQuery.trim()) {
             const q = globalSearchQuery.toLowerCase().trim();
             baseLots = baseLots.filter((l) => {
-                const nameMatches = l.lotName?.toLowerCase().includes(q);
+                const nameMatches =
+                    l.lotName?.toLowerCase().includes(q) ||
+                    l.branchName?.toLowerCase().includes(q) ||
+                    l.branchCode?.toLowerCase().includes(q);
                 const hasMatchingBatch = batches.some(
                     (b) =>
                         Number(b.lotId) === Number(l.lotId) &&
@@ -403,7 +438,7 @@ export default function LotManagementModule() {
                         {/* 1. Global Branch Select */}
                         <div className="w-full">
                             <SearchableBranchSelect
-                                branches={branches}
+                                branches={availableBranchesForSelect}
                                 value={selectedBranchId}
                                 onValueChange={(val) => {
                                     setSelectedBranchId(val);
