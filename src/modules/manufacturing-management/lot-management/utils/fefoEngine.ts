@@ -305,9 +305,24 @@ export function groupAndSumLotBatches(lotBatches: Batch[]): Batch[] {
         });
 
         sortedDateGroups.forEach((subGroup, idx) => {
-            const base = subGroup[0];
-            const totalQty = subGroup.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-            if (totalQty === 0) return;
+            const uniqueBatchMap = new Map<string, Batch>();
+            subGroup.forEach((b) => {
+                const key = b.batchId > 0
+                    ? `id_${b.batchId}`
+                    : `${b.lotId}_${b.productId}_${(b.batchNumber || "").trim().toLowerCase()}`;
+                if (!uniqueBatchMap.has(key)) {
+                    uniqueBatchMap.set(key, b);
+                }
+            });
+            const uniqueItems = Array.from(uniqueBatchMap.values());
+            if (uniqueItems.length === 0) return;
+
+            const base = uniqueItems[0];
+            const totalQty = uniqueItems.length === 1
+                ? Number(base.quantity || 0)
+                : uniqueItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+            if (totalQty === 0 && uniqueItems.every((u) => u.batchId < 0)) return;
 
             const baseBatchNumber = base.rawBatchNumber || base.batchNumber;
             const displayBatchNumber = idx === 0 ? baseBatchNumber : `${baseBatchNumber}-${idx}`;

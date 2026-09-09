@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, Loader2, History, ChevronDown, ChevronUp, Building2, AlertTriangle } from "lucide-react";
+import { Pencil, Package, Calendar, AlertCircle, CheckCircle2, ShieldAlert, Boxes, History, ChevronDown, ChevronUp, Building2, AlertTriangle } from "lucide-react";
 import { Lot, Batch, BatchStatus } from "../types";
 import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsByFefoExpiry } from "../utils/fefoEngine";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";

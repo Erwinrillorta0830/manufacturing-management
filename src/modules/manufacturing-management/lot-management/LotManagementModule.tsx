@@ -493,7 +493,7 @@ export default function LotManagementModule() {
                                 onValueChange={(val) => {
                                     if (Array.isArray(val)) {
                                         setSelectedLotIds(val);
-                                    } else if (val === "ALL" || val === "") {
+                                    } else if (val === "ALL" || String(val) === "") {
                                         setSelectedLotIds([]);
                                     } else {
                                         setSelectedLotIds([Number(val)]);
@@ -514,7 +514,7 @@ export default function LotManagementModule() {
                                 onValueChange={(val) => {
                                     if (Array.isArray(val)) {
                                         setSelectedBatchIds(val);
-                                    } else if (val === "ALL" || val === "") {
+                                    } else if (val === "ALL" || String(val) === "") {
                                         setSelectedBatchIds([]);
                                     } else {
                                         setSelectedBatchIds([Number(val)]);

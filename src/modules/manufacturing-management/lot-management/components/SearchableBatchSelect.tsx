@@ -11,10 +11,10 @@ import {
 } from "@/components/ui/popover";
 import { Batch } from "../types";
 
-interface SearchableBatchSelectProps {
+interface SearchableBatchSelectProps<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | ""> {
     batches: Batch[];
-    value: number[] | number | "ALL" | "";
-    onValueChange: (val: number[] & (number | "ALL")) => void;
+    value: T;
+    onValueChange: (val: T) => void;
     disabled?: boolean;
     hasError?: boolean;
     placeholder?: string;
@@ -24,7 +24,7 @@ interface SearchableBatchSelectProps {
     loading?: boolean;
 }
 
-export function SearchableBatchSelect({
+export function SearchableBatchSelect<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | "">({
     batches,
     value,
     onValueChange,
@@ -35,7 +35,7 @@ export function SearchableBatchSelect({
     allLabel = "All Batches",
     className,
     loading = false
-}: SearchableBatchSelectProps) {
+}: SearchableBatchSelectProps<T>) {
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
 
@@ -75,9 +75,9 @@ export function SearchableBatchSelect({
             const next = selectedBatchIds.includes(batchId)
                 ? selectedBatchIds.filter((id) => id !== batchId)
                 : [...selectedBatchIds, batchId];
-            onValueChange(next as any);
+            onValueChange(next as unknown as T);
         } else {
-            onValueChange(batchId as any);
+            onValueChange(batchId as unknown as T);
             setOpen(false);
             setSearchQuery("");
         }
@@ -85,9 +85,9 @@ export function SearchableBatchSelect({
 
     const handleSelectAll = () => {
         if (isArrayMode) {
-            onValueChange([] as any);
+            onValueChange([] as unknown as T);
         } else {
-            onValueChange("ALL" as any);
+            onValueChange("ALL" as unknown as T);
             setOpen(false);
             setSearchQuery("");
         }

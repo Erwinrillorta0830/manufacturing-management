@@ -11,10 +11,10 @@ import {
 } from "@/components/ui/popover";
 import { Lot } from "../types";
 
-interface SearchableLotSelectProps {
+interface SearchableLotSelectProps<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | ""> {
     lots: Lot[];
-    value: number[] | number | "ALL" | "";
-    onValueChange: (val: number[] & (number | "ALL")) => void;
+    value: T;
+    onValueChange: (val: T) => void;
     disabled?: boolean;
     hasError?: boolean;
     placeholder?: string;
@@ -23,7 +23,7 @@ interface SearchableLotSelectProps {
     loading?: boolean;
 }
 
-export function SearchableLotSelect({
+export function SearchableLotSelect<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | "">({
     lots,
     value,
     onValueChange,
@@ -33,7 +33,7 @@ export function SearchableLotSelect({
     allowAll = true,
     className,
     loading = false
-}: SearchableLotSelectProps) {
+}: SearchableLotSelectProps<T>) {
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
 
@@ -70,9 +70,9 @@ export function SearchableLotSelect({
             const next = selectedLotIds.includes(lotId)
                 ? selectedLotIds.filter((id) => id !== lotId)
                 : [...selectedLotIds, lotId];
-            onValueChange(next as any);
+            onValueChange(next as unknown as T);
         } else {
-            onValueChange(lotId as any);
+            onValueChange(lotId as unknown as T);
             setOpen(false);
             setSearchQuery("");
         }
@@ -80,9 +80,9 @@ export function SearchableLotSelect({
 
     const handleSelectAll = () => {
         if (isArrayMode) {
-            onValueChange([] as any);
+            onValueChange([] as unknown as T);
         } else {
-            onValueChange("ALL" as any);
+            onValueChange("ALL" as unknown as T);
             setOpen(false);
             setSearchQuery("");
         }

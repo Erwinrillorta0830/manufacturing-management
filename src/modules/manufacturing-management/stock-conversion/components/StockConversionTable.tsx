@@ -124,14 +124,14 @@ export function StockConversionTable({
       value: String(pt.id),
       label: pt.name,
     }));
-  }, [options?.productTypes]);
+  }, [options]);
 
   const isFinishedGoods = useMemo(() => {
     if (!inventoryType) return false;
     if (inventoryType === "388" || inventoryType === "FINISHED_GOODS") return true;
     const found = options?.productTypes?.find(pt => String(pt.id) === String(inventoryType));
     return found ? found.name.toLowerCase().includes("finished good") : false;
-  }, [inventoryType, options?.productTypes]);
+  }, [inventoryType, options]);
 
   const isPrimaryFilterSelected = !!localBranchId && !!inventoryType && (isFinishedGoods || !!supplierFilter);
 
