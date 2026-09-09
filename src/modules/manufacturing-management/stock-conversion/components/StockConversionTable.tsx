@@ -2,13 +2,14 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { RefreshCw } from "lucide-react";
-import { StockConversionProduct } from "../types/stock-conversion.types";
+import { StockConversionProduct, StockConversionFilterOptions } from "../types/stock-conversion.types";
 import { getColumns } from "./columns";
 import { DataTable } from "@/components/ui/new-data-table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { SearchableCombobox } from "@/modules/manufacturing-management/stock-transfer/shared/components/searchable-combobox";
+import { SearchableSelect } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
 
 interface StockConversionTableProps {
   data: StockConversionProduct[];
@@ -25,19 +26,9 @@ interface StockConversionTableProps {
   branches?: Array<{ id: number; branch_name?: string; name?: string; isActive?: number | boolean | string }>;
   selectedBranchId?: number;
   onBranchChange?: (branchId: number | undefined) => void;
-  options?: {
-    brands: { id: number; name: string }[];
-    categories: { id: number; name: string }[];
-    units: { id: number; name: string }[];
-    suppliers: { id: number; name: string; shortcut: string }[];
-  };
+  options?: StockConversionFilterOptions;
   convertingId?: number | null;
 }
-
-const INVENTORY_TYPE_OPTIONS = [
-  { value: "FINISHED_GOODS", label: "Finished Goods" },
-  { value: "RAW_MATERIALS", label: "Raw Materials" },
-];
 
 export function StockConversionTable({
   data,
@@ -60,7 +51,7 @@ export function StockConversionTable({
   const [brandFilter, setBrandFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
-  const [inventoryType, setInventoryType] = useState<string>("FINISHED_GOODS");
+  const [inventoryType, setInventoryType] = useState<string>("");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [hasStockFilter, setHasStockFilter] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -127,12 +118,29 @@ export function StockConversionTable({
     });
   }, [options, data]);
 
-  const isPrimaryFilterSelected = !!localBranchId && (inventoryType === "FINISHED_GOODS" || !!supplierFilter);
+  const inventoryTypeOptions = useMemo(() => {
+    if (!options?.productTypes?.length) return [];
+    return options.productTypes.map((pt) => ({
+      value: String(pt.id),
+      label: pt.name,
+    }));
+  }, [options?.productTypes]);
+
+  const isFinishedGoods = useMemo(() => {
+    if (!inventoryType) return false;
+    if (inventoryType === "388" || inventoryType === "FINISHED_GOODS") return true;
+    const found = options?.productTypes?.find(pt => String(pt.id) === String(inventoryType));
+    return found ? found.name.toLowerCase().includes("finished good") : false;
+  }, [inventoryType, options?.productTypes]);
+
+  const isPrimaryFilterSelected = !!localBranchId && !!inventoryType && (isFinishedGoods || !!supplierFilter);
 
   const handleInventoryTypeChange = (val: string | null) => {
-    const nextType = val || "FINISHED_GOODS";
+    const nextType = val || "";
     setInventoryType(nextType);
-    if (nextType === "FINISHED_GOODS") {
+    const isFg = nextType === "388" || nextType === "FINISHED_GOODS" ||
+      (options?.productTypes?.find(pt => String(pt.id) === String(nextType))?.name?.toLowerCase().includes("finished good") ?? false);
+    if (isFg) {
       setSupplierFilter("");
     }
   };
@@ -145,9 +153,11 @@ export function StockConversionTable({
     const activeSearch = (typeof searchOverride === 'string') ? searchOverride : searchQuery;
     const activeBranchId = branchOverride !== undefined ? branchOverride : localBranchId;
 
-    filterPayload.inventoryType = inventoryType;
+    if (inventoryType) {
+      filterPayload.inventoryType = inventoryType;
+    }
 
-    if (inventoryType !== "FINISHED_GOODS" && supplierFilter) {
+    if (!isFinishedGoods && supplierFilter) {
       // Find by name OR shortcut to be safe
       const found = uniqueSuppliers.find(s => s.name === supplierFilter || s.shortcut === supplierFilter);
       filterPayload.supplierShortcut = found?.shortcut || supplierFilter;
@@ -168,26 +178,11 @@ export function StockConversionTable({
     onFilterChange(finalPayload);
   };
 
-  // Filters now only apply when the "Apply" button is clicked, per user preference.
-  // Search query remains reactive but debounced for a better user experience.
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      // Apply filters if there is a search query OR if the search query was just cleared
-      // This ensures that deleting the search string actually resets the list.
-      if (localBranchId && (inventoryType === "FINISHED_GOODS" || supplierFilter)) {
-        handleApplyFilters();
-      }
-    }, 400);
-
-    return () => clearTimeout(handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
-
   const handleClearFilters = () => {
     setBrandFilter("");
     setCategoryFilter("");
     setUnitFilter("");
-    setInventoryType("FINISHED_GOODS");
+    setInventoryType("");
     setSupplierFilter("");
     setHasStockFilter(false);
     setSearchQuery("");
@@ -233,12 +228,13 @@ export function StockConversionTable({
           />
         </div>
 
-        <div className="w-[145px]">
-          <SearchableCombobox
-            options={INVENTORY_TYPE_OPTIONS}
+        <div className="w-[160px]">
+          <SearchableSelect
+            options={inventoryTypeOptions}
             value={inventoryType}
             onValueChange={handleInventoryTypeChange}
-            placeholder="Inventory Type"
+            placeholder="Select Inventory Type"
+            searchPlaceholder="Search inventory type..."
             className="h-9"
             disabled={isLoading}
           />
@@ -252,9 +248,9 @@ export function StockConversionTable({
             }))}
             value={supplierFilter}
             onValueChange={setSupplierFilter}
-            placeholder={inventoryType === "FINISHED_GOODS" ? "Not Applicable" : "Select Supplier"}
+            placeholder={isFinishedGoods ? "Not Applicable" : "Select Supplier"}
             className="h-9"
-            disabled={isLoading || inventoryType === "FINISHED_GOODS"}
+            disabled={isLoading || !localBranchId || !inventoryType || isFinishedGoods}
           />
         </div>
       </div>
@@ -387,20 +383,20 @@ export function StockConversionTable({
         isLoading={isLoading}
         actionComponent={filterActions}
         emptyTitle={
-          !isPrimaryFilterSelected
-            ? (inventoryType === "FINISHED_GOODS"
-                ? "Select a Branch to start"
-                : "Select a Branch and Supplier to start")
-            : "No products found"
+          !localBranchId || !inventoryType
+            ? "Select a Branch and Inventory Type to start"
+            : (!isFinishedGoods && !supplierFilter
+                ? "Select a Branch and Supplier to start"
+                : "No products found")
         }
         emptyDescription={
-          !isPrimaryFilterSelected
-            ? (inventoryType === "FINISHED_GOODS"
-                ? "Please choose a branch from the filters above and click Apply to view stock levels."
-                : "Please choose both a branch and a supplier from the filters above and click Apply to view stock levels.")
-            : (hasStockFilter
-                ? "No products with convertible stock found."
-                : "Try adjusting your filters.")
+          !localBranchId || !inventoryType
+            ? "Please choose both a branch and an inventory type from the filters above and click Apply to view stock levels."
+            : (!isFinishedGoods && !supplierFilter
+                ? "Please choose a supplier from the filters above and click Apply to view stock levels."
+                : (hasStockFilter
+                    ? "No products with convertible stock found."
+                    : "Try adjusting your filters."))
         }
       />
     </div>

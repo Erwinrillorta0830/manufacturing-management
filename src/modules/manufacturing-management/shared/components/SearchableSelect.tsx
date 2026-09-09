@@ -19,7 +19,10 @@ import {
 export interface SearchableSelectOption {
   value: string;
   label: string;
+  title?: string;
   subLabel?: string;
+  tag?: string;
+  tagClassName?: string;
   badge?: string;
   badgeClassName?: string;
 }
@@ -35,6 +38,7 @@ export interface SearchableSelectProps {
   className?: string;
   triggerClassName?: string;
   popoverClassName?: string;
+  triggerTitle?: string;
 }
 
 export function SearchableSelect({
@@ -48,6 +52,7 @@ export function SearchableSelect({
   className,
   triggerClassName,
   popoverClassName,
+  triggerTitle,
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -62,7 +67,9 @@ export function SearchableSelect({
     return options.filter(
       (opt) =>
         opt.label.toLowerCase().includes(q) ||
-        (opt.subLabel && opt.subLabel.toLowerCase().includes(q))
+        (opt.subLabel && opt.subLabel.toLowerCase().includes(q)) ||
+        (opt.tag && opt.tag.toLowerCase().includes(q)) ||
+        (opt.badge && opt.badge.toLowerCase().includes(q))
     );
   }, [options, search]);
 
@@ -82,6 +89,7 @@ export function SearchableSelect({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
+          title={triggerTitle || (selectedOption ? (selectedOption.title || selectedOption.label) : undefined)}
           className={cn(
             "w-full justify-between text-left font-normal h-9 px-3 text-xs bg-background hover:bg-muted/30 border-input cursor-pointer",
             !value && "text-muted-foreground",
@@ -89,7 +97,10 @@ export function SearchableSelect({
             className
           )}
         >
-          <span className="truncate">
+          <span
+            className="truncate"
+            title={triggerTitle || (selectedOption ? (selectedOption.title || selectedOption.label) : undefined)}
+          >
             {selectedOption ? selectedOption.label : placeholder}
           </span>
           <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -147,8 +158,23 @@ export function SearchableSelect({
                       )}
                     >
                       <div className="flex items-center justify-between w-full min-w-0 pr-2 gap-2">
-                        <div className="flex flex-col truncate">
-                          <span className="truncate">{opt.label}</span>
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div
+                            className="flex items-center gap-1.5 min-w-0"
+                            title={opt.title || `${opt.label}${opt.tag ? ` ${opt.tag}` : ""}`}
+                          >
+                            <span
+                              className="truncate"
+                              title={opt.title || opt.label}
+                            >
+                              {opt.label}
+                            </span>
+                            {opt.tag && (
+                              <span className={cn("text-[11px] font-semibold shrink-0", opt.tagClassName)}>
+                                {opt.tag}
+                              </span>
+                            )}
+                          </div>
                           {opt.subLabel && (
                             <span className="text-[10px] text-muted-foreground font-mono">
                               {opt.subLabel}

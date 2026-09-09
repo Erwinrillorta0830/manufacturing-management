@@ -75,3 +75,11 @@ export interface StockConversionPayload {
   targetQaStatus?: 'GOOD' | 'DAMAGED' | 'QUARANTINED' | 'EXPIRED';
   targetAllocations?: import("@/modules/manufacturing-management/shared/types/lot-tracking.types").LotAllocationGroup[];
 }
+
+export interface StockConversionFilterOptions {
+  brands: { id: number; name: string }[];
+  categories: { id: number; name: string }[];
+  units: { id: number; name: string }[];
+  suppliers: { id: number; name: string; shortcut: string }[];
+  productTypes?: { id: number; name: string }[];
+}

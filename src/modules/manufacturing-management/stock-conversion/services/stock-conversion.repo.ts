@@ -1,6 +1,7 @@
 import { AppError } from "../utils/error-handler";
 import { getCached, setCache } from "../utils/cache";
 import { getPhDbTimestamp } from "../utils/date-utils";
+import { StockConversionFilterOptions } from "../types";
 
 export const DIRECTUS_API = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
 export const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN;
@@ -98,8 +99,8 @@ export const stockConversionRepo = {
     for (let i = 0; i < uniqueIds.length; i += chunkSize) {
       const chunk = uniqueIds.slice(i, i + chunkSize);
       const filter = JSON.stringify({ [field]: { "_in": chunk } });
-      const sortParam = sort ? `&sort=${sort}` : "";
-      const url = `${DIRECTUS_API}/items/${endpoint}?filter=${filter}&fields=${fields}&limit=-1${sortParam}`;
+      const sortQuery = sort ? `&sort=${sort}` : "";
+      const url = `${DIRECTUS_API}/items/${endpoint}?filter=${encodeURIComponent(filter)}&limit=${chunkSize}&fields=${fields}${sortQuery}`;
       const res = await fetchWithTimeout(url, { headers });
       if (res.ok) {
         const json = await res.json();
@@ -109,22 +110,23 @@ export const stockConversionRepo = {
     return results;
   },
 
-  async fetchFilterOptions() {
-    const CACHE_KEY = "filter_options";
-    const TTL = 5 * 60 * 1000; // 5 minutes — brands/categories/units rarely change
+  async fetchFilterOptions(): Promise<StockConversionFilterOptions> {
+    const CACHE_KEY = "filter_options_v2";
+    const TTL = 5 * 60 * 1000; // 5 minutes — brands/categories/units/product_types rarely change
 
-    const cached = getCached<{ brands: { id: number; name: string }[]; categories: { id: number; name: string }[]; units: { id: number; name: string }[]; suppliers: { id: number; name: string; shortcut: string }[] }>(CACHE_KEY);
+    const cached = getCached<StockConversionFilterOptions>(CACHE_KEY);
     if (cached) return cached;
 
     const headers = getHeaders();
-    const [brands, categoriesRes, suppliers, units] = await Promise.all([
+    const [brands, categoriesRes, suppliers, units, productTypesRes] = await Promise.all([
       fetchWithTimeout(`${DIRECTUS_API}/items/brand?limit=-1&fields=*`, { headers }),
       fetchWithTimeout(`${DIRECTUS_API}/items/categories?limit=-1&fields=*`, { headers }),
       fetchWithTimeout(`${DIRECTUS_API}/items/suppliers?limit=-1&fields=*`, { headers }),
-      fetchWithTimeout(`${DIRECTUS_API}/items/units?limit=-1&fields=*`, { headers })
+      fetchWithTimeout(`${DIRECTUS_API}/items/units?limit=-1&fields=*`, { headers }),
+      fetchWithTimeout(`${DIRECTUS_API}/items/product_type?limit=-1&fields=id,name&sort=name`, { headers }),
     ]);
 
-    const result = {
+    const result: StockConversionFilterOptions = {
       brands: brands.ok ? (await brands.json()).data.map((b: { brand_id?: number; id?: number; brand_name?: string; name?: string }) => ({ 
         id: b.brand_id || b.id || 0, 
         name: b.brand_name || b.name || "Unknown" 
@@ -141,7 +143,11 @@ export const stockConversionRepo = {
         id: s.id || s.supplier_id || 0, 
         name: s.supplier_name || s.name || "Unknown", 
         shortcut: s.supplier_shortcut || s.shortcut || "" 
-      })) : []
+      })) : [],
+      productTypes: productTypesRes.ok ? (await productTypesRes.json()).data.map((pt: { id?: number; name?: string }) => ({
+        id: pt.id || 0,
+        name: pt.name || "Unknown"
+      })) : [],
     };
 
     setCache(CACHE_KEY, result, TTL);

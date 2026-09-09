@@ -1481,9 +1481,16 @@ export function LotBatchSelectionModal({
                           </span>
                           <div className="w-80">
                             {(() => {
+                              const otherSelectedLotIds = new Set(
+                                lotGroups
+                                  .filter((_, idx) => idx !== gIdx)
+                                  .map((og) => Number(og.lot_id))
+                                  .filter(Boolean)
+                              );
                               const groupIsBad = (group.batches || []).some((b) => b.qa_status && b.qa_status !== 'GOOD');
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
+                                if (otherSelectedLotIds.has(Number(l.lot_id))) return false;
                                 const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
                                 if (!isUomMatch) return false;
                                 const lotIsBad = isBadStockLot(l);
@@ -1503,32 +1510,55 @@ export function LotBatchSelectionModal({
                                       const lStockQty = lotStockQtyMap.get(Number(l.lot_id)) || 0;
                                       const isLotEmpty = !lStored || lStored.is_empty || ((lStored.total_stored_quantity ?? 0) === 0 && lStockQty === 0 && (lStored.stored_products?.length ?? 0) === 0 && (lStored.active_batch_count ?? 0) === 0);
 
-                                      let statusTag = '';
+                                      const isMultipleStored = Boolean(
+                                        lStored?.primary_classification_label?.includes('&') ||
+                                        (lStored?.stored_products && lStored.stored_products.length > 1)
+                                      );
+
+                                      let tag = '';
+                                      let tagClassName = '';
+
                                       if (!isUomMatch) {
-                                        statusTag = ' [UOM Mismatch]';
+                                        tag = '[UOM Mismatch]';
+                                        tagClassName = 'text-rose-600 dark:text-rose-400 font-semibold';
                                       } else if (!lComp.isCompatible) {
-                                        statusTag = lStored?.is_draft_allocation
-                                          ? ` [Type Mismatch: Form Draft (${lComp.storedLabel})]`
-                                          : ` [Type Mismatch: Warehouse (${lComp.storedLabel})]`;
+                                        tag = lStored?.is_draft_allocation
+                                          ? `[Type Mismatch: Form Draft (${lComp.storedLabel})]`
+                                          : `[Type Mismatch: Warehouse (${lComp.storedLabel})]`;
+                                        tagClassName = 'text-rose-600 dark:text-rose-400 font-semibold';
                                       } else if (lotIsBad) {
-                                        statusTag = ' [Bad Stock / Quarantine]';
+                                        tag = '[Bad Stock / Quarantine]';
+                                        tagClassName = 'text-amber-600 dark:text-amber-400 font-semibold';
+                                      } else if (!isLotEmpty && isMultipleStored) {
+                                        tag = lStored?.is_draft_allocation
+                                          ? `[Compatible: Form Draft (${lStored.primary_classification_label})]`
+                                          : `[Compatible: ${lStored?.primary_classification_label || 'Mixed Stock'}]`;
+                                        tagClassName = 'text-sky-600 dark:text-sky-400 font-semibold';
                                       } else if (!isLotEmpty && lStored && lStored.primary_classification_label && lStored.primary_classification_label !== 'Empty Lot') {
-                                        statusTag = lStored.is_draft_allocation
-                                          ? ` [Compatible: Form Draft (${lStored.primary_classification_label})]`
-                                          : ` [Compatible: ${lStored.primary_classification_label}]`;
+                                        tag = lStored.is_draft_allocation
+                                          ? `[Compatible: Form Draft (${lStored.primary_classification_label})]`
+                                          : `[Compatible: ${lStored.primary_classification_label}]`;
+                                        tagClassName = 'text-emerald-600 dark:text-emerald-400 font-semibold';
                                       } else {
-                                        statusTag = ' [Empty Lot]';
+                                        tag = '[Empty Lot]';
+                                        tagClassName = 'text-emerald-600 dark:text-emerald-400 font-semibold';
                                       }
 
+                                      const lotCapStr = l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : '';
                                       return {
                                         value: String(l.lot_id),
-                                        label: `${l.lot_name}${l.max_batch_capacity ? ` (Cap: ${l.max_batch_capacity.toLocaleString()} ${l.unit_name || productUomName})` : ''}${statusTag}`,
+                                        label: `${l.lot_name}${lotCapStr}`,
+                                        title: `${l.lot_name}${lotCapStr}${tag ? ` ${tag}` : ''}`,
+                                        tag,
+                                        tagClassName,
                                       };
                                     })}
                                     value={String(group.lot_id)}
                                     onValueChange={(val) => handleChangeLot(gIdx, val)}
                                     placeholder="Select Storage Lot / Bay..."
                                     searchPlaceholder="Search lot name..."
+                                    triggerTitle={groupLot ? `${groupLot.lot_name}${groupLot.max_batch_capacity ? ` (Cap: ${groupLot.max_batch_capacity.toLocaleString()} ${groupLot.unit_name || productUomName})` : ''}` : undefined}
+                                    popoverClassName="w-[540px] max-w-[90vw]"
                                     emptyMessage={
                                       <div className="py-4 px-2 flex flex-col items-center justify-center gap-2 text-center">
                                         <p className="text-xs text-muted-foreground">
@@ -2031,7 +2061,10 @@ export function LotBatchSelectionModal({
                               }`}
                             >
                               {/* Batch Number */}
-                              <div className="flex-1 min-w-[200px]">
+                              <div
+                                className="flex-1 min-w-[260px] md:min-w-[280px]"
+                                title={batch.batch_no ? `Batch Number: ${batch.batch_no}` : "Select or type batch number"}
+                              >
                                 <Label className="text-[10px] font-bold text-muted-foreground uppercase mb-1 block">
                                   Batch Number *
                                 </Label>
@@ -2089,6 +2122,7 @@ export function LotBatchSelectionModal({
                                   onSelectBatch={(selectedBatchNo, meta) => {
                                     handleSelectBatchWithMeta(gIdx, bIdx, selectedBatchNo, meta);
                                   }}
+                                  title={batch.batch_no || "Search or select batch..."}
                                   className="h-9 text-xs"
                                 />
                               </div>
