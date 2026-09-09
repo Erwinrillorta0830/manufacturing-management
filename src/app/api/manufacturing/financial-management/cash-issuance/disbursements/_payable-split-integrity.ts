@@ -51,14 +51,17 @@ export function normalizeVatSplitDivisions<T extends PayableSplitInput>(lines: T
     });
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function findMissingVatPrincipalDivisionError(lines: PayableSplitInput[]) {
     return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function findMissingPayableDivisionError(lines: PayableSplitInput[]) {
     return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function findVatSplitDivisionError(lines: PayableSplitInput[]) {
     return null;
 }

@@ -185,8 +185,12 @@ export const disbursementProvider = {
         return data as UnpaidPoDto[];
     },
 
-    getSupplierMemos: async (supplierId: number, signal?: AbortSignal): Promise<MemoDto[]> => {
-        const res = await fetch(`${API_BASE}/memos/${supplierId}`, { signal });
+    getSupplierMemos: async (supplierId: number, excludeDisbursementId?: number, signal?: AbortSignal): Promise<MemoDto[]> => {
+        let url = `${API_BASE}/memos/${supplierId}`;
+        if (excludeDisbursementId) {
+            url += `?excludeDisbursementId=${excludeDisbursementId}`;
+        }
+        const res = await fetch(url, { signal });
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(data?.detail || data?.message || "Failed to fetch supplier memos");
         if (!Array.isArray(data)) throw new Error("Supplier memos returned an invalid response");

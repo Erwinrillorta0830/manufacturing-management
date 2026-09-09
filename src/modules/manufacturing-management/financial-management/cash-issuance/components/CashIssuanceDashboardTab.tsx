@@ -130,7 +130,7 @@ export function CashIssuanceDashboardTab() {
     const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
     const [payees, setPayees] = useState<{ id: number; name: string }[]>([]);
     const [coas, setCoas] = useState<{ coaId: number; glCode: string; accountTitle: string }[]>([]);
-    const [divisions, setDivisions] = useState<{ divisionId: number; divisionName: string }[]>([]);
+    const [, setDivisions] = useState<{ divisionId: number; divisionName: string }[]>([]);
 
     const activeEncoders = useMemo(() => {
         const activeIds = data?.activeEncoderIds;
