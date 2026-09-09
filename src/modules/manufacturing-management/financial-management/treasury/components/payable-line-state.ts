@@ -1,4 +1,4 @@
-import { PayableLine } from "../types";
+import { PayableLine } from "../../cash-issuance/types";
 
 export function replaceEmptyPayablePlaceholders(prev: PayableLine[], newPayables: PayableLine[]): PayableLine[] {
     const isPopulated = (line: PayableLine) =>

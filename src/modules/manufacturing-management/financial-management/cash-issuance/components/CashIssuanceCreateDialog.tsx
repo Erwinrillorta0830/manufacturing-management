@@ -381,7 +381,7 @@ export function CashIssuanceCreateDialog({
             });
 
         return () => controller.abort();
-    }, [open, payeeId]);
+    }, [open, payeeId, editData?.id]);
 
     const handleAddPayable = useCallback(() => setPayables((prev) => [...prev, { referenceNo: "", date: today, amount: 0, remarks: "", divisionId: undefined }]), [today]);
 

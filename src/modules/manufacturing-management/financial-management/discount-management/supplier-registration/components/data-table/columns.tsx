@@ -2,7 +2,6 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTableColumnHeader } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/components/data-table/table-column-header";
 import { Supplier } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/types/supplier.schema";
 import { formatDate } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/utils/utils";
 import { ColumnDef } from "@tanstack/react-table";
