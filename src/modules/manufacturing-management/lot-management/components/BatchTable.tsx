@@ -1,4 +1,5 @@
 import React from "react";
+import { motion } from "framer-motion";
 import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History } from "lucide-react";
 import { Batch, Lot, type BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
@@ -153,17 +154,20 @@ export default function BatchTable({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {paginatedBatches.map((batch) => {
+                            {paginatedBatches.map((batch, idx) => {
                                 const unitLabel = batch.uomShortcut || batch.uomName || "";
                                 const isExpired = checkIsExpired(batch.expirationDate, batch.qaStatus, batch.status);
                                 const isNearExpiry = !isExpired && checkNearExpiry(batch.expirationDate);
                                 const fefoInfo = fefoMap.get(batch.batchId);
 
                                 return (
-                                    <TableRow
+                                    <motion.tr
                                         key={batch.batchId}
+                                        initial={{ opacity: 0, x: -15 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ duration: 0.2, delay: idx * 0.04, ease: "easeOut" as const }}
                                         onClick={() => onViewMovements?.(batch)}
-                                        className={`cursor-pointer transition-colors ${
+                                        className={`cursor-pointer transition-colors border-b border-border ${
                                             isExpired
                                                 ? "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500"
                                                 : fefoInfo?.isFefoNext
@@ -280,7 +284,7 @@ export default function BatchTable({
                                                 </Button>
                                             </div>
                                         </TableCell>
-                                    </TableRow>
+                                     </motion.tr>
                                 );
                             })}
                         </TableBody>

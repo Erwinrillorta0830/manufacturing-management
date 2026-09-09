@@ -22,6 +22,13 @@ async function extractErrorMessage(res: Response, defaultMessage: string): Promi
     } catch {
         errorDetail = await res.text().catch(() => "");
     }
+    if (errorDetail) {
+        errorDetail = String(errorDetail)
+            .replace(/,\s*"path":\s*"[^"]*"/g, "")
+            .replace(/"path":\s*"[^"]*"/g, "")
+            .replace(/https?:\/\/[^\s]+/g, "")
+            .trim();
+    }
     return errorDetail || `${defaultMessage} (HTTP ${res.status})`;
 }
 

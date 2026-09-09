@@ -227,6 +227,14 @@ export async function rejectLotTransfer(id: number, rejectionReason: string, qaE
     return unwrap(payload);
 }
 
+export async function cancelLotTransfer(id: number, cancellationReason: string): Promise<LotTransfer> {
+    const payload = await requestJson<ApiEnvelope<LotTransfer>>(`/api/manufacturing/lot-transfers/${id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ cancellationReason })
+    });
+    return unwrap(payload);
+}
+
 export async function fetchProducts(): Promise<ProductOption[]> {
     const payload = await requestJson<unknown>("/api/manufacturing/lots/products");
     const rows = Array.isArray(payload) ? payload : unwrap<ProductOption[]>(payload as ApiEnvelope<ProductOption[]>);

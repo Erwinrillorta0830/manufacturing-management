@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import type { StockConversionProduct, StockConversionPayload } from "../types/stock-conversion.types";
+import type { StockConversionProduct, StockConversionPayload, StockConversionFilterOptions } from "../types/stock-conversion.types";
 
 export function useStockConversion() {
   const [data, setData] = useState<StockConversionProduct[]>([]);
@@ -15,12 +15,13 @@ export function useStockConversion() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [options, setOptions] = useState<{
-    brands: { id: number; name: string }[];
-    categories: { id: number; name: string }[];
-    units: { id: number; name: string }[];
-    suppliers: { id: number; name: string; shortcut: string }[];
-  }>({ brands: [], categories: [], units: [], suppliers: [] });
+  const [options, setOptions] = useState<StockConversionFilterOptions>({
+    brands: [],
+    categories: [],
+    units: [],
+    suppliers: [],
+    productTypes: [],
+  });
 
   const loadingProductsRef = useRef<Set<number>>(new Set());
 

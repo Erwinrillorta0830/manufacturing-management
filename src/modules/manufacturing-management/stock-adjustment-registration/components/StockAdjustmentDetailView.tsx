@@ -26,6 +26,7 @@ import { PdfEngine } from "@/components/pdf-layout-design/PdfEngine";
 import { pdfTemplateService } from "@/components/pdf-layout-design/services/pdf-template";
 import { PAPER_SIZES } from "@/components/pdf-layout-design/constants";
 import { CompanyData } from "@/components/pdf-layout-design/types";
+import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { useStockAdjustmentForm } from "../hooks/useStockAdjustmentForm";
 import {
   StockAdjustmentDetail as DetailType,
@@ -180,17 +181,39 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       const adjTypeFull = data.type === 'IN' ? 'Stock In' : data.type === 'OUT' ? 'Stock Out' : (data.type || "-");
       doc.text(adjTypeFull, rightColX + 35, metaY + 6);
 
-      // --- Product Table ---
-      const tableRows: (string | number)[][] = [];
+      // --- Product Table (Hierarchical: Product Line -> Lot -> Batches) ---
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tableRows: any[] = [];
       let rowNumber = 1;
       data.items?.forEach((item) => {
         const product = (item.product_id as unknown as StockAdjustmentProduct) || {};
         const unitPrice = Number(item.cost_per_unit || product.cost_per_unit || product.price_per_unit || 0);
         const itemQty = Number(item.quantity || 0);
-        const brandName = item.brand_name || product.brand_name || (product as unknown as { product_brand?: { brand_name?: string } })?.product_brand?.brand_name || "N/A";
-        const productName = `${product.description || product.product_name || item.product_name || "Unknown"}\n(${product.product_code || item.product_code || "N/A"})`;
+        const totalAmount = itemQty * unitPrice;
+        const brandName = item.brand_name || product.brand_name || (product as unknown as { product_brand?: { brand_name?: string } })?.product_brand?.brand_name || "—";
+        const productName = `${product.description || product.product_name || item.product_name || "Unknown Product"}${product.product_code || item.product_code ? `\n(${product.product_code || item.product_code})` : ""}`;
         const uomName = item.unit_name || (product.unit_of_measurement as { unit_name?: string })?.unit_name || "pcs";
-        
+        const classification = resolveProductClassification(
+          product.product_type || item.product_type,
+          product.product_category || product.category_name || item.category_name,
+          (product.product_code || item.product_code) ?? undefined,
+          (product.description || product.product_name || item.product_name) ?? undefined
+        );
+        const productType = classification.label || "Finished Good";
+
+        // Row 1: Product Header Row
+        tableRows.push([
+          { content: String(rowNumber++), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: brandName, styles: { halign: "left", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: productName, styles: { halign: "left", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: String(productType), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: uomName, styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, styles: { halign: "right", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, styles: { halign: "right", fontStyle: "bold", fillColor: [241, 245, 249] } },
+          { content: itemQty.toLocaleString(), styles: { halign: "center", fontStyle: "bold", fillColor: [241, 245, 249] } },
+        ]);
+
+        // Check for multi-lot allocations
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -199,73 +222,149 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
         if (lotAllocations.length > 0) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           lotAllocations.forEach((lg: any) => {
-            const lotName = lg.lot_name || `Lot #${lg.lot_id}`;
+            const lotName = lg.lot_name || (lg.lot_id ? `Lot #${lg.lot_id}` : "Unassigned Lot");
             const batches = lg.batches || [];
+            const lotGroupTotal =
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              batches.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0) ||
+              Number(lg.allocated_quantity || 0);
+
+            // Row 2: Lot Row
+            tableRows.push([
+              { content: "", styles: { fillColor: [248, 250, 252] } },
+              {
+                content: `  Storage Lot: ${lotName} (Lot Total: ${Number(lotGroupTotal).toLocaleString()} ${uomName})`,
+                colSpan: 7,
+                styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+              },
+            ]);
+
+            // Row 3: Discrete Batches
             if (batches.length > 0) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               batches.forEach((b: any) => {
                 const bCost = b.unit_cost !== undefined ? Number(b.unit_cost) : unitPrice;
                 const bQty = Number(b.quantity || 0);
                 const bTotal = bQty * bCost;
+                const mfgStr = b.manufacturing_date ? ` | Mfg: ${String(b.manufacturing_date).substring(0, 10)}` : "";
+                const expStr = b.expiry_date ? ` | Exp: ${String(b.expiry_date).substring(0, 10)}` : "";
+                const qaStr = b.qa_status ? ` | QA: ${b.qa_status}` : "";
+
                 tableRows.push([
-                  rowNumber++,
-                  brandName,
-                  productName,
-                  lotName,
-                  b.batch_no || "N/A",
-                  uomName,
-                  `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                  `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                  bQty
+                  { content: "" },
+                  {
+                    content: `      • Batch: ${b.batch_no || "N/A"}${mfgStr}${expStr}${qaStr}`,
+                    colSpan: 4,
+                    styles: { halign: "left", textColor: [51, 65, 85] },
+                  },
+                  {
+                    content: `PHP ${bCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                    styles: { halign: "right", textColor: [71, 85, 105] },
+                  },
+                  {
+                    content: `PHP ${bTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                    styles: { halign: "right", textColor: [71, 85, 105] },
+                  },
+                  {
+                    content: bQty.toLocaleString(),
+                    styles: { halign: "center", textColor: [71, 85, 105] },
+                  },
                 ]);
               });
-            } else {
-              const grpQty = Number(lg.allocated_quantity || 0);
-              tableRows.push([
-                rowNumber++,
-                brandName,
-                productName,
-                lotName,
-                "N/A",
-                uomName,
-                `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                `PHP ${(grpQty * unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                grpQty
-              ]);
             }
           });
         } else if (allocations.length > 0) {
+          // Group allocations by lot
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const lotMap = new Map<string, any[]>();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           allocations.forEach((alloc: any) => {
-            const lotName = alloc.lot_name || (alloc.lot_id ? `Lot #${alloc.lot_id}` : "N/A");
-            const aQty = Number(alloc.allocated_quantity || 0);
-            const aCost = alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : unitPrice;
+            const lotKey = alloc.lot_name || (alloc.lot_id ? `Lot #${alloc.lot_id}` : "Unassigned Lot");
+            if (!lotMap.has(lotKey)) lotMap.set(lotKey, []);
+            lotMap.get(lotKey)!.push(alloc);
+          });
+
+          lotMap.forEach((allocs, lotName) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lotTotal = allocs.reduce((sum: number, a: any) => sum + Number(a.allocated_quantity || a.quantity || 0), 0);
             tableRows.push([
-              rowNumber++,
-              brandName,
-              productName,
-              lotName,
-              alloc.batch_no || "N/A",
-              uomName,
-              `PHP ${aCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-              `PHP ${(aQty * aCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-              aQty
+              { content: "", styles: { fillColor: [248, 250, 252] } },
+              {
+                content: `  Storage Lot: ${lotName} (Lot Total: ${Number(lotTotal).toLocaleString()} ${uomName})`,
+                colSpan: 7,
+                styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+              },
             ]);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            allocs.forEach((alloc: any) => {
+              const aQty = Number(alloc.allocated_quantity || alloc.quantity || 0);
+              const aCost = alloc.unit_cost !== undefined ? Number(alloc.unit_cost) : unitPrice;
+              const aTotal = aQty * aCost;
+              const mfgStr = alloc.manufacturing_date ? ` | Mfg: ${String(alloc.manufacturing_date).substring(0, 10)}` : "";
+              const expStr = alloc.expiry_date ? ` | Exp: ${String(alloc.expiry_date).substring(0, 10)}` : "";
+              const qaStr = alloc.qa_status ? ` | QA: ${alloc.qa_status}` : "";
+
+              tableRows.push([
+                { content: "" },
+                {
+                  content: `      • Batch: ${alloc.batch_no || "N/A"}${mfgStr}${expStr}${qaStr}`,
+                  colSpan: 4,
+                  styles: { halign: "left", textColor: [51, 65, 85] },
+                },
+                {
+                  content: `PHP ${aCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  styles: { halign: "right", textColor: [71, 85, 105] },
+                },
+                {
+                  content: `PHP ${aTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                  styles: { halign: "right", textColor: [71, 85, 105] },
+                },
+                {
+                  content: aQty.toLocaleString(),
+                  styles: { halign: "center", textColor: [71, 85, 105] },
+                },
+              ]);
+            });
           });
         } else {
-          const lotName = item.lot_name || (item.lot_id ? (typeof item.lot_id === 'object' ? (item.lot_id as { lot_name?: string })?.lot_name || `Lot #${(item.lot_id as { id?: number })?.id}` : `Lot #${item.lot_id}`) : "N/A");
+          // Single lot and batch direct assignment
+          const lotName = item.lot_name || (item.lot_id ? (typeof item.lot_id === 'object' ? (item.lot_id as { lot_name?: string })?.lot_name || `Lot #${(item.lot_id as { id?: number })?.id}` : `Lot #${item.lot_id}`) : "Unassigned Lot");
           const batchNo = item.batch_no || "N/A";
-          const totalAmount = itemQty * unitPrice;
+          const mfgStr = item.manufacturing_date ? ` | Mfg: ${String(item.manufacturing_date).substring(0, 10)}` : "";
+          const expStr = item.expiry_date ? ` | Exp: ${String(item.expiry_date).substring(0, 10)}` : "";
+          const qaStr = item.qa_status ? ` | QA: ${item.qa_status}` : "";
+
+          // Row 2: Lot Row
           tableRows.push([
-            rowNumber++,
-            brandName,
-            productName,
-            lotName,
-            batchNo,
-            uomName,
-            `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-            `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-            itemQty
+            { content: "", styles: { fillColor: [248, 250, 252] } },
+            {
+              content: `  Storage Lot: ${lotName} (Lot Total: ${Number(itemQty).toLocaleString()} ${uomName})`,
+              colSpan: 7,
+              styles: { halign: "left", fontStyle: "bold", textColor: [37, 99, 235], fillColor: [248, 250, 252] },
+            },
+          ]);
+
+          // Row 3: Batch Row
+          tableRows.push([
+            { content: "" },
+            {
+              content: `      • Batch: ${batchNo}${mfgStr}${expStr}${qaStr}`,
+              colSpan: 4,
+              styles: { halign: "left", textColor: [51, 65, 85] },
+            },
+            {
+              content: `PHP ${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              styles: { halign: "right", textColor: [71, 85, 105] },
+            },
+            {
+              content: `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              styles: { halign: "right", textColor: [71, 85, 105] },
+            },
+            {
+              content: itemQty.toLocaleString(),
+              styles: { halign: "center", textColor: [71, 85, 105] },
+            },
           ]);
         }
       });
@@ -278,20 +377,19 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
       autoTable(doc, {
         startY: metaY + 12,
         margin: { ...margins, bottom: bottomMargin },
-        head: [["#", "Brand", "Product Name", "Storage Lot", "Batch No", "UOM", "Unit Price", "Total Amount", "Qty"]],
+        head: [["#", "Brand", "Product Name", "Product Type", "UOM", "Unit Price", "Total Amount", "Qty"]],
         body: tableRows,
         headStyles: { fillColor: [248, 250, 252], textColor: [71, 85, 105], fontSize: 8, fontStyle: 'bold' },
         bodyStyles: { fontSize: 7, textColor: [30, 41, 59] },
         columnStyles: {
           0: { halign: 'center', cellWidth: 8 },
-          1: { halign: 'left', cellWidth: 18 },
+          1: { halign: 'left', cellWidth: 20 },
           2: { halign: 'left' },
-          3: { halign: 'left', cellWidth: 26 },
-          4: { halign: 'left', cellWidth: 26 },
-          5: { halign: 'center', cellWidth: 14 },
-          6: { halign: 'right', cellWidth: 22 },
-          7: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
-          8: { halign: 'center', fontStyle: 'bold', cellWidth: 14 }
+          3: { halign: 'center', cellWidth: 22 },
+          4: { halign: 'center', cellWidth: 14 },
+          5: { halign: 'right', cellWidth: 22 },
+          6: { halign: 'right', fontStyle: 'bold', cellWidth: 24 },
+          7: { halign: 'center', fontStyle: 'bold', cellWidth: 14 }
         },
         theme: 'grid',
         styles: { cellPadding: 1.5 }
@@ -601,6 +699,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                 <TableHead className="w-12 text-center text-xs font-bold text-muted-foreground uppercase tracking-wider">#</TableHead>
                 <TableHead className="w-28 text-xs font-bold text-muted-foreground uppercase tracking-wider">Brand</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Information</TableHead>
+                <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Product Type</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-right">Cost/Unit</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Unit</TableHead>
                 <TableHead className="text-xs font-bold text-muted-foreground uppercase tracking-wider text-center">Adj. Qty</TableHead>
@@ -620,6 +719,14 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                 // Color-coded Delta quantities
                 const isIncoming = data.type === 'IN';
                 const newStock = isIncoming ? current + qty : current - qty;
+
+                const classification = resolveProductClassification(
+                  product.product_type || item.product_type,
+                  product.product_category || product.category_name || item.category_name,
+                  (product.product_code || item.product_code) ?? undefined,
+                  (product.description || product.product_name || item.product_name) ?? undefined
+                );
+                const productType = classification.label || "Finished Good";
 
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const lotAllocations = (item as unknown as { lot_allocations?: any[] }).lot_allocations || [];
@@ -661,6 +768,11 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                             </div>
                           </div>
                         </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className="text-[10px] font-semibold bg-muted/50 text-foreground/80 border-border/60">
+                            {productType}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="text-right font-medium text-muted-foreground">
                           ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </TableCell>
@@ -696,7 +808,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                             {/* Storage Lot Sub-Header */}
                             <TableRow className="bg-muted/20 border-b border-border/40 text-xs">
                               <TableCell className="p-2 text-center border-r border-border/50 bg-muted/20"></TableCell>
-                              <TableCell colSpan={7} className="px-4 py-1.5 bg-muted/20">
+                              <TableCell colSpan={8} className="px-4 py-1.5 bg-muted/20">
                                 <div className="flex items-center justify-between text-xs font-bold text-foreground">
                                   <span className="flex items-center gap-1.5 text-primary">
                                     <Warehouse className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -755,6 +867,7 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                                       )}
                                     </div>
                                   </TableCell>
+                                  <TableCell className="p-2 text-center text-muted-foreground/40 text-xs">—</TableCell>
                                   <TableCell className="text-right text-xs text-muted-foreground font-mono">
                                     ₱{Number(batchCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </TableCell>
@@ -830,6 +943,11 @@ export function StockAdjustmentDetailView({ id, onBack, mode = "creation", isMod
                           </div>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className="text-[10px] font-semibold bg-muted/50 text-foreground/80 border-border/60">
+                        {productType}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right font-medium text-muted-foreground">
                       ₱{Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

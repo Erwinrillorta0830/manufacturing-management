@@ -1,4 +1,4 @@
-export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected";
+export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected" | "Cancelled";
 
 export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
@@ -27,7 +27,7 @@ export interface UserOption {
 
 export const DEFAULT_LOT_TRANSFER_REPORT_FILTERS: LotTransferReportFilters = {
     search: "",
-    statuses: ["Posted", "Rejected"],
+    statuses: ["Posted", "Rejected", "Cancelled"],
     branchId: "",
     requestedFrom: "",
     requestedTo: "",
@@ -74,6 +74,10 @@ export interface LotTransfer {
     rejectedByName: string | null;
     rejectedAt: string | null;
     rejectionReason: string | null;
+    cancelledBy: number | null;
+    cancelledByName: string | null;
+    cancelledAt: string | null;
+    cancellationReason: string | null;
     qaEvidence: string | null;
     effectiveExpiryDate: string | null;
     sourceUnitCost: number | null;

@@ -46,10 +46,14 @@ export const stockConversionService = {
     const allOptions = await stockConversionRepo.fetchFilterOptions();
     console.log(`[Perf] Step 1 - fetchFilterOptions: ${Date.now() - t0}ms`);
 
-    const isFinishedGoods = extraFilters?.inventoryType === "FINISHED_GOODS";
+    const inventoryTypeVal = extraFilters?.inventoryType;
 
-    // Do not show data on load if branch is not selected, or if raw materials and supplier is not selected
-    if (!branchId || (!isFinishedGoods && !extraFilters?.supplierShortcut)) {
+    const isFinishedGoods = inventoryTypeVal === "388" || inventoryTypeVal === "FINISHED_GOODS" ||
+      (allOptions.productTypes?.find(pt => String(pt.id) === String(inventoryTypeVal))?.name?.toLowerCase().includes("finished good") ?? false);
+
+    // Do not show data on load if branch is not selected, or if inventory type is not selected,
+    // or if other than finished goods, supplier is not selected
+    if (!branchId || !inventoryTypeVal || (!isFinishedGoods && !extraFilters?.supplierShortcut)) {
       return { data: [], totalCount: 0, options: allOptions };
     }
 
@@ -60,10 +64,14 @@ export const stockConversionService = {
     if (extraFilters && typeof extraFilters === 'object') {
       const f = extraFilters as Record<string, string>;
 
-      if (isFinishedGoods) {
+      if (inventoryTypeVal === "ALL") {
+        // "ALL" means no filter on product_type
+      } else if (inventoryTypeVal === "FINISHED_GOODS") {
         andClauses.push({ product_type: { _eq: 388 } });
-      } else {
-        andClauses.push({ product_type: { _neq: 388 } });
+      } else if (inventoryTypeVal === "RAW_MATERIALS") {
+        andClauses.push({ product_type: { _eq: 389 } });
+      } else if (!isNaN(Number(inventoryTypeVal))) {
+        andClauses.push({ product_type: { _eq: Number(inventoryTypeVal) } });
       }
 
       if (f.productBrand) {
@@ -89,7 +97,7 @@ export const stockConversionService = {
           ],
         });
       }
-      if (!isFinishedGoods && f.supplierShortcut) {
+      if (f.supplierShortcut) {
         const res = await fetch(`${DIRECTUS_API}/items/product_per_supplier?filter[supplier_id][supplier_shortcut][_eq]=${encodeURIComponent(f.supplierShortcut)}&fields=product_id&limit=-1`, {
           headers: { "Authorization": `Bearer ${DIRECTUS_TOKEN}` }
         });

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronsUpDown, Search, Layers } from "lucide-react";
+import { Check, ChevronsUpDown, Search, Layers, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,36 +11,50 @@ import {
 } from "@/components/ui/popover";
 import { Batch } from "../types";
 
-interface SearchableBatchSelectProps {
+interface SearchableBatchSelectProps<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | ""> {
     batches: Batch[];
-    value: number | "ALL" | "";
-    onValueChange: (val: number | "ALL") => void;
+    value: T;
+    onValueChange: (val: T) => void;
     disabled?: boolean;
     hasError?: boolean;
     placeholder?: string;
     allowAll?: boolean;
     allLabel?: string;
     className?: string;
+    loading?: boolean;
 }
 
-export function SearchableBatchSelect({
+export function SearchableBatchSelect<T extends number[] | number | "ALL" | "" = number[] | number | "ALL" | "">({
     batches,
     value,
     onValueChange,
     disabled = false,
     hasError = false,
     placeholder = "Select inventory batch...",
-    allowAll = false,
+    allowAll = true,
     allLabel = "All Batches",
-    className
-}: SearchableBatchSelectProps) {
+    className,
+    loading = false
+}: SearchableBatchSelectProps<T>) {
     const [open, setOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
 
-    const selectedBatch = React.useMemo(() => {
-        if (value === "" || value === "ALL") return null;
-        return batches.find((b) => Number(b.batchId) === Number(value));
-    }, [batches, value]);
+    const isArrayMode = Array.isArray(value);
+
+    const selectedBatchIds = React.useMemo(() => {
+        if (Array.isArray(value)) return value;
+        if (value === "" || value === "ALL") return [];
+        return [Number(value)];
+    }, [value]);
+
+    const isAllSelected = selectedBatchIds.length === 0 || value === "ALL";
+
+    const selectedSingleBatch = React.useMemo(() => {
+        if (selectedBatchIds.length === 1) {
+            return batches.find((b) => Number(b.batchId) === Number(selectedBatchIds[0]));
+        }
+        return null;
+    }, [batches, selectedBatchIds]);
 
     const filteredBatches = React.useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
@@ -55,6 +69,29 @@ export function SearchableBatchSelect({
             return batchNoMatch || prodNameMatch || skuMatch || lotMatch || remarksMatch || idMatch;
         });
     }, [batches, searchQuery]);
+
+    const handleSelectOption = (batchId: number) => {
+        if (isArrayMode) {
+            const next = selectedBatchIds.includes(batchId)
+                ? selectedBatchIds.filter((id) => id !== batchId)
+                : [...selectedBatchIds, batchId];
+            onValueChange(next as unknown as T);
+        } else {
+            onValueChange(batchId as unknown as T);
+            setOpen(false);
+            setSearchQuery("");
+        }
+    };
+
+    const handleSelectAll = () => {
+        if (isArrayMode) {
+            onValueChange([] as unknown as T);
+        } else {
+            onValueChange("ALL" as unknown as T);
+            setOpen(false);
+            setSearchQuery("");
+        }
+    };
 
     return (
         <Popover
@@ -73,28 +110,32 @@ export function SearchableBatchSelect({
                     disabled={disabled}
                     className={cn(
                         "w-full justify-between font-normal text-left h-9 px-3 bg-background border-border shadow-2xs hover:bg-accent/40",
-                        !selectedBatch && value !== "ALL" && "text-muted-foreground",
+                        isAllSelected && "text-foreground font-bold text-xs",
                         hasError && "border-rose-500 ring-rose-500/20 text-rose-500",
                         className
                     )}
                 >
                     <span className="truncate flex items-center gap-2 min-w-0">
                         <Layers className="h-3.5 w-3.5 text-primary shrink-0" />
-                        {value === "ALL" ? (
+                        {isAllSelected ? (
                             <span className="font-bold text-foreground text-xs truncate">{allLabel}</span>
-                        ) : selectedBatch ? (
+                        ) : selectedBatchIds.length === 1 ? (
                             <span className="flex items-center gap-1.5 truncate min-w-0">
                                 <span className="font-mono font-bold text-foreground text-xs truncate">
-                                    {selectedBatch.batchNumber}
+                                    {selectedSingleBatch ? selectedSingleBatch.batchNumber : `Batch #${selectedBatchIds[0]}`}
                                 </span>
-                                {selectedBatch.productName && (
+                                {selectedSingleBatch?.productName && (
                                     <span className="text-[11px] text-muted-foreground truncate hidden sm:inline">
-                                        ({selectedBatch.productName})
+                                        ({selectedSingleBatch.productName})
                                     </span>
                                 )}
                             </span>
-                        ) : value ? (
-                            <span className="font-semibold text-foreground text-xs">Batch #{value}</span>
+                        ) : selectedBatchIds.length > 1 ? (
+                            <span className="flex items-center gap-1.5 truncate">
+                                <span className="font-bold text-primary text-xs truncate">
+                                    {selectedBatchIds.length} Batches Selected
+                                </span>
+                            </span>
                         ) : (
                             <span className="text-xs">{placeholder}</span>
                         )}
@@ -130,102 +171,135 @@ export function SearchableBatchSelect({
                     )}
                 </div>
 
+                {/* Selection Reset Action Bar below searchbar */}
+                {selectedBatchIds.length > 0 && (
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-border/80 text-xs">
+                        <span className="text-[11px] font-semibold text-primary">
+                            {selectedBatchIds.length} {selectedBatchIds.length === 1 ? "batch" : "batches"} selected
+                        </span>
+                        <button
+                            type="button"
+                            onClick={handleSelectAll}
+                            className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Clear all selections and reset filter"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            Reset All
+                        </button>
+                    </div>
+                )}
+
                 {/* Scrollable List */}
                 <div
                     className="max-h-64 overflow-y-auto overscroll-contain p-1 space-y-0.5 text-xs"
                     onWheel={(e) => e.stopPropagation()}
                 >
-                    {allowAll && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                onValueChange("ALL");
-                                setOpen(false);
-                                setSearchQuery("");
-                            }}
-                            className={cn(
-                                "w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-left transition-colors cursor-pointer",
-                                value === "ALL"
-                                    ? "bg-primary/10 text-primary font-bold border border-primary/20"
-                                    : "text-foreground hover:bg-muted/70"
-                            )}
-                        >
-                            <div className="flex items-center gap-2 truncate">
-                                <Check
-                                    className={cn(
-                                        "h-3.5 w-3.5 shrink-0",
-                                        value === "ALL" ? "opacity-100 text-primary" : "opacity-0"
-                                    )}
-                                />
-                                <span className="font-bold">{allLabel}</span>
-                            </div>
-                        </button>
-                    )}
-
-                    {filteredBatches.length === 0 ? (
-                        <div className="py-5 text-center text-xs text-muted-foreground space-y-1">
-                            <p>No batches found matching &quot;{searchQuery}&quot;</p>
+                    {loading ? (
+                        <div className="p-1 space-y-1.5">
+                            {[1, 2, 3, 4, 5].map((i) => (
+                                <div
+                                    key={i}
+                                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-md bg-muted/40 animate-pulse"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-3.5 w-3.5 rounded bg-muted-foreground/20" />
+                                        <div className="space-y-1">
+                                            <div className="h-4 w-28 rounded bg-muted-foreground/20" />
+                                            <div className="h-3 w-36 rounded bg-muted-foreground/15" />
+                                        </div>
+                                    </div>
+                                    <div className="h-4 w-20 rounded bg-muted-foreground/20" />
+                                </div>
+                            ))}
                         </div>
                     ) : (
-                        filteredBatches.map((b) => {
-                            const isSelected = selectedBatch ? Number(selectedBatch.batchId) === Number(b.batchId) : false;
-                            const unitLabel = b.uomShortcut || b.uomName || "";
-                            return (
+                        <>
+                            {allowAll && (
                                 <button
-                                    key={b.batchId}
                                     type="button"
-                                    onClick={() => {
-                                        onValueChange(Number(b.batchId));
-                                        setOpen(false);
-                                        setSearchQuery("");
-                                    }}
+                                    onClick={handleSelectAll}
                                     className={cn(
-                                        "w-full flex items-center justify-between px-2.5 py-2 rounded-md text-left transition-colors cursor-pointer",
-                                        isSelected
+                                        "w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-left transition-colors cursor-pointer",
+                                        isAllSelected
                                             ? "bg-primary/10 text-primary font-bold border border-primary/20"
                                             : "text-foreground hover:bg-muted/70"
                                     )}
                                 >
-                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 truncate">
                                         <Check
                                             className={cn(
                                                 "h-3.5 w-3.5 shrink-0",
-                                                isSelected ? "opacity-100 text-primary" : "opacity-0"
+                                                isAllSelected ? "opacity-100 text-primary" : "opacity-0"
                                             )}
                                         />
-                                        <div className="truncate min-w-0">
-                                            <div className="flex items-center gap-1.5 truncate">
-                                                <span className="font-mono font-bold text-foreground text-xs">
-                                                    {b.batchNumber}
+                                        <span className="font-bold">{allLabel}</span>
+                                    </div>
+                                </button>
+                            )}
+
+                            {filteredBatches.length === 0 ? (
+                                <div className="py-5 text-center text-xs text-muted-foreground space-y-1">
+                                    <p>No batches found matching &quot;{searchQuery}&quot;</p>
+                                </div>
+                            ) : (
+                                filteredBatches.map((b) => {
+                                    const isSelected = selectedBatchIds.includes(Number(b.batchId));
+                                    const unitLabel = b.uomShortcut || b.uomName || "";
+                                    return (
+                                        <button
+                                            key={b.batchId}
+                                            type="button"
+                                            onClick={() => handleSelectOption(Number(b.batchId))}
+                                            className={cn(
+                                                "w-full flex items-center justify-between px-2.5 py-2 rounded-md text-left transition-colors cursor-pointer",
+                                                isSelected
+                                                    ? "bg-primary/10 text-primary font-bold border border-primary/20"
+                                                    : "text-foreground hover:bg-muted/70"
+                                            )}
+                                        >
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                <Check
+                                                    className={cn(
+                                                        "h-3.5 w-3.5 shrink-0",
+                                                        isSelected ? "opacity-100 text-primary" : "opacity-0"
+                                                    )}
+                                                />
+                                                <div className="truncate min-w-0">
+                                                    <div className="flex items-center gap-1.5 truncate">
+                                                        <span className="font-mono font-bold text-foreground text-xs">
+                                                            {b.batchNumber}
+                                                        </span>
+                                                        {b.lotName && (
+                                                            <span className="px-1 py-0.2 rounded text-[9px] bg-muted text-muted-foreground border border-border/60">
+                                                                {b.lotName}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                                                        {b.productName || `Product #${b.productId}`}
+                                                        {b.itemCode && <span className="font-mono text-[10px] ml-1">({b.itemCode})</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
+                                                <span className="font-bold text-xs text-foreground">
+                                                    {b.quantity.toLocaleString()} {unitLabel}
                                                 </span>
-                                                {b.lotName && (
-                                                    <span className="px-1 py-0.2 rounded text-[9px] bg-muted text-muted-foreground border border-border/60">
-                                                        {b.lotName}
+                                                {b.expirationDate && (
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        Exp: {b.expirationDate.slice(0, 10)}
                                                     </span>
                                                 )}
                                             </div>
-                                            <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                                                {b.productName || `Product #${b.productId}`}
-                                                {b.itemCode && <span className="font-mono text-[10px] ml-1">({b.itemCode})</span>}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
-                                        <span className="font-bold text-xs text-foreground">
-                                            {b.quantity.toLocaleString()} {unitLabel}
-                                        </span>
-                                        {b.expirationDate && (
-                                            <span className="text-[10px] text-muted-foreground">
-                                                Exp: {b.expirationDate.slice(0, 10)}
-                                            </span>
-                                        )}
-                                    </div>
-                                </button>
-                            );
-                        })
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </>
                     )}
                 </div>
             </PopoverContent>
         </Popover>
     );
 }
+

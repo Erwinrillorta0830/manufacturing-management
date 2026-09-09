@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type SetStateAction } from "react";
 import {
     approveLotTransfer,
+    cancelLotTransfer,
     createLotTransfer,
     deleteLotTransfer,
     fetchBranches,
@@ -40,7 +41,7 @@ interface UseLotTransferOptions {
     userBranchId?: number | null;
 }
 
-const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected"];
+const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled"];
 
 function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): LotTransferForm {
     const details = record.details?.length > 0 ? record.details : [{
@@ -536,6 +537,25 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, [refresh, selectedId]);
 
+    const cancel = useCallback(async (id: number, cancellationReason: string) => {
+        setIsActionLoading(true);
+        try {
+            const cancelled = await cancelLotTransfer(id, cancellationReason);
+            await refresh();
+            if (selectedId === id) {
+                setSelectedRecord(cancelled);
+                setPreview(null);
+            }
+            setError(null);
+            return cancelled;
+        } catch (cancelError) {
+            setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel the lot-transfer request.");
+            return null;
+        } finally {
+            setIsActionLoading(false);
+        }
+    }, [refresh, selectedId]);
+
     const sourceBatches = useMemo(() => {
         const detail = form.details[0];
         const rows = batchesByLot[Number(form.sourceLotId)] || [];
@@ -601,6 +621,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         approve,
         post,
         reject,
+        cancel,
         refresh,
         isLoading,
         isLookupLoading,

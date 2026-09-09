@@ -93,7 +93,12 @@ export async function GET(req: Request) {
     return NextResponse.json(filtered);
   } catch (error) {
     const status = movementErrorStatus(error);
-    const message = error instanceof Error ? error.message : "Failed to load inventory movements.";
+    let message = error instanceof Error ? error.message : "Failed to load inventory movements.";
+    message = message
+      .replace(/,\s*"path":\s*"[^"]*"/g, "")
+      .replace(/"path":\s*"[^"]*"/g, "")
+      .replace(/https?:\/\/[^\s]+/g, "")
+      .trim();
     console.error("[MM Inventory Movements BFF] Read failed:", error);
     return NextResponse.json({ error: message }, { status });
   }

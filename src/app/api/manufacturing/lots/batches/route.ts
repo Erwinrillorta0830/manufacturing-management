@@ -450,18 +450,29 @@ export async function GET(request: Request) {
         mappedBatches.forEach((b) => {
             const mfg = (b.manufacturingDate || "").slice(0, 10);
             const exp = (b.expirationDate || "").slice(0, 10);
+            const bNoLower = (b.batchNumber || "").trim().toLowerCase();
+
+            existingKeys.add(`${b.lotId}_${b.productId}_${bNoLower}`);
+            existingKeys.add(`${b.lotId}_${bNoLower}`);
             if (mfg || exp) {
-                existingKeys.add(`${b.lotId}_${b.productId}_${b.batchNumber.toLowerCase()}_${mfg}_${exp}`);
+                existingKeys.add(`${b.lotId}_${b.productId}_${bNoLower}_${mfg}_${exp}`);
+                existingKeys.add(`${b.lotId}_${bNoLower}_${mfg}_${exp}`);
             }
-            existingKeys.add(`${b.lotId}_${b.productId}_${b.batchNumber.toLowerCase()}`);
             if (b.batchId > 0) existingKeys.add(`id_${b.batchId}`);
         });
 
         let synthIdCounter = -1;
         // First synthesize any date-specific groups that aren't represented
         movementNetByLotProductBatchDate.forEach((mv, dateKey) => {
-            if (!existingKeys.has(dateKey)) {
+            const bNoLower = (mv.batchNo || "").trim().toLowerCase();
+            const baseKey = `${mv.lotId}_${mv.productId}_${bNoLower}`;
+            const lotBatchKey = `${mv.lotId}_${bNoLower}`;
+
+            if (!existingKeys.has(dateKey) && !existingKeys.has(baseKey) && !existingKeys.has(lotBatchKey)) {
                 existingKeys.add(dateKey);
+                existingKeys.add(baseKey);
+                existingKeys.add(lotBatchKey);
+
                 let lotName = "Unassigned Storage Lot";
                 const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
                 if (matchedLot) lotName = matchedLot.lot_name;
@@ -523,8 +534,13 @@ export async function GET(request: Request) {
 
         // Next synthesize any base batches with no dates that were not represented
         movementNetByLotProductBatch.forEach((mv, baseKey) => {
-            if (!existingKeys.has(baseKey)) {
+            const bNoLower = (mv.batchNo || "").trim().toLowerCase();
+            const lotBatchKey = `${mv.lotId}_${bNoLower}`;
+
+            if (!existingKeys.has(baseKey) && !existingKeys.has(lotBatchKey)) {
                 existingKeys.add(baseKey);
+                existingKeys.add(lotBatchKey);
+
                 let lotName = "Unassigned Storage Lot";
                 const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
                 if (matchedLot) lotName = matchedLot.lot_name;
