@@ -1,6 +1,17 @@
 export type LotTransferStatus = "Draft" | "Submitted" | "Approved" | "Posted" | "Rejected" | "Cancelled" | "Reversed";
 export type DestinationBatchResolutionAction = "MERGE" | "CREATE";
 
+export interface LotTransferStatusHistory {
+    id: number;
+    lotTransferId: number;
+    oldStatus: LotTransferStatus | null;
+    newStatus: LotTransferStatus;
+    changedBy: number | null;
+    changedByName: string | null;
+    changedAt: string;
+    remarks: string;
+}
+
 export type LotTransferMode = "request" | "approval" | "posting" | "summary";
 
 export interface LotTransferReportFilters {

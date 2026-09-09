@@ -25,6 +25,7 @@ import {
     transferPayload
 } from "./_input";
 import { getLotTransfer } from "./_queries";
+import { appendStatusHistory, deleteLotTransferStatusHistory } from "./_status-history";
 import { rowId, transferId } from "./_values";
 
 export async function createLotTransfer(input: LotTransferInput, actorUserId: number | null): Promise<LotTransferRecord> {
@@ -55,11 +56,21 @@ export async function createLotTransfer(input: LotTransferInput, actorUserId: nu
     if (!id) throw new LotTransferError(502, "Directus did not return the created lot-transfer request ID.");
     try {
         await replaceTransferDetails(id, details);
+        const created = await getLotTransfer(id);
+        await appendStatusHistory({
+            transferId: id,
+            oldStatus: null,
+            newStatus: "Draft",
+            changedBy: actorUserId,
+            changedAt: created.requestedAt || created.createdAt || undefined,
+            remarks: "Draft created."
+        });
+        return created;
     } catch (error) {
+        await deleteLotTransferStatusHistory(id).catch(() => undefined);
         await mutateDirectus(`/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`, "DELETE", undefined, "Lot-transfer orphaned Draft compensation").catch(() => undefined);
         throw error;
     }
-    return getLotTransfer(id);
 }
 
 export async function updateLotTransfer(id: number, input: LotTransferPatchInput): Promise<LotTransferRecord> {
@@ -151,5 +162,6 @@ export async function deleteLotTransfer(id: number): Promise<void> {
         const detailId = rowId(row, ["lot_transfer_detail_id", "id"]);
         if (detailId > 0) await deleteTransferDetail(detailId);
     }
+    await deleteLotTransferStatusHistory(id);
     await mutateDirectus(`/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`, "DELETE", undefined, "Lot-transfer Draft deletion");
 }

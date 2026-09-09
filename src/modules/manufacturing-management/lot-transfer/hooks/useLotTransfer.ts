@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import {
     approveLotTransfer,
     cancelLotTransfer,
@@ -9,6 +9,7 @@ import {
     fetchBranches,
     fetchBatches,
     fetchLotTransfers,
+    fetchLotTransferStatusHistory,
     fetchLotTransferUsers,
     fetchLots,
     fetchProducts,
@@ -33,6 +34,7 @@ import type {
     ProductOption,
     LotTransferReportFilters,
     LotTransferStatus,
+    LotTransferStatusHistory,
     UserOption
 } from "../types";
 import { DEFAULT_LOT_TRANSFER_REPORT_FILTERS, EMPTY_LOT_TRANSFER_FORM as emptyForm } from "../types";
@@ -122,6 +124,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [form, setForm] = useState<LotTransferForm>(() => initialForm(userBranchId));
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [selectedRecord, setSelectedRecord] = useState<LotTransfer | null>(null);
+    const [statusHistory, setStatusHistory] = useState<LotTransferStatusHistory[]>([]);
+    const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
+    const [statusHistoryError, setStatusHistoryError] = useState<string | null>(null);
     const [preview, setPreview] = useState<LotTransferPreview | null>(null);
     const [products, setProducts] = useState<ProductOption[]>([]);
     const [lots, setLots] = useState<LotOption[]>([]);
@@ -143,6 +148,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [draftValidationStatus, setDraftValidationStatus] = useState<DraftValidationStatus>("idle");
     const [draftValidationMessage, setDraftValidationMessage] = useState<string | null>(null);
     const [validatedDraftKey, setValidatedDraftKey] = useState("");
+    const statusHistoryRequestRef = useRef(0);
 
     const draftFormKey = useMemo(() => formKey(form), [form]);
     const draftValidationIsCurrent = validatedDraftKey === draftFormKey;
@@ -276,8 +282,12 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     }, [updateForm]);
 
     const clearSelection = useCallback(() => {
+        statusHistoryRequestRef.current += 1;
         setSelectedId(null);
         setSelectedRecord(null);
+        setStatusHistory([]);
+        setStatusHistoryLoading(false);
+        setStatusHistoryError(null);
         setPreview(null);
         setDraftValidationStatus("idle");
         setDraftValidationMessage(null);
@@ -285,9 +295,30 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         setForm(initialForm(userBranchId));
     }, [userBranchId]);
 
+    const loadStatusHistory = useCallback(async (id: number) => {
+        const requestId = statusHistoryRequestRef.current + 1;
+        statusHistoryRequestRef.current = requestId;
+        setStatusHistoryLoading(true);
+        setStatusHistoryError(null);
+        try {
+            const history = await fetchLotTransferStatusHistory(id);
+            if (statusHistoryRequestRef.current !== requestId) return;
+            setStatusHistory(history);
+        } catch (historyError) {
+            if (statusHistoryRequestRef.current !== requestId) return;
+            setStatusHistory([]);
+            setStatusHistoryError(historyError instanceof Error ? historyError.message : "Unable to load status-change history.");
+        } finally {
+            if (statusHistoryRequestRef.current === requestId) setStatusHistoryLoading(false);
+        }
+    }, []);
+
     const selectRecord = useCallback(async (record: LotTransfer) => {
         setSelectedId(record.id);
         setSelectedRecord(record);
+        setStatusHistory([]);
+        setStatusHistoryError(null);
+        void loadStatusHistory(record.id);
         markDraftValidationStale();
         setForm(formFromRecord(record, userBranchId));
         setError(null);
@@ -306,7 +337,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
                 setIsActionLoading(false);
             }
         }
-    }, [loadBatchesForLot, markDraftValidationStale, mode, userBranchId]);
+    }, [loadBatchesForLot, loadStatusHistory, markDraftValidationStale, mode, userBranchId]);
 
     const handleSourceLotChange = useCallback((lotId: string) => {
         updateForm((current) => ({
@@ -489,6 +520,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             const result = await approveLotTransfer(selectedId);
             setSelectedRecord(result.transfer);
             setPreview(result.preview);
+            await loadStatusHistory(result.transfer.id);
             await refresh();
             setError(null);
             return result.transfer;
@@ -498,7 +530,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [refresh, selectedId]);
+    }, [loadStatusHistory, refresh, selectedId]);
 
     const post = useCallback(async () => {
         if (!selectedId) return null;
@@ -507,6 +539,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             const result = await postLotTransfer(selectedId);
             setSelectedRecord(result.transfer);
             setPreview(result.preview);
+            await loadStatusHistory(result.transfer.id);
             await refresh();
             setError(null);
             return result.transfer;
@@ -516,7 +549,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [refresh, selectedId]);
+    }, [loadStatusHistory, refresh, selectedId]);
 
     const reject = useCallback(async (rejectionReason: string, qaEvidence?: string) => {
         if (!selectedId) return null;
@@ -525,6 +558,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             const rejected = await rejectLotTransfer(selectedId, rejectionReason, qaEvidence);
             await refresh();
             setSelectedRecord(rejected);
+            await loadStatusHistory(rejected.id);
             setPreview(null);
             setError(null);
             return rejected;
@@ -534,7 +568,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [refresh, selectedId]);
+    }, [loadStatusHistory, refresh, selectedId]);
 
     const cancel = useCallback(async (id: number, cancellationReason: string) => {
         setIsActionLoading(true);
@@ -543,6 +577,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             await refresh();
             if (selectedId === id) {
                 setSelectedRecord(cancelled);
+                await loadStatusHistory(cancelled.id);
                 setPreview(null);
             }
             setError(null);
@@ -553,7 +588,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [refresh, selectedId]);
+    }, [loadStatusHistory, refresh, selectedId]);
 
     const reverse = useCallback(async (id: number, reversalReason: string) => {
         setIsActionLoading(true);
@@ -563,6 +598,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             setSelectedId(result.transfer.id);
             setSelectedRecord(result.transfer);
             setPreview(result.preview);
+            await loadStatusHistory(result.transfer.id);
             setError(null);
             return result.transfer;
         } catch (reverseError) {
@@ -571,7 +607,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsActionLoading(false);
         }
-    }, [refresh]);
+    }, [loadStatusHistory, refresh]);
 
     const sourceBatches = useMemo(() => {
         const detail = form.details[0];
@@ -592,6 +628,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         form,
         selectedId,
         selectedRecord,
+        statusHistory,
+        statusHistoryLoading,
+        statusHistoryError,
         preview,
         products,
         lots,
@@ -631,6 +670,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         handleTargetLotChange,
         handleBatchChange,
         selectRecord,
+        loadStatusHistory,
         clearSelection,
         saveDraft,
         deleteDraft,

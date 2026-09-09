@@ -13,11 +13,7 @@ import type {
     LotTransferRecord,
     ValidationCheck
 } from "./_types";
-import {
-    hydrateTransferRecord,
-    legacyDetailFromRecord,
-    mapTransferRow
-} from "./_record-mappers";
+import { legacyDetailFromRecord } from "./_record-mappers";
 import {
     assertDifferentLotIds,
     normalizedDetails,
@@ -41,6 +37,7 @@ import {
 import { buildLotTransferPreview, recordForDetail } from "./_preview";
 import { requireSessionUserId } from "./_session";
 import { getLotTransfer } from "./_queries";
+import { transitionLotTransferStatus } from "./_status-history";
 import {
     dateOnly,
     movementId,
@@ -77,18 +74,29 @@ export async function submitLotTransfer(id: number, actorUserId: number | null):
         });
     }
     await persistDetailValidation(preview);
-    const row = await mutateDirectus(
-        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
-        "PATCH",
-        {
+    const submittedAt = new Date().toISOString();
+    const transition = await transitionLotTransferStatus({
+        transferId: id,
+        expectedOldStatus: "Draft",
+        newStatus: "Submitted",
+        changedBy: submittedBy,
+        changedAt: submittedAt,
+        remarks: "Submitted for QA approval.",
+        patch: {
             status: "Submitted",
             submitted_by: submittedBy,
-            submitted_at: new Date().toISOString(),
+            submitted_at: submittedAt,
+            updated_at: submittedAt
+        },
+        rollbackPatch: {
+            status: "Draft",
+            submitted_by: record.submittedBy,
+            submitted_at: record.submittedAt,
             updated_at: new Date().toISOString()
         },
-        "Lot-transfer submission"
-    );
-    return row ? hydrateTransferRecord(mapTransferRow(row)) : getLotTransfer(id);
+        action: "submission"
+    });
+    return transition.record;
 }
 
 export async function previewLotTransferInput(input: LotTransferInput): Promise<LotTransferPreview> {
@@ -122,13 +130,18 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
     }
     await persistDetailValidation(preview);
 
+    const approvedBy = requireSessionUserId(actorUserId, "approve a lot-transfer request");
     const approvedAt = new Date().toISOString();
-    const persisted = await mutateDirectus(
-        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
-        "PATCH",
-        {
+    const transition = await transitionLotTransferStatus({
+        transferId: id,
+        expectedOldStatus: "Submitted",
+        newStatus: "Approved",
+        changedBy: approvedBy,
+        changedAt: approvedAt,
+        remarks: "Approved after server-side QA validation.",
+        patch: {
             status: "Approved",
-            approved_by: actorUserId || 1,
+            approved_by: approvedBy,
             approved_at: approvedAt,
             effective_expiry_date: preview.effectiveExpiryDate,
             source_unit_cost: preview.source.unitCost,
@@ -145,9 +158,27 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
             posting_error: null,
             updated_at: approvedAt
         },
-        "Lot-transfer approval"
-    );
-    const finalRecord = persisted ? await hydrateTransferRecord(mapTransferRow(persisted)) : await getLotTransfer(id);
+        rollbackPatch: {
+            status: "Submitted",
+            approved_by: record.approvedBy,
+            approved_at: record.approvedAt,
+            effective_expiry_date: record.effectiveExpiryDate,
+            source_unit_cost: record.sourceUnitCost,
+            target_unit_cost: record.targetUnitCost,
+            source_balance_before: record.sourceBalanceBefore,
+            source_balance_after: record.sourceBalanceAfter,
+            target_balance_before: record.targetBalanceBefore,
+            target_balance_after: record.targetBalanceAfter,
+            source_movement_id: record.sourceMovementId,
+            target_movement_id: record.targetMovementId,
+            idempotency_key: record.idempotencyKey,
+            posting_started_at: record.postingStartedAt,
+            reconciliation_required: record.reconciliationRequired,
+            posting_error: record.postingError
+        },
+        action: "approval"
+    });
+    const finalRecord = transition.record;
     if (finalRecord.status !== "Approved" || finalRecord.sourceMovementId !== null || finalRecord.targetMovementId !== null) {
         throw new LotTransferError(503, "Lot-transfer approval was not durably finalized without posting inventory.");
     }
@@ -164,6 +195,7 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
     if (record.postingStartedAt && record.idempotencyKey && record.idempotencyKey !== idempotencyKey) {
         throw new LotTransferError(409, "Another posting operation is already in progress for this request.");
     }
+    const actor = requireSessionUserId(actorUserId, "post a lot-transfer request");
 
     let claimOwned = false;
     let reconciliationRequired = false;
@@ -225,7 +257,6 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
             throw new LotTransferError(503, "An incomplete or duplicate lot-transfer movement set exists; reconciliation is required.");
         }
 
-        const actor = actorUserId || 1;
         const destinationBatchCache = new Map<string, EnsuredDestinationBatch>();
         const destinationBatchResolutions = new Map<number, EnsuredDestinationBatch>();
         for (const line of preview.linePreviews) {
@@ -351,12 +382,16 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
         const postedAt = new Date().toISOString();
         const singleLine = pairs.length === 1 ? pairs[0] : null;
         const headerLine = pairs[0]?.detail || null;
-        const persisted = await mutateDirectus(
-            `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
-            "PATCH",
-            {
+        const transition = await transitionLotTransferStatus({
+            transferId: id,
+            expectedOldStatus: "Approved",
+            newStatus: "Posted",
+            changedBy: actor,
+            changedAt: postedAt,
+            remarks: "Posted with verified source OUT and target IN movement pairs.",
+            patch: {
                 status: "Posted",
-                posted_by: actorUserId || 1,
+                posted_by: actor,
                 posted_at: postedAt,
                 effective_expiry_date: preview.effectiveExpiryDate,
                 source_unit_cost: singleLine ? preview.source.unitCost : null,
@@ -375,9 +410,29 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
                 posting_error: null,
                 updated_at: postedAt
             },
-            pairs.length === 1 ? "Lot-transfer posting finalization" : "Lot-transfer multi-line posting finalization"
-        );
-        const finalRecord = persisted ? await hydrateTransferRecord(mapTransferRow(persisted)) : await getLotTransfer(id);
+            rollbackPatch: {
+                status: "Approved",
+                posted_by: record.postedBy,
+                posted_at: record.postedAt,
+                effective_expiry_date: record.effectiveExpiryDate,
+                source_unit_cost: record.sourceUnitCost,
+                target_unit_cost: record.targetUnitCost,
+                source_movement_id: record.sourceMovementId,
+                target_movement_id: record.targetMovementId,
+                source_balance_before: record.sourceBalanceBefore,
+                source_balance_after: record.sourceBalanceAfter,
+                target_balance_before: record.targetBalanceBefore,
+                target_balance_after: record.targetBalanceAfter,
+                target_inventory_lot_id: record.targetInventoryLotId,
+                target_batch_no: record.targetBatchNo,
+                posting_started_at: record.postingStartedAt,
+                idempotency_key: record.idempotencyKey,
+                reconciliation_required: record.reconciliationRequired,
+                posting_error: record.postingError
+            },
+            action: pairs.length === 1 ? "posting finalization" : "multi-line posting finalization"
+        });
+        const finalRecord = transition.record;
         if (finalRecord.status !== "Posted" || finalRecord.details.some((detail) => detail.detailId && (!detail.sourceMovementId || !detail.targetMovementId))) {
             reconciliationRequired = true;
             throw new LotTransferError(503, "Lot-transfer posting was not durably finalized for every detail line.");
@@ -434,22 +489,36 @@ export async function rejectLotTransfer(id: number, rejectionReason: string, qaE
     if (record.status !== "Submitted") {
         throw new LotTransferError(409, `Only Submitted requests can be rejected. Current status: ${record.status}.`);
     }
+    const rejectedBy = requireSessionUserId(actorUserId, "reject a lot-transfer request");
     const rejectedAt = new Date().toISOString();
-    const row = await mutateDirectus(
-        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
-        "PATCH",
-        {
+    const transition = await transitionLotTransferStatus({
+        transferId: id,
+        expectedOldStatus: "Submitted",
+        newStatus: "Rejected",
+        changedBy: rejectedBy,
+        changedAt: rejectedAt,
+        remarks: `Rejected: ${rejectionReason.trim()}`,
+        patch: {
             status: "Rejected",
-            rejected_by: actorUserId || 1,
+            rejected_by: rejectedBy,
             rejected_at: rejectedAt,
             rejection_reason: rejectionReason,
             qa_evidence: qaEvidence || null,
             posting_started_at: null,
             updated_at: rejectedAt
         },
-        "Lot-transfer rejection"
-    );
-    return row ? hydrateTransferRecord(mapTransferRow(row)) : getLotTransfer(id);
+        rollbackPatch: {
+            status: "Submitted",
+            rejected_by: record.rejectedBy,
+            rejected_at: record.rejectedAt,
+            rejection_reason: record.rejectionReason,
+            qa_evidence: record.qaEvidence,
+            posting_started_at: record.postingStartedAt,
+            updated_at: new Date().toISOString()
+        },
+        action: "rejection"
+    });
+    return transition.record;
 }
 
 export async function cancelLotTransfer(id: number, cancellationReason: string, actorUserId: number | null): Promise<LotTransferRecord> {
@@ -479,19 +548,30 @@ export async function cancelLotTransfer(id: number, cancellationReason: string, 
     }
 
     const cancelledAt = new Date().toISOString();
-    const row = await mutateDirectus(
-        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
-        "PATCH",
-        {
+    const transition = await transitionLotTransferStatus({
+        transferId: id,
+        expectedOldStatus: record.status,
+        newStatus: "Cancelled",
+        changedBy: cancelledBy,
+        changedAt: cancelledAt,
+        remarks: `Cancelled: ${reason}`,
+        patch: {
             status: "Cancelled",
             cancelled_by: cancelledBy,
             cancelled_at: cancelledAt,
             cancellation_reason: reason,
             updated_at: cancelledAt
         },
-        "Lot-transfer cancellation"
-    );
-    const finalRecord = row ? await hydrateTransferRecord(mapTransferRow(row)) : await getLotTransfer(id);
+        rollbackPatch: {
+            status: record.status,
+            cancelled_by: record.cancelledBy,
+            cancelled_at: record.cancelledAt,
+            cancellation_reason: record.cancellationReason,
+            updated_at: new Date().toISOString()
+        },
+        action: "cancellation"
+    });
+    const finalRecord = transition.record;
     if (finalRecord.status !== "Cancelled" || !finalRecord.cancelledAt || finalRecord.cancelledBy !== cancelledBy || finalRecord.cancellationReason !== reason) {
         throw new LotTransferError(503, "Lot-transfer cancellation was not durably finalized.");
     }
