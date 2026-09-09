@@ -1,3 +1,4 @@
+// src/app/(financial-management)/fm/treasury/disbursement/page.tsx
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -13,7 +14,7 @@ import { NavUser } from "@/components/shared/app-sidebar/nav-user";
 import { cookies } from "next/headers";
 
 // ✅ Wire the module you asked for
-import { ProductPricingModule } from "@/modules/manufacturing-management/financial-management/price-control/product-pricing";
+import { PriceChangeRequestsModule } from "@/modules/manufacturing-management/financial-management/price-control/price-change-request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,7 +126,7 @@ export default async function Page() {
                                 </BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden md:block" />
                                 <BreadcrumbItem className="hidden md:block">
-                                    <BreadcrumbPage>Product Pricing</BreadcrumbPage>
+                                    <BreadcrumbPage>Price Change Approval</BreadcrumbPage>
                                 </BreadcrumbItem>
                             </BreadcrumbList>
                         </Breadcrumb>
@@ -139,7 +140,7 @@ export default async function Page() {
 
             {/* ✅ Only content scrolls inside RIGHT column */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
-                <ProductPricingModule />
+                <PriceChangeRequestsModule />
             </main>
         </div>
     );

@@ -871,7 +871,7 @@ export async function POST(request: Request) {
         const snapshots = (await snapRes.json()).data;
 
         // Filter snapshots that are actual product quotas
-// disabled-lint-next-line @typescript-eslint/no-explicit-any
+        // disabled-lint-next-line @typescript-eslint/no-explicit-any
         const quoteItems = snapshots.filter((s: any) => s.node_type === "product_quota");
         if (quoteItems.length === 0) {
             throw new ApiError(400, "No finished goods found in this quotation.");
@@ -1056,368 +1056,368 @@ export async function PATCH(request: Request) {
         }
         const body = parsed.data;
         const orderId = body.orderId;
-        
+
         const systemTimestamp = await getSystemTimeISOString();
         const localCreatedDate = systemTimestamp.substring(0, 19).replace('T', ' ');
 
         return await withSalesOrderMutationLock(orderId, async () => {
 
-        const headerParams = new URLSearchParams({
-            fields: "order_id,order_status,discount_amount,total_amount,net_amount,customer_code,remarks",
-            limit: "1"
-        });
-        const orderRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}?${headerParams.toString()}`, {
-            headers,
-            cache: "no-store"
-        });
-        if (!orderRes.ok) throw new ApiError(404, "Sales order not found.");
-        const order = (await orderRes.json()).data;
-        const currentStatus = String(order.order_status || "");
-        const discount = Number(order.discount_amount || 0);
-        if (!Number.isFinite(discount) || discount < 0) {
-            throw new ApiError(409, "The sales order has an invalid discount amount.");
-        }
-
-        const detailParams = new URLSearchParams({
-            "filter[order_id][_eq]": String(orderId),
-            fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount,product_id,created_date",
-            limit: "-1"
-        });
-        const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
-            headers,
-            cache: "no-store"
-        });
-        if (!allDetailsRes.ok) throw new ApiError(503, "Unable to validate sales-order details.");
-        const allDetails = (await allDetailsRes.json()).data || [];
-
-        if ("action" in body && body.action === "update-draft") {
-            if (mapStatus(currentStatus) !== "Draft") {
-                throw new ApiError(409, `Sales order cannot be fully edited while it is ${currentStatus || "in an unknown status"}.`);
-            }
-
-            const headerPayload = {
-                customer_code: body.customerId ? undefined : undefined,
-                po_no: body.poNo,
-                delivery_date: body.deliveryDate || null,
-                due_date: body.dueDate || null,
-                payment_terms: body.paymentTerms ? Number(body.paymentTerms) : null,
-                salesman_id: body.salesmanId ? Number(body.salesmanId) : null,
-                branch_id: body.branchId ? Number(body.branchId) : null,
-                remarks: body.remarks || null,
-                discount_amount: body.discountAmount || 0,
-                modified_by: user.id,
-                modified_date: localCreatedDate,
-                order_status: body.submitForApproval ? "For Approval" : "Draft",
-                for_approval_at: body.submitForApproval ? localCreatedDate : undefined
-            };
-            
-            // Map old detail created_dates by product_id
-            const oldDetailsMap = new Map<number, string[]>();
-            for (const od of allDetails) {
-                const pid = Number(od.product_id);
-                if (!oldDetailsMap.has(pid)) oldDetailsMap.set(pid, []);
-                if (od.created_date) oldDetailsMap.get(pid)!.push(od.created_date);
-            }
-
-            // Calculate new totals
-            const items = body.items || [];
-            let newTotal = 0;
-            const newDetails = items.map((item: any) => {
-                const qty = Number(item.quantity);
-                const price = Number(item.unit_price);
-                const discount = Number(item.discount_amount || 0);
-                const net = qty * price - discount;
-                newTotal += (qty * price);
-                
-                const pid = Number(item.product_id);
-                const mappedCreatedDate = (oldDetailsMap.has(pid) && oldDetailsMap.get(pid)!.length > 0)
-                    ? oldDetailsMap.get(pid)!.shift()
-                    : localCreatedDate;
-
-                return {
-                    product_id: pid,
-                    bom_version_id: item.bom_version_id || null,
-                    ordered_quantity: qty,
-                    unit_price: price,
-                    discount_type: item.discount_type || null,
-                    discount_amount: discount,
-                    net_amount: net,
-                    gross_amount: qty * price,
-                    allocated_quantity: 0,
-                    served_quantity: 0,
-                    allocated_amount: 0,
-                    created_date: mappedCreatedDate,
-                    modified_date: localCreatedDate,
-                    order_id: orderId
-                };
+            const headerParams = new URLSearchParams({
+                fields: "order_id,order_status,discount_amount,total_amount,net_amount,customer_code,remarks",
+                limit: "1"
             });
-            const headerDiscount = Number(body.discountAmount || 0);
-            if (headerDiscount > newTotal) {
-                throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
-            }
-            const newNet = newTotal - headerDiscount;
-            
-            const fullHeaderPayload = {
-                ...headerPayload,
-                total_amount: newTotal,
-                net_amount: newNet
-            };
-
-            // Delete existing details
-            const deleteFailures: string[] = [];
-            for (const detail of allDetails) {
-                const detailId = Number(detail.detail_id);
-                try {
-                    const delRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
-                        method: "DELETE",
-                        headers
-                    });
-                    if (!delRes.ok && delRes.status !== 404) {
-                        deleteFailures.push(`detail ${detailId} delete returned ${delRes.status}`);
-                    }
-                } catch (err) {
-                    deleteFailures.push(`detail ${detailId} delete failed: ${err instanceof Error ? err.message : "unknown error"}`);
-                }
-            }
-            
-            if (deleteFailures.length > 0) {
-                console.error(`Failed to delete details for order ${orderId}:`, deleteFailures);
-                throw new ApiError(500, "Failed to update draft sales order (could not clear existing details).");
-            }
-
-            // Update header
-            const headerUpdateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
-                method: "PATCH",
+            const orderRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}?${headerParams.toString()}`, {
                 headers,
-                body: JSON.stringify(fullHeaderPayload)
+                cache: "no-store"
             });
-            if (!headerUpdateRes.ok) {
-                throw new ApiError(503, "Failed to update the sales-order header.");
+            if (!orderRes.ok) throw new ApiError(404, "Sales order not found.");
+            const order = (await orderRes.json()).data;
+            const currentStatus = String(order.order_status || "");
+            const discount = Number(order.discount_amount || 0);
+            if (!Number.isFinite(discount) || discount < 0) {
+                throw new ApiError(409, "The sales order has an invalid discount amount.");
             }
 
-            // Create new details
-            for (const newDetail of newDetails) {
-                const detailResponse = await fetch(`${DIRECTUS_URL}/items/sales_order_details`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(newDetail)
+            const detailParams = new URLSearchParams({
+                "filter[order_id][_eq]": String(orderId),
+                fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount,product_id,created_date",
+                limit: "-1"
+            });
+            const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
+                headers,
+                cache: "no-store"
+            });
+            if (!allDetailsRes.ok) throw new ApiError(503, "Unable to validate sales-order details.");
+            const allDetails = (await allDetailsRes.json()).data || [];
+
+            if ("action" in body && body.action === "update-draft") {
+                if (mapStatus(currentStatus) !== "Draft") {
+                    throw new ApiError(409, `Sales order cannot be fully edited while it is ${currentStatus || "in an unknown status"}.`);
+                }
+
+                const headerPayload = {
+                    customer_code: body.customerId ? undefined : undefined,
+                    po_no: body.poNo,
+                    delivery_date: body.deliveryDate || null,
+                    due_date: body.dueDate || null,
+                    payment_terms: body.paymentTerms ? Number(body.paymentTerms) : null,
+                    salesman_id: body.salesmanId ? Number(body.salesmanId) : null,
+                    branch_id: body.branchId ? Number(body.branchId) : null,
+                    remarks: body.remarks || null,
+                    discount_amount: body.discountAmount || 0,
+                    modified_by: user.id,
+                    modified_date: localCreatedDate,
+                    order_status: body.submitForApproval ? "For Approval" : "Draft",
+                    for_approval_at: body.submitForApproval ? localCreatedDate : undefined
+                };
+
+                // Map old detail created_dates by product_id
+                const oldDetailsMap = new Map<number, string[]>();
+                for (const od of allDetails) {
+                    const pid = Number(od.product_id);
+                    if (!oldDetailsMap.has(pid)) oldDetailsMap.set(pid, []);
+                    if (od.created_date) oldDetailsMap.get(pid)!.push(od.created_date);
+                }
+
+                // Calculate new totals
+                const items = body.items || [];
+                let newTotal = 0;
+                const newDetails = items.map((item: any) => {
+                    const qty = Number(item.quantity);
+                    const price = Number(item.unit_price);
+                    const discount = Number(item.discount_amount || 0);
+                    const net = qty * price - discount;
+                    newTotal += (qty * price);
+
+                    const pid = Number(item.product_id);
+                    const mappedCreatedDate = (oldDetailsMap.has(pid) && oldDetailsMap.get(pid)!.length > 0)
+                        ? oldDetailsMap.get(pid)!.shift()
+                        : localCreatedDate;
+
+                    return {
+                        product_id: pid,
+                        bom_version_id: item.bom_version_id || null,
+                        ordered_quantity: qty,
+                        unit_price: price,
+                        discount_type: item.discount_type || null,
+                        discount_amount: discount,
+                        net_amount: net,
+                        gross_amount: qty * price,
+                        allocated_quantity: 0,
+                        served_quantity: 0,
+                        allocated_amount: 0,
+                        created_date: mappedCreatedDate,
+                        modified_date: localCreatedDate,
+                        order_id: orderId
+                    };
                 });
-                if (!detailResponse.ok) {
-                    throw new ApiError(503, "Failed to create a sales-order detail.");
+                const headerDiscount = Number(body.discountAmount || 0);
+                if (headerDiscount > newTotal) {
+                    throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
                 }
-            }
-            
-            return NextResponse.json({ success: true, order_status: body.submitForApproval ? "For Approval" : "Draft" });
-        }
+                const newNet = newTotal - headerDiscount;
 
-        if ("orderStatus" in body) {
-            const targetStatus = body.orderStatus;
-            if (!targetStatus) throw new ApiError(400, "A target sales-order status is required.");
-            if (targetStatus === currentStatus) {
-                return NextResponse.json({ success: true, order_status: currentStatus });
-            }
+                const fullHeaderPayload = {
+                    ...headerPayload,
+                    total_amount: newTotal,
+                    net_amount: newNet
+                };
 
-            const current = mapStatus(currentStatus);
-            const target = mapStatus(targetStatus);
-
-            if (!SALES_ORDER_TRANSITIONS[current]?.includes(target)) {
-                throw new ApiError(409, `Cannot transition sales order from ${current} to ${target}.`);
-            }
-
-            const isApprovalDecision = (current === "For Approval" || current === "On Hold")
-                && (target === "For Consolidation" || target === "Draft" || target === "On Hold" || target === "Cancelled");
-            if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
-                throw new ApiError(403, "Sales-order approval access is required for this transition.");
-            }
-
-            if (target === "For Consolidation") {
-                if (allDetails.length === 0) {
-                    throw new ApiError(400, "Approval blocked: Sales Order has no item details.");
-                }
-                const total = allDetails.reduce((sum: number, detail: any) => {
-                    const quantity = Number(detail.ordered_quantity);
-                    const unitPrice = Number(detail.unit_price);
-                    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice <= 0) {
-                        throw new ApiError(400, "Approval blocked: Every item line must have a unit price explicitly greater than ₱0.00.");
+                // Delete existing details
+                const deleteFailures: string[] = [];
+                for (const detail of allDetails) {
+                    const detailId = Number(detail.detail_id);
+                    try {
+                        const delRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
+                            method: "DELETE",
+                            headers
+                        });
+                        if (!delRes.ok && delRes.status !== 404) {
+                            deleteFailures.push(`detail ${detailId} delete returned ${delRes.status}`);
+                        }
+                    } catch (err) {
+                        deleteFailures.push(`detail ${detailId} delete failed: ${err instanceof Error ? err.message : "unknown error"}`);
                     }
-                    return sum + quantity * unitPrice;
-                }, 0);
-                const netBalance = total - discount;
-                if (netBalance <= 0) {
-                    throw new ApiError(400, "Approval blocked: Sales Order total net balance must be explicitly greater than ₱0.00.");
                 }
+
+                if (deleteFailures.length > 0) {
+                    console.error(`Failed to delete details for order ${orderId}:`, deleteFailures);
+                    throw new ApiError(500, "Failed to update draft sales order (could not clear existing details).");
+                }
+
+                // Update header
+                const headerUpdateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify(fullHeaderPayload)
+                });
+                if (!headerUpdateRes.ok) {
+                    throw new ApiError(503, "Failed to update the sales-order header.");
+                }
+
+                // Create new details
+                for (const newDetail of newDetails) {
+                    const detailResponse = await fetch(`${DIRECTUS_URL}/items/sales_order_details`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify(newDetail)
+                    });
+                    if (!detailResponse.ok) {
+                        throw new ApiError(503, "Failed to create a sales-order detail.");
+                    }
+                }
+
+                return NextResponse.json({ success: true, order_status: body.submitForApproval ? "For Approval" : "Draft" });
             }
 
-            let creditLimitExceeded = false;
-            let warningString = "";
+            if ("orderStatus" in body) {
+                const targetStatus = body.orderStatus;
+                if (!targetStatus) throw new ApiError(400, "A target sales-order status is required.");
+                if (targetStatus === currentStatus) {
+                    return NextResponse.json({ success: true, order_status: currentStatus });
+                }
 
-            if (target === "For Approval") {
-                if (allDetails.length === 0) throw new ApiError(409, "A sales order without details cannot be submitted for approval.");
-                const total = allDetails.reduce((sum: number, detail: any) => {
-                    const quantity = Number(detail.ordered_quantity);
-                    const unitPrice = Number(detail.unit_price);
-                    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
-                        throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
+                const current = mapStatus(currentStatus);
+                const target = mapStatus(targetStatus);
+
+                if (!SALES_ORDER_TRANSITIONS[current]?.includes(target)) {
+                    throw new ApiError(409, `Cannot transition sales order from ${current} to ${target}.`);
+                }
+
+                const isApprovalDecision = (current === "For Approval" || current === "On Hold")
+                    && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "On Hold" || target === "Cancelled");
+                if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
+                    throw new ApiError(403, "Sales-order approval access is required for this transition.");
+                }
+
+                if (target === "For Consolidation" || target === "For Production") {
+                    if (allDetails.length === 0) {
+                        throw new ApiError(400, "Approval blocked: Sales Order has no item details.");
                     }
-                    return sum + quantity * unitPrice;
-                }, 0);
-                if (discount > total) throw new ApiError(409, "The sales-order discount exceeds its total amount.");
-                const orderNetAmount = total - discount;
+                    const total = allDetails.reduce((sum: number, detail: any) => {
+                        const quantity = Number(detail.ordered_quantity);
+                        const unitPrice = Number(detail.unit_price);
+                        if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+                            throw new ApiError(400, "Approval blocked: Every item line must have a unit price explicitly greater than ₱0.00.");
+                        }
+                        return sum + quantity * unitPrice;
+                    }, 0);
+                    const netBalance = total - discount;
+                    if (netBalance <= 0) {
+                        throw new ApiError(400, "Approval blocked: Sales Order total net balance must be explicitly greater than ₱0.00.");
+                    }
+                }
 
-                try {
-                    const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_eq]=${order.customer_code}&fields=id,credit_limit,customer_name`, { headers, cache: "no-store" });
-                    if (custRes.ok) {
-                        const custData = (await custRes.json()).data || [];
-                        if (custData.length > 0) {
-                            const customerRecord = custData[0];
-                            const creditLimit = Number(customerRecord.credit_limit || 0);
-                            if (creditLimit > 0) {
-                                const invoiceRes = await fetch(
-                                    `${DIRECTUS_URL}/items/sales_invoice?filter[customer_code][_eq]=${order.customer_code}&filter[transaction_status][_neq]=Cancelled&fields=net_amount,payment_status&limit=-1`,
-                                    { headers, cache: "no-store" }
-                                );
-                                const invoices: { net_amount: number; payment_status?: string }[] = invoiceRes.ok ? (await invoiceRes.json()).data || [] : [];
-                                let outstandingBalance = 0;
-                                for (const inv of invoices) {
-                                    let paid = 0;
-                                    if (inv.payment_status) {
-                                        try {
-                                            const payments = JSON.parse(inv.payment_status);
-                                            if (Array.isArray(payments)) paid = payments.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
-                                        } catch { /* string status - compute from value */ }
+                let creditLimitExceeded = false;
+                let warningString = "";
+
+                if (target === "For Approval") {
+                    if (allDetails.length === 0) throw new ApiError(409, "A sales order without details cannot be submitted for approval.");
+                    const total = allDetails.reduce((sum: number, detail: any) => {
+                        const quantity = Number(detail.ordered_quantity);
+                        const unitPrice = Number(detail.unit_price);
+                        if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+                            throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
+                        }
+                        return sum + quantity * unitPrice;
+                    }, 0);
+                    if (discount > total) throw new ApiError(409, "The sales-order discount exceeds its total amount.");
+                    const orderNetAmount = total - discount;
+
+                    try {
+                        const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_eq]=${order.customer_code}&fields=id,credit_limit,customer_name`, { headers, cache: "no-store" });
+                        if (custRes.ok) {
+                            const custData = (await custRes.json()).data || [];
+                            if (custData.length > 0) {
+                                const customerRecord = custData[0];
+                                const creditLimit = Number(customerRecord.credit_limit || 0);
+                                if (creditLimit > 0) {
+                                    const invoiceRes = await fetch(
+                                        `${DIRECTUS_URL}/items/sales_invoice?filter[customer_code][_eq]=${order.customer_code}&filter[transaction_status][_neq]=Cancelled&fields=net_amount,payment_status&limit=-1`,
+                                        { headers, cache: "no-store" }
+                                    );
+                                    const invoices: { net_amount: number; payment_status?: string }[] = invoiceRes.ok ? (await invoiceRes.json()).data || [] : [];
+                                    let outstandingBalance = 0;
+                                    for (const inv of invoices) {
+                                        let paid = 0;
+                                        if (inv.payment_status) {
+                                            try {
+                                                const payments = JSON.parse(inv.payment_status);
+                                                if (Array.isArray(payments)) paid = payments.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+                                            } catch { /* string status - compute from value */ }
+                                        }
+                                        const net = Number(inv.net_amount || 0);
+                                        outstandingBalance += Math.max(0, net - paid);
                                     }
-                                    const net = Number(inv.net_amount || 0);
-                                    outstandingBalance += Math.max(0, net - paid);
-                                }
 
-                                if (outstandingBalance + orderNetAmount > creditLimit) {
-                                    creditLimitExceeded = true;
-                                    warningString = `[SYSTEM WARNING: Order of ₱${orderNetAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} exceeds Credit Limit of ₱${creditLimit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}. Current Outstanding Balance: ₱${outstandingBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}]`;
+                                    if (outstandingBalance + orderNetAmount > creditLimit) {
+                                        creditLimitExceeded = true;
+                                        warningString = `[SYSTEM WARNING: Order of ₱${orderNetAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} exceeds Credit Limit of ₱${creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Current Outstanding Balance: ₱${outstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`;
+                                    }
                                 }
                             }
                         }
+                    } catch (creditError) {
+                        console.error("Error performing credit limit check:", creditError);
                     }
-                } catch (creditError) {
-                    console.error("Error performing credit limit check:", creditError);
                 }
-            }
 
-            const updatePayload: Record<string, any> = { order_status: target };
-            if (target === "For Invoicing") {
-                updatePayload.for_invoicing_at = new Date().toISOString();
-            }
-            if (creditLimitExceeded && warningString) {
-                // If warning is not already in the remarks, append it
-                const currentRemarks = order.remarks || "";
-                if (!currentRemarks.includes("[SYSTEM WARNING: Order of")) {
-                    updatePayload.remarks = currentRemarks 
-                        ? `${currentRemarks}\n${warningString}` 
-                        : warningString;
+                const updatePayload: Record<string, any> = { order_status: target };
+                if (target === "For Invoicing") {
+                    updatePayload.for_invoicing_at = new Date().toISOString();
                 }
-            }
-
-            const updateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify(updatePayload)
-            });
-            if (!updateRes.ok) throw new ApiError(503, "Failed to update the sales-order status.");
-            return NextResponse.json({ success: true, order_status: target });
-        }
-
-        if (mapStatus(currentStatus) !== "Draft") {
-            throw new ApiError(409, `Quantities cannot be changed while the sales order is ${currentStatus || "in an unknown status"}.`);
-        }
-
-        if (!("details" in body) || !body.details) {
-            throw new ApiError(400, "Invalid patch request. Expected details array.");
-        }
-
-        const requestedDetails = new Map<number, number>(body.details.map((detail: any) => [Number(detail.detail_id), Number(detail.ordered_quantity)]));
-        const existingDetailIds = new Set(allDetails.map((detail: any) => Number(detail.detail_id)));
-        const foreignDetailIds = [...requestedDetails.keys()].filter((detailId) => !existingDetailIds.has(detailId));
-        if (foreignDetailIds.length > 0) {
-            throw new ApiError(404, `Sales-order detail IDs were not found on this order: ${foreignDetailIds.join(", ")}`);
-        }
-
-        const total = allDetails.reduce((sum: number, detail: any) => {
-            const detailId = Number(detail.detail_id);
-            const quantity = requestedDetails.get(detailId) ?? Number(detail.ordered_quantity);
-            const unitPrice = Number(detail.unit_price);
-            if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
-                throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
-            }
-            return sum + (quantity * unitPrice);
-        }, 0);
-        if (discount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
-
-        const nextStatus = "Draft";
-        const detailsById = new Map<number, any>(allDetails.map((detail: any) => [Number(detail.detail_id), detail]));
-        const attemptedMutations: DetailQuantityMutation[] = [];
-        let headerMutation: HeaderQuantityMutation | null = null;
-
-        try {
-            for (const [detailId, quantity] of requestedDetails) {
-                const detail = detailsById.get(detailId);
-                const newNet = Number(detail.unit_price) * quantity;
-                const mutation: DetailQuantityMutation = {
-                    detailId,
-                    original: {
-                        ordered_quantity: detail.ordered_quantity,
-                        net_amount: detail.net_amount,
-                        gross_amount: detail.gross_amount
-                    },
-                    applied: {
-                        ordered_quantity: quantity,
-                        net_amount: newNet,
-                        gross_amount: newNet
+                if (creditLimitExceeded && warningString) {
+                    // If warning is not already in the remarks, append it
+                    const currentRemarks = order.remarks || "";
+                    if (!currentRemarks.includes("[SYSTEM WARNING: Order of")) {
+                        updatePayload.remarks = currentRemarks
+                            ? `${currentRemarks}\n${warningString}`
+                            : warningString;
                     }
-                };
-                attemptedMutations.push(mutation);
+                }
 
-                const detailRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
+                const updateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify(mutation.applied)
+                    body: JSON.stringify(updatePayload)
                 });
-                if (!detailRes.ok) throw new Error(`detail ${detailId} update returned ${detailRes.status}`);
+                if (!updateRes.ok) throw new ApiError(503, "Failed to update the sales-order status.");
+                return NextResponse.json({ success: true, order_status: target });
             }
 
-            headerMutation = {
-                original: {
-                    total_amount: order.total_amount,
-                    net_amount: order.net_amount,
-                    order_status: currentStatus
-                },
-                applied: {
-                    total_amount: total,
-                    net_amount: total - discount,
-                    order_status: nextStatus
+            if (mapStatus(currentStatus) !== "Draft") {
+                throw new ApiError(409, `Quantities cannot be changed while the sales order is ${currentStatus || "in an unknown status"}.`);
+            }
+
+            if (!("details" in body) || !body.details) {
+                throw new ApiError(400, "Invalid patch request. Expected details array.");
+            }
+
+            const requestedDetails = new Map<number, number>(body.details.map((detail: any) => [Number(detail.detail_id), Number(detail.ordered_quantity)]));
+            const existingDetailIds = new Set(allDetails.map((detail: any) => Number(detail.detail_id)));
+            const foreignDetailIds = [...requestedDetails.keys()].filter((detailId) => !existingDetailIds.has(detailId));
+            if (foreignDetailIds.length > 0) {
+                throw new ApiError(404, `Sales-order detail IDs were not found on this order: ${foreignDetailIds.join(", ")}`);
+            }
+
+            const total = allDetails.reduce((sum: number, detail: any) => {
+                const detailId = Number(detail.detail_id);
+                const quantity = requestedDetails.get(detailId) ?? Number(detail.ordered_quantity);
+                const unitPrice = Number(detail.unit_price);
+                if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+                    throw new ApiError(409, "Sales-order details contain invalid quantities or prices.");
                 }
-            };
-            const headerUpdateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify(headerMutation.applied)
-            });
-            if (!headerUpdateRes.ok) throw new Error(`header update returned ${headerUpdateRes.status}`);
-        } catch (error) {
-            const rollback = await rollbackQuantityUpdate(orderId, attemptedMutations, headerMutation);
-            if (rollback.failures.length > 0) {
-                console.error(`Sales-order ${orderId} quantity update and rollback failed.`, { error, rollback });
-                throw new ApiError(500, "Sales-order quantity update failed and automatic restoration was incomplete.", {
-                    cleanupRequired: true,
-                    order_id: orderId,
-                    detail_ids: rollback.unresolvedDetailIds,
-                    header_cleanup_required: rollback.headerUnresolved
+                return sum + (quantity * unitPrice);
+            }, 0);
+            if (discount > total) throw new ApiError(400, "The sales-order discount cannot exceed the updated total.");
+
+            const nextStatus = "Draft";
+            const detailsById = new Map<number, any>(allDetails.map((detail: any) => [Number(detail.detail_id), detail]));
+            const attemptedMutations: DetailQuantityMutation[] = [];
+            let headerMutation: HeaderQuantityMutation | null = null;
+
+            try {
+                for (const [detailId, quantity] of requestedDetails) {
+                    const detail = detailsById.get(detailId);
+                    const newNet = Number(detail.unit_price) * quantity;
+                    const mutation: DetailQuantityMutation = {
+                        detailId,
+                        original: {
+                            ordered_quantity: detail.ordered_quantity,
+                            net_amount: detail.net_amount,
+                            gross_amount: detail.gross_amount
+                        },
+                        applied: {
+                            ordered_quantity: quantity,
+                            net_amount: newNet,
+                            gross_amount: newNet
+                        }
+                    };
+                    attemptedMutations.push(mutation);
+
+                    const detailRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify(mutation.applied)
+                    });
+                    if (!detailRes.ok) throw new Error(`detail ${detailId} update returned ${detailRes.status}`);
+                }
+
+                headerMutation = {
+                    original: {
+                        total_amount: order.total_amount,
+                        net_amount: order.net_amount,
+                        order_status: currentStatus
+                    },
+                    applied: {
+                        total_amount: total,
+                        net_amount: total - discount,
+                        order_status: nextStatus
+                    }
+                };
+                const headerUpdateRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${orderId}`, {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify(headerMutation.applied)
                 });
+                if (!headerUpdateRes.ok) throw new Error(`header update returned ${headerUpdateRes.status}`);
+            } catch (error) {
+                const rollback = await rollbackQuantityUpdate(orderId, attemptedMutations, headerMutation);
+                if (rollback.failures.length > 0) {
+                    console.error(`Sales-order ${orderId} quantity update and rollback failed.`, { error, rollback });
+                    throw new ApiError(500, "Sales-order quantity update failed and automatic restoration was incomplete.", {
+                        cleanupRequired: true,
+                        order_id: orderId,
+                        detail_ids: rollback.unresolvedDetailIds,
+                        header_cleanup_required: rollback.headerUnresolved
+                    });
+                }
+
+                console.error(`Sales-order ${orderId} quantity update failed; prior values were restored.`, error);
+                throw new ApiError(503, "Sales-order quantity update failed. Prior values were restored; please retry.");
             }
 
-            console.error(`Sales-order ${orderId} quantity update failed; prior values were restored.`, error);
-            throw new ApiError(503, "Sales-order quantity update failed. Prior values were restored; please retry.");
-        }
-
-        return NextResponse.json({ success: true, order_status: nextStatus });
+            return NextResponse.json({ success: true, order_status: nextStatus });
         });
     } catch (e) {
         return mutationError(e, "Failed to update the sales order.");

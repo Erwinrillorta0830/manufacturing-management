@@ -61,13 +61,10 @@ export function CashIssuanceTable({ data, loading, onView }: CashIssuanceTablePr
                                 </TableCell>
                                 <TableCell className="align-top py-4">
                                     <div className="flex flex-col gap-1">
-                                        {d.divisionName && (
-                                            <div className="flex items-center gap-1.5 text-foreground/80">
-                                                <Building2 className="w-3 h-3 opacity-50" />
-                                                <span className="text-[10px] font-bold uppercase truncate">{d.divisionName}</span>
-                                            </div>
-                                        )}
-                                        <span className={`text-[9px] font-bold text-muted-foreground uppercase ${d.divisionName ? "ml-4.5" : ""} truncate`}>{d.departmentName || "No Department"}</span>
+                                        <div className="flex items-center gap-1.5 text-foreground/80">
+                                            <Building2 className="w-3 h-3 opacity-50" />
+                                            <span className="text-[10px] font-bold text-muted-foreground uppercase truncate">{d.departmentName || "No Department"}</span>
+                                        </div>
                                     </div>
                                 </TableCell>
                                 <TableCell className="align-top py-4 text-right">

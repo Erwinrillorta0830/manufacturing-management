@@ -130,7 +130,7 @@ export function CashIssuanceDashboardTab() {
     const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
     const [payees, setPayees] = useState<{ id: number; name: string }[]>([]);
     const [coas, setCoas] = useState<{ coaId: number; glCode: string; accountTitle: string }[]>([]);
-    const [divisions, setDivisions] = useState<{ divisionId: number; divisionName: string }[]>([]);
+    const [, setDivisions] = useState<{ divisionId: number; divisionName: string }[]>([]);
 
     const activeEncoders = useMemo(() => {
         const activeIds = data?.activeEncoderIds;
@@ -430,24 +430,11 @@ export function CashIssuanceDashboardTab() {
                                 onValueChange={(val) => setFilters({ ...filters, coaId: val === "ALL" ? "" : Number(val) })}
                                 options={[
                                     { value: "ALL", label: "All COAs" },
-                                    ...coas.map(c => ({ value: c.coaId.toString(), label: `${c.glCode} - ${c.accountTitle}` }))
+                                    ...coas.map(c => ({ value: c.coaId.toString(), label: c.accountTitle }))
                                 ]}
                                 placeholder="Select COA"
                                 className="h-10 text-xs font-bold uppercase bg-background shadow-sm border-border/50 justify-between"
                             />
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="text-[9px] font-black uppercase text-muted-foreground tracking-widest">Division</label>
-                            <Select value={filters.divisionId?.toString() || "ALL"} onValueChange={(val) => setFilters({ ...filters, divisionId: val === "ALL" ? "" : Number(val) })}>
-                                <SelectTrigger className="h-10 text-xs font-bold uppercase bg-background shadow-sm border-border/50"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="ALL" className="text-xs font-bold uppercase text-primary">All Divisions</SelectItem>
-                                    {divisions.map(d => (
-                                        <SelectItem key={d.divisionId} value={d.divisionId.toString()} className="text-xs font-bold uppercase">{d.divisionName}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
                         </div>
 
                         <div className="space-y-1.5">

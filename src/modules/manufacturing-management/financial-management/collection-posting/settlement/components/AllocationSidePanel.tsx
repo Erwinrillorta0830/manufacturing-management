@@ -135,26 +135,28 @@ export default function AllocationSidePanel({
                     </div>
 
                     {credits.filter(c => {
-                        const targetCode = inv.customerCode?.trim().toUpperCase();
-                        const targetName = inv.customerName?.trim().toUpperCase();
-                        const sourceCode = c.customerCode?.trim().toUpperCase();
-                        const sourceName = c.customerName?.trim().toUpperCase();
+                        const targetCode = inv.customerCode?.trim().toUpperCase() || "";
+                        const targetName = inv.customerName?.trim().toUpperCase() || "";
+                        const sourceCode = c.customerCode?.trim().toUpperCase() || "";
+                        const sourceName = c.customerName?.trim().toUpperCase() || "";
                         
-                        // If no customer code exists on the invoice, it's safer not to show anything than to leak
-                        if (!targetCode && !targetName) return false;
+                        // Pass through if credit was already loaded for this invoice's customer
+                        if (!targetCode && !targetName) return true;
 
                         return (
-                            (targetCode && targetCode === sourceCode) ||
-                            (targetName && targetName === sourceName) ||
-                            (targetName && targetName === sourceCode) ||
-                            (targetCode && targetCode === sourceName)
+                            (targetCode && sourceCode && targetCode === sourceCode) ||
+                            (targetName && sourceName && targetName === sourceName) ||
+                            (targetName && sourceCode && targetName === sourceCode) ||
+                            (targetCode && sourceName && targetCode === sourceName) ||
+                            (!sourceCode && !sourceName)
                         );
                     }).map(c => {
                         if (!c.label.toLowerCase().includes(localSearch.toLowerCase()) && !(c.customerName || "").toLowerCase().includes(localSearch.toLowerCase())) return null;
 
                         const existingAlloc = allocations.find(a => a.invoiceId === inv.id && a.sourceTempId === c.id);
                         const usedElsewhere = getUsedAmount(c.id) - (existingAlloc?.amountApplied || 0);
-                        const remaining = getSourceAllocationCapacity(c.originalAmount, usedElsewhere);
+                        const startingCapacity = c.unappliedAmount !== undefined ? c.unappliedAmount : c.originalAmount;
+                        const remaining = getSourceAllocationCapacity(startingCapacity, usedElsewhere);
                         const invoiceAvailable = getInvoiceAllocationCapacity(
                             requiredBalance,
                             appliedSession - (existingAlloc?.amountApplied || 0)

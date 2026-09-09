@@ -88,6 +88,7 @@ export interface WalletItem extends SettlementPrintableWalletItem {
     balanceTypeId?: number;
     isLocal?: boolean;
     invoiceId?: number;
+    unappliedAmount?: number;
 }
 
 export interface GeneralFinding {
@@ -271,7 +272,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             const [memosResult, returnsResult] = await Promise.allSettled([
                 page === 1
                     ? fetchProvider.getOrThrow<RawMemoOrReturn[]>(
-                        `/api/manufacturing/financial-management/collection-posting/memos/available?${customerQuery}`,
+                        `/api/manufacturing/financial-management/collection-posting/memos/available?${customerQuery}&currentPouchId=${encodeURIComponent(String(pouchId))}`,
                         {signal: controller.signal},
                     )
                     : Promise.resolve<RawMemoOrReturn[] | null>([]),
@@ -298,10 +299,12 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             setCredits(prev => {
                 const newCredits = append ? [...prev] : [];
                 memos?.forEach(m => {
-                    const remainingMemoAmount = (m.amount || 0) - (m.appliedAmount || 0);
                     const id = `memo-${m.id}`;
-                    if (remainingMemoAmount > 0 && !newCredits.some(c => c.id === id)) {
-                        newCredits.push({id, dbId: m.id, type: "MEMO", label: `Memo: ${m.memo_number || m.memoNumber}`, originalAmount: remainingMemoAmount, customerCode: m.customerCode, customerName: m.customerName});
+                    const faceAmount = Math.max(0, m.amount || 0);
+                    const unappliedInDb = Math.max(0, faceAmount - (m.appliedAmount || 0));
+
+                    if (unappliedInDb > 0 && !newCredits.some(c => c.id === id)) {
+                        newCredits.push({id, dbId: m.id, type: "MEMO", label: `Memo: ${m.memo_number || m.memoNumber}`, originalAmount: faceAmount, unappliedAmount: unappliedInDb, customerCode: m.customerCode, customerName: m.customerName});
                     }
                 });
                 returnItems.forEach(r => {

@@ -162,7 +162,12 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
 
     const currentStepIndex = getVoucherStepIndex(disbursement.status);
     return (
-        <Sheet open={open} onOpenChange={(val) => { onOpenChange(val); setShowPrintOptions(false); if (!val) setStatusError(null); }}>
+        <Sheet open={open} onOpenChange={(val) => {
+            if (!val && loading) return;
+            onOpenChange(val);
+            setShowPrintOptions(false);
+            if (!val) setStatusError(null);
+        }}>
             <SheetContent className="sm:max-w-[1000px] w-full p-0 flex flex-col bg-background border-l border-border overflow-hidden shadow-2xl">
 
                 <SheetHeader className="p-6 border-b border-border bg-card shrink-0 shadow-sm relative z-10">
@@ -355,20 +360,18 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
                                 <Table>
                                     <TableHeader className="bg-muted/80 backdrop-blur-md sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                                         <TableRow className="border-border">
-                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[150px]">Ref No</TableHead>
-                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[120px]">Division</TableHead>
-                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[300px]">Chart of Account</TableHead>
-                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[150px]">Remarks</TableHead>
+                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[160px]">Ref No</TableHead>
+                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[320px]">Chart of Account</TableHead>
+                                            <TableHead className="text-[9px] font-black uppercase tracking-widest text-muted-foreground min-w-[180px]">Remarks</TableHead>
                                             <TableHead className="text-[9px] font-black uppercase tracking-widest text-right text-muted-foreground min-w-[120px]">Amount</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {!disbursement.payables?.length ? (
-                                            <TableRow><TableCell colSpan={5} className="text-center text-[10px] text-muted-foreground py-6 font-bold">No payables attached.</TableCell></TableRow>
+                                            <TableRow><TableCell colSpan={4} className="text-center text-[10px] text-muted-foreground py-6 font-bold">No payables attached.</TableCell></TableRow>
                                         ) : disbursement.payables.map((p, i) => (
                                             <TableRow key={i} className="hover:bg-muted/50 border-border">
                                                 <TableCell className="text-xs font-bold uppercase text-foreground">{p.referenceNo || "N/A"}</TableCell>
-                                                <TableCell className="text-xs font-bold uppercase text-foreground">{p.divisionName || "N/A"}</TableCell>
                                                 <TableCell className="text-[10px] font-bold text-muted-foreground uppercase">{p.accountTitle || `COA: ${p.coaId}`}</TableCell>
                                                 <TableCell className="text-[10px] font-medium text-muted-foreground truncate max-w-[200px]">{p.remarks || "-"}</TableCell>
                                                 <TableCell className="text-xs font-black text-right text-foreground">{formatCurrency(p.amount)}</TableCell>

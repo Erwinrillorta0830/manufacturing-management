@@ -2,16 +2,12 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useSuppliers } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/hooks/useSuppliers";
+import { Building2 } from "lucide-react";
 import { SupplierDataTable } from "./components/data-table";
 import { createColumns } from "./components/data-table/columns";
-import { SupplierDetailsModal } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/components/modals/suppliers-detail-modal";
-import { Button } from "@/components/ui/button";
+import { ManageProductsModal } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/components/modals/manage-products-modal";
 import { Supplier } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/types/supplier.schema";
-import { Plus, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
-import { EditSupplierModal } from "./components/modals/edit-supplier-modal";
 import { DataTableSkeleton } from "./components/data-table/DataTableSkeleton";
-import { AddSupplierModal } from "./components/modals/add-supplier-modal";
 import { ErrorPage } from "@/app/(manufacturing-management)/mm/_components/ErrorPage";
 
 export default function SupplierRepresentativeModulePage() {
@@ -20,47 +16,26 @@ export default function SupplierRepresentativeModulePage() {
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(
     null,
   );
-  const [viewModalOpen, setViewModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [manageDiscountOpen, setManageDiscountOpen] = useState(false);
 
-  // Handle view supplier
-  const handleView = useCallback((supplier: Supplier) => {
+  // Handle manage discount for supplier
+  const handleManageDiscount = useCallback((supplier: Supplier) => {
     setSelectedSupplier(supplier);
-    setViewModalOpen(true);
+    setManageDiscountOpen(true);
   }, []);
-
-  // Handle edit supplier
-  const handleEdit = useCallback((supplier: Supplier) => {
-    setSelectedSupplier(supplier);
-    setEditModalOpen(true);
-  }, []);
-
-  // Handle edit success
-  const handleEditSuccess = () => {
-    refresh();
-    toast.success("Supplier updated successfully");
-  };
-
-  // Handle add supplier success
-  const handleAddSuccess = () => {
-    refresh();
-    toast.success("Supplier created successfully");
-  };
 
   // Create columns with handlers
   const columns = useMemo(
     () =>
       createColumns({
-        onView: handleView,
-        onEdit: handleEdit,
+        onView: handleManageDiscount,
       }),
-    [handleView, handleEdit],
+    [handleManageDiscount],
   );
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div className="p-4 md:p-6">
         <DataTableSkeleton />
       </div>
     );
@@ -79,63 +54,44 @@ export default function SupplierRepresentativeModulePage() {
   }
 
   return (
-    <div className="p-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={refresh}
-            disabled={isLoading}
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-            />
-          </Button>
-          <Button onClick={() => setAddModalOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add Supplier
-          </Button>
+    <div className="p-4 md:p-6 space-y-6 bg-background animate-in fade-in duration-500">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Building2 className="h-5 w-5 text-primary" />
+            <h1 className="text-2xl font-extrabold tracking-tight">Supplier Discount</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Manage supplier-specific information and product discount configurations.
+          </p>
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content & Filters */}
       <SupplierDataTable
         columns={columns}
         data={suppliers || []}
         searchPlaceholder="Search by name, TIN, or contact person..."
         onSearchChange={setSearchQuery}
+        onRefresh={refresh}
+        isLoading={isLoading}
       />
 
-      {/* Supplier Details Modal */}
-      <SupplierDetailsModal
-        supplier={selectedSupplier}
-        open={viewModalOpen}
-        onClose={() => {
-          setViewModalOpen(false);
-          setSelectedSupplier(null);
-        }}
-      />
-
-      {/* Edit Supplier Modal */}
-      <EditSupplierModal
-        supplier={selectedSupplier}
-        open={editModalOpen}
-        onClose={() => {
-          setEditModalOpen(false);
-          setSelectedSupplier(null);
-        }}
-        onSuccess={handleEditSuccess}
-      />
-
-      {/* Add Supplier Modal */}
-      <AddSupplierModal
-        open={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        onSuccess={handleAddSuccess}
-      />
+      {/* Manage Product Discounts Modal */}
+      {selectedSupplier && (
+        <ManageProductsModal
+          supplierId={selectedSupplier.id ?? null}
+          supplierName={selectedSupplier.supplier_name}
+          open={manageDiscountOpen}
+          onClose={() => {
+            setManageDiscountOpen(false);
+            setSelectedSupplier(null);
+          }}
+        />
+      )}
     </div>
   );
 }
+
 

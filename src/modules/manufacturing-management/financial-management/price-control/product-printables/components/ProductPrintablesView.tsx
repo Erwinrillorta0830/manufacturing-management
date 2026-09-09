@@ -99,7 +99,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
     const filterSummary = React.useMemo(() => {
         const parts: string[] = [];
         if (filters.q) parts.push(`Search: "${filters.q}"`);
-        
+
         if (filters.supplier_ids.length) {
             const names = filters.supplier_ids.map(id => suppliers.find(s => String(s.id) === String(id))?.supplier_name).filter(Boolean);
             if (names.length) parts.push(`Suppliers: ${names.join(", ")}`);
@@ -143,7 +143,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
         } else {
             parts.push("Prices: All Configured Price Types");
         }
-        
+
         return parts.join("\n");
     }, [filters, categories, brands, suppliers, units, priceTypes, productTypes]);
 
@@ -408,7 +408,7 @@ export default function ProductPrintablesView({ userName }: { userName?: string 
             <Card className="border-border/50 shadow-sm bg-background/60 backdrop-blur-md overflow-hidden">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-6 pb-4">
                     <div className="space-y-1.5">
-                        <h2 className="text-2xl font-bold tracking-tight text-foreground">Product Printables</h2>
+                        <h2 className="text-2xl font-bold tracking-tight text-foreground">Product Pricing Masterlist</h2>
                         <p className="text-sm text-muted-foreground">
                             Filter and generate spreadsheet-style matrix reports for your products.
                         </p>
