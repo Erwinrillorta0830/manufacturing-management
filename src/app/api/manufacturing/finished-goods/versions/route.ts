@@ -19,8 +19,40 @@ interface VersionRecord {
     valid_to?: string | null;
 }
 
+let isPrimarySchemaChecked = false;
+
+async function ensureIsPrimaryFieldSchema() {
+    if (isPrimarySchemaChecked) return;
+    try {
+        const checkRes = await fetch(`${DIRECTUS_URL}/fields/product_manufacturing_version/is_primary`, { headers, cache: "no-store" });
+        if (checkRes.status === 404) {
+            await fetch(`${DIRECTUS_URL}/fields/product_manufacturing_version`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                    field: "is_primary",
+                    type: "boolean",
+                    meta: {
+                        interface: "boolean",
+                        options: { label: "Primary Default Version" },
+                        display: "boolean",
+                        readonly: false,
+                        hidden: false,
+                        width: "half"
+                    },
+                    schema: { default_value: false, is_nullable: true }
+                })
+            });
+        }
+        isPrimarySchemaChecked = true;
+    } catch (err) {
+        console.error("Error ensuring is_primary field schema in Directus:", err);
+    }
+}
+
 export async function GET(request: Request) {
     try {
+        await ensureIsPrimaryFieldSchema();
         const { searchParams } = new URL(request.url);
         const productIdStr = searchParams.get("productId");
         if (!productIdStr) {
@@ -48,7 +80,7 @@ export async function GET(request: Request) {
         const json = await res.json();
         const rawData = json.data || [];
 
-        const versionsList = rawData.map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; is_primary?: boolean | number; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null; rejection_reason?: string | null; approval_remarks?: string | null; created_at?: string | null; updated_at?: string | null; created_by?: number | string | null; approved_by?: number | string | null; approved_at?: string | null }) => {
+        const versionsList = rawData.map((v: Record<string, unknown> & { version_id: number; version_name?: string; status?: string; is_primary?: boolean | number | string; expected_yield_percentage?: number; base_quantity?: number; uom_id?: number | null; valid_from?: string | null; valid_to?: string | null; rejection_reason?: string | null; approval_remarks?: string | null; created_at?: string | null; updated_at?: string | null; created_by?: number | string | null; approved_by?: number | string | null; approved_at?: string | null }) => {
             const isActive = v.status === "Active";
             return {
                 version_id: v.version_id,
@@ -62,9 +94,9 @@ export async function GET(request: Request) {
                 valid_from: v.valid_from || null,
                 valid_to: v.valid_to || null,
                 is_active: isActive,
-                is_primary: v.is_primary === true || v.is_primary === 1,
-                rejection_reason: v.rejection_reason ?? null,
-                approval_remarks: v.approval_remarks ?? null,
+                is_primary: v.is_primary === true || v.is_primary === 1 || String(v.is_primary) === "1" || Number(v.is_primary) === 1,
+                rejection_reason: v.rejection_reason ?? (v.remarks as string) ?? null,
+                approval_remarks: v.approval_remarks ?? (v.remarks as string) ?? null,
                 created_at: v.created_at ?? null,
                 updated_at: v.updated_at ?? (v.updated_on as string) ?? v.created_at ?? null,
                 created_by: v.created_by ?? null,
@@ -73,8 +105,11 @@ export async function GET(request: Request) {
             };
         });
 
-        // Order by most recent update first, then newest version_id
-        versionsList.sort((a: { updated_at?: string | null; created_at?: string | null; version_id: number }, b: { updated_at?: string | null; created_at?: string | null; version_id: number }) => {
+        // Order by primary default version first, then most recent update, then newest version_id
+        versionsList.sort((a: { is_primary?: boolean; updated_at?: string | null; created_at?: string | null; version_id: number }, b: { is_primary?: boolean; updated_at?: string | null; created_at?: string | null; version_id: number }) => {
+            const isPriA = a.is_primary ? 1 : 0;
+            const isPriB = b.is_primary ? 1 : 0;
+            if (isPriA !== isPriB) return isPriB - isPriA;
             const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
             const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
             if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;

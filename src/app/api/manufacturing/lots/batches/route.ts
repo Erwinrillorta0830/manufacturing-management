@@ -135,7 +135,14 @@ export async function GET(request: Request) {
         const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
 
         rawMovements.forEach((m) => {
-            const lId = Number(m.mmLotId || m.mm_lot_id || m.lotId || m.lot_id || 0);
+            const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
+            const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
+            const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
+            const hasLotId = rawLotId !== null && rawLotId !== undefined && Number(rawLotId) > 0;
+            const parsedLotId = hasLotId ? Number(rawLotId) : 0;
+            const matchedLot = lotsList.find((l) => Number(l.lot_id) === parsedLotId);
+
+            const lId = (hasInvId && matchedLot) ? parsedLotId : 0;
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
             const qIn = Number(m.quantityIn || m.quantity_in || 0);
@@ -295,16 +302,27 @@ export async function GET(request: Request) {
             const batchNumber = String(row.batch_no || "");
 
             let lotId = 0;
-            let lotName = "Unassigned Storage Lot";
-            if (row.lot_id) {
-                if (typeof row.lot_id === "object" && row.lot_id !== null) {
-                    const lotObj = row.lot_id as { lot_id?: number; lot_name?: string };
-                    lotId = Number(lotObj.lot_id || 0);
-                    lotName = lotObj.lot_name || `Lot #${lotId}`;
+            let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
+            const rawInvLotId = row.inventory_lot_id;
+            const hasInvLotId = rawInvLotId !== null && rawInvLotId !== undefined && Number(rawInvLotId) > 0;
+            const rawLotId = row.lot_id;
+
+            if (hasInvLotId && rawLotId) {
+                if (typeof rawLotId === "object" && rawLotId !== null) {
+                    const lotObj = rawLotId as { lot_id?: number; lot_name?: string };
+                    const parsedId = Number(lotObj.lot_id || 0);
+                    const matched = lotsList.find((l) => Number(l.lot_id) === parsedId);
+                    if (matched) {
+                        lotId = parsedId;
+                        lotName = matched.lot_name;
+                    }
                 } else {
-                    lotId = Number(row.lot_id);
-                    const matched = lotsList.find((l) => Number(l.lot_id) === lotId);
-                    if (matched) lotName = matched.lot_name;
+                    const parsedId = Number(rawLotId);
+                    const matched = lotsList.find((l) => Number(l.lot_id) === parsedId);
+                    if (matched) {
+                        lotId = parsedId;
+                        lotName = matched.lot_name;
+                    }
                 }
             }
 
@@ -473,10 +491,15 @@ export async function GET(request: Request) {
                 existingKeys.add(baseKey);
                 existingKeys.add(lotBatchKey);
 
-                let lotName = "Unassigned Storage Lot";
-                const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
-                if (matchedLot) lotName = matchedLot.lot_name;
-                else if (mv.lotId > 0) lotName = `Lot #${mv.lotId}`;
+                let lotId = 0;
+                let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
+                if (mv.lotId > 0) {
+                    const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
+                    if (matchedLot) {
+                        lotId = mv.lotId;
+                        lotName = matchedLot.lot_name;
+                    }
+                }
 
                 let prodName = mv.productName || "";
                 let itemCode = mv.productCode || "";
@@ -506,7 +529,7 @@ export async function GET(request: Request) {
                 mappedBatches.push({
                     batchId: synthIdCounter--,
                     batchNumber: mv.batchNo,
-                    lotId: mv.lotId,
+                    lotId,
                     lotName,
                     branchId: mv.branchId || 1,
                     productId: mv.productId,
@@ -541,10 +564,15 @@ export async function GET(request: Request) {
                 existingKeys.add(baseKey);
                 existingKeys.add(lotBatchKey);
 
-                let lotName = "Unassigned Storage Lot";
-                const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
-                if (matchedLot) lotName = matchedLot.lot_name;
-                else if (mv.lotId > 0) lotName = `Lot #${mv.lotId}`;
+                let lotId = 0;
+                let lotName = "Unassigned / Pending Storage Rack (Ghost Rack)";
+                if (mv.lotId > 0) {
+                    const matchedLot = lotsList.find((l) => Number(l.lot_id) === mv.lotId);
+                    if (matchedLot) {
+                        lotId = mv.lotId;
+                        lotName = matchedLot.lot_name;
+                    }
+                }
 
                 let prodName = mv.productName || "";
                 let itemCode = mv.productCode || "";
@@ -574,7 +602,7 @@ export async function GET(request: Request) {
                 mappedBatches.push({
                     batchId: synthIdCounter--,
                     batchNumber: mv.batchNo,
-                    lotId: mv.lotId,
+                    lotId,
                     lotName,
                     branchId: mv.branchId || 1,
                     productId: mv.productId,

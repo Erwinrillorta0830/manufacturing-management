@@ -6,6 +6,7 @@ import { getFefoPriorityMap, groupAndSumLotBatches, sortBatchesByFefo, sortLotsB
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 const containerVariants = {
     hidden: { opacity: 0 },
@@ -92,12 +93,29 @@ export default function WarehouseRackView({
     }, [batches, selectedProductId]);
 
     const sortedLots = React.useMemo(() => {
-        let baseLots = lots;
+        const ghostLot: Lot = {
+            lotId: 0,
+            lotName: "Unassigned / Pending Storage Rack (Ghost Rack)",
+            branchId: 0,
+            branchName: "System Virtual Rack",
+            branchCode: "GHOST",
+            uomId: null,
+            uomName: "",
+            uomShortcut: "",
+            maxBatchCapacity: 999999,
+            status: "ACTIVE",
+            createdBy: "System Virtual",
+            updatedBy: "System Virtual",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        let baseLots = [ghostLot, ...lots];
+
         if (selectedBranchId !== "ALL") {
-            baseLots = baseLots.filter((lot) => Number(lot.branchId) === Number(selectedBranchId));
+            baseLots = baseLots.filter((lot) => Number(lot.lotId) === 0 || Number(lot.branchId) === Number(selectedBranchId));
         }
         if (selectedUomId !== "ALL") {
-            baseLots = baseLots.filter((lot) => Number(lot.uomId) === Number(selectedUomId));
+            baseLots = baseLots.filter((lot) => Number(lot.lotId) === 0 || Number(lot.uomId) === Number(selectedUomId));
         }
         if (selectedLotId !== "ALL") {
             if (Array.isArray(selectedLotId)) {
@@ -113,7 +131,12 @@ export default function WarehouseRackView({
         const query = (searchQuery || "").toLowerCase().trim();
 
         const matchingLots = baseLots.filter((lot) => {
-            const lotBatches = batches.filter((b) => Number(b.lotId) === Number(lot.lotId));
+            const isGhost = Number(lot.lotId) === 0;
+            const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
+            const lotBatches = batches.filter((b) => {
+                const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+                return isGhost ? isUnassigned : Number(b.lotId) === Number(lot.lotId);
+            });
 
             if (selectedProductType !== "ALL") {
                 const hasMatchingType = lotBatches.some(
@@ -141,7 +164,10 @@ export default function WarehouseRackView({
             }
 
             if (query) {
-                const lotNameMatches = lot.lotName?.toLowerCase().includes(query);
+                const lotNameMatches =
+                    lot.lotName?.toLowerCase().includes(query) ||
+                    lot.branchName?.toLowerCase().includes(query) ||
+                    lot.branchCode?.toLowerCase().includes(query);
                 const hasMatchingBatch = lotBatches.some(
                     (b) =>
                         b.batchNumber?.toLowerCase().includes(query) ||
@@ -213,8 +239,16 @@ export default function WarehouseRackView({
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
             >
                 {sortedLots.map((lot) => {
+                    const isGhostLot = Number(lot.lotId) === 0;
+                    const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
+
                     const rawLotBatches = batches.filter((b) => {
-                        if (Number(b.lotId) !== Number(lot.lotId)) return false;
+                        const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+                        if (isGhostLot) {
+                            if (!isUnassigned) return false;
+                        } else {
+                            if (Number(b.lotId) !== Number(lot.lotId)) return false;
+                        }
                         if (Number(b.quantity || 0) === 0) return false;
                         if (selectedProductType !== "ALL") {
                             const cls = resolveProductClassification(b.productType, b.productCategory, b.itemCode, b.productName);
@@ -252,7 +286,12 @@ export default function WarehouseRackView({
                     const hasMoreThan5 = fefoSortedBatches.length > 5;
 
                     // Physical rack occupancy and capacity reflect all inventory stored in this rack (unaffected by active product/batch filters)
-                    const allLotBatches = groupAndSumLotBatches(batches.filter((b) => Number(b.lotId) === Number(lot.lotId)));
+                    const allLotBatches = groupAndSumLotBatches(
+                        batches.filter((b) => {
+                            const isUnassigned = !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId));
+                            return isGhostLot ? isUnassigned : Number(b.lotId) === Number(lot.lotId);
+                        })
+                    );
                     const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
                     const isRackNegative = totalRackOccupancy < 0;
                     const capacityPercent = Math.max(
@@ -266,7 +305,10 @@ export default function WarehouseRackView({
                     // Capacity status color
                     let progressColorClass = "bg-emerald-500";
                     let progressBadgeClass = "text-emerald-600 bg-emerald-500/10 border-emerald-500/20";
-                    if (isRackNegative) {
+                    if (isGhostLot) {
+                        progressColorClass = "bg-amber-500";
+                        progressBadgeClass = "text-amber-600 bg-amber-500/10 border-amber-500/20 font-bold";
+                    } else if (isRackNegative) {
                         progressColorClass = "bg-rose-500 animate-pulse";
                         progressBadgeClass = "text-rose-600 bg-rose-500/15 border-rose-500/30 font-bold";
                     } else if (capacityPercent >= 90) {
@@ -307,14 +349,27 @@ export default function WarehouseRackView({
                         <motion.div
                             key={lot.lotId}
                             variants={itemVariants}
-                            className="group relative flex flex-col rounded-xl border border-border/80 bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+                            className={cn(
+                                "group relative flex flex-col rounded-xl border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden",
+                                isGhostLot
+                                    ? "border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10"
+                                    : "border-border/80 bg-card"
+                            )}
                         >
                             {/* Metallic Industrial Rack Header */}
-                            <div className="p-4 border-b border-border/60 bg-gradient-to-r from-muted/40 via-card to-muted/20">
+                            <div className={cn(
+                                "p-4 border-b",
+                                isGhostLot
+                                    ? "border-amber-500/30 bg-amber-500/10"
+                                    : "border-border/60 bg-gradient-to-r from-muted/40 via-card to-muted/20"
+                            )}>
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="h-2.5 w-2.5 rounded-full bg-primary shrink-0 animate-pulse" />
+                                            <span className={cn(
+                                                "h-2.5 w-2.5 rounded-full shrink-0 animate-pulse",
+                                                isGhostLot ? "bg-amber-500" : "bg-primary"
+                                            )} />
                                             <h4 className="font-extrabold text-foreground text-base truncate">
                                                 {lot.lotName}
                                             </h4>
@@ -327,22 +382,26 @@ export default function WarehouseRackView({
                                                     {uomLabel}
                                                 </span>
                                             )}
-                                            {/* <span className="text-xs text-muted-foreground shrink-0 mr-0.5">
-                                                Max Cap: <strong className="text-foreground">{lot.maxBatchCapacity.toLocaleString()}</strong>
-                                            </span> */}
 
                                             {/* Branch Location Badge */}
-                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-muted/80 text-foreground border border-border/80 shadow-2xs shrink-0">
-                                                <Building2 className="h-3 w-3 text-primary shrink-0" />
-                                                <span className="truncate max-w-[120px]" title={lot.branchName || `Branch #${lot.branchId}`}>
-                                                    {lot.branchName || `Branch #${lot.branchId}`}
+                                            {isGhostLot ? (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 shadow-2xs shrink-0">
+                                                    <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
+                                                    Ghost / Pending Rack
                                                 </span>
-                                                {lot.branchCode && (
-                                                    <span className="text-[9px] font-mono font-bold text-muted-foreground ml-0.5">
-                                                        ({lot.branchCode})
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-muted/80 text-foreground border border-border/80 shadow-2xs shrink-0">
+                                                    <Building2 className="h-3 w-3 text-primary shrink-0" />
+                                                    <span className="truncate max-w-[120px]" title={lot.branchName || `Branch #${lot.branchId}`}>
+                                                        {lot.branchName || `Branch #${lot.branchId}`}
                                                     </span>
-                                                )}
-                                            </span>
+                                                    {lot.branchCode && (
+                                                        <span className="text-[9px] font-mono font-bold text-muted-foreground ml-0.5">
+                                                            ({lot.branchCode})
+                                                        </span>
+                                                    )}
+                                                </span>
+                                            )}
 
                                             {/* Bad Stock Indicator if applicable */}
                                             {(lot.isBadStock || lot.branchIsBadStock) && (

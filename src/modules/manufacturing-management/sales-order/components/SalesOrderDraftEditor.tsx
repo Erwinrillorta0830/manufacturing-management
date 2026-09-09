@@ -154,19 +154,28 @@ export function SalesOrderDraftEditor({
         setVersionStates(Object.fromEntries(productIds.map(id => [id, { status: "loading" }])));
         Promise.all(productIds.map(async productId => {
             try {
-                const response = await fetch(`/api/manufacturing/finished-goods/versions?productId=${productId}`, { signal: controller.signal });
+                const response = await fetch(`/api/manufacturing/finished-goods/versions?productId=${productId}`, { signal: controller.signal, cache: "no-store" });
                 if (!response.ok) return [productId, { status: "unavailable" }] as const;
-                const versions = await response.json();
+                const fetchedVersions = await response.json();
+                const activeVersions = fetchedVersions
+                    .filter((v: any) => v.status === "Active" || v.is_active)
+                    .sort((a: any, b: any) => {
+                        const isPriA = a.is_primary === true || a.is_primary === 1 || String(a.is_primary) === "1" || Number(a.is_primary) === 1 ? 1 : 0;
+                        const isPriB = b.is_primary === true || b.is_primary === 1 || String(b.is_primary) === "1" || Number(b.is_primary) === 1 ? 1 : 0;
+                        if (isPriA !== isPriB) return isPriB - isPriA;
+                        return Number(b.version_id) - Number(a.version_id);
+                    });
                 const overrideVersionId = customerOverrides[productId];
-                const overrideVersion = overrideVersionId ? versions.find((v: any) => Number(v.version_id) === overrideVersionId) : null;
-                const standardVersion = versions.find((v: any) => (v.status === "Active" || v.is_active) && isStandardBOMVersion(v));
-                const matchedVersion = overrideVersion || standardVersion || versions.find((v: any) => v.status === "Active" || v.is_active);
+                const overrideVersion = overrideVersionId ? activeVersions.find((v: any) => Number(v.version_id) === overrideVersionId) : null;
+                const primaryVersion = activeVersions.find((v: any) => v.is_primary === true || v.is_primary === 1 || String(v.is_primary) === "1" || Number(v.is_primary) === 1);
+                const standardVersion = activeVersions.find((v: any) => isStandardBOMVersion(v));
+                const matchedVersion = overrideVersion || primaryVersion || standardVersion || activeVersions[0];
                 if (!matchedVersion) return [productId, { status: "unavailable" }] as const;
-                const suffix = overrideVersion ? "Override" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
+                const suffix = overrideVersion ? "Override" : primaryVersion === matchedVersion ? "Primary" : standardVersion === matchedVersion ? "Standard" : "Active fallback";
                 return [productId, {
                     status: "resolved",
                     label: `${matchedVersion.version_name} (${suffix})`,
-                    versions,
+                    versions: activeVersions,
                     defaultVersionId: Number(matchedVersion.version_id)
                 }] as const;
             } catch (error) {
@@ -693,7 +702,7 @@ export function SalesOrderDraftEditor({
                                                         : versionStates[item.parent_product_id]?.status === "resolved" ? (
                                                             <select value={item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
                                                                 {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
-                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}</option>
+                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}</option>
                                                                 ))}
                                                             </select>
                                                         ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>

@@ -42,8 +42,15 @@ export function selectPreferredActiveVersion<T extends VersionSelectionCandidate
         const verRecord = version as Record<string, unknown>;
         return s === "active" || verRecord.is_active === true || verRecord.is_active === 1;
     });
-    if (activeVersions.length > 0) return activeVersions[0];
-    return versions.find(isStandardBOMVersion) || versions[0] || null;
+    const pool = activeVersions.length > 0 ? activeVersions : versions;
+    const primary = pool.find(v => {
+        const rec = v as Record<string, unknown>;
+        return rec.is_primary === true || rec.is_primary === 1 || Number(rec.is_primary) === 1;
+    });
+    if (primary) return primary;
+    const standard = pool.find(isStandardBOMVersion);
+    if (standard) return standard;
+    return pool[0] || null;
 }
 
 export async function getBOMDetailsForVersion(
