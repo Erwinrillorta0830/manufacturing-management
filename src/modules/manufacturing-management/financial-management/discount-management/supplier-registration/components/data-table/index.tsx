@@ -22,8 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Building2 } from "lucide-react";
+import { SupplierTableFilters } from "./table-filters";
 import { DataTablePagination } from "./table-pagination";
 
 interface DataTableProps<TData, TValue> {
@@ -31,12 +31,31 @@ interface DataTableProps<TData, TValue> {
   data: TData[];
   searchPlaceholder?: string;
   onSearchChange?: (value: string) => void;
+  onRefresh?: () => void;
+  isLoading?: boolean;
 }
 
 export function SupplierDataTable<TData, TValue>({
   columns,
   data,
+  searchPlaceholder = "Search suppliers name...",
+  onSearchChange,
+  onRefresh,
+  isLoading = false,
 }: DataTableProps<TData, TValue>) {
+  const [statusFilter, setStatusFilter] = React.useState("all");
+
+  const filteredData = React.useMemo(() => {
+    if (!data) return [];
+    if (statusFilter === "active") {
+      return data.filter((item) => Number((item as { isActive?: number }).isActive) === 1);
+    }
+    if (statusFilter === "inactive") {
+      return data.filter((item) => Number((item as { isActive?: number }).isActive) === 0);
+    }
+    return data;
+  }, [data, statusFilter]);
+
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
     pageSize: 10,
@@ -52,7 +71,7 @@ export function SupplierDataTable<TData, TValue>({
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data,
+    data: filteredData,
     columns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -74,30 +93,40 @@ export function SupplierDataTable<TData, TValue>({
     },
   });
 
+  const filterValue =
+    (table.getColumn("supplier_name")?.getFilterValue() as string) ?? "";
+
+  const handleFilterChange = (val: string) => {
+    table.getColumn("supplier_name")?.setFilterValue(val);
+    if (onSearchChange) {
+      onSearchChange(val);
+    }
+  };
+
+  const handleStatusChange = (val: string) => {
+    setStatusFilter(val);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
   return (
     <div className="space-y-4">
-      {/* Search Bar */}
-      <div className="relative flex-1 max-w-sm">
-        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Search suppliers name..."
-          value={
-            (table.getColumn("supplier_name")?.getFilterValue() as string) ?? ""
-          }
-          onChange={(event) =>
-            table.getColumn("supplier_name")?.setFilterValue(event.target.value)
-          }
-          className="pl-8"
-        />
-      </div>
+      {/* Filter Row Component */}
+      <SupplierTableFilters
+        searchValue={filterValue}
+        onSearchChange={handleFilterChange}
+        statusValue={statusFilter}
+        onStatusChange={handleStatusChange}
+        onRefresh={onRefresh}
+        isLoading={isLoading}
+        searchPlaceholder={searchPlaceholder}
+      />
 
-      {/* Table */}
-      <div className="rounded-md border">
+      {/* Table Section */}
+      <div className="border rounded-xl shadow-sm overflow-hidden bg-card">
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
+              <TableRow key={headerGroup.id} className="hover:bg-transparent">
                 {headerGroup.headers.map((header) => {
                   return (
                     <TableHead key={header.id}>
@@ -119,6 +148,7 @@ export function SupplierDataTable<TData, TValue>({
                 <TableRow
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}
+                  className="group hover:bg-muted/30 transition-colors"
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>
@@ -134,17 +164,23 @@ export function SupplierDataTable<TData, TValue>({
               <TableRow>
                 <TableCell
                   colSpan={columns.length}
-                  className="h-24 text-center"
+                  className="h-64 text-center"
                 >
-                  No results found.
+                  <div className="flex flex-col items-center justify-center text-muted-foreground">
+                    <Building2 className="h-12 w-12 opacity-20 mb-2" />
+                    <p>No suppliers found matching your criteria.</p>
+                  </div>
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+
+        {/* Pagination */}
+        <div className="border-t bg-muted/20 p-4">
+          <DataTablePagination table={table} showSelectionInfo={false} />
+        </div>
       </div>
-      {/* Pagination */}
-      <DataTablePagination table={table} showSelectionInfo={false} />
     </div>
   );
 }

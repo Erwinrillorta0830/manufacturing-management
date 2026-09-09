@@ -4,14 +4,21 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PackageOpen, Plus, Search } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { FilterX, PackageOpen, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useDiscountTypes } from "../../hooks/useDiscountTypes";
 import { useSupplierProducts } from "../../hooks/useSupplierProduct";
@@ -64,98 +71,129 @@ export function ManageProductsModal({
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[800px] max-h-[80vh] gap-0 p-0 flex flex-col" showCloseButton={false}>
+        <DialogContent
+          className="max-w-[95vw] md:max-w-[60vw] sm:max-w-[90svw] w-full max-h-[90vh] overflow-y-auto"
+          showCloseButton={false}
+        >
           {/* Header */}
-          <DialogHeader className="px-6 py-4 border-b shrink-0">
-            <DialogTitle>Manage Products</DialogTitle>
-            <DialogDescription className="mt-0.5">
-              {supplierName}
-            </DialogDescription>
+          <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b">
+            <div>
+              <DialogTitle className="text-xl font-bold">
+                Manage Product Discounts - {supplierName}
+              </DialogTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Assign product discount rules for this supplier.
+              </p>
+            </div>
+            <Button
+              onClick={() => setAddModalOpen(true)}
+              disabled={isLoading}
+              className="gap-2 h-9"
+            >
+              <Plus className="h-4 w-4" /> Add Product
+            </Button>
+          </DialogHeader>
 
-            {/* Search bar */}
-            {!isLoading && products.length > 0 && (
-              <div className="relative mt-4">
+          <div className="space-y-4 mt-4">
+            {/* Search Filter */}
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="relative flex-1 max-w-sm">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search assigned products..."
-                  className="pl-9 h-9"
+                  className="pl-9 h-9 text-sm bg-muted/30 focus-visible:ring-primary"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-            )}
-          </DialogHeader>
-
-          {/* Column headers */}
-          {!isLoading && filteredProducts.length > 0 && (
-            <div className="grid grid-cols-[1fr_200px_40px] gap-4 px-6 py-2 border-b bg-muted/30 shrink-0">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Product Details
-              </span>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                Applied Discount
-              </span>
-              <span />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSearchQuery("")}
+                  className="h-9 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                >
+                  <FilterX className="h-3 w-3" /> Clear
+                </Button>
+              )}
             </div>
-          )}
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            {isLoading ? (
-              <div className="p-4 space-y-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-[1fr_200px_40px] gap-4 px-2 py-3 items-center"
-                  >
-                    <div className="space-y-1.5">
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="h-8 w-8" />
-                  </div>
-                ))}
-              </div>
-            ) : products.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-16 text-center">
-                <PackageOpen className="h-8 w-8 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-medium text-muted-foreground">
-                  No products assigned yet.
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Click &ldquo;Add Product&rdquo; to get started.
-                </p>
-              </div>
-            ) : filteredProducts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-16 text-center">
-                <Search className="h-8 w-8 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-medium text-muted-foreground">
-                  No products match your search.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y">
-                {filteredProducts.map((product) => (
-                  <ProductListItem
-                    key={product.id}
-                    product={product}
-                    discountTypes={discountTypes}
-                    onDiscountChange={updateDiscount}
-                    onRemove={removeProduct}
-                  />
-                ))}
-              </div>
-            )}
+            {/* Table Container */}
+            <div className="rounded-md border shadow-sm overflow-hidden bg-card">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent border-b">
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-foreground py-3 px-6">
+                      Product Details
+                    </TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-foreground py-3 px-6 w-[280px]">
+                      Applied Discount
+                    </TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-right text-foreground py-3 px-6 w-[80px]">
+                      Action
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="divide-y min-h-[160px]">
+                  {isLoading ? (
+                    Array.from({ length: 4 }).map((_, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="py-3 px-6">
+                          <div className="space-y-1.5">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-3 w-16" />
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-3 px-6 w-[280px]">
+                          <Skeleton className="h-9 w-full" />
+                        </TableCell>
+                        <TableCell className="py-3 px-6 w-[80px] text-right">
+                          <Skeleton className="h-8 w-8 ml-auto" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : products.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="h-48 text-center py-12 text-muted-foreground bg-muted/10">
+                        <div className="flex flex-col items-center justify-center">
+                          <PackageOpen className="h-10 w-10 opacity-20 mb-2" />
+                          <p className="text-sm font-medium">No products assigned yet.</p>
+                          <p className="text-xs mt-1">
+                            Click &ldquo;Add Product&rdquo; above to assign product discounts.
+                          </p>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredProducts.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="h-48 text-center py-12 text-muted-foreground bg-muted/10">
+                        <div className="flex flex-col items-center justify-center">
+                          <Search className="h-10 w-10 opacity-20 mb-2" />
+                          <p className="text-sm font-medium">
+                            No products match your search query.
+                          </p>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredProducts.map((product) => (
+                      <ProductListItem
+                        key={product.id}
+                        product={product}
+                        discountTypes={discountTypes}
+                        onDiscountChange={updateDiscount}
+                        onRemove={removeProduct}
+                      />
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t bg-muted/10">
-            <Button variant="outline" onClick={onClose}>
+          <DialogFooter className="mt-6 pt-4 border-t">
+            <Button variant="outline" onClick={onClose} className="h-9">
               Close
-            </Button>
-            <Button onClick={() => setAddModalOpen(true)} disabled={isLoading}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              Add Product
             </Button>
           </DialogFooter>
         </DialogContent>
