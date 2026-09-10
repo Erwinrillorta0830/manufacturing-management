@@ -4,7 +4,22 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finis
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "./inventory-helper";
-import { assertJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import {
+    assertJobOrderStatus,
+    isCancelledJobOrderStatus,
+    isTerminalJobOrderStatus,
+    JOB_ORDER_STATUS
+} from "@/modules/manufacturing-management/job-order-status";
+import { deleteJobOrder } from "./delete-helper";
+
+const QUANTITY_EPSILON = 0.000001;
+
+export class SalesOrderAllocationConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "SalesOrderAllocationConflictError";
+    }
+}
 
 export interface SalesOrderSchedulingPlan {
     branchId: number;
@@ -14,8 +29,83 @@ export interface SalesOrderSchedulingPlan {
     lines: Array<{
         detailId: number;
         parentOrderId: number;
-        remainingQuantity: number;
+        availableQuantity: number;
+        allocationQuantity: number;
     }>;
+}
+
+function relationId(value: unknown): number {
+    if (value && typeof value === "object") {
+        const relation = value as Record<string, unknown>;
+        return Number(relation.job_order_id ?? relation.sales_order_detail_id ?? relation.detail_id ?? relation.id ?? 0);
+    }
+    return Number(value || 0);
+}
+
+async function readActiveAllocationQuantity(detailId: number, excludedJobOrderId?: number): Promise<number> {
+    const allocationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_eq]=${detailId}&fields=sales_order_detail_id,job_order_id,allocated_quantity,status&limit=-1`;
+    let response = await fetch(allocationUrl, { headers, cache: "no-store" });
+    let allocations: any[];
+    if (response.ok) {
+        allocations = (await response.json()).data || [];
+    } else {
+        const responseBody = await response.text();
+        if (!/unknown field|invalid field|does not exist|doesn't exist|field .* not found/i.test(responseBody)) {
+            throw new Error(`Failed to refresh Sales Order allocations for detail ${detailId}: ${response.status}`);
+        }
+        response = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_eq]=${detailId}&fields=sales_order_detail_id,job_order_id,allocated_quantity&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!response.ok) throw new Error(`Failed to refresh Sales Order allocations for detail ${detailId}: ${response.status}`);
+        allocations = (await response.json()).data || [];
+    }
+
+    const activeAllocations = allocations.filter((allocation) => {
+        if (isCancelledJobOrderStatus(allocation.status)) return false;
+        const jobOrderId = relationId(allocation.job_order_id);
+        return !excludedJobOrderId || jobOrderId !== excludedJobOrderId;
+    });
+    const jobOrderIds = [...new Set(activeAllocations.map((allocation) => relationId(allocation.job_order_id)).filter(Boolean))];
+    const terminalJobOrderIds = new Set<number>();
+    if (jobOrderIds.length > 0) {
+        const jobOrderResponse = await fetch(
+            `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(",")}&fields=job_order_id,status&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!jobOrderResponse.ok) throw new Error(`Failed to refresh linked Job Orders for detail ${detailId}: ${jobOrderResponse.status}`);
+        for (const jobOrder of ((await jobOrderResponse.json()).data || []) as any[]) {
+            if (isCancelledJobOrderStatus(jobOrder.status) || isTerminalJobOrderStatus(jobOrder.status)) {
+                terminalJobOrderIds.add(Number(jobOrder.job_order_id));
+            }
+        }
+    }
+
+    return activeAllocations.reduce((sum, allocation) => {
+        if (terminalJobOrderIds.has(relationId(allocation.job_order_id))) return sum;
+        const quantity = Number(allocation.allocated_quantity ?? allocation.quantity ?? 0);
+        return Number.isFinite(quantity) && quantity > 0 ? sum + quantity : sum;
+    }, 0);
+}
+
+async function assertFreshAllocationCapacity(
+    detailId: number,
+    requestedQuantity: number,
+    excludedJobOrderId?: number
+) {
+    const detailResponse = await fetch(
+        `${DIRECTUS_URL}/items/sales_order_details/${detailId}?fields=detail_id,ordered_quantity,allocated_quantity,served_quantity`,
+        { headers, cache: "no-store" }
+    );
+    if (!detailResponse.ok) throw new Error(`Failed to refresh Sales Order detail ${detailId}: ${detailResponse.status}`);
+    const detail = (await detailResponse.json()).data;
+    const ordered = Number(detail?.ordered_quantity || 0);
+    const fulfilled = Math.max(Number(detail?.allocated_quantity || 0), Number(detail?.served_quantity || 0));
+    const planned = await readActiveAllocationQuantity(detailId, excludedJobOrderId);
+    const available = Math.max(0, ordered - fulfilled - planned);
+    if (!Number.isFinite(available) || requestedQuantity > available + QUANTITY_EPSILON) {
+        throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
+    }
 }
 
 export async function createJobOrder(
@@ -24,6 +114,8 @@ export async function createJobOrder(
     salesOrderDetailIds: number[] = [],
     schedulingPlan?: SalesOrderSchedulingPlan | null
 ): Promise<{ jo_id?: string | null }> {
+    let createdJobOrderNo: string | null = null;
+    const previousParentStatuses = new Map<number, string>();
     try {
         const todayStr = await getTodayDateString();
         let productsList = schedulingPlan
@@ -251,6 +343,7 @@ export async function createJobOrder(
         const createdJo = (await headerRes.json()).data;
         const joIdInt = createdJo.job_order_id;
         const joNoStr = createdJo.job_order_no;
+        createdJobOrderNo = joNoStr;
 
         // Insert initial status record into manufacturing_job_order_status_history
         await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
@@ -699,13 +792,15 @@ export async function createJobOrder(
                 const servedQuantity = Number(detail.served_quantity || 0);
                 const currentRemainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
                 const plannedLine = plannedLinesById.get(detailId);
-                const remainingQuantity = plannedLine?.remainingQuantity ?? currentRemainingQuantity;
-                if (remainingQuantity <= 0) {
-                    throw new Error(`Sales Order detail ${detailId} has no remaining quantity for the Job Order allocation.`);
+                const allocationQuantity = plannedLine?.allocationQuantity ?? currentRemainingQuantity;
+                if (allocationQuantity <= 0) {
+                    throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} has no remaining quantity for the Job Order allocation.`);
                 }
-                if (plannedLine && Math.abs(currentRemainingQuantity - plannedLine.remainingQuantity) > 0.000001) {
-                    throw new Error(`Sales Order detail ${detailId} changed while the Job Order was being created. Refresh the demand list and try again.`);
+                if (plannedLine && allocationQuantity > currentRemainingQuantity + 0.000001) {
+                    throw new SalesOrderAllocationConflictError(`Sales Order detail ${detailId} no longer has enough remaining quantity for this Job Order. Refresh the demand list and try again.`);
                 }
+
+                await assertFreshAllocationCapacity(detailId, allocationQuantity);
 
                 const allocationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                     method: "POST",
@@ -713,7 +808,7 @@ export async function createJobOrder(
                     body: JSON.stringify({
                         job_order_id: joIdInt,
                         sales_order_detail_id: detailId,
-                        allocated_quantity: remainingQuantity,
+                        allocated_quantity: allocationQuantity,
                         reservation_type: "SOFT",
                         created_at: new Date().toISOString(),
                         created_by: joData.created_by ? Number(joData.created_by) : null
@@ -722,11 +817,25 @@ export async function createJobOrder(
                 if (!allocationResponse.ok) {
                     throw new Error(`Failed to create Sales Order allocation for detail ${detailId}: ${allocationResponse.status}`);
                 }
+                await assertFreshAllocationCapacity(detailId, allocationQuantity, joIdInt);
 
                 const parentOrderId = Number(
                     typeof detail.order_id === "object" ? detail.order_id?.order_id || detail.order_id?.id : detail.order_id
                 );
-                if (Number.isInteger(parentOrderId) && parentOrderId > 0) affectedOrderIds.add(parentOrderId);
+                if (Number.isInteger(parentOrderId) && parentOrderId > 0) {
+                    affectedOrderIds.add(parentOrderId);
+                    if (!previousParentStatuses.has(parentOrderId)) {
+                        const parentResponse = await fetch(
+                            `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
+                            { headers, cache: "no-store" }
+                        );
+                        if (!parentResponse.ok) {
+                            throw new Error(`Failed to read Sales Order ${parentOrderId} before status transition: ${parentResponse.status}`);
+                        }
+                        const parent = (await parentResponse.json()).data;
+                        previousParentStatuses.set(parentOrderId, String(parent?.order_status || ""));
+                    }
+                }
             }
 
             // A regular JO puts its linked parent orders into production only
@@ -746,6 +855,24 @@ export async function createJobOrder(
         return { jo_id: joNoStr };
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
+        if (createdJobOrderNo) {
+            try {
+                for (const [parentOrderId, previousStatus] of previousParentStatuses) {
+                    if (!previousStatus) continue;
+                    await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ order_status: previousStatus })
+                    });
+                }
+                const rolledBack = await deleteJobOrder(createdJobOrderNo);
+                if (!rolledBack) {
+                    console.error(`[Manufacturing Directus API] Rollback could not remove Job Order ${createdJobOrderNo}; reconciliation is required.`);
+                }
+            } catch (rollbackError) {
+                console.error(`[Manufacturing Directus API] Job Order ${createdJobOrderNo} rollback failed:`, rollbackError);
+            }
+        }
         throw e;
     }
 }

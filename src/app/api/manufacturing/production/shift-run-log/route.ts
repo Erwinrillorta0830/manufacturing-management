@@ -6,7 +6,13 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { mmLotId, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
-import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import {
+    isCancelledJobOrderStatus,
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus
+} from "@/modules/manufacturing-management/job-order-status";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -98,6 +104,90 @@ function normalizeGenealogyRecord(row: any): any {
 
 async function requireDirectusWriteData(response: Response, label: string): Promise<any> {
     return requireDirectusData(response, label);
+}
+
+async function reconcileSalesOrderFulfillment(
+    jobOrderId: number,
+    quantityProduced: number,
+    targetQuantity: number,
+    isRetryRun: boolean
+): Promise<void> {
+    if (isRetryRun || quantityProduced <= 0 || targetQuantity <= 0) return;
+
+    let allocations: any[];
+    try {
+        allocations = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=sales_order_detail_id,allocated_quantity,status&limit=-1`,
+            `Sales-order allocation lookup for Job Order ${jobOrderId}`
+        );
+    } catch (error) {
+        if (!(error instanceof DirectusPersistenceError) || !/HTTP (400|403)/.test(error.message)) throw error;
+        allocations = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
+            `Sales-order allocation lookup for Job Order ${jobOrderId}`
+        );
+    }
+
+    const parentOrderIds = new Set<number>();
+    const proportionalFactor = quantityProduced / targetQuantity;
+    for (const allocation of allocations) {
+        if (isCancelledJobOrderStatus(allocation.status)) continue;
+
+        const detailId = Number(
+            typeof allocation.sales_order_detail_id === "object"
+                ? allocation.sales_order_detail_id?.detail_id ?? allocation.sales_order_detail_id?.id
+                : allocation.sales_order_detail_id
+        );
+        const allocatedQuantity = Number(allocation.allocated_quantity || 0);
+        if (!Number.isSafeInteger(detailId) || detailId <= 0 || !Number.isFinite(allocatedQuantity) || allocatedQuantity <= 0) continue;
+
+        const detail = await directusRequest<any>(
+            `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(detailId))}`,
+            `Sales-order detail lookup for allocation ${detailId}`
+        );
+        const orderedQuantity = Number(detail.ordered_quantity ?? detail.quantity ?? 0);
+        const currentAllocated = Number(detail.allocated_quantity || 0);
+        if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0 || !Number.isFinite(currentAllocated)) continue;
+
+        const fulfillmentIncrement = allocatedQuantity * proportionalFactor;
+        const nextAllocated = Math.min(orderedQuantity, currentAllocated + fulfillmentIncrement);
+        const unitPrice = Number(detail.unit_price || 0);
+        await directusRequest(
+            `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(detailId))}`,
+            `Update sales-order fulfillment for detail ${detailId}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+                    allocated_quantity: nextAllocated,
+                    allocated_amount: nextAllocated * (Number.isFinite(unitPrice) ? unitPrice : 0)
+                })
+            }
+        );
+
+        const parentOrderId = Number(
+            typeof detail.order_id === "object"
+                ? detail.order_id?.order_id ?? detail.order_id?.id
+                : detail.order_id
+        );
+        if (Number.isSafeInteger(parentOrderId) && parentOrderId > 0) parentOrderIds.add(parentOrderId);
+    }
+
+    for (const parentOrderId of parentOrderIds) {
+        const details = await directusRows<any>(
+            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&fields=detail_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
+            `Sales-order fulfillment verification for ${parentOrderId}`
+        );
+        await directusRequest(
+            `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}`,
+            `Update Sales Order ${parentOrderId} fulfillment status`,
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+                    order_status: areSalesOrderDetailsFullyFulfilled(details) ? "For Invoicing" : "In Production"
+                })
+            }
+        );
+    }
 }
 
 // GET handler: Fetches yield ledger logs, rejection reasons, or status history
@@ -873,6 +963,13 @@ export async function POST(request: Request) {
                 );
             }
         }
+
+        await reconcileSalesOrderFulfillment(
+            Number(joId),
+            goodYield,
+            targetQuantity,
+            isRetryRun
+        );
 
         return NextResponse.json({ 
             success: true, 

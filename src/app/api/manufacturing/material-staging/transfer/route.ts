@@ -4,7 +4,9 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     branchProductBatchKey,
     branchProductLotBatchKey,
-    normalizeBatchNo
+    normalizeBatchNo,
+    normalizeDirectusStagingMovement,
+    type MaterialStagingStockMovement
 } from "../_stock";
 import { z } from "zod";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
@@ -385,10 +387,32 @@ export async function POST(request: Request) {
             throw new TransferError("The material product does not match the selected product.", 400);
         }
 
-        const movements = await fetchMmInventoryMovements({
+        const springMovements = await fetchMmInventoryMovements({
             branch: branchId,
             product: data.product_id
         });
+        const stagingMovementFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { branch_id: { _eq: branchId } },
+                { product_id: { _eq: data.product_id } },
+                { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+            ]
+        }));
+        const directusStagingMovements = await directusRequest<DirectusRecord[]>(
+            `/items/inventory_movements?filter=${stagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
+            { headers, cache: "no-store" },
+            "Load material staging movements",
+            true
+        );
+        const springMovementIds = new Set(springMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0));
+        const movements: MaterialStagingStockMovement[] = [
+            ...springMovements,
+            ...directusStagingMovements
+                .map((movement) => normalizeDirectusStagingMovement(movement))
+                .filter((movement) => !movement.movement_id || !springMovementIds.has(movement.movement_id))
+        ];
 
         const requestedBatch = normalizeBatchNo(data.batch_no);
         const stockByBatch = new Map<string, number>();
@@ -676,9 +700,17 @@ export async function POST(request: Request) {
         }
 
         for (const [index, movementId] of transactionState.movementIds.entries()) {
-            const verifiedMovement = (await fetchMmInventoryMovements({ movementId }))
-                .find((movement) => Number(movement.movement_id) === movementId);
-            if (!verifiedMovement) {
+            // Verify the row through Directus, where the movement ID is the
+            // persisted primary key. The Spring movement view currently does
+            // not expose movementId reliably, so it cannot verify a just-created
+            // Directus row by ID.
+            const verifiedMovement = await directusRequest<DirectusRecord>(
+                `/items/inventory_movements/${movementId}?fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,batch_no,quantity`,
+                { headers, cache: "no-store" },
+                `Verify inventory movement ${movementId}`,
+                true
+            );
+            if (!verifiedMovement || typeof verifiedMovement !== "object") {
                 throw new TransferError("The inventory movement could not be verified after saving.", 503);
             }
             const expectedMovement = movementPayloads[index];
@@ -722,11 +754,34 @@ export async function POST(request: Request) {
             "Validate Job Order staging reservations",
             true
         );
-        const allJobOrderMovements = await fetchMmInventoryMovements({
+        const springJobOrderMovements = await fetchMmInventoryMovements({
             referenceId: data.job_order_id,
             branch: branchId,
             transactionTypeId: 4
         });
+        const jobOrderStagingMovementFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { branch_id: { _eq: branchId } },
+                { source_document_id: { _eq: data.job_order_id } },
+                { transaction_type_id: { _eq: 4 } },
+                { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+            ]
+        }));
+        const directusJobOrderMovements = await directusRequest<DirectusRecord[]>(
+            `/items/inventory_movements?filter=${jobOrderStagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
+            { headers, cache: "no-store" },
+            "Load Job Order staging movements",
+            true
+        );
+        const springJobOrderMovementIds = new Set(springJobOrderMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0));
+        const allJobOrderMovements: MaterialStagingStockMovement[] = [
+            ...springJobOrderMovements,
+            ...directusJobOrderMovements
+                .map((movement) => normalizeDirectusStagingMovement(movement))
+                .filter((movement) => !movement.movement_id || !springJobOrderMovementIds.has(movement.movement_id))
+        ];
         const stagedQuantityByProductBatch = new Map<string, number>();
         allJobOrderMovements.forEach((movement) => {
             if (!String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")) return;

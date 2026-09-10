@@ -4,7 +4,9 @@ import {
     branchProductBatchKey,
     branchProductKey,
     branchProductLotBatchKey,
-    normalizeBatchNo
+    normalizeBatchNo,
+    normalizeDirectusStagingMovement,
+    type MaterialStagingStockMovement
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
@@ -77,6 +79,16 @@ export async function GET(request: Request) {
         const branchFilter = searchParams.get("branchId");
         const statusFilter = searchParams.get("status");
         const search = searchParams.get("search")?.toLowerCase().trim();
+        const stagingMovementFilter = encodeURIComponent(JSON.stringify(
+            branchFilter && branchFilter !== "all" && Number.isInteger(Number(branchFilter))
+                ? {
+                    _and: [
+                        { branch_id: { _eq: Number(branchFilter) } },
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+                    ]
+                }
+                : { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+        ));
 
         // 1. Fetch data concurrently
         const [
@@ -87,6 +99,7 @@ export async function GET(request: Request) {
             workCentersRes,
             branchesRes,
             movementsRes,
+            stagingMovementsRes,
             receivingRes,
             yieldsRes
         ] = await Promise.all([
@@ -99,6 +112,7 @@ export async function GET(request: Request) {
             fetchMmInventoryMovements({
                 branch: branchFilter && branchFilter !== "all" ? Number(branchFilter) : null
             }),
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${stagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,expiry_date,received_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=*,job_order_id.product_id,job_order_id.job_order_no`, { headers, cache: "no-store" }).catch(() => null)
         ]);
@@ -114,7 +128,16 @@ export async function GET(request: Request) {
         const rawProducts = productsRes.ok ? (await productsRes.json()).data || [] : [];
         const rawWorkCenters = workCentersRes && workCentersRes.ok ? (await workCentersRes.json()).data || [] : [];
         const rawBranches = branchesRes && branchesRes.ok ? (await branchesRes.json()).data || [] : [];
-        const rawMovements = movementsRes;
+        const rawStagingMovements: MaterialStagingStockMovement[] = stagingMovementsRes && stagingMovementsRes.ok
+            ? ((await stagingMovementsRes.json()).data || []).map((movement: Record<string, unknown>) => normalizeDirectusStagingMovement(movement))
+            : [];
+        const springMovementIds = new Set(movementsRes
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0));
+        const rawMovements: MaterialStagingStockMovement[] = [
+            ...movementsRes,
+            ...rawStagingMovements.filter((movement) => !movement.movement_id || !springMovementIds.has(movement.movement_id))
+        ];
         const rawReceiving = receivingRes && receivingRes.ok ? (await receivingRes.json()).data || [] : [];
         const rawYields = yieldsRes && yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
 

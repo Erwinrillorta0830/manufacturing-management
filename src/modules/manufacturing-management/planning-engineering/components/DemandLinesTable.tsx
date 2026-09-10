@@ -119,7 +119,9 @@ export function DemandLinesTable({
                                     <TableHead className="font-bold text-xs">SO No.</TableHead>
                                     <TableHead className="font-bold text-xs">Product / Version</TableHead>
                                     <TableHead className="font-bold text-xs">Production Status</TableHead>
-                                    <TableHead className="font-bold text-xs text-right">Qty</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Ordered</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Planned</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Remaining</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
@@ -155,17 +157,27 @@ export function DemandLinesTable({
                                         </TableCell>
                                         <TableCell className="py-2 text-xs">
                                             <span className={isSchedulableLine(line) ? "font-semibold text-amber-700" : "font-semibold text-blue-700"}>
-                                                {line.is_scheduled ? "Already scheduled" : line.parent_order_status || "Unknown"}
+                                                {line.is_partially_scheduled
+                                                    ? "Partially scheduled"
+                                                    : line.is_scheduled
+                                                        ? "Fully scheduled"
+                                                        : line.parent_order_status || "Unknown"}
                                             </span>
                                         </TableCell>
                                         <TableCell className="py-2 text-right font-bold text-xs">
-                                            <span>{(line.remaining_quantity ?? Math.max(0, Number(line.ordered_quantity || 0) - Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0)))).toLocaleString()}</span>
+                                            {Number(line.ordered_quantity || 0).toLocaleString()}
                                             <span className="text-[10px] text-muted-foreground font-normal ml-1 lowercase">
                                                 {line.product_id?.uom || "pcs"}
                                             </span>
-                                            <div className="text-[9px] font-normal text-muted-foreground">
-                                                of {line.ordered_quantity.toLocaleString()} ordered
-                                            </div>
+                                        </TableCell>
+                                        <TableCell className="py-2 text-right font-semibold text-xs text-amber-700">
+                                            {Number(line.planned_quantity || 0).toLocaleString()}
+                                        </TableCell>
+                                        <TableCell className="py-2 text-right font-bold text-xs text-emerald-700">
+                                            {(line.remaining_quantity ?? Math.max(0, Number(line.ordered_quantity || 0) - Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0)) - Number(line.planned_quantity || 0))).toLocaleString()}
+                                            <span className="text-[10px] text-muted-foreground font-normal ml-1 lowercase">
+                                                {line.product_id?.uom || "pcs"}
+                                            </span>
                                         </TableCell>
                                     </TableRow>
                                 ))}
