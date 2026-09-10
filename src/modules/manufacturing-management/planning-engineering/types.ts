@@ -18,6 +18,13 @@ export interface ProductIdInfo {
     parent_id?: number | null;
 }
 
+export interface LinkedJobOrder {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    allocatedQuantity: number;
+}
+
 export interface SalesOrderDetail {
     detail_id: number;
     order_id: number;
@@ -38,6 +45,7 @@ export interface SalesOrderDetail {
     is_scheduled?: boolean;
     is_partially_scheduled?: boolean;
     is_read_only?: boolean;
+    linkedJobOrders?: LinkedJobOrder[];
     id?: number;
 }
 
