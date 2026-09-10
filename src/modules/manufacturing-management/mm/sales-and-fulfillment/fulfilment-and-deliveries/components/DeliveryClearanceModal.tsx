@@ -95,7 +95,7 @@ export default function DeliveryClearanceModal({
     onSubmit,
     onRefresh,
 }: DeliveryClearanceModalProps) {
-    const isReadOnly = Boolean(record?.is_cleared || record?.status === "Delivered");
+    const isReadOnly = Boolean(record?.is_cleared || record?.status === "Completed" || record?.status === "Delivered");
 
     const [hasActiveDraft, setHasActiveDraft] = useState<boolean>(() => {
         if (isReadOnly || !record?.consolidator_id) return false;
@@ -685,7 +685,7 @@ export default function DeliveryClearanceModal({
                                         </h2>
                                         {isReadOnly ? (
                                             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                                                Cleared & Locked
+                                                {record.status === "Completed" ? "Completed" : "Cleared & Locked"}
                                             </span>
                                         ) : hasActiveDraft ? (
                                             <div className="flex items-center gap-2">

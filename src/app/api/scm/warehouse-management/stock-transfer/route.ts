@@ -151,7 +151,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const result = await updateTransferStatus({ ...body, userId });
+    const result = await updateTransferStatus({ ...body, userId, token });
     return NextResponse.json(result, { status: 200 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";

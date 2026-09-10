@@ -134,7 +134,9 @@ export const StockAdjustmentManualFormSchema = z
   .object({
     doc_no: z.string().min(1, "Document number is required"),
     branch_id: z.number().min(1, "Branch is required"),
-    inventory_type: z.enum(["FINISHED_GOODS", "RAW_MATERIALS"]),
+    inventory_type: z.enum(["FINISHED_GOODS", "RAW_MATERIALS"], {
+      message: "Inventory type is required",
+    }),
     supplier_id: z.number().optional(),
     type: StockAdjustmentManualTypeSchema,
     remarks: z.string().optional(),

@@ -11,7 +11,8 @@ export function useInventoryMovements(
     globalSearchQuery: string = "",
     selectedBranchId: number | "ALL" = "ALL",
     selectedProductType: string | "ALL" = "ALL",
-    selectedUomId: number | "ALL" = "ALL"
+    selectedUomId: number | "ALL" = "ALL",
+    selectedStatusFilter: string | "ALL" = "ALL"
 ) {
     const [movements, setMovements] = useState<InventoryMovement[]>([]);
     const [loadingMovements, setLoadingMovements] = useState(true);
@@ -119,6 +120,36 @@ export function useInventoryMovements(
                     if (m.unitId !== undefined && Number(m.unitId) !== Number(selectedUomId)) return false;
                 }
 
+                // Status filter
+                if (selectedStatusFilter !== "ALL") {
+                    const isNeg = selectedStatusFilter === "NEGATIVE";
+                    const isExp = selectedStatusFilter === "EXPIRED";
+                    const isQua = selectedStatusFilter === "QUARANTINED";
+                    const isDam = selectedStatusFilter === "DAMAGED";
+                    const isGood = selectedStatusFilter === "GOOD";
+
+                    const cond = String(m.inventoryCondition || m.inventory_condition || m.sourceStatus || m.source_status || "").toUpperCase();
+                    const expDate = m.expirationDate || m.expiration_date || m.expiryDate || m.expiry_date;
+                    const isExpired = expDate ? new Date(expDate).getTime() < Date.now() : false;
+
+                    if (isNeg) {
+                        const qIn = Number(m.quantityIn || m.quantity_in || 0);
+                        const qOut = Number(m.quantityOut || m.quantity_out || 0);
+                        const net = qIn - qOut;
+                        const hasNegRemark = (m.remarks || "").toLowerCase().includes("deficit") || (m.remarks || "").toLowerCase().includes("negative");
+                        if (net >= 0 && !hasNegRemark) return false;
+                    } else if (isExp) {
+                        if (cond !== "EXPIRED" && !isExpired) return false;
+                    } else if (isQua) {
+                        if (cond !== "QUARANTINED" && cond !== "HOLD") return false;
+                    } else if (isDam) {
+                        if (cond !== "DAMAGED" && cond !== "BAD_STOCK") return false;
+                    } else if (isGood) {
+                        if (cond && cond !== "GOOD" && cond !== "NORMAL" && cond !== "ACTIVE") return false;
+                        if (isExpired) return false;
+                    }
+                }
+
                 // Direction filter
                 if (directionFilter !== "ALL") {
                     const dirUpper = String(m.movementDirection || "").toUpperCase();
@@ -195,7 +226,8 @@ export function useInventoryMovements(
         selectedBatchId,
         selectedBranchId,
         selectedProductType,
-        selectedUomId
+        selectedUomId,
+        selectedStatusFilter
     ]);
 
     // Aggregate summary stats

@@ -725,6 +725,7 @@ export async function fetchBatchOnhand(params: {
   mmLotId?: number;
   batchNo?: string;
   inventoryCondition?: string;
+  token?: string;
 }): Promise<MMBatchOnhand[]> {
   try {
     const searchParams = new URLSearchParams();
@@ -747,16 +748,56 @@ export async function fetchBatchOnhand(params: {
       return await res.json();
     }
 
-    // Server-side execution: Try Spring Boot directly
+    // Server-side execution: Resolve token if not explicitly provided
+    let authToken = params.token;
+    if (!authToken) {
+      try {
+        const { cookies } = await import("next/headers");
+        const cookieStore = await cookies();
+        authToken =
+          cookieStore.get("vos_access_token")?.value ||
+          cookieStore.get("springboot_token")?.value ||
+          cookieStore.get("token")?.value;
+      } catch {
+        // cookies() unavailable in non-request contexts
+      }
+    }
+
+    if (!authToken) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fs = require("fs");
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const path = require("path");
+        const tokenFile = path.resolve(process.cwd(), "node_modules/.cache/vos-tokens/latest_token.txt");
+        if (fs.existsSync(tokenFile)) {
+          authToken = fs.readFileSync(tokenFile, "utf8").trim();
+        }
+      } catch {
+        // file lookup fallback
+      }
+    }
+
+    const reqHeaders: Record<string, string> = {
+      Accept: "application/json",
+    };
+    if (authToken) {
+      reqHeaders["Authorization"] = `Bearer ${authToken}`;
+    }
+
+    // Server-side execution: Try Spring Boot directly with Auth
     const springUrl = `${SPRING_API_BASE}/api/mm-batch-onhand/filter?${qs}`;
     try {
-      const res = await fetch(springUrl, { cache: "no-store" });
+      const res = await fetch(springUrl, { headers: reqHeaders, cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         return Array.isArray(data) ? data : data?.data || [];
+      } else {
+        const errDetail = await res.text().catch(() => "");
+        console.warn(`[LotTracking] Spring Boot batch onhand error HTTP ${res.status}:`, errDetail);
       }
-    } catch {
-      // ignore and fallback
+    } catch (fetchErr) {
+      console.warn("[LotTracking] Spring Boot batch onhand network error:", fetchErr);
     }
 
     // Strictly no Directus fallback for v_mm_batch_onhand view (views are only queryable on Spring Boot)

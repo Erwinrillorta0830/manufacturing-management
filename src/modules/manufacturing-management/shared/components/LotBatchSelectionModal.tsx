@@ -239,6 +239,36 @@ export function LotBatchSelectionModal({
     return list;
   }, [lotGroups, getExistingBatchOnhand]);
 
+  // Strict UOM matching helper to ensure storage lot has the exact same unit as the item
+  const isLotMatchingUom = useCallback(
+    (l?: MMLot | null) => {
+      if (!l) return false;
+      const lUomId = l.unit_id ? Number(l.unit_id) : null;
+      const lUomName = l.unit_name ? String(l.unit_name).trim().toLowerCase() : null;
+      const targetId = productUomId ? Number(productUomId) : null;
+      const targetName = productUomName ? String(productUomName).trim().toLowerCase() : null;
+
+      // 1. If both have numeric IDs, compare numeric IDs
+      if (lUomId && targetId) {
+        return lUomId === targetId;
+      }
+      // 2. If both have names and target name is not generic placeholder 'units', compare names
+      if (lUomName && targetName && targetName !== 'units') {
+        return lUomName === targetName;
+      }
+      // 3. Exact string match if target is named 'units' and lot is also named 'units'
+      if (lUomName && targetName && lUomName === targetName) {
+        return true;
+      }
+      // 4. If target has specific unit (by ID or named non-units) and lot does not match, reject
+      if (targetId || (targetName && targetName !== 'units')) {
+        return false;
+      }
+      return true;
+    },
+    [productUomId, productUomName]
+  );
+
   // Check lot compatibility based on stored products and product types
   const checkLotCompatibility = useCallback(
     (lotId: number, currentClassification = currentItemClassification) => {
@@ -329,12 +359,11 @@ export function LotBatchSelectionModal({
     if (!lots || lots.length === 0) return false;
     return lots.some((l) => {
       if (l.status && l.status !== 'ACTIVE') return false;
-      const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
-      if (!isUomMatch) return false;
+      if (!isLotMatchingUom(l)) return false;
       const lComp = checkLotCompatibility(Number(l.lot_id));
       return lComp.isCompatible;
     });
-  }, [lots, productUomId, checkLotCompatibility]);
+  }, [lots, isLotMatchingUom, checkLotCompatibility]);
 
   // Initialize clean state and load lots whenever modal opens or product changes
   useEffect(() => {
@@ -660,7 +689,7 @@ export function LotBatchSelectionModal({
 
           const compatibleLot = (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            if (!isLotMatchingUom(l)) return false;
             const lotIsBad = isBadStockLot(l);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
@@ -670,23 +699,26 @@ export function LotBatchSelectionModal({
             return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            if (!isLotMatchingUom(l)) return false;
             const lotIsBad = isBadStockLot(l);
             if (preferBad && !lotIsBad) return false;
             if (!preferBad && lotIsBad) return false;
             return true;
           }) || (lotsData || []).find((l) => {
             if (l.status && l.status !== 'ACTIVE') return false;
-            if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+            if (!isLotMatchingUom(l)) return false;
             return true;
-          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id)) : undefined) || lotsData?.[0];
+          }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
 
           const hydrated = initialLotAllocations.map((g) => {
             let matchedLot = (lotsData || []).find((l) => Number(l.lot_id) === Number(g.lot_id));
+            if (matchedLot && !isLotMatchingUom(matchedLot)) {
+              matchedLot = undefined;
+            }
             if (!matchedLot && compatibleLot) {
               matchedLot = compatibleLot;
             }
-            const lId = Number(matchedLot?.lot_id || g.lot_id);
+            const lId = Number(matchedLot?.lot_id || (isLotMatchingUom({ lot_id: g.lot_id, unit_id: g.unit_id, unit_name: g.unit_name } as MMLot) ? g.lot_id : 0));
             const isLotBad = matchedLot ? isBadStockLot(matchedLot) : false;
 
             return {
@@ -781,7 +813,7 @@ export function LotBatchSelectionModal({
 
         const compatibleLot = (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          if (!isLotMatchingUom(l)) return false;
           const lotIsBad = isBadStockLot(l);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
@@ -791,16 +823,16 @@ export function LotBatchSelectionModal({
           return stored.stored_products.some((p) => p.classification === targetClass.code) || stored.primary_classification === targetClass.code;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          if (!isLotMatchingUom(l)) return false;
           const lotIsBad = isBadStockLot(l);
           if (preferBad && !lotIsBad) return false;
           if (!preferBad && lotIsBad) return false;
           return true;
         }) || (lotsData || []).find((l) => {
           if (l.status && l.status !== 'ACTIVE') return false;
-          if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+          if (!isLotMatchingUom(l)) return false;
           return true;
-        }) || lotsData?.[0];
+        }) || (initialValues?.lot_id ? (lotsData || []).find((l) => Number(l.lot_id) === Number(initialValues.lot_id) && isLotMatchingUom(l)) : undefined);
 
         if (compatibleLot) {
           const lId = Number(compatibleLot.lot_id);
@@ -852,7 +884,7 @@ export function LotBatchSelectionModal({
     return () => {
       isMounted = false;
     };
-  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations]);
+  }, [open, branchId, productId, requestedQuantity, productUomId, productType, productCategory, categoryName, productCode, productName, initialLotAllocations, initialValues, existingFormAllocations, isLotMatchingUom]);
 
   // Compute total allocated quantity across all lots & batches
   const totalAllocated = useMemo(() => {
@@ -875,7 +907,7 @@ export function LotBatchSelectionModal({
       lots.find((l) => {
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
-        if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        if (!isLotMatchingUom(l)) return false;
         const lotIsBad = isBadStockLot(l);
         if (currentIsBad && !lotIsBad) return false;
         if (!currentIsBad && lotIsBad) return false;
@@ -885,14 +917,13 @@ export function LotBatchSelectionModal({
       lots.find((l) => {
         if (usedLotIds.has(Number(l.lot_id))) return false;
         if (l.status && l.status !== 'ACTIVE') return false;
-        if (l.unit_id && productUomId && Number(l.unit_id) !== Number(productUomId)) return false;
+        if (!isLotMatchingUom(l)) return false;
         const lotIsBad = isBadStockLot(l);
         if (currentIsBad && !lotIsBad) return false;
         if (!currentIsBad && lotIsBad) return false;
         return true;
       }) ||
-      lots.find((l) => !usedLotIds.has(Number(l.lot_id))) ||
-      lots[0];
+      lots.find((l) => !usedLotIds.has(Number(l.lot_id)) && isLotMatchingUom(l));
 
     if (!nextLot) return;
 
@@ -1145,7 +1176,8 @@ export function LotBatchSelectionModal({
       }
 
       // 3. UOM Integrity Check
-      if (g.unit_id && productUomId && Number(g.unit_id) !== Number(productUomId)) {
+      const lotObj = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
+      if (!isLotMatchingUom(lotObj || ({ lot_id: g.lot_id, unit_id: g.unit_id, unit_name: g.unit_name } as MMLot))) {
         errors.push(
           `Lot #${gIdx + 1} (${g.lot_name}): UOM Mismatch! Lot requires UOM #${g.unit_id}${
             g.unit_name ? ` (${g.unit_name})` : ''
@@ -1154,7 +1186,6 @@ export function LotBatchSelectionModal({
       }
 
       // 3.5 Bad Stock vs Standard Storage Lot Check
-      const lotObj = lots.find((l) => Number(l.lot_id) === Number(g.lot_id));
       const lotIsBad = isBadStockLot(lotObj);
 
       (g.batches || []).forEach((b, bIdx) => {
@@ -1233,7 +1264,7 @@ export function LotBatchSelectionModal({
     });
 
     return errors;
-  }, [lotGroups, totalAllocated, productUomId, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots]);
+  }, [lotGroups, totalAllocated, productUomName, adjustmentType, checkLotCompatibility, lotStoredSummaryMap, currentItemClassification, lots, isLotMatchingUom]);
 
   const isValid = validationErrors.length === 0;
 
@@ -1383,7 +1414,7 @@ export function LotBatchSelectionModal({
                 const groupLot = lots.find((l) => Number(l.lot_id) === Number(group.lot_id));
                 const lotUomId = groupLot?.unit_id ?? group.unit_id;
                 const lotUomName = groupLot?.unit_name ?? group.unit_name;
-                const isUomMatch = !lotUomId || (productUomId && Number(lotUomId) === Number(productUomId));
+                const isUomMatch = isLotMatchingUom(groupLot || (group.lot_id ? { lot_id: group.lot_id, unit_id: group.unit_id, unit_name: group.unit_name } as MMLot : null));
                 const isUomNull = lotUomId === null || lotUomId === undefined;
 
                 // Product type compatibility analysis
@@ -1491,8 +1522,7 @@ export function LotBatchSelectionModal({
                               const optionsLots = lots.filter((l) => {
                                 if (l.status && l.status !== 'ACTIVE') return false;
                                 if (otherSelectedLotIds.has(Number(l.lot_id))) return false;
-                                const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
-                                if (!isUomMatch) return false;
+                                if (!isLotMatchingUom(l)) return false;
                                 const lotIsBad = isBadStockLot(l);
                                 if (groupIsBad && !lotIsBad) return false;
                                 if (!groupIsBad && lotIsBad) return false;
@@ -1503,7 +1533,6 @@ export function LotBatchSelectionModal({
                                 <>
                                   <SearchableSelect
                                     options={optionsLots.map((l) => {
-                                      const isUomMatch = !l.unit_id || (productUomId && Number(l.unit_id) === Number(productUomId));
                                       const lComp = checkLotCompatibility(Number(l.lot_id));
                                       const lStored = lotStoredSummaryMap.get(Number(l.lot_id));
                                       const lotIsBad = isBadStockLot(l);
@@ -1518,10 +1547,7 @@ export function LotBatchSelectionModal({
                                       let tag = '';
                                       let tagClassName = '';
 
-                                      if (!isUomMatch) {
-                                        tag = '[UOM Mismatch]';
-                                        tagClassName = 'text-rose-600 dark:text-rose-400 font-semibold';
-                                      } else if (!lComp.isCompatible) {
+                                      if (!lComp.isCompatible) {
                                         tag = lStored?.is_draft_allocation
                                           ? `[Type Mismatch: Form Draft (${lComp.storedLabel})]`
                                           : `[Type Mismatch: Warehouse (${lComp.storedLabel})]`;

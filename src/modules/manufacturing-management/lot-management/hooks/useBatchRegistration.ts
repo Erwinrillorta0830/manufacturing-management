@@ -28,7 +28,8 @@ export function useBatchRegistration(
     globalSearchQuery: string = "",
     selectedBranchId: number | "ALL" = "ALL",
     selectedProductType: string | "ALL" = "ALL",
-    selectedUomId: number | "ALL" = "ALL"
+    selectedUomId: number | "ALL" = "ALL",
+    selectedStatusFilter: string | "ALL" = "ALL"
 ) {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [products, setProducts] = useState<ProductItem[]>([]);
@@ -388,11 +389,30 @@ export function useBatchRegistration(
             const matchesBatch = Array.isArray(selectedBatchId)
                 ? (selectedBatchId.length === 0 || selectedBatchId.includes(Number(b.batchId)))
                 : (selectedBatchId === "ALL" || Number(b.batchId) === Number(selectedBatchId));
+            
+            const activeStatus = selectedStatusFilter !== "ALL" ? selectedStatusFilter : statusFilter;
+            const isNegFilter = activeStatus === "NEGATIVE";
+            const isExpFilter = activeStatus === "EXPIRED";
+            const isQuaFilter = activeStatus === "QUARANTINED";
+            const isDamFilter = activeStatus === "DAMAGED";
+            const isGoodFilter = activeStatus === "GOOD";
+
+            const q = Number(b.quantity || 0);
+            const qa = String(b.qaStatus || "").toUpperCase();
+
             const matchesStatus =
-                statusFilter === "ALL" ||
-                (statusFilter === "NEGATIVE"
-                    ? Number(b.quantity || 0) < 0
-                    : (b.status === statusFilter || b.qaStatus === statusFilter));
+                activeStatus === "ALL" ||
+                (isNegFilter
+                    ? q < 0
+                    : isExpFilter
+                    ? qa === "EXPIRED" || (b.expirationDate && new Date(b.expirationDate).getTime() < Date.now())
+                    : isQuaFilter
+                    ? qa === "QUARANTINED"
+                    : isDamFilter
+                    ? qa === "DAMAGED"
+                    : isGoodFilter
+                    ? (qa === "GOOD" || !qa) && q > 0
+                    : (b.status === activeStatus || b.qaStatus === activeStatus));
             
             const localQuery = batchSearchQuery.toLowerCase().trim();
             const globalQuery = globalSearchQuery.toLowerCase().trim();
@@ -429,6 +449,7 @@ export function useBatchRegistration(
         selectedLotFilter,
         selectedLotId,
         selectedBatchId,
+        selectedStatusFilter,
         statusFilter,
         batchSearchQuery,
         globalSearchQuery,

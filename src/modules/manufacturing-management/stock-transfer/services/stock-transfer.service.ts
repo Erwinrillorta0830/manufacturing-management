@@ -39,7 +39,11 @@ async function ensureSourceInventoryLot(params: {
   const { branchId, productId, unitId, sourceReference, userId } = params;
   const cleanBatchNo = params.batchNo && String(params.batchNo).trim() !== "" 
     ? String(params.batchNo).trim() 
-    : `BATCH-${productId}-${Date.now()}`;
+    : null;
+
+  if (!cleanBatchNo) {
+    throw new Error(`Cannot ensure source inventory lot: batch number is required for product ID ${productId}.`);
+  }
 
   // 1. Verify passed lotId exists in mm_lots for source branch
   let validLotId: number | null = null;
@@ -477,8 +481,9 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
 
     const tDetails = detailsMap[t.id] || [];
     const isDispatchedStage = ['DISPATCHED', 'FOR_LOADING', 'IN_TRANSIT', 'RECEIVED', 'Dispatched', 'For Loading', 'In Transit', 'Received'].includes(t.status);
+    const isPhantomStr = (str?: string | null) => !str || /^BATCH-\d+-\d{10,}$/.test(str.trim()) || str.trim() === 'N/A';
     let lotAllocations: LotAllocationGroup[] | undefined = undefined;
-    let batchNo = t.batch_no;
+    let batchNo = isPhantomStr(t.batch_no) ? null : t.batch_no;
     let mfgDate = t.manufacturing_date;
     let expDate = t.expiry_date;
     let qaStatus = t.qa_status;
@@ -508,6 +513,13 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
         const bNo = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { batch_no?: string }).batch_no)
           ? (d.inventory_lot_id as { batch_no?: string }).batch_no!
           : d.batch_no;
+
+        // Disregard phantom batches created by fallback (e.g. BATCH-25038-1788936941559 or N/A)
+        const isPhantom = !bNo || /^BATCH-\d+-\d{10,}$/.test(bNo.trim()) || bNo.trim() === 'N/A';
+        if (isPhantom) {
+          continue;
+        }
+
         const mDate = (typeof d.inventory_lot_id === 'object' && d.inventory_lot_id !== null && (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date)
           ? (d.inventory_lot_id as { manufacturing_date?: string }).manufacturing_date
           : d.manufacturing_date;
@@ -551,13 +563,14 @@ export async function getEnrichedTransfers(status?: string): Promise<StockTransf
         expDate = firstBatch.expiry_date ? String(firstBatch.expiry_date).substring(0, 10) : expDate;
         qaStatus = firstBatch.qa_status;
         condition = firstBatch.qa_status;
-      } else if (isDispatchedStage && Number(t.dispatched_quantity || t.picked_quantity || 0) <= 0) {
+      } else {
         batchNo = null;
       }
     }
 
     const srcLotId = Number(t.source_lot_id || 0);
-    const srcLotName = lotsMap[srcLotId]?.lot_name || (srcLotId ? `Lot #${srcLotId}` : null);
+    const rawLotName = lotsMap[srcLotId]?.lot_name || (srcLotId ? `Lot #${srcLotId}` : null);
+    const srcLotName = (!batchNo && isPhantomStr(t.batch_no)) ? null : rawLotName;
 
     return {
       ...t,
@@ -857,6 +870,9 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
                 productId: Number(prodId),
                 branchId: Number(srcBranch),
                 requestedQuantity: Number(allocatedQty),
+                options: {
+                  token: validated.token,
+                },
               });
               if (fefoPlan?.allocations?.length > 0) {
                 allocations = fefoPlan.allocations;
@@ -901,7 +917,7 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
               });
             }
             await repo.createStockTransferDetails(validatedDetails);
-          } else {
+          } else if (t.source_lot_id || t.source_inventory_lot_id || (t.batch_no && t.batch_no.trim() !== "" && t.batch_no !== "N/A")) {
             const ensured = await ensureSourceInventoryLot({
               lotId: t.source_lot_id ? Number(t.source_lot_id) : null,
               inventoryLotId: t.source_inventory_lot_id ? Number(t.source_inventory_lot_id) : null,
@@ -932,6 +948,8 @@ export async function updateTransferStatus(payload: UpdateTransferPayload): Prom
               received_quantity: 0,
               variance_quantity: 0,
             }]);
+          } else {
+            console.log(`[StockTransfer] No FEFO allocation found for transfer ${t.order_no} (product ${prodId}). Leaving unallocated for manual selection.`);
           }
         }
       }

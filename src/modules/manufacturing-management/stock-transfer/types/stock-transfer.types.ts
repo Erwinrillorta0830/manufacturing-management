@@ -307,6 +307,7 @@ export interface UpdateTransferPayload {
   /** Directus file IDs attached to the receiving transaction. */
   attachments?: string[];
   destination_lot_id?: number | null;
+  token?: string;
 }
 
 /** Directus payload for batch-inserting a stock_transfer row. */

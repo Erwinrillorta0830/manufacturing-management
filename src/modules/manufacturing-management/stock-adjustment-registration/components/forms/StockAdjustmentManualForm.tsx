@@ -496,7 +496,7 @@ export function StockAdjustmentManualForm({
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [branchInputValue, setBranchInputValue] = useState("");
   const [supplierInputValue, setSupplierInputValue] = useState("");
-  const [inventoryTypeInputValue, setInventoryTypeInputValue] = useState("Finished Goods");
+  const [inventoryTypeInputValue, setInventoryTypeInputValue] = useState("");
   const [branchSearch, setBranchSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [inventoryTypeSearch, setInventoryTypeSearch] = useState("");
@@ -576,7 +576,7 @@ export function StockAdjustmentManualForm({
     defaultValues: {
       doc_no: "", // Will be fetched via effect
       branch_id: 0,
-      inventory_type: "FINISHED_GOODS",
+      inventory_type: "" as unknown as "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -595,7 +595,7 @@ export function StockAdjustmentManualForm({
     form.reset({
       doc_no: "",
       branch_id: 0,
-      inventory_type: "FINISHED_GOODS",
+      inventory_type: "" as unknown as "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -605,7 +605,7 @@ export function StockAdjustmentManualForm({
     });
     setBranchInputValue("");
     setSupplierInputValue("");
-    setInventoryTypeInputValue("Finished Goods");
+    setInventoryTypeInputValue("");
 
     // Fetch and set the new doc_no for type "IN"
     const nextDocNo = await fetchNextDocNo("IN");
@@ -615,7 +615,7 @@ export function StockAdjustmentManualForm({
     initialValuesRef.current = JSON.stringify({
       doc_no: nextDocNo,
       branch_id: 0,
-      inventory_type: "FINISHED_GOODS",
+      inventory_type: "" as unknown as "FINISHED_GOODS",
       supplier_id: 0,
       type: "IN",
       remarks: "",
@@ -1135,13 +1135,15 @@ export function StockAdjustmentManualForm({
   // Runs whenever branches/suppliers load OR when the form values change.
   const watchedBranchId = useWatch({ control: form.control, name: "branch_id" });
   const watchedSupplierId = useWatch({ control: form.control, name: "supplier_id" });
-  const watchedInventoryType = useWatch({ control: form.control, name: "inventory_type" }) || "FINISHED_GOODS";
+  const watchedInventoryType = useWatch({ control: form.control, name: "inventory_type" });
 
   useEffect(() => {
     if (watchedInventoryType === "FINISHED_GOODS") {
       setInventoryTypeInputValue("Finished Goods");
     } else if (watchedInventoryType === "RAW_MATERIALS") {
       setInventoryTypeInputValue("Raw Materials / Packaging");
+    } else {
+      setInventoryTypeInputValue("");
     }
   }, [watchedInventoryType]);
 
@@ -1178,7 +1180,7 @@ export function StockAdjustmentManualForm({
       const defaultVal = {
         doc_no: form.getValues("doc_no") || "",
         branch_id: 0,
-        inventory_type: "FINISHED_GOODS",
+        inventory_type: "" as unknown as "FINISHED_GOODS",
         supplier_id: 0,
         type: "IN",
         remarks: "",
@@ -1316,6 +1318,9 @@ export function StockAdjustmentManualForm({
     if (errors.branch_id?.message) {
       messages.push(String(errors.branch_id.message));
     }
+    if (errors.inventory_type?.message) {
+      messages.push(String(errors.inventory_type.message));
+    }
     if (errors.supplier_id?.message) {
       messages.push(String(errors.supplier_id.message));
     }
@@ -1349,6 +1354,7 @@ export function StockAdjustmentManualForm({
       const initial = JSON.parse(initialStr);
 
       if (Number(current.branch_id) !== Number(initial.branch_id)) return true;
+      if (current.inventory_type !== initial.inventory_type) return true;
       if (Number(current.supplier_id) !== Number(initial.supplier_id)) return true;
       if (current.type !== initial.type) return true;
       if ((current.remarks || "") !== (initial.remarks || "")) return true;
@@ -1809,17 +1815,19 @@ export function StockAdjustmentManualForm({
                   Inventory Type <span className="text-red-500">*</span>
                 </Label>
                 <Combobox
-                  value={watchedInventoryType}
+                  value={watchedInventoryType || ""}
                   onValueChange={(v: string | null) => {
-                    if (!v) return;
-                    const nextType = v as "FINISHED_GOODS" | "RAW_MATERIALS";
-                    form.setValue("inventory_type", nextType, { shouldValidate: true });
-                    if (nextType === "FINISHED_GOODS") {
-                      form.setValue("supplier_id", 0, { shouldValidate: true });
-                      setSupplierInputValue("");
+                    const nextType = (v || "") as "FINISHED_GOODS" | "RAW_MATERIALS";
+                    if (nextType !== watchedInventoryType) {
+                      form.setValue("inventory_type", nextType, { shouldValidate: true });
+                      form.setValue("items", []);
+                      if (nextType === "FINISHED_GOODS" || !nextType) {
+                        form.setValue("supplier_id", 0, { shouldValidate: true });
+                        setSupplierInputValue("");
+                      }
+                      const found = INVENTORY_TYPES.find((t) => t.id === nextType);
+                      setInventoryTypeInputValue(found ? found.label : "");
                     }
-                    const found = INVENTORY_TYPES.find((t) => t.id === nextType);
-                    if (found) setInventoryTypeInputValue(found.label);
                   }}
                   inputValue={inventoryTypeInputValue}
                   onInputValueChange={(v: string) => {
@@ -1840,7 +1848,7 @@ export function StockAdjustmentManualForm({
                     disabled={isReadOnly || !!id || fields.length > 0}
                     className={form.formState.errors.inventory_type ? "border-red-500 bg-red-50 dark:bg-red-900/10" : ""}
                     showTrigger={!id && fields.length === 0}
-                    showClear={false}
+                    showClear={!id && !isReadOnly && fields.length === 0}
                   />
                   <ComboboxContent>
                     <ComboboxList>
@@ -1869,14 +1877,14 @@ export function StockAdjustmentManualForm({
                 </Label>
                 <Combobox
                   value={
-                    watchedInventoryType === "FINISHED_GOODS"
+                    !watchedInventoryType || watchedInventoryType === "FINISHED_GOODS"
                       ? ""
                       : watchedSupplierIdForSelect
                       ? String(watchedSupplierIdForSelect)
                       : ""
                   }
                   onValueChange={(v: string | null) => {
-                    if (watchedInventoryType === "FINISHED_GOODS") return;
+                    if (watchedInventoryType !== "RAW_MATERIALS") return;
                     if (!v) {
                       setSupplierInputValue("");
                       form.setValue("supplier_id", 0, { shouldValidate: true });
@@ -1887,12 +1895,12 @@ export function StockAdjustmentManualForm({
                     form.setValue("supplier_id", Number(v), { shouldValidate: true });
                   }}
                   inputValue={
-                    watchedInventoryType === "FINISHED_GOODS"
+                    !watchedInventoryType || watchedInventoryType === "FINISHED_GOODS"
                       ? ""
                       : supplierInputValue
                   }
                   onInputValueChange={(v: string) => {
-                    if (watchedInventoryType === "FINISHED_GOODS") return;
+                    if (watchedInventoryType !== "RAW_MATERIALS") return;
                     const matched = suppliers.find((s) => String(s.id) === v);
                     if (matched) {
                       setSupplierInputValue(`${matched.supplier_name}${matched.supplier_shortcut ? ` (${matched.supplier_shortcut})` : ""}`);
@@ -1905,17 +1913,19 @@ export function StockAdjustmentManualForm({
                 >
                   <ComboboxInput
                     placeholder={
-                      watchedInventoryType === "FINISHED_GOODS"
+                      !watchedInventoryType
+                        ? "Select Inventory Type first"
+                        : watchedInventoryType === "FINISHED_GOODS"
                         ? "Not Applicable (Internal Production)"
                         : isSuppliersLoading
                         ? "Loading suppliers..."
                         : "Select Supplier"
                     }
-                    disabled={watchedInventoryType === "FINISHED_GOODS" || isReadOnly || !!id || fields.length > 0}
+                    disabled={!watchedInventoryType || watchedInventoryType === "FINISHED_GOODS" || isReadOnly || !!id || fields.length > 0}
                     className={
                       watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id
                         ? "border-red-500 bg-red-50 dark:bg-red-900/10"
-                        : watchedInventoryType === "FINISHED_GOODS"
+                        : watchedInventoryType === "FINISHED_GOODS" || !watchedInventoryType
                         ? "bg-muted/40 cursor-not-allowed opacity-75"
                         : ""
                     }
@@ -2046,6 +2056,7 @@ export function StockAdjustmentManualForm({
                   onClick={() => setIsModalOpen(true)}
                   disabled={
                     !watchedBranchIdForSelect ||
+                    !watchedInventoryType ||
                     (watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect)
                   }
                   className="font-bold h-9 px-4 rounded-full shadow-sm flex items-center gap-2 text-sm transition-all border-primary/20 text-primary/90 bg-primary/10 hover:bg-primary/20 dark:bg-primary/20 dark:border-primary/40 shrink-0"
@@ -2079,6 +2090,8 @@ export function StockAdjustmentManualForm({
                 <h3 className="text-lg font-bold text-foreground mb-1">
                   {!watchedBranchIdForSelect
                     ? "Branch required"
+                    : !watchedInventoryType
+                    ? "Inventory Type required"
                     : watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect
                     ? "Supplier required"
                     : "Empty Cart"}
@@ -2086,6 +2099,8 @@ export function StockAdjustmentManualForm({
                 <p className="text-muted-foreground font-medium max-w-xs mx-auto text-sm">
                   {!watchedBranchIdForSelect
                     ? "Select a branch first before adding products."
+                    : !watchedInventoryType
+                    ? "Select an inventory type (Finished Goods or Raw Materials) first."
                     : watchedInventoryType === "RAW_MATERIALS" && !watchedSupplierIdForSelect
                     ? "Select a supplier to browse and add raw materials / packaging."
                     : 'Click "ADD MORE PRODUCTS" to browse and add items.'}

@@ -54,7 +54,6 @@ interface StockAdjustmentPayload {
   manufacturing_date?: string | null;
   expiry_date?: string | null;
   remarks: string;
-  stock_adjustment_id?: number | null;
 }
 
 interface StockAdjustmentHeaderPayload {
@@ -296,7 +295,11 @@ export const stockConversionRepo = {
         date_updated: payload.date_updated || nowPHT,
       }),
     });
-    if (!res.ok) throw new Error("Failed to create stock adjustment");
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("[StockConversionRepo] createStockAdjustment failed:", res.status, errText);
+      throw new Error(`Failed to create stock adjustment: ${errText || res.statusText}`);
+    }
     return res.json() as Promise<{ data?: { id: number } }>;
   },
 
@@ -316,7 +319,11 @@ export const stockConversionRepo = {
         posted_at: payload.posted_at || payload.postedAt || nowPHT,
       }),
     });
-    if (!res.ok) throw new Error("Failed to create adjustment header");
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("[StockConversionRepo] createStockAdjustmentHeader failed:", res.status, errText);
+      throw new Error(`Failed to create adjustment header: ${errText || res.statusText}`);
+    }
     return res.json() as Promise<{ data?: { id: number } }>;
   },
   async insertStockAdjustmentRfids(entries: { rfid_tag: string, stock_adjustment_id: number, created_by: number }[]) {

@@ -128,11 +128,15 @@ export function useStockTransferDispatchManual() {
         const rawAvailable = scannedInventory[pid as number] ?? (st as OrderGroupItem).qtyAvailable ?? 0;
         const pickedLot = itemLots[st.id];
 
+        const isPhantomStr = (str?: string | null) => !str || /^BATCH-\d+-\d{10,}$/.test(str.trim()) || str.trim() === 'N/A';
+        const effectiveBatchNo = pickedLot?.batch_no ?? (isPhantomStr(st.batch_no) ? null : st.batch_no);
+        const effectiveLotId = pickedLot?.lot_id ?? (isPhantomStr(st.batch_no) ? null : st.source_lot_id);
+
         return {
           ...st,
-          batch_no: pickedLot?.batch_no ?? st.batch_no,
-          source_lot_id: pickedLot?.lot_id ?? st.source_lot_id,
-          source_inventory_lot_id: pickedLot?.inventory_lot_id ?? st.source_inventory_lot_id,
+          batch_no: effectiveBatchNo,
+          source_lot_id: effectiveLotId,
+          source_inventory_lot_id: pickedLot?.inventory_lot_id ?? (isPhantomStr(st.batch_no) ? null : st.source_inventory_lot_id),
           manufacturing_date: pickedLot?.manufacturing_date ?? st.manufacturing_date,
           expiry_date: pickedLot?.expiry_date ?? st.expiry_date,
           lot_allocations: pickedLot?.lot_allocations ?? st.lot_allocations,
