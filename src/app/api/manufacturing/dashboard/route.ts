@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 interface InventoryMovement {
     movement_id: number;
@@ -316,7 +317,7 @@ export async function GET(request: Request) {
 
         // B. Aggregate Production Yield Wastage from Completed Job Orders
         jobOrders.forEach((jo: any) => {
-            if (jo.status !== "Completed") return;
+            if (!isJobOrderStatus(jo.status, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.FINISHED)) return;
             const dateStr = jo.end_date || jo.created_on;
             if (!dateStr || !isWithinRange(dateStr)) return;
 
@@ -589,7 +590,14 @@ export async function GET(request: Request) {
         }).filter(Boolean);
 
         // Calculate ongoing production runs progress breakdown
-        const ongoingRuns = jobOrders.filter((jo: any) => ["In Progress", "Released", "On Hold"].includes(jo.status));
+        const ongoingRuns = jobOrders.filter((jo: any) => isJobOrderStatus(
+            jo.status,
+            JOB_ORDER_STATUS.IN_PROGRESS,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.ON_HOLD,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.PROCEED
+        ));
         const ongoingBreakdown = ongoingRuns.map((jo: any) => {
             const mainProduct = (products.find((p: Product) => Number(p.product_id) === Number(jo.product_id)) || {}) as any;
             const productName = mainProduct.product_name || "Unknown Product";
@@ -605,7 +613,7 @@ export async function GET(request: Request) {
 
             return {
                 jo_id: jo.job_order_no,
-                status: jo.status,
+                status: normalizeJobOrderStatus(jo.status) || jo.status,
                 product_name: productName,
                 quantity: targetQty,
                 percentage: Number(percentage.toFixed(1)),

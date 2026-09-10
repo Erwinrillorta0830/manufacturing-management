@@ -15,6 +15,7 @@ import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 import { loadMmLots, MmLotError } from "../../services/mm-lots.service";
 import { paginate } from "../../_pagination";
+import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -35,14 +36,12 @@ async function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 
 }
 
 function mapQAQueueStatus(value: unknown): string {
-    const status = String(value || "").trim().toLowerCase();
-    if (status === "released" || status === "proceed") return "Proceed";
-    if (status === "in progress" || status === "ongoing") return "Ongoing";
-    if (status === "completed" || status === "finished" || status === "closed") return "Finished";
-    if (status === "on hold" || status === "qa hold") return "On Hold";
-    if (status === "draft") return "Draft";
-    if (status === "planned") return "Planned";
-    if (status === "planning") return "Planning";
+    const status = normalizeJobOrderStatus(value);
+    if (status === JOB_ORDER_STATUS.RELEASED || status === JOB_ORDER_STATUS.PROCEED) return JOB_ORDER_STATUS.PROCEED;
+    if (status === JOB_ORDER_STATUS.IN_PROGRESS || status === JOB_ORDER_STATUS.ONGOING) return JOB_ORDER_STATUS.ONGOING;
+    if (status === JOB_ORDER_STATUS.COMPLETED || status === JOB_ORDER_STATUS.FINISHED || status === JOB_ORDER_STATUS.CLOSED) return JOB_ORDER_STATUS.FINISHED;
+    if (status === JOB_ORDER_STATUS.ON_HOLD || status === JOB_ORDER_STATUS.QA_HOLD) return JOB_ORDER_STATUS.ON_HOLD;
+    if (status) return status;
     return String(value || "Unknown");
 }
 
@@ -562,7 +561,13 @@ export async function handleGET(request: Request) {
                         _and: [
                             { product_id: { _in: pIds } },
                             { job_order_id: { _and: [
-                                { status: { _in: ["Proceed", "Ongoing", "On Hold", "Released", "In Progress"] } },
+                                { status: { _in: [
+                                    JOB_ORDER_STATUS.PROCEED,
+                                    JOB_ORDER_STATUS.ONGOING,
+                                    JOB_ORDER_STATUS.ON_HOLD,
+                                    JOB_ORDER_STATUS.RELEASED,
+                                    JOB_ORDER_STATUS.IN_PROGRESS
+                                ] } },
                                 { job_order_id: { _ne: Number(joId) } }
                             ] } }
                         ]
@@ -611,7 +616,15 @@ export async function handleGET(request: Request) {
                         _and: [
                             { product_id: { _in: pIds } },
                             { branch_id: { _eq: branchId } },
-                            { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
+                            { jo_material_id: { job_order_id: { status: { _in: [
+                                JOB_ORDER_STATUS.PLANNED,
+                                JOB_ORDER_STATUS.DRAFT,
+                                JOB_ORDER_STATUS.RELEASED,
+                                JOB_ORDER_STATUS.IN_PROGRESS,
+                                JOB_ORDER_STATUS.ONGOING,
+                                JOB_ORDER_STATUS.PROCEED,
+                                JOB_ORDER_STATUS.ON_HOLD
+                            ] } } } }
                         ]
                     }));
                     const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,reserved_quantity&limit=-1`, { headers });

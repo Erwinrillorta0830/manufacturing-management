@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder, PRODUCTION_WORKFLOW_STATUS_FILTERS } from "../types";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -22,7 +23,7 @@ interface ReleasedJobQueueProps {
 }
 
 const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
+    switch (normalizeJobOrderStatus(status)) {
         case "Draft":
             return "secondary";
         case "Proceed":
@@ -72,6 +73,12 @@ export function ReleasedJobQueue({
         const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
 
         const producedQty = jo.producedQty || 0;
+        const normalizedStatus = normalizeJobOrderStatus(jo.status);
+        const statusLabel = normalizedStatus === JOB_ORDER_STATUS.PROCEED
+            ? JOB_ORDER_STATUS.RELEASED
+            : normalizedStatus === JOB_ORDER_STATUS.ONGOING
+            ? JOB_ORDER_STATUS.IN_PROGRESS
+            : displayJobOrderStatus(jo.status);
 
         return (
             <div
@@ -97,14 +104,14 @@ export function ReleasedJobQueue({
                     <Badge
                         variant={getStatusBadgeVariant(jo.status)}
                         className={
-                            jo.status === "Ongoing"
+                            isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS)
                                 ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                                : jo.status === "Finished"
+                                : isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.CLOSED)
                                 ? "bg-blue-500 hover:bg-blue-600 text-white"
                                 : ""
                         }
                     >
-                        {jo.status === "Proceed" ? "Released" : jo.status === "Ongoing" ? "In Progress" : jo.status}
+                        {statusLabel}
                     </Badge>
                 </div>
                 <h4 className="font-medium text-sm line-clamp-1 mb-1">{jo.product_name}</h4>

@@ -24,6 +24,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { JobOrder, WorkCenter, StationScanResponse } from "../types";
 import { scanStationStart, fetchWorkCenters } from "../services/production-api";
 import { toast } from "sonner";
+import { displayJobOrderStatus } from "../../job-order-status";
 
 interface StationStartScannerProps {
     open: boolean;
@@ -391,7 +392,7 @@ export function StationStartScanner({
                                                     {selectedJo.job_order_no || selectedJo.jo_id}
                                                 </span>
                                                 <Badge variant="outline" className="text-[9px] font-bold">
-                                                    {selectedJo.status}
+                                                    {displayJobOrderStatus(selectedJo.status)}
                                                 </Badge>
                                             </div>
                                             <span className="text-[10px] text-muted-foreground block truncate max-w-[260px]">
@@ -432,7 +433,7 @@ export function StationStartScanner({
                                                             {jo.job_order_no || jo.jo_id}
                                                         </span>
                                                         <span className="text-[9px] text-muted-foreground font-semibold">
-                                                            {jo.status}
+                                                            {displayJobOrderStatus(jo.status)}
                                                         </span>
                                                     </div>
                                                     <span className="text-[10px] text-muted-foreground truncate block mt-0.5">

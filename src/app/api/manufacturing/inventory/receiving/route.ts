@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, fetchJobOrders } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 interface ComponentVarianceDetail {
@@ -71,9 +72,15 @@ export async function GET(request: Request) {
             activeJOs = jobOrders.filter(jo => jo.jo_id === joId);
         } else {
             // Otherwise, filter for Ongoing (in production) or Finished (to view history)
-            activeJOs = jobOrders.filter(jo => 
-                jo.status === "Ongoing" || jo.status === "Proceed" || jo.status === "Finished"
-            );
+            activeJOs = jobOrders.filter(jo => isJobOrderStatus(
+                jo.status,
+                JOB_ORDER_STATUS.ONGOING,
+                JOB_ORDER_STATUS.IN_PROGRESS,
+                JOB_ORDER_STATUS.RELEASED,
+                JOB_ORDER_STATUS.PROCEED,
+                JOB_ORDER_STATUS.FINISHED,
+                JOB_ORDER_STATUS.COMPLETED
+            ));
         }
 
         if (activeJOs.length === 0) {
@@ -512,7 +519,7 @@ export async function POST(request: Request) {
 
         // 7. Update Job Order: status = "Completed", save actual_quantity_produced & variances
         const patchPayload = {
-            status: "Completed",
+            status: JOB_ORDER_STATUS.COMPLETED,
             actual_quantity_produced: qty,
             remarks: `Completed yield receiving. Variance details logged.`
         };

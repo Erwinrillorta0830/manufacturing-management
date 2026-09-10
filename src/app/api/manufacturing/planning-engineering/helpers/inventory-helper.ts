@@ -3,8 +3,19 @@ import { DIRECTUS_URL, headers } from "./shared";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
+import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
-const ACTIVE_JOB_ORDER_STATUSES = ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"];
+const ACTIVE_JOB_ORDER_STATUSES = [
+    JOB_ORDER_STATUS.PLANNED,
+    JOB_ORDER_STATUS.DRAFT,
+    JOB_ORDER_STATUS.RELEASED,
+    JOB_ORDER_STATUS.IN_PROGRESS,
+    JOB_ORDER_STATUS.ONGOING,
+    JOB_ORDER_STATUS.PROCEED,
+    JOB_ORDER_STATUS.RESERVED,
+    JOB_ORDER_STATUS.ON_HOLD,
+    JOB_ORDER_STATUS.QA_HOLD
+];
 
 export interface AvailableInventoryLot {
     batchNo: string;
@@ -223,7 +234,15 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                 const resFilter = encodeURIComponent(JSON.stringify({
                     _and: [
                         { product_id: { _in: allProductIds } },
-                        { jo_material_id: { job_order_id: { status: { _in: ["Planned", "Draft", "Released", "In Progress", "Ongoing", "Proceed", "On Hold"] } } } }
+                        { jo_material_id: { job_order_id: { status: { _in: [
+                            JOB_ORDER_STATUS.PLANNED,
+                            JOB_ORDER_STATUS.DRAFT,
+                            JOB_ORDER_STATUS.RELEASED,
+                            JOB_ORDER_STATUS.IN_PROGRESS,
+                            JOB_ORDER_STATUS.ONGOING,
+                            JOB_ORDER_STATUS.PROCEED,
+                            JOB_ORDER_STATUS.ON_HOLD
+                        ] } } } }
                     ]
                 }));
                 const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,purchase_order_receiving_id,purchase_order_receiving_id.lot_no,purchase_order_receiving_id.batch_no,reserved_quantity&limit=-1`, { headers, cache: "no-store" });

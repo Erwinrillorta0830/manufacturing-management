@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord } from "../types";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { toast } from "sonner";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface OperatorPanelProps {
     selectedTask: RoutingTask;
@@ -298,7 +299,7 @@ export default function OperatorPanel({
         }, []);
     }, [routeOperators, users]);
 
-    const isJobOnHold = selectedJobOrder.status === "On Hold";
+    const isJobOnHold = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
 
     return (
         <Card className="border border-border bg-card shadow-sm rounded-xl overflow-hidden">

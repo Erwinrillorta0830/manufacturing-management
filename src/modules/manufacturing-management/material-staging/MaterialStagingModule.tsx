@@ -29,6 +29,7 @@ import { useMaterialStaging } from "./hooks/useMaterialStaging";
 import { StagingPickList } from "./components/StagingPickList";
 import { BinTransferModal } from "./components/BinTransferModal";
 import { ShortageWarningDialog } from "./components/ShortageWarningDialog";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 
 export default function MaterialStagingModule() {
     const {
@@ -335,12 +336,12 @@ export default function MaterialStagingModule() {
                                                     <Badge
                                                         variant="outline"
                                                         className={
-                                                            jo.status === "RESERVED"
+                                                            isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED)
                                                                 ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]"
                                                                 : "bg-blue-500/10 text-blue-500 border-blue-500/30 text-[10px]"
                                                         }
                                                     >
-                                                        {jo.status}
+                                                        {displayJobOrderStatus(jo.status)}
                                                     </Badge>
                                                 </div>
                                                 <div className="font-bold text-sm text-foreground line-clamp-1">

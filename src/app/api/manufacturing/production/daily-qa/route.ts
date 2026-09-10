@@ -8,6 +8,7 @@ import {
 } from "@/app/api/manufacturing/qa/_dispositions";
 import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { hasPagination, paginate } from "../../_pagination";
+import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -277,7 +278,7 @@ export async function POST(request: Request) {
             const holdResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}`, {
                 method: "PATCH",
                 headers,
-                body: JSON.stringify({ status: "On Hold" })
+                body: JSON.stringify({ status: JOB_ORDER_STATUS.ON_HOLD })
             });
             if (!holdResponse.ok) {
                 throw new Error(`Failed to place Job Order ${jobOrderId} on QA Hold.`);

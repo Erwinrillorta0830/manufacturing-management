@@ -1,4 +1,10 @@
 /* eslint-disable */
+import {
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus,
+    type CanonicalJobOrderStatus
+} from "../job-order-status";
 export interface OperatorAssignment {
     id: number;
     task_id: number;
@@ -62,7 +68,7 @@ export interface JobOrder {
     producedQty?: number;
     produced_quantity?: number;
     due_date: string;
-    status: "Draft" | "Planned" | "Proceed" | "Ongoing" | "In Progress" | "Finished" | "Completed" | "On Hold" | string;
+    status: CanonicalJobOrderStatus | string;
     branch_id: number;
     primary_work_center_id?: number | null;
     work_center_name?: string | null;
@@ -94,10 +100,18 @@ export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
 
 export function matchesProductionWorkflowStatus(status: string, filter: string): boolean {
     if (filter === "All") return true;
-    if (filter === "Active") return status === "Proceed" || status === "Ongoing";
-    if (filter === "Proceed" || filter === "Released") return status === "Proceed";
-    if (filter === "Ongoing" || filter === "In Progress") return status === "Ongoing";
-    return status === filter;
+    const normalizedStatus = normalizeJobOrderStatus(status);
+    if (!normalizedStatus) return false;
+    if (filter === "Active") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+    }
+    if (filter === "Proceed" || filter === "Released") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED);
+    }
+    if (filter === "Ongoing" || filter === "In Progress") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+    }
+    return normalizedStatus === normalizeJobOrderStatus(filter);
 }
 
 export interface User {

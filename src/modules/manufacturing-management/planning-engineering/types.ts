@@ -1,3 +1,5 @@
+import type { CanonicalJobOrderStatus } from "../job-order-status";
+
 export interface Branch {
     id: number;
     branch_name: string;
@@ -69,18 +71,7 @@ export interface NetRequirementItem {
 // DDL Clean Schema Entities
 // -------------------------------------------------------------
 
-export type JobOrderStatus = 
-    | "Draft" 
-    | "Planned" 
-    | "Released" 
-    | "In Progress" 
-    | "Ongoing" 
-    | "Proceed" 
-    | "On Hold" 
-    | "Completed" 
-    | "Finished" 
-    | "Cancelled" 
-    | "Closed";
+export type JobOrderStatus = CanonicalJobOrderStatus;
 
 export type JobOrderAllocationStatus = "ACTIVE" | "RELEASED" | "CONSUMED" | "CANCELLED";
 export type JobOrderReservationType = "SOFT" | "HARD";

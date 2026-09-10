@@ -1,6 +1,7 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { ReceivingJO, InventoryData } from "../types/inventory.types";
+import { isTerminalJobOrderStatus } from "../../job-order-status";
 
 interface FinishedGoodsReceivingTabProps {
     receivingJOs: ReceivingJO[];
@@ -49,7 +50,7 @@ export function FinishedGoodsReceivingTab({
                 {filtered.map((jo) => {
                     const branchName = data?.branches?.find(b => Number(b.id) === Number(jo.branch_id))?.branch_name ||
                         (Number(jo.branch_id) === 1 || Number(jo.branch_id) === 183 ? "Main Branch" : Number(jo.branch_id) === 163 ? "Urdaneta Branch" : `Branch #${jo.branch_id}`);
-                    const isFinished = jo.status === "Finished";
+                    const isFinished = isTerminalJobOrderStatus(jo.status);
 
                     return (
                         <tr key={jo.jo_id} className="border-b border-input/60 hover:bg-muted/10">

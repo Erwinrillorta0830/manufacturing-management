@@ -26,6 +26,7 @@ import { JobOrderTraveler } from "./components/JobOrderTraveler";
 import { fetchJobMaterials } from "./services/planning-api";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { isJobOrderStatus, normalizeJobOrderStatus } from "../job-order-status";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -157,7 +158,8 @@ export default function PlanningEngineeringModule() {
     // Filter unreleased jobs
     const filteredUnreleasedJobs = useMemo(() => {
         return unreleasedJobs.filter((jo: any) => {
-            const matchesStatus = statusFilter === "all" || jo.status === statusFilter;
+            const normalizedFilter = normalizeJobOrderStatus(statusFilter);
+            const matchesStatus = statusFilter === "all" || (normalizedFilter !== null && isJobOrderStatus(jo.status, normalizedFilter));
             const query = searchQuery.toLowerCase().trim();
             const matchesQuery = !query ||
                 String(jo.jo_id || "").toLowerCase().includes(query) ||

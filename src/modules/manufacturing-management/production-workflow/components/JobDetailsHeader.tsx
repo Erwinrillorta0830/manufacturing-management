@@ -2,6 +2,7 @@ import { AlertTriangle, CornerDownRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder } from "../types";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 
 interface JobDetailsHeaderProps {
     selectedJobOrder: JobOrder;
@@ -9,7 +10,7 @@ interface JobDetailsHeaderProps {
 }
 
 const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
+    switch (normalizeJobOrderStatus(status)) {
         case "Draft":
             return "secondary";
         case "Proceed":
@@ -26,6 +27,13 @@ const getStatusBadgeVariant = (status: string) => {
 };
 
 export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHeaderProps) {
+    const normalizedStatus = normalizeJobOrderStatus(selectedJobOrder.status);
+    const statusLabel = normalizedStatus === JOB_ORDER_STATUS.PROCEED
+        ? JOB_ORDER_STATUS.RELEASED
+        : normalizedStatus === JOB_ORDER_STATUS.ONGOING
+        ? JOB_ORDER_STATUS.IN_PROGRESS
+        : displayJobOrderStatus(selectedJobOrder.status);
+
     return (
         <Card>
             <CardContent className="pt-6">
@@ -36,14 +44,14 @@ export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHea
                             <Badge
                                 variant={getStatusBadgeVariant(selectedJobOrder.status)}
                                 className={
-                                    selectedJobOrder.status === "Ongoing"
+                                    isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS)
                                         ? "bg-emerald-500 text-white"
-                                        : selectedJobOrder.status === "Finished"
+                                        : isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.CLOSED)
                                         ? "bg-blue-500 text-white"
                                         : ""
                                 }
                             >
-                                {selectedJobOrder.status === "Proceed" ? "Released" : selectedJobOrder.status === "Ongoing" ? "In Progress" : selectedJobOrder.status}
+                                {statusLabel}
                             </Badge>
                         </div>
                         <h2 className="text-xl font-bold text-card-foreground leading-tight">
@@ -88,7 +96,7 @@ export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHea
                 </div>
 
                 {/* Critical On Hold Alert Banner */}
-                {selectedJobOrder.status === "On Hold" && (
+                {isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD) && (
                     <div className="mt-4 p-4 border border-destructive/30 bg-destructive/10 rounded-lg flex gap-3 text-destructive">
                         <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
                         <div className="space-y-1 text-sm">

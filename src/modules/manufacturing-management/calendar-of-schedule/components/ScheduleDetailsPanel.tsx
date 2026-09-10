@@ -1,6 +1,7 @@
 import React from "react";
 import { Cpu, Anchor } from "lucide-react";
 import { JobOrder, IncomingShipment, DailyBreakdownItem, RoutingStep } from "../types";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface ScheduleDetailsPanelProps {
     selectedJO: JobOrder | null;
@@ -53,13 +54,13 @@ export function ScheduleDetailsPanel({
                         <div className="col-span-2 pt-2 border-t mt-2 flex justify-between items-center">
                             <span className="text-muted-foreground font-bold uppercase text-[9px]">Alloc Status:</span>
                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                selectedJO.status === "Proceed"
+                                isJobOrderStatus(selectedJO.status, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED)
                                     ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
-                                    : selectedJO.status === "Shortage"
+                                    : isJobOrderStatus(selectedJO.status, JOB_ORDER_STATUS.SHORTAGE)
                                     ? "bg-destructive/10 text-destructive border border-destructive/20"
                                     : "bg-muted text-muted-foreground border"
                             }`}>
-                                {selectedJO.status}
+                                {displayJobOrderStatus(selectedJO.status)}
                             </span>
                         </div>
                     </div>

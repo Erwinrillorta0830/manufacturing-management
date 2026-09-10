@@ -11,6 +11,7 @@ import {
     fetchQATemplate,
     submitQAVerification
 } from "../services/production-api";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useProductionWorkflow() {
     // --- State Variables ---
@@ -74,7 +75,12 @@ export function useProductionWorkflow() {
         if (!silent) setLoadingJobs(true);
         try {
             const data = await fetchJobOrders();
-            const activeJobs = data.filter((jo: any) => jo.status !== "Draft" && jo.status !== "Planned" && jo.status !== "Planning");
+            const activeJobs = data.filter((jo: any) => !isJobOrderStatus(
+                jo.status,
+                JOB_ORDER_STATUS.DRAFT,
+                JOB_ORDER_STATUS.PLANNED,
+                JOB_ORDER_STATUS.PLANNING
+            ));
             setJobOrders(activeJobs);
             
             if (activeJobs.length > 0) {

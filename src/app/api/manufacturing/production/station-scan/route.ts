@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 interface UserRecord {
     user_id: number;
@@ -462,16 +463,22 @@ export async function POST(request: Request) {
         }) || null;
 
         // 4. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION.
-        const oldStatus = String(matchedJobOrder.status || "Draft");
-        if (oldStatus === "Completed" || oldStatus === "Finished") {
+        const oldStatus = normalizeJobOrderStatus(matchedJobOrder.status || JOB_ORDER_STATUS.DRAFT);
+        if (!oldStatus) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has an unknown status and cannot be transitioned.`
+            }, { status: 409 });
+        }
+        if (isTerminalJobOrderStatus(oldStatus)) {
             return NextResponse.json({
                 success: false,
                 error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is already finished and cannot be restarted.`
             }, { status: 409 });
         }
 
-        const isAlreadyActive = oldStatus === "In Progress" || oldStatus === "Ongoing";
-        const targetStatus = isAlreadyActive ? oldStatus : "In Progress";
+        const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING);
+        const targetStatus = isAlreadyActive ? oldStatus : JOB_ORDER_STATUS.IN_PROGRESS;
         const statusTransitioned = !isAlreadyActive;
         const primaryWorkCenterChanged = Number(matchedJobOrder.primary_work_center_id) !== workCenterIdNumber;
         let updatedJobOrder = matchedJobOrder;

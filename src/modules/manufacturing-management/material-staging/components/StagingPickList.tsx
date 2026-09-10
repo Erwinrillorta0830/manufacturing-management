@@ -26,6 +26,7 @@ import {
     Unlock
 } from "lucide-react";
 import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } from "../types";
+import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus } from "../../job-order-status";
 
 interface StagingPickListProps {
     jobOrder: StagingJobOrder | null;
@@ -84,14 +85,14 @@ export function StagingPickList({
                         <Badge
                             variant="outline"
                             className={
-                                jobOrder.status === "RESERVED"
+                                isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.RESERVED)
                                     ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 font-semibold"
-                                    : jobOrder.status === "PLANNED" || jobOrder.status === "Planned"
+                                    : isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.DRAFT)
                                         ? "bg-blue-500/10 text-blue-500 border-blue-500/30 font-semibold"
                                         : "bg-muted text-muted-foreground"
                             }
                         >
-                            {jobOrder.status?.toUpperCase()}
+                            {displayJobOrderStatus(jobOrder.status)}
                         </Badge>
                         {jobOrder.reservation_status === "HARD" ? (
                             <Badge className="bg-emerald-600 text-white font-medium text-[11px]">

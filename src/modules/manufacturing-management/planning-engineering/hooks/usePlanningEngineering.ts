@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
@@ -64,7 +65,12 @@ export function usePlanningEngineering() {
             const res = await fetch("/api/manufacturing/planning-engineering");
             if (res.ok) {
                 const data = await res.json();
-                const draftOrPlanned = data.filter((j: any) => j.status === "Draft" || j.status === "Planned" || j.status === "Planning");
+                const draftOrPlanned = data.filter((j: any) => isJobOrderStatus(
+                    j.status,
+                    JOB_ORDER_STATUS.DRAFT,
+                    JOB_ORDER_STATUS.PLANNED,
+                    JOB_ORDER_STATUS.PLANNING
+                ));
                 setRawUnreleasedJobs(draftOrPlanned);
             }
         } catch (err) {
@@ -132,7 +138,12 @@ export function usePlanningEngineering() {
                 fetch("/api/manufacturing/planning-engineering").then(async (res) => {
                     if (res.ok) {
                         const data = await res.json();
-                        return data.filter((j: any) => j.status === "Draft" || j.status === "Planned" || j.status === "Planning");
+                        return data.filter((j: any) => isJobOrderStatus(
+                            j.status,
+                            JOB_ORDER_STATUS.DRAFT,
+                            JOB_ORDER_STATUS.PLANNED,
+                            JOB_ORDER_STATUS.PLANNING
+                        ));
                     }
                     return [];
                 }).catch(() => [])

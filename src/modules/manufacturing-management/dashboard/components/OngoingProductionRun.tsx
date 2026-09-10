@@ -1,6 +1,7 @@
 import React from "react";
 import { Activity } from "lucide-react";
 import { DashboardData, ProductionRun } from "../types/dashboard.types";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface OngoingProductionRunProps {
     data: DashboardData | null;
@@ -32,7 +33,12 @@ export function OngoingProductionRun({ data }: OngoingProductionRunProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {data.ongoingProduction.runs.map((run: ProductionRun) => (
+                {data.ongoingProduction.runs.map((run: ProductionRun) => {
+                    const status = displayJobOrderStatus(run.status);
+                    const isOngoing = isJobOrderStatus(run.status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+                    const isOnHold = isJobOrderStatus(run.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+
+                    return (
                     <div key={run.jo_id} className="bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3 hover:border-slate-200 dark:border-slate-800 transition-colors">
                         <div className="flex justify-between items-start gap-3">
                             <div className="space-y-0.5">
@@ -45,13 +51,13 @@ export function OngoingProductionRun({ data }: OngoingProductionRunProps) {
                             </div>
                             <div className="flex flex-col items-end gap-1 shrink-0">
                                 <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-lg border ${
-                                    run.status === "Ongoing" 
+                                    isOngoing
                                         ? "bg-primary/10 border-primary/25 text-primary" 
-                                        : run.status === "On Hold" 
+                                        : isOnHold
                                             ? "bg-amber-500/10 border-amber-500/25 text-amber-500" 
                                             : "bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-muted-foreground"
                                 }`}>
-                                    {run.status}
+                                    {status}
                                 </span>
                                 {run.due_date && (
                                     <span className="text-[8px] text-muted-foreground font-semibold">
@@ -74,7 +80,8 @@ export function OngoingProductionRun({ data }: OngoingProductionRunProps) {
                             </div>
                         </div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

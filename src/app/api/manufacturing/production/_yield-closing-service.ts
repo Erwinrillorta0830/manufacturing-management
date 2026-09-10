@@ -18,6 +18,12 @@ import {
     resolveProductUnitId,
     MmLotError
 } from "@/app/api/manufacturing/services/mm-lots.service";
+import {
+    isCancelledJobOrderStatus,
+    isTerminalJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus
+} from "@/modules/manufacturing-management/job-order-status";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -467,14 +473,6 @@ function sameDate(left: unknown, right: string): boolean {
     return String(left ?? "").trim().slice(0, 10) === right;
 }
 
-function isTerminalJobOrderStatus(status: unknown): boolean {
-    return ["completed", "finished", "closed"].includes(String(status ?? "").trim().toLowerCase());
-}
-
-function isCancelledStatus(status: unknown): boolean {
-    return String(status ?? "").trim().toLowerCase() === "cancelled";
-}
-
 async function findExistingFinishedMovements(
     productId: number,
     branchId: number,
@@ -641,7 +639,7 @@ async function processSalesOrderAllocations(
     }
     const linksByDetail = new Map<number, number>();
     for (const link of rawLinks) {
-        if (isCancelledStatus(link.status)) continue;
+        if (isCancelledJobOrderStatus(link.status)) continue;
         const detailId = numericRelationId(link.sales_order_detail_id);
         if (!Number.isFinite(detailId) || detailId <= 0) continue;
         const linkedQuantity = finiteNumber(link.allocated_quantity ?? 0, "Sales-order allocation quantity", { nonNegative: true });
@@ -988,7 +986,7 @@ function completionReceipt(
         movement_id: movementId,
         yield_ledger_id: yieldLedgerId,
         job_order_id: jobOrder.jobOrderId,
-        job_order_status: "Completed",
+        job_order_status: JOB_ORDER_STATUS.COMPLETED,
         jo_id: jobOrder.jobOrderNo,
         product_id: jobOrder.productId,
         product_name: input.productName || "Manufactured Good",
@@ -1262,12 +1260,19 @@ async function completeYieldClosingInternal(
             throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", "Yield ledger update returned an invalid record identifier.");
         }
 
-        const oldStatus = jobOrder.status || "In Progress";
+        const oldStatus = normalizeJobOrderStatus(jobOrder.status || JOB_ORDER_STATUS.IN_PROGRESS);
+        if (!oldStatus) {
+            throw new YieldCompletionError(
+                409,
+                "UNKNOWN_JOB_ORDER_STATUS",
+                `Job Order ${jobOrder.jobOrderNo} has an unknown status and cannot be completed.`
+            );
+        }
         await journal.patch(
             "manufacturing_job_orders",
             jobOrder.jobOrderId,
             {
-                status: "Completed",
+                status: JOB_ORDER_STATUS.COMPLETED,
                 actual_quantity_produced: quantityProduced,
                 modified_at: new Date().toISOString()
             },
@@ -1280,7 +1285,7 @@ async function completeYieldClosingInternal(
             {
                 job_order_id: jobOrder.jobOrderId,
                 old_status: oldStatus,
-                new_status: "Completed",
+                new_status: JOB_ORDER_STATUS.COMPLETED,
                 changed_by: 24,
                 changed_at: new Date().toISOString(),
                 remarks: `Yield Closing completed: ${quantityProduced} units.`

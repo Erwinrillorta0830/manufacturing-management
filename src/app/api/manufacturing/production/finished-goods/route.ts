@@ -5,6 +5,7 @@ import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-se
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
+import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 interface LedgerEntry {
@@ -667,7 +668,7 @@ export async function POST(request: Request) {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({
-                                status: "Completed",
+                                status: JOB_ORDER_STATUS.COMPLETED,
                                 actual_quantity_produced: qty
                             })
                         });

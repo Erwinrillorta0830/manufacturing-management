@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { TrendingUp, TrendingDown, ClipboardList, Hammer, AlertTriangle, CheckCircle, BarChart3, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 
 interface CostVarianceJobOrder {
     jo_id: string;
@@ -137,7 +138,15 @@ export default function CostVarianceModule() {
 
     // Filter job orders currently eligible for shopfloor log submissions
     const activeJOs = useMemo(() => {
-        return jobOrders.filter(jo => ["Ongoing", "Proceed", "On Hold"].includes(jo.status));
+        return jobOrders.filter(jo => isJobOrderStatus(
+            jo.status,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.ON_HOLD,
+            JOB_ORDER_STATUS.QA_HOLD
+        ));
     }, [jobOrders]);
 
     // Handle Job Order selection inside form
