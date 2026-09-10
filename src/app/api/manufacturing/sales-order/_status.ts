@@ -37,6 +37,11 @@ export const SALES_ORDER_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[
     Cancelled: [],
 };
 
+export function isProductionSchedulingStatus(value: unknown): boolean {
+    const status = String(value || "").trim();
+    return status === "For Production" || status === "In Production";
+}
+
 export const LEGACY_STATUS_MAP: Record<string, SalesOrderStatus> = {
     Pending: "Draft",
     Approved: "For Invoicing",

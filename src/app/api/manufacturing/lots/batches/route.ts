@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const filterLotId = searchParams.get("lotId") || searchParams.get("mmLotId") || searchParams.get("mm_lot_id") || searchParams.get("lot_id");
+        const lotTransferSource = searchParams.get("source") === "lot-transfer";
         const timestamp = Date.now();
 
         let token: string | undefined;
@@ -58,6 +59,28 @@ export async function GET(request: Request) {
                 rawMovements = Array.isArray(movJson) ? movJson : movJson?.data || [];
             } catch (err) {
                 console.error("Error parsing movements in GET batches:", err);
+            }
+        }
+
+        if (lotTransferSource) {
+            const lotFilter = filterLotId
+                ? `&filter[mm_lot_id][_eq]=${encodeURIComponent(filterLotId)}`
+                : "";
+            const directusMovementsRes = await fetch(
+                `${DIRECTUS_URL}/items/inventory_movements?limit=-1&fields=movement_id,product_id,branch_id,mm_lot_id,batch_no,quantity,expiry_date,manufacturing_date,transaction_type_id,source_document_id,source_document_no${lotFilter}&_t=${timestamp}`,
+                { headers, cache: "no-store" }
+            ).catch(() => null);
+
+            if (directusMovementsRes && directusMovementsRes.ok) {
+                try {
+                    const directusMovementsJson = await directusMovementsRes.json();
+                    rawMovements = directusMovementsJson.data || [];
+                } catch (err) {
+                    console.error("Error parsing Directus movements in GET batches:", err);
+                    rawMovements = [];
+                }
+            } else {
+                rawMovements = [];
             }
         }
 
@@ -135,18 +158,23 @@ export async function GET(request: Request) {
         const movementNetByLotProductBatchDate = new Map<string, { onhand: number; totalIn: number; totalOut: number; unitCost: number; count: number; lotId: number; productId: number; batchNo: string; mfgDate?: string; expDate?: string; condition?: string; remarks?: string; referenceNo?: string; postedAt?: string; branchId?: number; unitId?: number; productName?: string; productCode?: string; }>();
 
         rawMovements.forEach((m) => {
-            const rawInvId = m.inventoryLotId ?? m.inventory_lot_id;
-            const hasInvId = rawInvId !== null && rawInvId !== undefined && Number(rawInvId) > 0;
             const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
             const hasLotId = rawLotId !== null && rawLotId !== undefined && Number(rawLotId) > 0;
             const parsedLotId = hasLotId ? Number(rawLotId) : 0;
             const matchedLot = lotsList.find((l) => Number(l.lot_id) === parsedLotId);
 
-            const lId = (hasInvId && matchedLot) ? parsedLotId : 0;
+            const lId = matchedLot ? parsedLotId : 0;
             const pId = Number(m.productId || m.product_id || 0);
             const bNo = String(m.batchNo || m.batch_no || "").trim();
-            const qIn = Number(m.quantityIn || m.quantity_in || 0);
-            const qOut = Number(m.quantityOut || m.quantity_out || 0);
+            const signedQuantity = Number(m.quantity || 0);
+            const rawQuantityIn = m.quantityIn ?? m.quantity_in;
+            const rawQuantityOut = m.quantityOut ?? m.quantity_out;
+            const qIn = rawQuantityIn !== null && rawQuantityIn !== undefined
+                ? Number(rawQuantityIn)
+                : Math.max(0, signedQuantity);
+            const qOut = rawQuantityOut !== null && rawQuantityOut !== undefined
+                ? Number(rawQuantityOut)
+                : Math.max(0, -signedQuantity);
             const net = qIn - qOut;
             const cost = Number(m.unitCost || m.unit_cost || 0);
             const invId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
@@ -219,6 +247,8 @@ export async function GET(request: Request) {
                 }
             }
         });
+
+        if (lotTransferSource) rawOnhand = [];
 
         rawOnhand.forEach((oh) => {
             const lId = Number(oh.mmLotId || oh.mm_lot_id || oh.lotId || oh.lot_id || 0);

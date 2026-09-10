@@ -4,7 +4,7 @@ import { directusRows, mutateDirectus, updateDirectusItems, type RecordValue } f
 import { getLotTransfer } from "./_queries";
 import type { LotTransferRecord, LotTransferStatus, LotTransferStatusHistory } from "./_types";
 import { LOT_TRANSFER_STATUSES } from "./_types";
-import { nullableString, relationId, relationName, rowId, stringValue } from "./_values";
+import { manilaTimestamp, nullableString, relationId, relationName, rowId, stringValue } from "./_values";
 
 interface AppendStatusHistoryOptions {
     transferId: number;
@@ -138,7 +138,7 @@ export async function appendStatusHistory(options: AppendStatusHistoryOptions): 
         return { entry: existing, idempotent: true };
     }
 
-    const changedAt = options.changedAt || new Date().toISOString();
+    const changedAt = options.changedAt || manilaTimestamp();
     const body = {
         lot_transfer_id: options.transferId,
         old_status: options.oldStatus,
@@ -254,7 +254,7 @@ export async function transitionLotTransferStatus(options: TransitionStatusOptio
 
         const currentAfterFailure = await getLotTransfer(options.transferId).catch(() => null);
         if (currentAfterFailure?.status === options.newStatus) {
-            const rollbackUpdatedAt = new Date().toISOString();
+            const rollbackUpdatedAt = manilaTimestamp();
             const rollbackFilter: RecordValue = {
                 lot_transfer_id: { _eq: options.transferId },
                 status: { _eq: options.newStatus }
@@ -293,7 +293,7 @@ export async function deleteLotTransferStatusHistory(transferId: number): Promis
     try {
         const params = new URLSearchParams({
             "filter[lot_transfer_id][_eq]": String(transferId),
-            fields: "lot_transfer_status_history_id,id",
+            fields: "lot_transfer_status_history_id",
             limit: "-1"
         });
         rows = await directusRows(`/items/${LOT_TRANSFER_STATUS_HISTORY_COLLECTION}?${params.toString()}`, "Lot-transfer status history cleanup");

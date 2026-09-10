@@ -27,9 +27,8 @@ function requestedDateBoundary(value: string, endExclusive = false): string {
     const year = Number(canonicalDate.slice(0, 4));
     const month = Number(canonicalDate.slice(5, 7));
     const day = Number(canonicalDate.slice(8, 10));
-    const utcMidnight = Date.UTC(year, month - 1, day);
-    const boundary = utcMidnight + (endExclusive ? 24 * 60 * 60 * 1000 : 0) - (8 * 60 * 60 * 1000);
-    return new Date(boundary).toISOString();
+    const boundary = new Date(Date.UTC(year, month - 1, day + (endExclusive ? 1 : 0)));
+    return `${boundary.toISOString().slice(0, 10)} 00:00:00`;
 }
 
 export interface LotTransferListOptions {

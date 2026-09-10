@@ -24,6 +24,7 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
+import { isProductionSchedulingStatus } from "../sales-order/_status";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -492,6 +493,25 @@ async function findExistingFinishedMovements(
     });
     if (bySourceId.length > 0) return bySourceId;
 
+    // The Spring view is the normal read source, but a newly written movement
+    // can be briefly absent from a stale/read-replica view. Verify the write
+    // against the authoritative Directus collection before treating it as
+    // missing and rolling the completion back.
+    const directusBySourceId = await directusRows<any>(
+        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
+            _and: [
+                { product_id: { _eq: productId } },
+                { branch_id: { _eq: branchId } },
+                { transaction_type_id: { _eq: 2 } },
+                { quantity: { _gt: 0 } },
+                { batch_no: { _eq: lotNumber } },
+                { source_document_id: { _eq: jobOrderId } }
+            ]
+        }))}&fields=movement_id,product_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
+        `Directus finished-goods movement lookup for ${joNo}`
+    );
+    if (directusBySourceId.length > 0) return directusBySourceId;
+
     const legacyRows = await fetchMmInventoryMovements({
         product: productId,
         branch: branchId,
@@ -500,7 +520,28 @@ async function findExistingFinishedMovements(
         movementDirection: "IN",
         referenceNo: joNo
     });
-    return legacyRows.filter(row => numericRelationId(row.source_document_id) <= 0);
+    const filteredLegacyRows = legacyRows.filter(row => numericRelationId(row.source_document_id) <= 0);
+    if (filteredLegacyRows.length > 0) return filteredLegacyRows;
+
+    return directusRows<any>(
+        `${DIRECTUS_URL}/items/inventory_movements?filter=${encodeURIComponent(JSON.stringify({
+            _and: [
+                { product_id: { _eq: productId } },
+                { branch_id: { _eq: branchId } },
+                { transaction_type_id: { _eq: 2 } },
+                { quantity: { _gt: 0 } },
+                { batch_no: { _eq: lotNumber } },
+                { source_document_no: { _eq: joNo } },
+                {
+                    _or: [
+                        { source_document_id: { _null: true } },
+                        { source_document_id: { _eq: 0 } }
+                    ]
+                }
+            ]
+        }))}&fields=movement_id,product_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
+        `Directus legacy finished-goods movement lookup for ${joNo}`
+    );
 }
 
 function matchingFinishedMovement(
@@ -709,16 +750,17 @@ async function processSalesOrderAllocations(
             return Math.max(allocated, served) >= ordered;
         });
 
-        if (currentStatus === "In Production" && allFullyFulfilled) {
+        const nextStatus = allFullyFulfilled ? "For Invoicing" : "In Production";
+        if (isProductionSchedulingStatus(currentStatus) && nextStatus !== currentStatus) {
             await journal.patch(
                 "sales_order",
                 parentOrderId,
-                { order_status: "For Invoicing" },
+                { order_status: nextStatus },
                 `Update sales-order status ${parentOrderId}`
             );
-            expectedStatusByParent.set(parentOrderId, "For Invoicing");
-        } else if (currentStatus === "In Production") {
-            expectedStatusByParent.set(parentOrderId, "In Production");
+            expectedStatusByParent.set(parentOrderId, nextStatus);
+        } else if (isProductionSchedulingStatus(currentStatus)) {
+            expectedStatusByParent.set(parentOrderId, currentStatus);
         }
     }
 

@@ -40,6 +40,7 @@ import { getLotTransfer } from "./_queries";
 import { getLotTransferStatusHistoryEvent, transitionLotTransferStatus } from "./_status-history";
 import {
     dateOnly,
+    manilaTimestamp,
     movementId,
     normalizeStatus,
     normalizedBatch,
@@ -56,7 +57,7 @@ async function persistDetailValidation(preview: LotTransferPreview): Promise<voi
             {
                 validation_status: failed.length === 0 ? "PASSED" : "FAILED",
                 validation_error: failed.length > 0 ? failed.join(" ").slice(0, 5000) : null,
-                updated_at: new Date().toISOString()
+                updated_at: manilaTimestamp()
             },
             "Lot-transfer detail validation audit"
         );
@@ -74,7 +75,7 @@ export async function submitLotTransfer(id: number, actorUserId: number | null):
         });
     }
     await persistDetailValidation(preview);
-    const submittedAt = new Date().toISOString();
+    const submittedAt = manilaTimestamp();
     const transition = await transitionLotTransferStatus({
         transferId: id,
         expectedOldStatus: "Draft",
@@ -92,7 +93,7 @@ export async function submitLotTransfer(id: number, actorUserId: number | null):
             status: "Draft",
             submitted_by: record.submittedBy,
             submitted_at: record.submittedAt,
-            updated_at: new Date().toISOString()
+            updated_at: manilaTimestamp()
         },
         action: "submission"
     });
@@ -138,7 +139,7 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
     await persistDetailValidation(preview);
 
     const approvedBy = requireSessionUserId(actorUserId, "approve a lot-transfer request");
-    const approvedAt = new Date().toISOString();
+    const approvedAt = manilaTimestamp();
     const transition = await transitionLotTransferStatus({
         transferId: id,
         expectedOldStatus: "Submitted",
@@ -212,7 +213,7 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
     let preview: LotTransferPreview | null = null;
 
     try {
-        const startedAt = new Date().toISOString();
+        const startedAt = manilaTimestamp();
         await mutateDirectus(
             `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
             "PATCH",
@@ -380,13 +381,13 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
                     validation_error: null,
                     posting_error: null,
                     reconciliation_required: false,
-                    updated_at: new Date().toISOString()
+                    updated_at: manilaTimestamp()
                 },
                 "Lot-transfer detail posting audit"
             );
         }
 
-        const postedAt = new Date().toISOString();
+        const postedAt = manilaTimestamp();
         const singleLine = pairs.length === 1 ? pairs[0] : null;
         const headerLine = pairs[0]?.detail || null;
         const transition = await transitionLotTransferStatus({
@@ -467,7 +468,7 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
                 target_movement_id: null,
                 posting_error: error instanceof Error ? error.message : "Unknown lot-transfer posting failure",
                 reconciliation_required: reconciliationRequired || compensationFailures.length > 0,
-                updated_at: new Date().toISOString()
+                updated_at: manilaTimestamp()
             }, "Lot-transfer detail posting failure audit").catch(() => undefined);
         }
         const errorText = error instanceof Error ? error.message : "Unknown lot-transfer posting failure";
@@ -479,7 +480,7 @@ export async function postLotTransfer(id: number, idempotencyKey: string, actorU
                     posting_started_at: null,
                     posting_error: errorText,
                     reconciliation_required: reconciliationRequired || compensationFailures.length > 0,
-                    updated_at: new Date().toISOString()
+                    updated_at: manilaTimestamp()
                 },
                 "Lot-transfer posting failure audit"
             ).catch(() => undefined);
@@ -497,7 +498,7 @@ export async function rejectLotTransfer(id: number, rejectionReason: string, qaE
         throw new LotTransferError(409, `Only Submitted requests can be rejected. Current status: ${record.status}.`);
     }
     const rejectedBy = requireSessionUserId(actorUserId, "reject a lot-transfer request");
-    const rejectedAt = new Date().toISOString();
+    const rejectedAt = manilaTimestamp();
     const transition = await transitionLotTransferStatus({
         transferId: id,
         expectedOldStatus: "Submitted",
@@ -521,7 +522,7 @@ export async function rejectLotTransfer(id: number, rejectionReason: string, qaE
             rejection_reason: record.rejectionReason,
             qa_evidence: record.qaEvidence,
             posting_started_at: record.postingStartedAt,
-            updated_at: new Date().toISOString()
+            updated_at: manilaTimestamp()
         },
         action: "rejection"
     });
@@ -554,7 +555,7 @@ export async function cancelLotTransfer(id: number, cancellationReason: string, 
         throw new LotTransferError(409, "This lot-transfer request already has inventory movements and cannot be cancelled.");
     }
 
-    const cancelledAt = new Date().toISOString();
+    const cancelledAt = manilaTimestamp();
     const transition = await transitionLotTransferStatus({
         transferId: id,
         expectedOldStatus: record.status,
@@ -574,7 +575,7 @@ export async function cancelLotTransfer(id: number, cancellationReason: string, 
             cancelled_by: record.cancelledBy,
             cancelled_at: record.cancelledAt,
             cancellation_reason: record.cancellationReason,
-            updated_at: new Date().toISOString()
+            updated_at: manilaTimestamp()
         },
         action: "cancellation"
     });

@@ -26,7 +26,7 @@ import {
 } from "./_input";
 import { getLotTransfer } from "./_queries";
 import { appendStatusHistory, deleteLotTransferStatusHistory } from "./_status-history";
-import { rowId, transferId } from "./_values";
+import { manilaTimestamp, rowId, transferId } from "./_values";
 
 export async function createLotTransfer(input: LotTransferInput, actorUserId: number | null): Promise<LotTransferRecord> {
     assertDifferentLotIds(input.sourceLotId, input.targetLotId);
@@ -124,7 +124,7 @@ export async function updateLotTransfer(id: number, input: LotTransferPatchInput
     const row = await mutateDirectus(
         `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(id))}`,
         "PATCH",
-        { ...patchPayload(normalized, null, current.requestNo, transferUnitId), updated_at: new Date().toISOString() },
+        { ...patchPayload(normalized, null, current.requestNo, transferUnitId), updated_at: manilaTimestamp() },
         "Lot-transfer Draft update"
     );
     try {

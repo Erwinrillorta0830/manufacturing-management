@@ -46,6 +46,7 @@ import { appendStatusHistory, deleteLotTransferStatusHistory, transitionLotTrans
 import {
     movementId,
     movementTransactionTypeId,
+    manilaTimestamp,
     numeric,
     rowId,
     transferId
@@ -337,7 +338,7 @@ export async function reverseLotTransfer(
         if (!reversal || reversal.status !== "Draft" || reversal.reversalOfId !== original.id) {
             throw new LotTransferError(503, "The reversal record is not a valid linked Draft reversal.");
         }
-        const startedAt = new Date().toISOString();
+        const startedAt = manilaTimestamp();
         await mutateDirectus(
             `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(reversal.id))}`,
             "PATCH",
@@ -352,7 +353,8 @@ export async function reverseLotTransfer(
             "Lot-transfer reversal claim"
         );
 
-        if (reversal.details.length === 0) {
+        const existingReversalDetails = await readRawTransferDetails(reversal.id);
+        if (existingReversalDetails.length === 0) {
             const details = normalizedDetails(input);
             for (let index = 0; index < details.length; index += 1) {
                 const row = await createTransferDetail(reversal.id, details[index], index);
@@ -448,13 +450,13 @@ export async function reverseLotTransfer(
                     validation_error: null,
                     posting_error: null,
                     reconciliation_required: false,
-                    updated_at: new Date().toISOString()
+                    updated_at: manilaTimestamp()
                 },
                 "Lot-transfer reversal detail audit"
             );
         }
 
-        const reversedAt = new Date().toISOString();
+        const reversedAt = manilaTimestamp();
         const singleLine = pairs.length === 1 ? pairs[0] : null;
         const transition = await transitionLotTransferStatus({
             transferId: reversal.id,
@@ -550,7 +552,7 @@ export async function reverseLotTransfer(
                     posting_started_at: null,
                     posting_error: error instanceof Error ? error.message : "Unknown lot-transfer reversal failure",
                     reconciliation_required: compensationFailures.length > 0,
-                    updated_at: new Date().toISOString()
+                    updated_at: manilaTimestamp()
                 },
                 "Lot-transfer reversal failure audit"
             ).catch(() => undefined);
@@ -563,7 +565,7 @@ export async function reverseLotTransfer(
                         target_movement_id: null,
                         posting_error: error instanceof Error ? error.message : "Unknown lot-transfer reversal failure",
                         reconciliation_required: compensationFailures.length > 0,
-                        updated_at: new Date().toISOString()
+                        updated_at: manilaTimestamp()
                     },
                     "Lot-transfer reversal detail failure audit"
                 ).catch(() => undefined);

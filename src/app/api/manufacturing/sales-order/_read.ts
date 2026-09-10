@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { selectPreferredActiveVersion } from "../finished-goods/versions/versions-helper";
+import { isProductionSchedulingStatus } from "./_status";
 
 type Row = Record<string, any>;
 
@@ -332,7 +333,7 @@ export async function enrichSalesOrderReadModel(
         const parentOrderStatus = String(order?.order_status || detail.parent_order_status || "").trim() || null;
         detail.parent_order_status = parentOrderStatus;
         detail.is_scheduled = scheduledDetailIds.has(detailId);
-        detail.is_read_only = parentOrderStatus !== "For Production" || detail.is_scheduled;
+        detail.is_read_only = !isProductionSchedulingStatus(parentOrderStatus) || detail.is_scheduled;
         const customer = order ? customersByCode.get(String(order.customer_code)) : undefined;
         const customerId = Number(customer?.id || customer?.customer_id) || undefined;
         const storedVersionId = detail.bom_version_id ? Number(detail.bom_version_id) : null;
