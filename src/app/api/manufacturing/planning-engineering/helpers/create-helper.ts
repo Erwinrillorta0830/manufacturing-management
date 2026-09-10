@@ -6,15 +6,34 @@ import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements
 import { getAvailableInventoryLots } from "./inventory-helper";
 import { assertJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
+export interface SalesOrderSchedulingPlan {
+    branchId: number;
+    productId: number;
+    bomVersionId: number;
+    totalQuantity: number;
+    lines: Array<{
+        detailId: number;
+        parentOrderId: number;
+        remainingQuantity: number;
+    }>;
+}
 
 export async function createJobOrder(
     joData: Partial<DirectusJobOrder>,
     salesOrderIds: number[] = [],
-    salesOrderDetailIds: number[] = []
+    salesOrderDetailIds: number[] = [],
+    schedulingPlan?: SalesOrderSchedulingPlan | null
 ): Promise<{ jo_id?: string | null }> {
     try {
         const todayStr = await getTodayDateString();
-        let productsList = joData.products || [];
+        let productsList = schedulingPlan
+            ? [{
+                product_id: schedulingPlan.productId,
+                product_name: joData.product_name,
+                quantity: schedulingPlan.totalQuantity,
+                bom: { version_id: schedulingPlan.bomVersionId }
+            }]
+            : (joData.products || []);
         if (productsList.length === 0 && joData.product_id) {
             productsList = [{
                 product_id: joData.product_id,
@@ -651,8 +670,13 @@ export async function createJobOrder(
         // 5. Insert junction entries only for the detail lines explicitly
         // selected by Planning Engineering. Buffer JOs intentionally have no
         // Sales Order links or lifecycle transition.
-        if (salesOrderDetailIds.length > 0 && initialStatus !== JOB_ORDER_STATUS.DRAFT) {
-            const detailIds = [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+        if (salesOrderDetailIds.length > 0 && (initialStatus !== JOB_ORDER_STATUS.DRAFT || schedulingPlan)) {
+            const detailIds = schedulingPlan
+                ? schedulingPlan.lines.map((line) => line.detailId)
+                : [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+            const plannedLinesById = new Map(
+                (schedulingPlan?.lines || []).map((line) => [line.detailId, line])
+            );
             const detailRes = await fetch(
                 `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
                 { headers, cache: "no-store" }
@@ -673,8 +697,15 @@ export async function createJobOrder(
                 const orderedQuantity = Number(detail.ordered_quantity || 0);
                 const allocatedQuantity = Number(detail.allocated_quantity || 0);
                 const servedQuantity = Number(detail.served_quantity || 0);
-                const remainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
-                if (remainingQuantity <= 0) continue;
+                const currentRemainingQuantity = Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity));
+                const plannedLine = plannedLinesById.get(detailId);
+                const remainingQuantity = plannedLine?.remainingQuantity ?? currentRemainingQuantity;
+                if (remainingQuantity <= 0) {
+                    throw new Error(`Sales Order detail ${detailId} has no remaining quantity for the Job Order allocation.`);
+                }
+                if (plannedLine && Math.abs(currentRemainingQuantity - plannedLine.remainingQuantity) > 0.000001) {
+                    throw new Error(`Sales Order detail ${detailId} changed while the Job Order was being created. Refresh the demand list and try again.`);
+                }
 
                 const allocationResponse = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                     method: "POST",

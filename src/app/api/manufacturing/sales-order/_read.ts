@@ -334,6 +334,14 @@ export async function enrichSalesOrderReadModel(
         detail.parent_order_status = parentOrderStatus;
         detail.is_scheduled = scheduledDetailIds.has(detailId);
         detail.is_read_only = !isProductionSchedulingStatus(parentOrderStatus) || detail.is_scheduled;
+        const orderedQuantity = Number(detail.ordered_quantity || 0);
+        const allocatedQuantity = Number(detail.allocated_quantity || 0);
+        const servedQuantity = Number(detail.served_quantity || 0);
+        detail.remaining_quantity = Number.isFinite(orderedQuantity)
+            && Number.isFinite(allocatedQuantity)
+            && Number.isFinite(servedQuantity)
+            ? Math.max(0, orderedQuantity - Math.max(allocatedQuantity, servedQuantity))
+            : 0;
         const customer = order ? customersByCode.get(String(order.customer_code)) : undefined;
         const customerId = Number(customer?.id || customer?.customer_id) || undefined;
         const storedVersionId = detail.bom_version_id ? Number(detail.bom_version_id) : null;

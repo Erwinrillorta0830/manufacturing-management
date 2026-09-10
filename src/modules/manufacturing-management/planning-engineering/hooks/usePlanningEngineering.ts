@@ -10,6 +10,16 @@ function isSchedulableLine(line: SalesOrderDetail): boolean {
     return isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
 }
 
+function remainingQuantity(line: SalesOrderDetail): number {
+    const ordered = Number(line.ordered_quantity || 0);
+    const allocated = Number(line.allocated_quantity || 0);
+    const served = Number(line.served_quantity || 0);
+    const resolved = Number(line.remaining_quantity);
+    if (Number.isFinite(resolved)) return Math.max(0, resolved);
+    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served)) return 0;
+    return Math.max(0, ordered - Math.max(allocated, served));
+}
+
 export function usePlanningEngineering() {
     // UI State
     const [loadingBranches, setLoadingBranches] = useState(true);
@@ -473,22 +483,19 @@ export function usePlanningEngineering() {
         const targetProductId = firstLine.product_id?.product_id;
         
         // Sum total demand
-        const totalDemand = selectedLines.reduce((sum, l) => {
-            return sum + Number(l.ordered_quantity || 0);
-        }, 0);
-
-        // Find matching shortfall if any to prefill target quantity
-        const matchingShortfall = netRequirements.find(
-            (r) => r.product_id === targetProductId
-        );
-        const suggestedQty = matchingShortfall && matchingShortfall.net_shortfall > 0 
-            ? matchingShortfall.net_shortfall 
-            : totalDemand;
+        // Sales-Order-linked JO quantity is authoritative: it is the sum of
+        // each selected line's remaining unfulfilled quantity. Net
+        // requirements may inform planning, but must not change this link.
+        const totalRemaining = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (totalRemaining <= 0) {
+            toast.error("The selected Sales Order lines have no remaining quantity to schedule.");
+            return;
+        }
 
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(suggestedQty);
+        setTargetQuantity(totalRemaining);
         setJoNumber(code);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption("8");
@@ -577,7 +584,7 @@ export function usePlanningEngineering() {
                 recipeVersionId: targetVersionId,
                 lines: selectedLines.map(l => ({
                     detail_id: l.detail_id,
-                    ordered_quantity: l.ordered_quantity
+                    ordered_quantity: remainingQuantity(l)
                 }))
             };
  

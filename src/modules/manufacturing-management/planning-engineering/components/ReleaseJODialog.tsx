@@ -525,10 +525,12 @@ export function ReleaseJODialog({
                                             type="number"
                                             value={targetQuantity}
                                             onChange={(e) => setTargetQuantity(Math.max(1, Number(e.target.value)))}
-                                            className="h-9 font-semibold bg-card border-input text-foreground"
+                                            readOnly
+                                            aria-readonly="true"
+                                            className="h-9 font-semibold bg-muted border-input text-foreground cursor-not-allowed"
                                         />
                                         <p className="text-[10px] text-muted-foreground">
-                                            Scale quantity up or down according to branch net requirements or batch sizing.
+                                            Derived from the selected Sales Order lines' remaining quantities and locked for linked Job Orders.
                                         </p>
                                     </div>
 

@@ -10,6 +10,7 @@ import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { assertJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
 import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 
@@ -50,6 +51,61 @@ function isCancelledStatus(value: unknown): boolean {
 function isOptionalAllocationStatusError(status: number, body: string): boolean {
     return (status === 400 && /unknown field|invalid field|invalid query|does not exist|doesn't exist|field .* not found/i.test(body))
         || (status === 403 && (body.trim().length === 0 || /permission to access field|field .* does not exist|field .* not found/i.test(body)));
+}
+
+async function resolveEffectiveBomVersionIds(
+    details: any[],
+    ordersById: Map<number, any>
+): Promise<Map<number, number>> {
+    const customerCodes = [...new Set(
+        details
+            .map((detail) => ordersById.get(relationId(detail.order_id))?.customer_code)
+            .map((code) => String(code || "").trim())
+            .filter(Boolean)
+    )];
+    const customerIdsByCode = new Map<string, number>();
+
+    if (customerCodes.length > 0) {
+        const customerFilter = encodeURIComponent(JSON.stringify({
+            customer_code: { _in: customerCodes }
+        }));
+        const customerResponse = await fetchWithTimeout(
+            `${DIRECTUS_URL}/items/customer?filter=${customerFilter}&fields=id,customer_code&limit=-1`,
+            { headers, cache: "no-store" }
+        );
+        if (!customerResponse.ok) {
+            throw new Error(`Unable to resolve customer BOM mappings (${customerResponse.status}).`);
+        }
+        for (const customer of ((await customerResponse.json()).data || []) as any[]) {
+            const code = String(customer.customer_code || "").trim();
+            const customerId = Number(customer.id ?? customer.customer_id ?? 0);
+            if (code && Number.isInteger(customerId) && customerId > 0) {
+                customerIdsByCode.set(code, customerId);
+            }
+        }
+    }
+
+    const effectiveVersionIds = new Map<number, number>();
+    for (const detail of details) {
+        const detailId = relationId(detail.detail_id);
+        const storedVersionId = relationId(detail.bom_version_id);
+        if (storedVersionId > 0) {
+            effectiveVersionIds.set(detailId, storedVersionId);
+            continue;
+        }
+
+        const parentOrder = ordersById.get(relationId(detail.order_id));
+        const customerCode = String(parentOrder?.customer_code || "").trim();
+        const customerId = customerIdsByCode.get(customerCode);
+        const productId = relationId(detail.product_id);
+        const activeVersion = await getActiveVersionForProduct(productId, customerId);
+        const versionId = Number(activeVersion.version?.version_id || 0);
+        if (Number.isInteger(versionId) && versionId > 0) {
+            effectiveVersionIds.set(detailId, versionId);
+        }
+    }
+
+    return effectiveVersionIds;
 }
 
 async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
@@ -96,7 +152,7 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     // exact Sales Order detail lines so stale parent-only payloads cannot create
     // allocations for an entire order.
     const isBufferJobOrder = detailIds.length === 0 && suppliedSalesOrderIds.length === 0 && !jo.order_id;
-    if (isBufferJobOrder) return { detailIds: [], parentOrderIds: [] };
+    if (isBufferJobOrder) return { detailIds: [], parentOrderIds: [], schedulingPlan: null };
     if (detailIds.length === 0) {
         throw new PlanningConflictError("Select at least one Sales Order detail line before creating a Job Order.");
     }
@@ -107,9 +163,8 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     if (
         !Number.isInteger(requestedBranchId) || requestedBranchId <= 0
         || !Number.isInteger(requestedProductId) || requestedProductId <= 0
-        || !Number.isInteger(requestedRecipeVersionId) || requestedRecipeVersionId <= 0
     ) {
-        throw new PlanningConflictError("A valid branch, product, and BOM version are required before creating a Job Order.");
+        throw new PlanningConflictError("A valid branch and product are required before creating a Job Order.");
     }
 
     const detailsResponse = await fetchWithTimeout(
@@ -148,7 +203,7 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
         throw new PlanningConflictError("The selected Sales Order details have no valid parent Sales Order.");
     }
     const ordersResponse = await fetchWithTimeout(
-        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_status,branch_id&limit=-1`,
+        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_status,branch_id,customer_code&limit=-1`,
         { headers, cache: "no-store" }
     );
     if (!ordersResponse.ok) {
@@ -156,6 +211,19 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     }
     const orders: any[] = (await ordersResponse.json()).data || [];
     const ordersById = new Map(orders.map((order: any) => [Number(order.order_id), order]));
+    const effectiveVersionIds = await resolveEffectiveBomVersionIds(details, ordersById);
+    const selectedVersionIds = new Set(
+        detailIds
+            .map((detailId) => effectiveVersionIds.get(detailId) || 0)
+            .filter((versionId) => versionId > 0)
+    );
+    if (selectedVersionIds.size !== 1 || effectiveVersionIds.size !== detailIds.length) {
+        throw new PlanningConflictError("Every selected Sales Order detail must resolve to the same active BOM version before consolidation.");
+    }
+    const effectiveBomVersionId = [...selectedVersionIds][0];
+    if (requestedRecipeVersionId > 0 && requestedRecipeVersionId !== effectiveBomVersionId) {
+        throw new PlanningConflictError("The submitted BOM version is stale or does not match the selected Sales Order details. Refresh the demand list and try again.");
+    }
 
     const allocations: any[] = await fetchSchedulingAllocations(detailIds);
     const allocatedJobOrderIds = [...new Set(
@@ -188,6 +256,8 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
             .map((allocation: any) => relationId(allocation.sales_order_detail_id))
     );
 
+    const schedulingLines: SalesOrderSchedulingPlan["lines"] = [];
+    const selectedBranchIds = new Set<number>();
     for (const detailId of detailIds) {
         const detail = detailsById.get(detailId);
         const parentOrderId = relationId(detail.order_id);
@@ -201,11 +271,12 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
         if (relationId(parentOrder.branch_id) !== requestedBranchId) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} belongs to a different production branch.`);
         }
+        selectedBranchIds.add(relationId(parentOrder.branch_id));
         if (relationId(detail.product_id) !== requestedProductId) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the Job Order product.`);
         }
-        if (relationId(detail.bom_version_id) !== requestedRecipeVersionId) {
-            throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the selected BOM version.`);
+        if (effectiveVersionIds.get(detailId) !== effectiveBomVersionId) {
+            throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the consolidated BOM version.`);
         }
         if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || !Number.isFinite(served) || allocated >= ordered || served >= ordered) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} is already fulfilled or has invalid quantities.`);
@@ -213,9 +284,28 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
         if (activeAllocationDetailIds.has(detailId)) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} is already linked to an active Job Order.`);
         }
+        const remainingQuantity = ordered - Math.max(allocated, served);
+        if (!Number.isFinite(remainingQuantity) || remainingQuantity <= 0) {
+            throw new PlanningConflictError(`Sales Order detail ${detailId} has no remaining quantity to schedule.`);
+        }
+        schedulingLines.push({ detailId, parentOrderId, remainingQuantity });
     }
 
-    return { detailIds, parentOrderIds };
+    if (selectedBranchIds.size !== 1) {
+        throw new PlanningConflictError("All selected Sales Order details must belong to one production branch.");
+    }
+
+    return {
+        detailIds,
+        parentOrderIds,
+        schedulingPlan: {
+            branchId: requestedBranchId,
+            productId: requestedProductId,
+            bomVersionId: effectiveBomVersionId,
+            totalQuantity: schedulingLines.reduce((sum, line) => sum + line.remainingQuantity, 0),
+            lines: schedulingLines
+        } satisfies SalesOrderSchedulingPlan
+    };
 }
 
 
@@ -663,7 +753,7 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "The selected Sales Order details have no valid parent Sales Order." }, { status: 409 });
             }
             const ordersResponse = await fetch(
-                `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_status,branch_id&limit=-1`,
+                `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_status,branch_id,customer_code&limit=-1`,
                 { headers, cache: "no-store" }
             );
             if (!ordersResponse.ok) {
@@ -671,6 +761,19 @@ export async function handlePOST(request: Request) {
             }
             const orders: any[] = (await ordersResponse.json()).data || [];
             const ordersById = new Map(orders.map((order: any) => [Number(order.order_id), order]));
+            const effectiveVersionIds = await resolveEffectiveBomVersionIds(details, ordersById);
+            const selectedVersionIds = new Set(
+                detailIds
+                    .map((detailId) => effectiveVersionIds.get(detailId) || 0)
+                    .filter((versionId) => versionId > 0)
+            );
+            if (selectedVersionIds.size !== 1 || effectiveVersionIds.size !== detailIds.length) {
+                return NextResponse.json({ error: "Every selected Sales Order detail must resolve to the same active recipe version." }, { status: 409 });
+            }
+            const effectiveRecipeVersionId = [...selectedVersionIds][0];
+            if (effectiveRecipeVersionId !== requestedRecipeVersionId) {
+                return NextResponse.json({ error: "The selected recipe version is stale or does not match the Sales Order details." }, { status: 409 });
+            }
 
             for (const detailId of detailIds) {
                 const detail = detailsById.get(detailId);
@@ -688,7 +791,7 @@ export async function handlePOST(request: Request) {
                 if (relationId(detail.product_id) !== requestedProductId) {
                     return NextResponse.json({ error: `Sales Order detail ${detailId} does not match the selected product.` }, { status: 409 });
                 }
-                if (relationId(detail.bom_version_id) !== requestedRecipeVersionId) {
+                if (effectiveVersionIds.get(detailId) !== effectiveRecipeVersionId) {
                     return NextResponse.json({ error: `Sales Order detail ${detailId} does not match the selected recipe version.` }, { status: 409 });
                 }
                 if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || !Number.isFinite(served) || allocated >= ordered || served >= ordered) {
@@ -730,7 +833,13 @@ export async function handlePOST(request: Request) {
 
             const allocationLines = details.map((detail: any) => ({
                 detail_id: Number(detail.detail_id),
-                ordered_quantity: Number(detail.ordered_quantity)
+                remaining_quantity: Math.max(
+                    0,
+                    Number(detail.ordered_quantity || 0) - Math.max(
+                        Number(detail.allocated_quantity || 0),
+                        Number(detail.served_quantity || 0)
+                    )
+                )
             }));
 
             // Fetch inventory movements to calculate the true ledger stock
@@ -839,7 +948,7 @@ export async function handlePOST(request: Request) {
                 return Number(a.id) - Number(b.id);
             });
 
-            const totalRequested = allocationLines.reduce((sum: number, line: any) => sum + Number(line.ordered_quantity || 0), 0);
+            const totalRequested = allocationLines.reduce((sum: number, line: any) => sum + Number(line.remaining_quantity || 0), 0);
             const totalAvailable = matchingLots.reduce((sum: number, lot: any) => sum + Number(lot.quantity || 0), 0);
 
             if (totalAvailable < totalRequested) {
@@ -861,15 +970,26 @@ export async function handlePOST(request: Request) {
                 if (!detailData) throw new Error(`Sales Order detail ${detailId} was not returned by Directus.`);
 
                 const orderedQty = Number(detailData.ordered_quantity || 0);
+                const currentAllocated = Number(detailData.allocated_quantity || 0);
+                const currentServed = Number(detailData.served_quantity || 0);
                 const unitPrice = Number(detailData.unit_price || 0);
+                const plannedLine = allocationLines.find((line: any) => Number(line.detail_id) === detailId);
+                const currentRemaining = Math.max(0, orderedQty - Math.max(currentAllocated, currentServed));
+                if (!plannedLine || Math.abs(currentRemaining - Number(plannedLine.remaining_quantity)) > 0.000001) {
+                    throw new Error(`Sales Order detail ${detailId} changed while allocation was being prepared. Refresh the demand list and try again.`);
+                }
+                const nextAllocatedQuantity = Math.min(
+                    orderedQty,
+                    Math.max(currentAllocated, currentServed) + Number(plannedLine.remaining_quantity)
+                );
 
                 // Update detail
                 const patchDetailRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({
-                        allocated_quantity: orderedQty,
-                        allocated_amount: orderedQty * unitPrice
+                        allocated_quantity: nextAllocatedQuantity,
+                        allocated_amount: nextAllocatedQuantity * unitPrice
                     })
                 });
                 if (!patchDetailRes.ok) {
@@ -947,17 +1067,20 @@ export async function handlePOST(request: Request) {
         }
 
         // Map camelCase from frontend to snake_case for Directus database
+        const schedulingPlan = schedulingValidation.schedulingPlan;
         const dbPayload = {
             jo_id: jo.jo_id,
             order_id: jo.order_id || null,
             order_no: jo.order_no || null,
-            product_id: jo.product_id,
+            product_id: schedulingPlan?.productId ?? jo.product_id,
             product_name: jo.product_name,
-            quantity: jo.quantity,
+            quantity: schedulingPlan?.totalQuantity ?? jo.quantity,
             due_date: jo.due_date,
             status: assertJobOrderStatus(jo.status || JOB_ORDER_STATUS.DRAFT),
             is_batched: !!jo.is_batched,
-            bom: jo.bom || null,
+            bom: schedulingPlan
+                ? { version_id: schedulingPlan.bomVersionId }
+                : (jo.bom || null),
             components: jo.components || null,
             routings: jo.routings || null,
             allocation_results: jo.allocationResults || null,
@@ -972,18 +1095,28 @@ export async function handlePOST(request: Request) {
             sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,
             assignments: jo.assignments || null,
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
-            products: jo.products ? jo.products.map((p: any) => ({
-                product_id: p.product_id,
-                product_name: p.product_name,
-                quantity: p.quantity,
-                bom: p.bom || null,
-                components: p.components || null,
-                routings: p.routings || null,
-                allocation_results: p.allocationResults || null
-            })) : null
+            products: schedulingPlan
+                ? [{
+                    product_id: schedulingPlan.productId,
+                    product_name: jo.product_name,
+                    quantity: schedulingPlan.totalQuantity,
+                    bom: { version_id: schedulingPlan.bomVersionId },
+                    components: jo.components || null,
+                    routings: jo.routings || null,
+                    allocation_results: jo.allocationResults || null
+                }]
+                : (jo.products ? jo.products.map((p: any) => ({
+                    product_id: p.product_id,
+                    product_name: p.product_name,
+                    quantity: p.quantity,
+                    bom: p.bom || null,
+                    components: p.components || null,
+                    routings: p.routings || null,
+                    allocation_results: p.allocationResults || null
+                })) : null)
         };
 
-        const result = await createJobOrder(dbPayload, effectiveSalesOrderIds, schedulingValidation.detailIds);
+        const result = await createJobOrder(dbPayload, effectiveSalesOrderIds, schedulingValidation.detailIds, schedulingPlan);
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
         console.error("API Error in planning-engineering POST:", e);

@@ -32,6 +32,7 @@ export interface SalesOrderDetail {
     allocated_quantity?: number;
     allocated_amount?: number;
     served_quantity?: number;
+    remaining_quantity?: number;
     parent_order_status?: string | null;
     is_scheduled?: boolean;
     is_read_only?: boolean;
