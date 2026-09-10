@@ -9,6 +9,7 @@ import {
     fetchBranches,
     fetchBatches,
     fetchLotTransfers,
+    fetchLotTransferMovementHistory,
     fetchLotTransferStatusHistory,
     fetchLotTransferUsers,
     fetchLots,
@@ -34,6 +35,7 @@ import type {
     ProductOption,
     LotTransferReportFilters,
     LotTransferStatus,
+    LotTransferMovementHistoryResult,
     LotTransferStatusHistory,
     UserOption
 } from "../types";
@@ -45,6 +47,7 @@ interface UseLotTransferOptions {
 }
 
 const WORKFLOW_VISIBLE_STATUSES: LotTransferStatus[] = ["Draft", "Submitted", "Approved", "Posted", "Rejected", "Cancelled", "Reversed"];
+const REPORT_PAGE_SIZE = 50;
 
 function formFromRecord(record: LotTransfer, fallbackBranchId?: number | null): LotTransferForm {
     const details = record.details?.length > 0 ? record.details : [{
@@ -127,6 +130,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [statusHistory, setStatusHistory] = useState<LotTransferStatusHistory[]>([]);
     const [statusHistoryLoading, setStatusHistoryLoading] = useState(false);
     const [statusHistoryError, setStatusHistoryError] = useState<string | null>(null);
+    const [movementHistory, setMovementHistory] = useState<LotTransferMovementHistoryResult | null>(null);
+    const [movementHistoryLoading, setMovementHistoryLoading] = useState(false);
+    const [movementHistoryError, setMovementHistoryError] = useState<string | null>(null);
     const [preview, setPreview] = useState<LotTransferPreview | null>(null);
     const [products, setProducts] = useState<ProductOption[]>([]);
     const [lots, setLots] = useState<LotOption[]>([]);
@@ -149,6 +155,8 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [draftValidationMessage, setDraftValidationMessage] = useState<string | null>(null);
     const [validatedDraftKey, setValidatedDraftKey] = useState("");
     const statusHistoryRequestRef = useRef(0);
+    const movementHistoryRequestRef = useRef(0);
+    const [reportPage, setReportPage] = useState(0);
 
     const draftFormKey = useMemo(() => formKey(form), [form]);
     const draftValidationIsCurrent = validatedDraftKey === draftFormKey;
@@ -187,7 +195,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
                 targetBatchNo: report?.targetBatchNo,
                 requestedBy: report?.requestedBy ? Number(report.requestedBy) : undefined,
                 approvedBy: report?.approvedBy ? Number(report.approvedBy) : undefined,
-                postedBy: report?.postedBy ? Number(report.postedBy) : undefined
+                postedBy: report?.postedBy ? Number(report.postedBy) : undefined,
+                limit: mode === "summary" ? REPORT_PAGE_SIZE : 500,
+                offset: mode === "summary" ? reportPage * REPORT_PAGE_SIZE : 0
             });
             setRecords(response.data);
             setTotalCount(response.totalCount);
@@ -197,7 +207,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         } finally {
             setIsLoading(false);
         }
-    }, [appliedReportFilters, mode, userBranchId]);
+    }, [appliedReportFilters, mode, reportPage, userBranchId]);
 
     useEffect(() => {
         void refresh();
@@ -283,11 +293,15 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
 
     const clearSelection = useCallback(() => {
         statusHistoryRequestRef.current += 1;
+        movementHistoryRequestRef.current += 1;
         setSelectedId(null);
         setSelectedRecord(null);
         setStatusHistory([]);
         setStatusHistoryLoading(false);
         setStatusHistoryError(null);
+        setMovementHistory(null);
+        setMovementHistoryLoading(false);
+        setMovementHistoryError(null);
         setPreview(null);
         setDraftValidationStatus("idle");
         setDraftValidationMessage(null);
@@ -313,11 +327,33 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         }
     }, []);
 
+    const loadMovementHistory = useCallback(async (id: number) => {
+        const requestId = movementHistoryRequestRef.current + 1;
+        movementHistoryRequestRef.current = requestId;
+        setMovementHistoryLoading(true);
+        setMovementHistoryError(null);
+        try {
+            const history = await fetchLotTransferMovementHistory(id);
+            if (movementHistoryRequestRef.current !== requestId) return;
+            setMovementHistory(history);
+        } catch (historyError) {
+            if (movementHistoryRequestRef.current !== requestId) return;
+            setMovementHistory(null);
+            setMovementHistoryError(historyError instanceof Error ? historyError.message : "Unable to load inventory movement history.");
+        } finally {
+            if (movementHistoryRequestRef.current === requestId) setMovementHistoryLoading(false);
+        }
+    }, []);
+
     const selectRecord = useCallback(async (record: LotTransfer) => {
         setSelectedId(record.id);
         setSelectedRecord(record);
         setStatusHistory([]);
         setStatusHistoryError(null);
+        movementHistoryRequestRef.current += 1;
+        setMovementHistory(null);
+        setMovementHistoryLoading(false);
+        setMovementHistoryError(null);
         void loadStatusHistory(record.id);
         markDraftValidationStale();
         setForm(formFromRecord(record, userBranchId));
@@ -621,6 +657,28 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         return rows.filter((row) => !detail?.productId || row.productId === Number(detail.productId));
     }, [batchesByLot, form.details, form.targetLotId]);
 
+    const reportPageCount = Math.max(1, Math.ceil(totalCount / REPORT_PAGE_SIZE));
+    const goToReportPage = useCallback((page: number) => {
+        setReportPage(Math.min(Math.max(page, 0), reportPageCount - 1));
+    }, [reportPageCount]);
+    const applyReportFilters = useCallback(() => {
+        setReportPage(0);
+        setAppliedReportFilters({
+            ...reportFilters,
+            statuses: [...reportFilters.statuses]
+        });
+    }, [reportFilters]);
+    const clearReportFilters = useCallback(() => {
+        const nextFilters = {
+            ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
+            branchId: userBranchId ? "" : DEFAULT_LOT_TRANSFER_REPORT_FILTERS.branchId,
+            statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
+        };
+        setReportPage(0);
+        setReportFilters(nextFilters);
+        setAppliedReportFilters(nextFilters);
+    }, [userBranchId]);
+
     return {
         userBranchId,
         records,
@@ -631,6 +689,9 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         statusHistory,
         statusHistoryLoading,
         statusHistoryError,
+        movementHistory,
+        movementHistoryLoading,
+        movementHistoryError,
         preview,
         products,
         lots,
@@ -645,22 +706,15 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         draftValidationIsCurrent,
         isDraftFormComplete: isCompleteDraftForm(form),
         reportFilters,
+        reportPage,
+        reportPageSize: REPORT_PAGE_SIZE,
+        reportPageCount,
         setReportFilter: <K extends keyof LotTransferReportFilters>(field: K, value: LotTransferReportFilters[K]) => {
             setReportFilters((current) => ({ ...current, [field]: value }));
         },
-        applyReportFilters: () => setAppliedReportFilters({
-            ...reportFilters,
-            statuses: [...reportFilters.statuses]
-        }),
-        clearReportFilters: () => {
-            const nextFilters = {
-                ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
-                branchId: userBranchId ? "" : DEFAULT_LOT_TRANSFER_REPORT_FILTERS.branchId,
-                statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
-            };
-            setReportFilters(nextFilters);
-            setAppliedReportFilters(nextFilters);
-        },
+        goToReportPage,
+        applyReportFilters,
+        clearReportFilters,
         setField,
         updateDetail,
         addDetail,
@@ -671,6 +725,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         handleBatchChange,
         selectRecord,
         loadStatusHistory,
+        loadMovementHistory,
         clearSelection,
         saveDraft,
         deleteDraft,

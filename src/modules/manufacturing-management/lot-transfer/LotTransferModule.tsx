@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
 import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
@@ -343,6 +344,78 @@ function StatusHistoryTimeline({ controller, record }: { controller: LotTransfer
                 : controller.statusHistoryError ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{controller.statusHistoryError}</p>
                     : controller.statusHistory.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No status history is available.</p>
                         : <ol className="mt-3 space-y-2">{controller.statusHistory.map(renderEntry)}</ol>}
+        </div>
+    );
+}
+
+function movementUserLabel(userId: number | null, users: LotTransferController["users"]) {
+    if (!userId) return "System";
+    return users.find((user) => user.id === userId)?.name || `User #${userId}`;
+}
+
+function movementLineLabel(detailId: number | null, record: LotTransferController["records"][number]) {
+    if (!detailId) return "Header / legacy line";
+    const detail = record.details.find((item) => item.detailId === detailId);
+    return detail ? `Line ${detail.lineNo}` : `Line detail #${detailId}`;
+}
+
+function MovementHistoryTimeline({ controller, record }: { controller: LotTransferController; record: LotTransferController["records"][number] }) {
+    const result = controller.movementHistory;
+    const groups = useMemo(() => {
+        const grouped = new Map<string, { label: string; rows: NonNullable<typeof result>["data"] }>();
+        for (const movement of result?.data || []) {
+            const key = movement.detailId ? String(movement.detailId) : "header";
+            const existing = grouped.get(key);
+            if (existing) existing.rows.push(movement);
+            else grouped.set(key, { label: movementLineLabel(movement.detailId, record), rows: [movement] });
+        }
+        return [...grouped.values()];
+    }, [record, result]);
+
+    return (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-semibold">Movement history</h3>
+                    <p className="text-xs text-muted-foreground">Authoritative inventory ledger entries grouped by transfer detail line.</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => void controller.loadMovementHistory(record.id)} disabled={controller.movementHistoryLoading}>
+                    <RefreshCw className={controller.movementHistoryLoading ? "animate-spin" : ""} />
+                    Refresh
+                </Button>
+            </div>
+            {controller.movementHistoryLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading inventory movements...</p>
+                : controller.movementHistoryError ? <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-red-700 dark:text-red-300"><span role="alert">{controller.movementHistoryError}</span><Button type="button" variant="outline" size="sm" onClick={() => void controller.loadMovementHistory(record.id)}>Retry</Button></div>
+                    : !result ? <p className="mt-3 text-sm text-muted-foreground">Select the Movement history tab to load the inventory ledger.</p>
+                        : <>
+                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                <span>Expected movements: <strong className="text-foreground">{result.expectedMovementCount}</strong></span>
+                                <span>Recorded movements: <strong className="text-foreground">{result.actualMovementCount}</strong></span>
+                                <span>Paired lines: <strong className="text-foreground">{result.pairedLineCount}/{result.expectedLineCount}</strong></span>
+                            </div>
+                            {result.reconciliationRequired && <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Movement reconciliation is required: the recorded ledger rows do not form the expected canonical OUT/IN pair for every transfer line.</p>}
+                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 space-y-3">
+                                {groups.map((group) => <div key={group.label} className="rounded-lg border bg-background p-2">
+                                    <h4 className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[980px] text-left text-xs">
+                                            <thead className="border-y bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground"><tr><th className="px-2 py-2">Direction</th><th className="px-2 py-2">Transaction type</th><th className="px-2 py-2">Product</th><th className="px-2 py-2">MM lot</th><th className="px-2 py-2">Batch</th><th className="px-2 py-2">Quantity</th><th className="px-2 py-2">Created</th><th className="px-2 py-2">User</th><th className="px-2 py-2">Remarks</th></tr></thead>
+                                            <tbody className="divide-y">{group.rows.map((movement) => <tr key={movement.movementId}>
+                                                <td className="px-2 py-2 font-semibold">{movement.movementDirection}</td>
+                                                <td className="px-2 py-2 font-medium">{movement.transactionType}</td>
+                                                <td className="px-2 py-2">{productLabel(movement.productId, controller.products)}</td>
+                                                <td className="px-2 py-2">{movement.mmLotId ? lotLabel(movement.mmLotId, controller.lots) : "Not recorded"}</td>
+                                                <td className="px-2 py-2">{movement.batchNo || "-"}</td>
+                                                <td className="px-2 py-2">{formatQuantity(movement.quantity)}</td>
+                                                <td className="px-2 py-2">{formatDateTime(movement.createdAt)}</td>
+                                                <td className="px-2 py-2">{movementUserLabel(movement.createdBy, controller.users)}</td>
+                                                <td className="max-w-[260px] whitespace-pre-wrap px-2 py-2">{movement.remarks || movement.sourceDocumentNo || "-"}</td>
+                                            </tr>)}</tbody>
+                                        </table>
+                                    </div>
+                                </div>)}
+                            </div>}
+                        </>}
         </div>
     );
 }
@@ -767,10 +840,20 @@ function SummaryTable({ controller, onView }: {
     controller: LotTransferController;
     onView: (record: LotTransferController["records"][number]) => void;
 }) {
+    const firstRecordNumber = controller.totalCount === 0 ? 0 : controller.reportPage * controller.reportPageSize + 1;
+    const lastRecordNumber = Math.min((controller.reportPage + 1) * controller.reportPageSize, controller.totalCount);
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-summary-heading">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 id="lot-transfer-summary-heading" className="font-semibold">Master LOT Transfer Summary</h2><p className="text-xs text-muted-foreground">Searchable audit history for lot-transfer lifecycle records.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} />Refresh</Button></div>
             <SummaryReportFilters controller={controller} />
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-3 text-xs text-muted-foreground" aria-label="Lot-transfer report pagination">
+                <span>{firstRecordNumber}-{lastRecordNumber} of {controller.totalCount} record(s)</span>
+                <div className="flex items-center gap-2">
+                    <span>Page {controller.reportPage + 1} of {controller.reportPageCount}</span>
+                    <Button type="button" variant="outline" size="sm" onClick={() => controller.goToReportPage(controller.reportPage - 1)} disabled={controller.reportPage === 0 || controller.isLoading}>Previous</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => controller.goToReportPage(controller.reportPage + 1)} disabled={controller.reportPage >= controller.reportPageCount - 1 || controller.isLoading}>Next</Button>
+                </div>
+            </div>
             {controller.records.length === 0 ? <EmptyState message="No lot-transfer records match the selected report filters." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDate(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
         </section>
     );
@@ -778,6 +861,15 @@ function SummaryTable({ controller, onView }: {
 
 function SummaryAudit({ controller, allowCancel = false }: { controller: LotTransferController; allowCancel?: boolean }) {
     const record = controller.selectedRecord;
+    const [auditTab, setAuditTab] = useState("approval");
+
+    const handleAuditTabChange = (value: string) => {
+        setAuditTab(value);
+        if (value === "movement" && record && !controller.movementHistory && !controller.movementHistoryLoading) {
+            void controller.loadMovementHistory(record.id);
+        }
+    };
+
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
             {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <>
@@ -823,7 +915,14 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
                     {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
                 </div>
-                <StatusHistoryTimeline controller={controller} record={record} />
+                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4" aria-label="Lot-transfer audit history">
+                    <TabsList className="w-full sm:w-fit">
+                        <TabsTrigger value="approval">Approval history</TabsTrigger>
+                        <TabsTrigger value="movement">Movement history</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="approval"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="movement"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
+                </Tabs>
                 <div className="mt-4 flex justify-end gap-2">
                     <ReverseTransferAction controller={controller} record={record} />
                     {allowCancel && <CancelTransferAction controller={controller} record={record} />}
@@ -926,7 +1025,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogTitle>Lot transfer status</DialogTitle>
                         <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
                     </DialogHeader>
-                    <SummaryAudit controller={controller} allowCancel />
+                    <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} allowCancel />
                 </DialogContent>
             </Dialog>}
             {mode === "approval" && <Dialog open={approvalDialogOpen} onOpenChange={(open) => open ? setApprovalDialogOpen(true) : closeApprovalDialog()}>
@@ -953,7 +1052,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogTitle>Lot transfer audit</DialogTitle>
                         <DialogDescription>Read-only details for the selected terminal transfer request.</DialogDescription>
                     </DialogHeader>
-                    <SummaryAudit controller={controller} />
+                    <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} />
                 </DialogContent>
             </Dialog>}
             <div className="mt-auto flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><ClipboardCheck className="h-4 w-4" />Draft and rejection operations do not change inventory. Approval authorizes the request; posting creates one source OUT and one target IN movement.</div>
