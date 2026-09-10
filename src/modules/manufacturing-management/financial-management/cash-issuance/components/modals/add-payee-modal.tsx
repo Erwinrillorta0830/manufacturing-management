@@ -16,7 +16,7 @@ import { UserPlus, Loader2 } from "lucide-react";
 import { disbursementProvider } from "../../providers/fetchProvider";
 import { SupplierDto } from "../../types";
 import { toast } from "sonner";
-import { formatTIN } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-registration/utils/utils";
+import { formatTIN } from "@/modules/manufacturing-management/financial-management/discount-management/supplier-discount/utils/utils";
 
 interface AddPayeeModalProps {
     open: boolean;
