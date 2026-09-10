@@ -13,7 +13,7 @@ type WallClockParts = {
 
 function wallClockParts(value: string): WallClockParts | null {
     const match = value.trim().match(
-        /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/
+        /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?$/
     );
     if (!match) return null;
 
@@ -25,7 +25,7 @@ function wallClockParts(value: string): WallClockParts | null {
         hour: Number(hour),
         minute: Number(minute),
         second: Number(second),
-        millisecond: Number(milliseconds.padEnd(3, "0"))
+        millisecond: Number(milliseconds.padEnd(3, "0").slice(0, 3))
     };
 
     const calendarCheck = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));

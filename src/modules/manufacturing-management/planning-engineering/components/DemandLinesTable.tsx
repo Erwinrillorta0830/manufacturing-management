@@ -159,10 +159,13 @@ export function DemandLinesTable({
                                             </span>
                                         </TableCell>
                                         <TableCell className="py-2 text-right font-bold text-xs">
-                                            <span>{line.ordered_quantity.toLocaleString()}</span>
+                                            <span>{(line.remaining_quantity ?? Math.max(0, Number(line.ordered_quantity || 0) - Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0)))).toLocaleString()}</span>
                                             <span className="text-[10px] text-muted-foreground font-normal ml-1 lowercase">
                                                 {line.product_id?.uom || "pcs"}
                                             </span>
+                                            <div className="text-[9px] font-normal text-muted-foreground">
+                                                of {line.ordered_quantity.toLocaleString()} ordered
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}

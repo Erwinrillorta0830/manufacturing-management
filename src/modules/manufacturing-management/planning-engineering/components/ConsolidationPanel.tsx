@@ -29,7 +29,18 @@ export function ConsolidationPanel({
     loadingVersionStock,
     handleInitiateDirectAllocate
 }: ConsolidationPanelProps) {
-    const totalDemand = selectedLines.reduce((sum, l) => sum + Number(l.ordered_quantity), 0);
+    const totalRemaining = selectedLines.reduce((sum, line) => {
+        const ordered = Number(line.ordered_quantity || 0);
+        const allocated = Number(line.allocated_quantity || 0);
+        const served = Number(line.served_quantity || 0);
+        const remaining = Number(line.remaining_quantity);
+        return sum + (Number.isFinite(remaining)
+            ? Math.max(0, remaining)
+            : Math.max(0, ordered - Math.max(allocated, served)));
+    }, 0);
+    const selectedOrderReferences = Array.from(new Map(
+        selectedLines.map((line) => [line.order_id, line.order_no || `SO #${line.order_id}`])
+    ).entries());
 
     return (
         <Card className="shadow-sm border-primary/20 bg-primary/[0.01]">
@@ -64,7 +75,7 @@ export function ConsolidationPanel({
                                     <Check className="h-4 w-4 text-green-600" />
                                     <AlertTitle className="text-xs font-bold text-green-700 uppercase">Valid Consolidation</AlertTitle>
                                     <AlertDescription className="text-xs font-medium text-green-600 mt-1">
-                                        Ready to batch consolidate {selectedLines.length} order lines for {selectedLines[0].product_id.product_name}.
+                                        Ready to consolidate {selectedLines.length} lines from {selectedOrderReferences.length} Sales Orders for {selectedLines[0].product_id.product_name}.
                                     </AlertDescription>
                                 </Alert>
  
@@ -82,9 +93,19 @@ export function ConsolidationPanel({
                                         </Badge>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Total SO Demand:</span>
+                                        <span className="font-semibold text-muted-foreground">Selected Sales Orders:</span>
+                                        <span className="font-bold text-foreground text-right">
+                                            {selectedOrderReferences.map(([orderId, orderNo], index) => (
+                                                <React.Fragment key={orderId}>
+                                                    {index > 0 ? ", " : ""}{orderNo}
+                                                </React.Fragment>
+                                            ))}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Remaining JO Quantity:</span>
                                         <span className="font-bold text-foreground">
-                                            {totalDemand.toLocaleString()}
+                                            {totalRemaining.toLocaleString()}
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
@@ -111,7 +132,7 @@ export function ConsolidationPanel({
                                 Consolidate & Release Job Order
                             </Button>
 
-                            {mergeValidation.isValid && versionStock !== null && versionStock >= totalDemand && (
+                            {mergeValidation.isValid && versionStock !== null && versionStock >= totalRemaining && (
                                 <Button
                                     type="button"
                                     variant="outline"
