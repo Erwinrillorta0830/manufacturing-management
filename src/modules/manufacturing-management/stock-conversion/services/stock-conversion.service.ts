@@ -556,7 +556,7 @@ export const stockConversionService = {
     try {
       // 1. Create a SINGLE header for the entire conversion transaction
       const nowPHT = getPhDbTimestamp();
-      const headerRes = await stockConversionRepo.createStockAdjustmentHeader({
+      await stockConversionRepo.createStockAdjustmentHeader({
         doc_no: docNo, 
         type: "OUT", 
         branch_id: payload.branchId, 
@@ -573,7 +573,6 @@ export const stockConversionService = {
         date_created: nowPHT,
         date_updated: nowPHT,
       });
-      const headerId = headerRes?.data?.id || null;
 
       // 2. Create the OUT movement(s) (Source Product) with exact batch and lot tracking
       let outId: number | undefined;

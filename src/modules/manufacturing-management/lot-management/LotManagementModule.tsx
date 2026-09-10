@@ -26,6 +26,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 
+function isBatchExpired(expirationDate?: string | null): boolean {
+    if (!expirationDate) return false;
+    const expTime = new Date(expirationDate).getTime();
+    return !isNaN(expTime) && expTime < Date.now();
+}
+
 export default function LotManagementModule() {
     const [mounted, setMounted] = useState(false);
 
@@ -251,7 +257,7 @@ export default function LotManagementModule() {
                 const isGood = selectedStatusFilter === "GOOD";
 
                 if (isNeg && q >= 0) return false;
-                if (isExp && qa !== "EXPIRED" && !(b.expirationDate && new Date(b.expirationDate).getTime() < Date.now())) return false;
+                if (isExp && qa !== "EXPIRED" && !isBatchExpired(b.expirationDate)) return false;
                 if (isQua && qa !== "QUARANTINED") return false;
                 if (isDam && qa !== "DAMAGED") return false;
                 if (isGood && ((qa && qa !== "GOOD") || q <= 0)) return false;

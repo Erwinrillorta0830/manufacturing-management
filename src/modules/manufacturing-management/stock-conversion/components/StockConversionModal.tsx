@@ -523,99 +523,103 @@ export function StockConversionModal({
 
   // ── Auto-split Target Batches & Cascade MFG / EXP Dates from Source Allocations ──
   useEffect(() => {
-    if (wholeUnits <= 0) {
-      setTargetLotGroups((prev) => (prev.length > 0 ? [] : prev));
-      return;
-    }
-
-    const sourceFactor = Number(product?.conversionFactor) || 1;
-    const targetFactor = Number(targetUnit?.conversionFactor) || 1;
-    const stepInSource = targetFactor / sourceFactor;
-
-    setTargetLotGroups((prev) => {
-      // Only auto-split if user hasn't created multiple lot groups (single lot group)
-      if (prev.length > 1) return prev;
-
-      const currentGroup = prev[0];
-      const existingBatches = currentGroup?.batches || [];
-
-      let splits: BatchRowAllocation[] = [];
-
-      if (activeAllocations.length > 0) {
-        let remainingTargetQty = wholeUnits;
-        activeAllocations.forEach((alloc, idx) => {
-          if (remainingTargetQty <= 0) return;
-
-          let splitQty = 0;
-          if (idx === activeAllocations.length - 1) {
-            splitQty = remainingTargetQty;
-          } else if (stepInSource > 0) {
-            splitQty = Math.min(
-              remainingTargetQty,
-              Math.floor((alloc.allocated_quantity || 0) / stepInSource)
-            );
-          } else {
-            splitQty = remainingTargetQty;
-          }
-          remainingTargetQty -= splitQty;
-
-          const existingB = existingBatches[idx];
-          const mfgDate = alloc.manufacturing_date?.substring(0, 10) || todayStr;
-          const expDate = alloc.expiry_date?.substring(0, 10) || null;
-
-          splits.push({
-            batch_no: existingB?.batch_no || "",
-            quantity: splitQty,
-            manufacturing_date: mfgDate,
-            expiry_date: expDate,
-            qa_status: existingB?.qa_status || "GOOD",
-          });
-        });
-
-        if (remainingTargetQty > 0 && splits.length > 0) {
-          splits[splits.length - 1].quantity += remainingTargetQty;
-        }
-      } else {
-        splits = [
-          {
-            batch_no: existingBatches[0]?.batch_no || "",
-            quantity: wholeUnits,
-            manufacturing_date: todayStr,
-            expiry_date: defaultExpDate || null,
-            qa_status: existingBatches[0]?.qa_status || "GOOD",
-          },
-        ];
+    const timer = setTimeout(() => {
+      if (wholeUnits <= 0) {
+        setTargetLotGroups((prev) => (prev.length > 0 ? [] : prev));
+        return;
       }
 
-      // Check if splits actually changed to avoid unnecessary re-renders
-      const hasChanged =
-        prev.length === 0 ||
-        existingBatches.length !== splits.length ||
-        existingBatches.some((eb, i) => {
-          const s = splits[i];
-          return (
-            eb.quantity !== s.quantity ||
-            eb.manufacturing_date !== s.manufacturing_date ||
-            eb.expiry_date !== s.expiry_date
-          );
-        });
+      const sourceFactor = Number(product?.conversionFactor) || 1;
+      const targetFactor = Number(targetUnit?.conversionFactor) || 1;
+      const stepInSource = targetFactor / sourceFactor;
 
-      if (!hasChanged) return prev;
+      setTargetLotGroups((prev) => {
+        // Only auto-split if user hasn't created multiple lot groups (single lot group)
+        if (prev.length > 1) return prev;
 
-      const currentGroupLot = currentGroup?.lot_id ? lots.find((l) => Number(l.lot_id) === Number(currentGroup.lot_id)) : undefined;
-      return [
-        {
-          lot_id: currentGroup?.lot_id || 0,
-          lot_name: currentGroupLot?.lot_name || currentGroup?.lot_name || "",
-          max_batch_capacity: Number(currentGroupLot?.max_batch_capacity ?? currentGroup?.max_batch_capacity ?? 0),
-          unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
-          unit_name: targetUnit?.name || null,
-          current_stock_quantity: Math.max(0, Number(currentGroupLot?.current_stock_quantity ?? currentGroup?.current_stock_quantity ?? 0)),
-          allocated_quantity: wholeUnits,
-          batches: splits,
-        },
-      ];
-    });
+        const currentGroup = prev[0];
+        const existingBatches = currentGroup?.batches || [];
+
+        let splits: BatchRowAllocation[] = [];
+
+        if (activeAllocations.length > 0) {
+          let remainingTargetQty = wholeUnits;
+          activeAllocations.forEach((alloc, idx) => {
+            if (remainingTargetQty <= 0) return;
+
+            let splitQty = 0;
+            if (idx === activeAllocations.length - 1) {
+              splitQty = remainingTargetQty;
+            } else if (stepInSource > 0) {
+              splitQty = Math.min(
+                remainingTargetQty,
+                Math.floor((alloc.allocated_quantity || 0) / stepInSource)
+              );
+            } else {
+              splitQty = remainingTargetQty;
+            }
+            remainingTargetQty -= splitQty;
+
+            const existingB = existingBatches[idx];
+            const mfgDate = alloc.manufacturing_date?.substring(0, 10) || todayStr;
+            const expDate = alloc.expiry_date?.substring(0, 10) || null;
+
+            splits.push({
+              batch_no: existingB?.batch_no || "",
+              quantity: splitQty,
+              manufacturing_date: mfgDate,
+              expiry_date: expDate,
+              qa_status: existingB?.qa_status || "GOOD",
+            });
+          });
+
+          if (remainingTargetQty > 0 && splits.length > 0) {
+            splits[splits.length - 1].quantity += remainingTargetQty;
+          }
+        } else {
+          splits = [
+            {
+              batch_no: existingBatches[0]?.batch_no || "",
+              quantity: wholeUnits,
+              manufacturing_date: todayStr,
+              expiry_date: defaultExpDate || null,
+              qa_status: existingBatches[0]?.qa_status || "GOOD",
+            },
+          ];
+        }
+
+        // Check if splits actually changed to avoid unnecessary re-renders
+        const hasChanged =
+          prev.length === 0 ||
+          existingBatches.length !== splits.length ||
+          existingBatches.some((eb, i) => {
+            const s = splits[i];
+            return (
+              eb.quantity !== s.quantity ||
+              eb.manufacturing_date !== s.manufacturing_date ||
+              eb.expiry_date !== s.expiry_date
+            );
+          });
+
+        if (!hasChanged) return prev;
+
+        const currentGroupLot = currentGroup?.lot_id ? lots.find((l) => Number(l.lot_id) === Number(currentGroup.lot_id)) : undefined;
+        return [
+          {
+            lot_id: currentGroup?.lot_id || 0,
+            lot_name: currentGroupLot?.lot_name || currentGroup?.lot_name || "",
+            max_batch_capacity: Number(currentGroupLot?.max_batch_capacity ?? currentGroup?.max_batch_capacity ?? 0),
+            unit_id: targetUnit?.unitId ? Number(targetUnit.unitId) : null,
+            unit_name: targetUnit?.name || null,
+            current_stock_quantity: Math.max(0, Number(currentGroupLot?.current_stock_quantity ?? currentGroup?.current_stock_quantity ?? 0)),
+            allocated_quantity: wholeUnits,
+            batches: splits,
+          },
+        ];
+      });
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [
     activeAllocations,
     wholeUnits,
@@ -794,20 +798,6 @@ export function StockConversionModal({
     toast.success("Dates applied to all batch splits in this lot");
   };
 
-  // Atomically apply Mfg Date and Expiry Date across all lots & batches
-  const handleApplyDatesToAllLots = (mfgDate?: string, expDate?: string) => {
-    setTargetLotGroups((prevGroups) =>
-      prevGroups.map((g) => ({
-        ...g,
-        batches: (g.batches || []).map((b) => ({
-          ...b,
-          ...(mfgDate ? { manufacturing_date: mfgDate } : {}),
-          ...(expDate ? { expiry_date: expDate } : {}),
-        })),
-      }))
-    );
-    toast.success("Dates applied across all storage lots and batches");
-  };
 
   // Capacity-Aware Auto-Reallocate across all target lot groups
   const handleReallocateLots = () => {
