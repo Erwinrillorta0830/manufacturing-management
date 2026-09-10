@@ -7,17 +7,18 @@ import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../typ
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
 function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
+    return isProductionSchedulingStatus(line.parent_order_status) && remainingQuantity(line) > 0;
 }
 
 function remainingQuantity(line: SalesOrderDetail): number {
     const ordered = Number(line.ordered_quantity || 0);
     const allocated = Number(line.allocated_quantity || 0);
     const served = Number(line.served_quantity || 0);
+    const planned = Number(line.planned_quantity || 0);
     const resolved = Number(line.remaining_quantity);
     if (Number.isFinite(resolved)) return Math.max(0, resolved);
-    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served)) return 0;
-    return Math.max(0, ordered - Math.max(allocated, served));
+    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
+    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
 }
 
 export function usePlanningEngineering() {
@@ -506,6 +507,12 @@ export function usePlanningEngineering() {
     // Release JO Submit
     const handleConfirmRelease = async (selectedSubAssemblyVersions?: Record<number, number>) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
+
+        const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity) {
+            toast.error(`Enter a Job Order quantity from 1 to ${maxAvailableQuantity.toLocaleString()}.`);
+            return;
+        }
 
         setReleasingJO(true);
         try {

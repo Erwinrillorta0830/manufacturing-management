@@ -7,9 +7,16 @@ import { getActiveVersionForProduct } from "../../finished-goods/versions/versio
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
-import { assertJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import {
+    assertJobOrderStatus,
+    isCancelledJobOrderStatus,
+    isJobOrderStatus,
+    isTerminalJobOrderStatus,
+    JOB_ORDER_STATUS
+} from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
 import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
@@ -109,7 +116,7 @@ async function resolveEffectiveBomVersionIds(
 }
 
 async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
-    const allocationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=sales_order_detail_id,job_order_id,status&limit=-1`;
+    const allocationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=sales_order_detail_id,job_order_id,allocated_quantity,status&limit=-1`;
     const allocationResponse = await fetchWithTimeout(allocationUrl, { headers, cache: "no-store" });
     if (allocationResponse.ok) return (await allocationResponse.json()).data || [];
 
@@ -119,7 +126,7 @@ async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
     }
 
     const legacyResponse = await fetchWithTimeout(
-        `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=sales_order_detail_id,job_order_id&limit=-1`,
+        `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&fields=sales_order_detail_id,job_order_id,allocated_quantity&limit=-1`,
         { headers, cache: "no-store" }
     );
     if (!legacyResponse.ok) {
@@ -160,11 +167,15 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     const requestedBranchId = Number(jo.branch_id);
     const requestedProductId = Number(jo.product_id);
     const requestedRecipeVersionId = relationId(jo.bom?.version_id ?? jo.bom_version_id);
+    const requestedQuantity = Number(jo.quantity ?? jo.target_quantity);
     if (
         !Number.isInteger(requestedBranchId) || requestedBranchId <= 0
         || !Number.isInteger(requestedProductId) || requestedProductId <= 0
     ) {
         throw new PlanningConflictError("A valid branch and product are required before creating a Job Order.");
+    }
+    if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+        throw new PlanningConflictError("The Job Order target quantity must be greater than zero.");
     }
 
     const detailsResponse = await fetchWithTimeout(
@@ -228,7 +239,7 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     const allocations: any[] = await fetchSchedulingAllocations(detailIds);
     const allocatedJobOrderIds = [...new Set(
         allocations
-            .filter((allocation: any) => !isCancelledStatus(allocation.status))
+            .filter((allocation: any) => !isCancelledJobOrderStatus(allocation.status))
             .map((allocation: any) => relationId(allocation.job_order_id))
             .filter((id: number) => id > 0)
     )];
@@ -246,17 +257,22 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
         }
     }
 
-    const activeAllocationDetailIds = new Set(
-        allocations
-            .filter((allocation: any) => {
-                if (isCancelledStatus(allocation.status)) return false;
-                const jobOrder = jobOrdersById.get(relationId(allocation.job_order_id));
-                return !jobOrder || !isCancelledStatus(jobOrder.status);
-            })
-            .map((allocation: any) => relationId(allocation.sales_order_detail_id))
-    );
+    const plannedQuantityByDetail = new Map<number, number>();
+    for (const allocation of allocations) {
+        if (isCancelledJobOrderStatus(allocation.status)) continue;
+        const jobOrder = jobOrdersById.get(relationId(allocation.job_order_id));
+        if (jobOrder && (isCancelledJobOrderStatus(jobOrder.status) || isTerminalJobOrderStatus(jobOrder.status))) continue;
+        const detailId = relationId(allocation.sales_order_detail_id);
+        const quantity = Number(allocation.allocated_quantity ?? allocation.quantity ?? 0);
+        if (!detailId || !Number.isFinite(quantity) || quantity <= 0) continue;
+        plannedQuantityByDetail.set(detailId, (plannedQuantityByDetail.get(detailId) || 0) + quantity);
+    }
 
-    const schedulingLines: SalesOrderSchedulingPlan["lines"] = [];
+    const availableLines: Array<{
+        detailId: number;
+        parentOrderId: number;
+        availableQuantity: number;
+    }> = [];
     const selectedBranchIds = new Set<number>();
     for (const detailId of detailIds) {
         const detail = detailsById.get(detailId);
@@ -278,21 +294,45 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
         if (effectiveVersionIds.get(detailId) !== effectiveBomVersionId) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} does not match the consolidated BOM version.`);
         }
-        if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || !Number.isFinite(served) || allocated >= ordered || served >= ordered) {
-            throw new PlanningConflictError(`Sales Order detail ${detailId} is already fulfilled or has invalid quantities.`);
+        const planned = plannedQuantityByDetail.get(detailId) || 0;
+        const remainingQuantity = Math.max(0, ordered - Math.max(allocated, served) - planned);
+        if (!Number.isFinite(ordered) || ordered <= 0 || !Number.isFinite(allocated) || allocated < 0 || !Number.isFinite(served) || served < 0) {
+            throw new PlanningConflictError(`Sales Order detail ${detailId} has invalid quantities.`);
         }
-        if (activeAllocationDetailIds.has(detailId)) {
-            throw new PlanningConflictError(`Sales Order detail ${detailId} is already linked to an active Job Order.`);
-        }
-        const remainingQuantity = ordered - Math.max(allocated, served);
         if (!Number.isFinite(remainingQuantity) || remainingQuantity <= 0) {
             throw new PlanningConflictError(`Sales Order detail ${detailId} has no remaining quantity to schedule.`);
         }
-        schedulingLines.push({ detailId, parentOrderId, remainingQuantity });
+        availableLines.push({ detailId, parentOrderId, availableQuantity: remainingQuantity });
     }
 
     if (selectedBranchIds.size !== 1) {
         throw new PlanningConflictError("All selected Sales Order details must belong to one production branch.");
+    }
+
+    const totalAvailableQuantity = availableLines.reduce((sum, line) => sum + line.availableQuantity, 0);
+    if (requestedQuantity > totalAvailableQuantity + 0.000001) {
+        throw new PlanningConflictError(
+            `The requested Job Order quantity (${requestedQuantity}) exceeds the currently available Sales Order quantity (${totalAvailableQuantity}). Refresh the demand list and try again.`
+        );
+    }
+
+    let quantityToAllocate = requestedQuantity;
+    const schedulingLines: SalesOrderSchedulingPlan["lines"] = [];
+    for (const line of availableLines) {
+        if (quantityToAllocate <= 0.000001) break;
+        const allocationQuantity = Math.min(line.availableQuantity, quantityToAllocate);
+        if (allocationQuantity > 0) {
+            schedulingLines.push({
+                detailId: line.detailId,
+                parentOrderId: line.parentOrderId,
+                availableQuantity: line.availableQuantity,
+                allocationQuantity
+            });
+            quantityToAllocate -= allocationQuantity;
+        }
+    }
+    if (quantityToAllocate > 0.000001) {
+        throw new PlanningConflictError("The requested Job Order quantity could not be allocated across the selected Sales Order details. Refresh the demand list and try again.");
     }
 
     return {
@@ -302,7 +342,7 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
             branchId: requestedBranchId,
             productId: requestedProductId,
             bomVersionId: effectiveBomVersionId,
-            totalQuantity: schedulingLines.reduce((sum, line) => sum + line.remainingQuantity, 0),
+            totalQuantity: requestedQuantity,
             lines: schedulingLines
         } satisfies SalesOrderSchedulingPlan
     };
@@ -816,14 +856,14 @@ export async function handlePOST(request: Request) {
                     return (await response.json()).data || [];
                 })()
                 : [];
-            const cancelledJobOrderIds = new Set(
+            const terminalJobOrderIds = new Set(
                 linkedJobOrders
-                    .filter((jobOrder: any) => isCancelledStatus(jobOrder.status))
+                    .filter((jobOrder: any) => isCancelledJobOrderStatus(jobOrder.status) || isTerminalJobOrderStatus(jobOrder.status))
                     .map((jobOrder: any) => relationId(jobOrder.job_order_id))
             );
             const activeAllocatedDetailIds = new Set(
                 existingAllocations
-                    .filter((allocation: any) => !isCancelledStatus(allocation.status) && !cancelledJobOrderIds.has(relationId(allocation.job_order_id)))
+                    .filter((allocation: any) => !isCancelledJobOrderStatus(allocation.status) && !terminalJobOrderIds.has(relationId(allocation.job_order_id)))
                     .map((allocation: any) => relationId(allocation.sales_order_detail_id))
             );
             const duplicateDetailIds = detailIds.filter((detailId: number) => activeAllocatedDetailIds.has(detailId));
@@ -1120,7 +1160,7 @@ export async function handlePOST(request: Request) {
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
         console.error("API Error in planning-engineering POST:", e);
-        if (e instanceof PlanningConflictError) {
+        if (e instanceof PlanningConflictError || e instanceof SalesOrderAllocationConflictError) {
             return NextResponse.json({ error: e.message }, { status: 409 });
         }
         return NextResponse.json(

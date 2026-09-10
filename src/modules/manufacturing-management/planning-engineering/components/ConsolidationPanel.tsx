@@ -29,14 +29,17 @@ export function ConsolidationPanel({
     loadingVersionStock,
     handleInitiateDirectAllocate
 }: ConsolidationPanelProps) {
+    const totalOrdered = selectedLines.reduce((sum, line) => sum + Number(line.ordered_quantity || 0), 0);
+    const totalPlanned = selectedLines.reduce((sum, line) => sum + Number(line.planned_quantity || 0), 0);
     const totalRemaining = selectedLines.reduce((sum, line) => {
         const ordered = Number(line.ordered_quantity || 0);
         const allocated = Number(line.allocated_quantity || 0);
         const served = Number(line.served_quantity || 0);
+        const planned = Number(line.planned_quantity || 0);
         const remaining = Number(line.remaining_quantity);
         return sum + (Number.isFinite(remaining)
             ? Math.max(0, remaining)
-            : Math.max(0, ordered - Math.max(allocated, served)));
+            : Math.max(0, ordered - Math.max(allocated, served) - planned));
     }, 0);
     const selectedOrderReferences = Array.from(new Map(
         selectedLines.map((line) => [line.order_id, line.order_no || `SO #${line.order_id}`])
@@ -103,10 +106,16 @@ export function ConsolidationPanel({
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Ordered Quantity:</span>
+                                        <span className="font-bold text-foreground">{totalOrdered.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Planned Quantity:</span>
+                                        <span className="font-bold text-amber-700">{totalPlanned.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
                                         <span className="font-semibold text-muted-foreground">Remaining JO Quantity:</span>
-                                        <span className="font-bold text-foreground">
-                                            {totalRemaining.toLocaleString()}
-                                        </span>
+                                        <span className="font-bold text-emerald-700">{totalRemaining.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="font-semibold text-muted-foreground">Available Version Stock:</span>
