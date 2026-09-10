@@ -9,6 +9,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -18,7 +25,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FilterX, Loader2, PackageOpen, Save, Search } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  FilterX,
+  Loader2,
+  PackageOpen,
+  Save,
+  Search,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useDiscountTypes } from "../../hooks/useDiscountTypes";
@@ -40,6 +57,9 @@ export function ManageProductsModal({
   onClose,
 }: ManageProductsModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   const { products, isLoading, updateDiscount, removeProduct, refresh } =
     useSupplierProducts(supplierId);
   const { discountTypes } = useDiscountTypes();
@@ -56,8 +76,14 @@ export function ManageProductsModal({
     if (open) {
       setLocalProducts(products);
       setPendingRemovals([]);
+      setCurrentPage(1);
     }
   }, [products, open]);
+
+  // Reset page when search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   // Handle local discount change
   const handleLocalDiscountChange = (
@@ -93,6 +119,24 @@ export function ManageProductsModal({
         (p.product_code?.toLowerCase() ?? "").includes(query),
     );
   }, [activeProducts, searchQuery]);
+
+  // Total pages
+  const totalPages = useMemo(() => {
+    return Math.ceil(filteredProducts.length / pageSize) || 1;
+  }, [filteredProducts.length, pageSize]);
+
+  // Paginated slice
+  const paginatedProducts = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredProducts.slice(start, start + pageSize);
+  }, [filteredProducts, currentPage, pageSize]);
+
+  // Adjust page if current page exceeds total pages after filtering/deletion
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   // Check if there are uncommitted changes
   const hasPendingChanges = useMemo(() => {
@@ -253,7 +297,7 @@ export function ManageProductsModal({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredProducts.map((product) => (
+                  paginatedProducts.map((product) => (
                     <ProductListItem
                       key={product.id}
                       product={product}
@@ -267,6 +311,89 @@ export function ManageProductsModal({
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination Controls */}
+          {filteredProducts.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-2 py-2 text-xs text-muted-foreground border-t pt-3">
+              <div>
+                Showing {Math.min((currentPage - 1) * pageSize + 1, filteredProducts.length)} to{" "}
+                {Math.min(currentPage * pageSize, filteredProducts.length)} of{" "}
+                {filteredProducts.length} records.
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                <div className="flex items-center space-x-2">
+                  <span className="font-medium">Rows per page</span>
+                  <Select
+                    value={`${pageSize}`}
+                    onValueChange={(val) => {
+                      setPageSize(Number(val));
+                      setCurrentPage(1);
+                    }}
+                    disabled={isSaving}
+                  >
+                    <SelectTrigger className="h-8 w-16 text-xs">
+                      <SelectValue placeholder={pageSize} />
+                    </SelectTrigger>
+                    <SelectContent side="top">
+                      {[5, 10, 20, 50].map((size) => (
+                        <SelectItem key={size} value={`${size}`} className="text-xs">
+                          {size}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="font-medium">
+                  Page {currentPage} of {totalPages}
+                </div>
+
+                <div className="flex items-center space-x-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1 || isSaving}
+                    title="First Page"
+                  >
+                    <ChevronsLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1 || isSaving}
+                    title="Previous Page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages || isSaving}
+                    title="Next Page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages || isSaving}
+                    title="Last Page"
+                  >
+                    <ChevronsRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="mt-6 pt-4 border-t gap-2 sm:gap-3">
@@ -298,3 +425,4 @@ export function ManageProductsModal({
     </Dialog>
   );
 }
+
