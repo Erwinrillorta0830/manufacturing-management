@@ -6,7 +6,8 @@ import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
-import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
+import { isProductionSchedulingStatus } from "../../sales-order/_status";
 
 
 interface LedgerEntry {
@@ -718,16 +719,23 @@ export async function POST(request: Request) {
                                             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${parentOrderId}&limit=-1`, { headers });
                                             if (allDetailsRes.ok) {
                                                 const allDetails = (await allDetailsRes.json()).data || [];
-                                                const nextStatus = areSalesOrderDetailsFullyFulfilled(allDetails)
-                                                    ? "For Invoicing"
-                                                    : "In Production";
-
-                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${nextStatus}`);
-                                                await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                                                    method: "PATCH",
-                                                    headers,
-                                                    body: JSON.stringify({ order_status: nextStatus })
-                                                });
+                                                const currentOrderRes = await fetch(
+                                                    `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
+                                                    { headers, cache: "no-store" }
+                                                );
+                                                if (currentOrderRes.ok) {
+                                                    const currentOrder = (await currentOrderRes.json()).data;
+                                                    const currentStatus = String(currentOrder?.order_status || "").trim();
+                                                    const nextStatus = salesOrderStatusAfterFulfillment(allDetails);
+                                                    if (isProductionSchedulingStatus(currentStatus) && nextStatus !== currentStatus) {
+                                                        console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${nextStatus}`);
+                                                        await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                                                            method: "PATCH",
+                                                            headers,
+                                                            body: JSON.stringify({ order_status: nextStatus })
+                                                        });
+                                                    }
+                                                }
                                             }
                                         }
                                     }

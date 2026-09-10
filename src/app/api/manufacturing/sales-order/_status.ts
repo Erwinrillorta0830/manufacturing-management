@@ -25,7 +25,7 @@ export const SALES_ORDER_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[
     "On Hold": ["For Approval", "Draft", "Cancelled"],
     "For Invoicing": ["For Consolidation", "Cancelled"],
     "For Consolidation": ["For Picking", "Cancelled"],
-    "In Production": ["For Invoicing"],
+    "In Production": ["For Consolidation"],
     "For Picking": ["For Loading", "Cancelled"],
     "For Loading": ["For Shipping", "Cancelled"],
     "For Shipping": ["En Route", "Cancelled"],

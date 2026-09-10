@@ -6,13 +6,14 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { mmLotId, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
-import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import {
     isCancelledJobOrderStatus,
     isJobOrderStatus,
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
+import { isProductionSchedulingStatus } from "../../sales-order/_status";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -173,18 +174,23 @@ async function reconcileSalesOrderFulfillment(
     }
 
     for (const parentOrderId of parentOrderIds) {
+        const parentOrder = await directusRequest<any>(
+            `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}?fields=order_id,order_status`,
+            `Sales-order status lookup for ${parentOrderId}`
+        );
+        const currentStatus = String(parentOrder.order_status || "").trim();
         const details = await directusRows<any>(
             `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&fields=detail_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
             `Sales-order fulfillment verification for ${parentOrderId}`
         );
+        const nextStatus = salesOrderStatusAfterFulfillment(details);
+        if (!isProductionSchedulingStatus(currentStatus) || nextStatus === currentStatus) continue;
         await directusRequest(
             `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}`,
             `Update Sales Order ${parentOrderId} fulfillment status`,
             {
                 method: "PATCH",
-                body: JSON.stringify({
-                    order_status: areSalesOrderDetailsFullyFulfilled(details) ? "For Invoicing" : "In Production"
-                })
+                body: JSON.stringify({ order_status: nextStatus })
             }
         );
     }

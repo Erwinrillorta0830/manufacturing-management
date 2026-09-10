@@ -25,6 +25,7 @@ import {
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../sales-order/_status";
+import { salesOrderStatusAfterFulfillment } from "../sales-order/_fulfillment";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -743,14 +744,13 @@ async function processSalesOrderAllocations(
             `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&fields=detail_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
             `Sales-order detail allocation verification for ${parentOrderId}`
         );
-        const allFullyFulfilled = allDetails.length > 0 && allDetails.every(orderDetail => {
-            const ordered = finiteNumber(orderDetail.ordered_quantity ?? 0, "Sales-order ordered quantity", { positive: true });
-            const allocated = finiteNumber(orderDetail.allocated_quantity ?? 0, "Sales-order allocated quantity", { nonNegative: true });
-            const served = finiteNumber(orderDetail.served_quantity ?? 0, "Sales-order served quantity", { nonNegative: true });
-            return Math.max(allocated, served) >= ordered;
+        allDetails.forEach(orderDetail => {
+            finiteNumber(orderDetail.ordered_quantity ?? 0, "Sales-order ordered quantity", { positive: true });
+            finiteNumber(orderDetail.allocated_quantity ?? 0, "Sales-order allocated quantity", { nonNegative: true });
+            finiteNumber(orderDetail.served_quantity ?? 0, "Sales-order served quantity", { nonNegative: true });
         });
 
-        const nextStatus = allFullyFulfilled ? "For Invoicing" : "In Production";
+        const nextStatus = salesOrderStatusAfterFulfillment(allDetails);
         if (isProductionSchedulingStatus(currentStatus) && nextStatus !== currentStatus) {
             await journal.patch(
                 "sales_order",

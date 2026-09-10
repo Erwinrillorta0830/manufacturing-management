@@ -15,7 +15,7 @@ import {
     JOB_ORDER_STATUS
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
-import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
 
@@ -1050,18 +1050,30 @@ export async function handlePOST(request: Request) {
                 );
                 if (!allDetailsRes.ok) throw new Error(`Unable to verify Sales Order ${parentOrderId} detail fulfillment (${allDetailsRes.status}).`);
                 const allDetails = (await allDetailsRes.json()).data || [];
-                const allFullyFulfilled = areSalesOrderDetailsFullyFulfilled(allDetails);
-                const nextStatus = allFullyFulfilled ? "For Invoicing" : "In Production";
-                console.log(`[BFF Direct Allocate] Transitioning SO ${parentOrderId} to status: ${nextStatus}`);
-                const updateStatusRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ order_status: nextStatus })
-                });
-                if (!updateStatusRes.ok) {
-                    throw new Error(`Failed to update parent Sales Order ${parentOrderId} status to ${nextStatus} (${updateStatusRes.status}).`);
+                const parentOrderRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
+                    { headers, cache: "no-store" }
+                );
+                if (!parentOrderRes.ok) {
+                    throw new Error(`Unable to read Sales Order ${parentOrderId} status (${parentOrderRes.status}).`);
                 }
-                resultingOrderStatuses[String(parentOrderId)] = nextStatus;
+                const parentOrder = (await parentOrderRes.json()).data;
+                const currentStatus = String(parentOrder?.order_status || "").trim();
+                const nextStatus = salesOrderStatusAfterFulfillment(allDetails);
+                if (isProductionSchedulingStatus(currentStatus) && nextStatus !== currentStatus) {
+                    console.log(`[BFF Direct Allocate] Transitioning SO ${parentOrderId} to status: ${nextStatus}`);
+                    const updateStatusRes = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ order_status: nextStatus })
+                    });
+                    if (!updateStatusRes.ok) {
+                        throw new Error(`Failed to update parent Sales Order ${parentOrderId} status to ${nextStatus} (${updateStatusRes.status}).`);
+                    }
+                }
+                resultingOrderStatuses[String(parentOrderId)] = isProductionSchedulingStatus(currentStatus)
+                    ? nextStatus
+                    : currentStatus;
             }
 
             return NextResponse.json({

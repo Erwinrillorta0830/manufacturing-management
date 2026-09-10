@@ -954,7 +954,7 @@ export default function PlanningEngineeringModule() {
                                         <div><strong>Available Version Stock:</strong> {versionStock?.toLocaleString()}</div>
                                     </div>
                                     <p className="text-xs">
-                                        This action will immediately deduct inventory lots using FIFO selection, post negative ledger entries, and transition the Sales Order to &quot;For Invoicing&quot;. This cannot be undone.
+                                        This action will immediately deduct inventory lots using FIFO selection, post negative ledger entries, and transition the Sales Order to &quot;For Consolidation&quot; when all detail lines are fulfilled. This cannot be undone.
                                     </p>
                                 </div>
                             )}

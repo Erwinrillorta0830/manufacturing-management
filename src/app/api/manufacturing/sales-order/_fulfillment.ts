@@ -28,3 +28,9 @@ export function areSalesOrderDetailsFullyFulfilled(details: unknown): boolean {
             && typeof detail === "object"
             && isSalesOrderDetailFullyFulfilled(detail as SalesOrderDetailLike));
 }
+
+export type SalesOrderFulfillmentStatus = "For Consolidation" | "In Production";
+
+export function salesOrderStatusAfterFulfillment(details: unknown): SalesOrderFulfillmentStatus {
+    return areSalesOrderDetailsFullyFulfilled(details) ? "For Consolidation" : "In Production";
+}
