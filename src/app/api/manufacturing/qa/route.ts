@@ -15,6 +15,7 @@ import {
 } from "./_dispositions";
 import { hasPagination, paginate } from "../_pagination";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../services/mm-lots.service";
+import { assertJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -617,7 +618,7 @@ export async function POST(request: Request) {
                             quantity: rejQty,
                             target_quantity: rejQty,
                             due_date: parentJO.end_date || null,
-                            status: "Released",
+                            status: JOB_ORDER_STATUS.RELEASED,
                             branch_id: branchId,
                             created_by: userId,
                             parent_job_order_id: parentJoIdInt,
@@ -658,7 +659,7 @@ export async function POST(request: Request) {
                                         completed_quantity: 0,
                                         rejected_quantity: 0,
                                         start_date: todayStr,
-                                        status: "Released",
+                                        status: JOB_ORDER_STATUS.RELEASED,
                                         branch_id: branchId,
                                         created_by: userId,
                                         created_at: new Date().toISOString(),
@@ -691,7 +692,7 @@ export async function POST(request: Request) {
                         job_order_id: reworkJoIdInt,
                         job_order_no: String(rData.job_order_no || reworkJoNo),
                         target_quantity: Number(rData.target_quantity),
-                        status: String(rData.status || "Released")
+                        status: normalizeJobOrderStatus(rData.status) || JOB_ORDER_STATUS.RELEASED
                     };
                 }
 
@@ -739,8 +740,8 @@ export async function POST(request: Request) {
                 }
 
                 // 5. Update Parent Job Order status and completed/rejected quantities.
-                const oldStatus = parentJO.status || "In Progress";
-                const newStatus = "COMPLETED"; // Transitions to COMPLETED on QA inspection signoff.
+                const oldStatus = assertJobOrderStatus(parentJO.status || JOB_ORDER_STATUS.IN_PROGRESS);
+                const newStatus = JOB_ORDER_STATUS.COMPLETED; // Transitions to Completed on QA inspection signoff.
 
                 const newCompletedQty = (Number(parentJO.completed_quantity) || 0) + passQty;
                 const newProducedQty = (Number(parentJO.actual_quantity_produced) || 0) + passQty;
@@ -928,7 +929,7 @@ export async function POST(request: Request) {
                         {
                             method: "PATCH",
                             headers,
-                            body: JSON.stringify({ status: "On Hold" })
+                            body: JSON.stringify({ status: JOB_ORDER_STATUS.ON_HOLD })
                         },
                         "Place Job Order on QA Hold"
                     );
@@ -996,7 +997,7 @@ export async function POST(request: Request) {
             }
             const joIdInt = joInfo.id;
 
-            const targetStatus = decision === "Scrap" ? "Cancelled" : "In Progress";
+            const targetStatus = decision === "Scrap" ? JOB_ORDER_STATUS.CANCELLED : JOB_ORDER_STATUS.IN_PROGRESS;
             let jobOrderPatched = false;
             try {
                 await directusMutation(

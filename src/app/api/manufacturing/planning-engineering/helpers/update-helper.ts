@@ -2,6 +2,7 @@
 import { DIRECTUS_URL, headers, getJobOrderIdByNo } from "./shared";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { resolveOrCreateMmLot, unitId as resolveUnitId } from "../../services/mm-lots.service";
+import { assertJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 export async function updateJobOrder(joId: string, patchData: Record<string, any>): Promise<{ success: boolean }> {
@@ -29,11 +30,11 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
 
         // Map incoming fields to new schema fields
         if (patchData.status !== undefined) {
-            let mappedStatus = patchData.status;
-            if (patchData.status === "Shortage") mappedStatus = "Draft";
-            else if (patchData.status === "Proceed") mappedStatus = "Released";
-            else if (patchData.status === "Ongoing") mappedStatus = "In Progress";
-            else if (patchData.status === "Finished") mappedStatus = "Completed";
+            let mappedStatus = assertJobOrderStatus(patchData.status);
+            if (mappedStatus === JOB_ORDER_STATUS.SHORTAGE) mappedStatus = JOB_ORDER_STATUS.DRAFT;
+            else if (mappedStatus === JOB_ORDER_STATUS.PROCEED) mappedStatus = JOB_ORDER_STATUS.RELEASED;
+            else if (mappedStatus === JOB_ORDER_STATUS.ONGOING) mappedStatus = JOB_ORDER_STATUS.IN_PROGRESS;
+            else if (mappedStatus === JOB_ORDER_STATUS.FINISHED) mappedStatus = JOB_ORDER_STATUS.COMPLETED;
             headerPatch.status = mappedStatus;
         }
         if (patchData.due_date !== undefined) headerPatch.end_date = patchData.due_date;
@@ -52,7 +53,7 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
             if (!res.ok) throw new Error(`Failed to patch job_order header: ${res.status}`);
 
             // Automatically pass finished goods to inventory if JO is finalized
-            if (headerPatch.status === "Finished" || headerPatch.status === "Completed") {
+            if (headerPatch.status === JOB_ORDER_STATUS.FINISHED || headerPatch.status === JOB_ORDER_STATUS.COMPLETED) {
                 try {
                     const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joIdInt}`, { headers });
                     if (joRes.ok) {

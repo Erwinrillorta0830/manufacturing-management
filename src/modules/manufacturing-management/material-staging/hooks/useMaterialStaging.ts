@@ -20,6 +20,7 @@ import {
 } from "../types";
 import { fetchStagingJobOrders, executeBinTransfer } from "../services/staging-api";
 import { buildBatchStagePlan } from "../batch-staging";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
@@ -99,17 +100,14 @@ export function useMaterialStaging() {
         return jobOrders.filter((jo) => {
             // Status filtering
             if (selectedStatusFilter === "PLANNED_RESERVED") {
-                const s = jo.status?.toUpperCase();
-                const matches = s === "PLANNED" || s === "RESERVED" || s === "DRAFT";
+                const matches = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.RESERVED, JOB_ORDER_STATUS.DRAFT);
                 if (!matches) return false;
             } else if (selectedStatusFilter === "PLANNED") {
-                const s = jo.status?.toUpperCase();
-                if (s !== "PLANNED" && s !== "DRAFT") return false;
+                if (!isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.DRAFT)) return false;
             } else if (selectedStatusFilter === "RESERVED") {
-                if (jo.status?.toUpperCase() !== "RESERVED") return false;
+                if (!isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED)) return false;
             } else if (selectedStatusFilter === "RELEASED") {
-                const s = jo.status?.toUpperCase();
-                if (s !== "RELEASED" && s !== "PROCEED") return false;
+                if (!isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED)) return false;
             }
 
             // Shortage filter

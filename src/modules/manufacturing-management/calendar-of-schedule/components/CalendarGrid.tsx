@@ -1,6 +1,7 @@
 import React from "react";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { JobOrder, IncomingShipment, DailyBreakdownItem } from "../types";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface CalendarGridProps {
     currentDate: Date;
@@ -183,8 +184,8 @@ export function CalendarGrid({
                                 {/* Job Orders Events (Due Dates) */}
                                 {cellJOs.map(jo => {
                                     let bgClass = "bg-muted text-muted-foreground border-border";
-                                    if (jo.status === "Proceed") bgClass = "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
-                                    else if (jo.status === "Shortage") bgClass = "bg-destructive/10 text-destructive border-destructive/20";
+                                    if (isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED)) bgClass = "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+                                    else if (isJobOrderStatus(jo.status, JOB_ORDER_STATUS.SHORTAGE)) bgClass = "bg-destructive/10 text-destructive border-destructive/20";
 
                                     return (
                                         <button

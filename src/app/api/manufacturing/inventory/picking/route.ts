@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, fetchJobOrders } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 interface PickItem {
@@ -15,9 +16,15 @@ export async function GET() {
         const jobOrders = await fetchJobOrders();
 
         // Filter for Proceed (released) and Ongoing (in production) job orders
-        const activeJOs = jobOrders.filter(jo => 
-            jo.status === "Proceed" || jo.status === "Ongoing" || jo.status === "Finished"
-        );
+        const activeJOs = jobOrders.filter(jo => isJobOrderStatus(
+            jo.status,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS,
+            JOB_ORDER_STATUS.FINISHED,
+            JOB_ORDER_STATUS.COMPLETED
+        ));
 
         if (activeJOs.length === 0) {
             return NextResponse.json([]);
@@ -174,11 +181,17 @@ export async function POST(request: Request) {
             });
             if (joRes.ok) {
                 const joData = (await joRes.json()).data?.[0];
-                if (joData && (joData.status === "Released" || joData.status === "Proceed" || joData.status === "Planned" || joData.status === "Draft")) {
+                if (joData && isJobOrderStatus(
+                    joData.status,
+                    JOB_ORDER_STATUS.RELEASED,
+                    JOB_ORDER_STATUS.PROCEED,
+                    JOB_ORDER_STATUS.PLANNED,
+                    JOB_ORDER_STATUS.DRAFT
+                )) {
                     await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
                         method: "PATCH",
                         headers,
-                        body: JSON.stringify({ status: "In Progress" })
+                        body: JSON.stringify({ status: JOB_ORDER_STATUS.IN_PROGRESS })
                     });
                 }
             }

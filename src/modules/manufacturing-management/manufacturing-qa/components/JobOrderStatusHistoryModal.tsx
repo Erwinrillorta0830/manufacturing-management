@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder, JobOrderStatusHistory } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/qa-api";
+import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 
 interface JobOrderStatusHistoryModalProps {
     isOpen: boolean;
@@ -135,13 +136,15 @@ function JobOrderStatusHistoryContent({
                             <Clock className="h-8 w-8 text-muted-foreground/40 mb-2" />
                             <h4 className="text-xs font-bold text-foreground">No Historical Transitions</h4>
                             <p className="text-[11px] text-muted-foreground mt-0.5">
-                                Current Job Order status: <Badge variant="secondary" className="text-[10px] ml-1">{jobOrder.status}</Badge>
+                                Current Job Order status: <Badge variant="secondary" className="text-[10px] ml-1">{displayJobOrderStatus(jobOrder.status)}</Badge>
                             </p>
                         </div>
                     ) : (
                         <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
                             {history.map((h, idx) => {
-                                const isCompleted = h.new_status === "COMPLETED";
+                                const normalizedNewStatus = normalizeJobOrderStatus(h.new_status);
+                                const normalizedOldStatus = h.old_status ? normalizeJobOrderStatus(h.old_status) : null;
+                                const isCompleted = isTerminalJobOrderStatus(normalizedNewStatus);
                                 const isRework = h.new_status.includes("REWORK") || (h.remarks || "").includes("Rework");
 
                                 return (
@@ -171,7 +174,7 @@ function JobOrderStatusHistoryContent({
                                                     {h.old_status && (
                                                         <>
                                                             <Badge variant="outline" className="text-[10px] font-semibold">
-                                                                {h.old_status}
+                                                                {normalizedOldStatus || displayJobOrderStatus(h.old_status)}
                                                             </Badge>
                                                             <ArrowRight className="h-3 w-3 text-muted-foreground" />
                                                         </>
@@ -182,7 +185,7 @@ function JobOrderStatusHistoryContent({
                                                             isCompleted ? "bg-emerald-600 text-white" : ""
                                                         }`}
                                                     >
-                                                        {h.new_status}
+                                                        {displayJobOrderStatus(h.new_status)}
                                                     </Badge>
                                                 </div>
 

@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
+import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -155,20 +156,18 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const joIdInt = Number(jo.job_order_id || jo.id || 0);
 
-            const rawStatus = String(jo.status || "").trim().toLowerCase();
-            let mappedStatus = jo.status;
-            if (rawStatus === "draft") {
-                mappedStatus = "Draft";
-            } else if (rawStatus === "planned") {
-                mappedStatus = "Planned";
-            } else if (rawStatus === "planning") {
-                mappedStatus = "Planning";
-            } else if (rawStatus === "released" || rawStatus === "proceed") {
-                mappedStatus = "Proceed";
-            } else if (rawStatus === "in progress" || rawStatus === "ongoing") {
-                mappedStatus = "Ongoing";
-            } else if (rawStatus === "completed" || rawStatus === "finished" || rawStatus === "closed") {
-                mappedStatus = "Finished";
+            const canonicalStatus = normalizeJobOrderStatus(jo.status);
+            let mappedStatus = canonicalStatus || jo.status;
+            if (canonicalStatus === JOB_ORDER_STATUS.RELEASED || canonicalStatus === JOB_ORDER_STATUS.PROCEED) {
+                mappedStatus = JOB_ORDER_STATUS.PROCEED;
+            } else if (canonicalStatus === JOB_ORDER_STATUS.IN_PROGRESS || canonicalStatus === JOB_ORDER_STATUS.ONGOING) {
+                mappedStatus = JOB_ORDER_STATUS.ONGOING;
+            } else if (
+                canonicalStatus === JOB_ORDER_STATUS.COMPLETED
+                || canonicalStatus === JOB_ORDER_STATUS.FINISHED
+                || canonicalStatus === JOB_ORDER_STATUS.CLOSED
+            ) {
+                mappedStatus = JOB_ORDER_STATUS.FINISHED;
             }
 
             const matchedProduct = productsList.find((p: any) => Number(p.product_id) === Number(jo.product_id));

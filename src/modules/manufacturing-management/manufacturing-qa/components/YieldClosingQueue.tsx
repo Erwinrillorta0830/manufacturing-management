@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { JobOrder } from "../types";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
 
 interface PendingHold {
     jo_id: string | number;
@@ -33,7 +34,8 @@ export function YieldClosingQueue({
 }: YieldClosingQueueProps) {
     const renderCard = (jo: JobOrder) => {
         const isHeld = pendingHolds.some((h: PendingHold) => String(h.jo_id) === String(jo.jo_id));
-        const blocked = isHeld || jo.status === "On Hold" || jo.status === "QA Hold";
+        const status = normalizeJobOrderStatus(jo.status);
+        const blocked = isHeld || isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
         return (
             <Card key={jo.jo_id} className="border p-4 shadow-xs">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -41,7 +43,7 @@ export function YieldClosingQueue({
                         <p className="font-mono text-base font-bold text-foreground">{jo.jo_id}</p>
                         <p className="mt-1 truncate text-sm font-semibold">{jo.product_name}</p>
                     </div>
-                    <Badge variant={blocked ? "destructive" : "secondary"} className="min-h-7 text-sm">{isHeld ? "QA Quarantine" : jo.status}</Badge>
+                    <Badge variant={blocked ? "destructive" : "secondary"} className="min-h-7 text-sm">{isHeld ? "QA Quarantine" : displayJobOrderStatus(jo.status)}</Badge>
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                     <div><dt className="text-muted-foreground">Target quantity</dt><dd className="font-mono font-semibold">{Number(jo.quantity || 0).toLocaleString()}</dd></div>
@@ -108,7 +110,10 @@ export function YieldClosingQueue({
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {activeJobOrders.map((jo) => (
+                                {activeJobOrders.map((jo) => {
+                                    const status = normalizeJobOrderStatus(jo.status);
+                                    const isOnHold = isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+                                    return (
                                     <TableRow key={jo.jo_id} className="hover:bg-muted/40 transition-colors">
                                         <TableCell className="font-bold text-foreground">
                                             {jo.jo_id}
@@ -132,13 +137,13 @@ export function YieldClosingQueue({
                                                     <Badge 
                                                         variant={
                                                             isHeld ? "destructive" :
-                                                            jo.status === "Proceed" || jo.status === "Released" ? "secondary" :
-                                                            jo.status === "Ongoing" || jo.status === "In Progress" ? "default" :
-                                                            jo.status === "On Hold" || jo.status === "QA Hold" ? "destructive" :
+                                                            isJobOrderStatus(status, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED) ? "secondary" :
+                                                            isJobOrderStatus(status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS) ? "default" :
+                                                            isOnHold ? "destructive" :
                                                             "outline"
                                                         }
                                                     >
-                                                        {isHeld ? "QA Quarantine" : jo.status}
+                                                        {isHeld ? "QA Quarantine" : displayJobOrderStatus(jo.status)}
                                                     </Badge>
                                                 );
                                             })()}
@@ -152,8 +157,8 @@ export function YieldClosingQueue({
                                                         size="sm" 
                                                         className="min-h-11 font-semibold text-sm transition-all"
                                                         onClick={() => handleOpenYieldDialog(jo)}
-                                                        disabled={isHeld || jo.status === "On Hold" || jo.status === "QA Hold"}
-                                                        title={isHeld ? "Unlock quarantine hold first" : jo.status === "On Hold" || jo.status === "QA Hold" ? "Unlock override hold first" : ""}
+                                                        disabled={isHeld || isOnHold}
+                                                        title={isHeld ? "Unlock quarantine hold first" : isOnHold ? "Unlock override hold first" : ""}
                                                     >
                                                         <TrendingUp className="h-3.5 w-3.5 mr-1" />
                                                         Close Yield
@@ -162,7 +167,8 @@ export function YieldClosingQueue({
                                             })()}
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                         )}

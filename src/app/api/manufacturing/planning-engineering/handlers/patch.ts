@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { assertJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 export async function handlePATCH(request: Request) {
     try {
@@ -26,7 +27,7 @@ export async function handlePATCH(request: Request) {
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
-                    status: "On Hold",
+                    status: JOB_ORDER_STATUS.ON_HOLD,
                     actual_quantity_produced: Number(yieldQty),
                     remarks: `Halted at step ${haltedStepId}. Reason: ${trimmedHaltReason}`
                 })
@@ -136,11 +137,11 @@ export async function handlePATCH(request: Request) {
                                 const allDaysCompleted = dailyBreakdown.every((d: DailyBreakdownItem) => d.status === "Completed");
                                 const joStatusPatch: Record<string, unknown> = { daily_breakdown: dailyBreakdown };
                                 if (allDaysCompleted) {
-                                    joStatusPatch.status = "Finished";
+                                    joStatusPatch.status = JOB_ORDER_STATUS.FINISHED;
                                 } else {
                                     const anyDayStarted = dailyBreakdown.some((d: DailyBreakdownItem) => d.status === "Ongoing" || d.status === "Completed");
-                                    if (anyDayStarted && jo.status !== "Ongoing" && jo.status !== "Finished" && jo.status !== "Cancelled") {
-                                        joStatusPatch.status = "Ongoing";
+                                    if (anyDayStarted && !isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.CANCELLED)) {
+                                        joStatusPatch.status = JOB_ORDER_STATUS.ONGOING;
                                     }
                                 }
 
@@ -400,7 +401,7 @@ export async function handlePATCH(request: Request) {
 
         // Map camelCase patch fields to snake_case fields
         const dbPatch: Record<string, unknown> = {};
-        if (patch.status !== undefined) dbPatch.status = patch.status;
+        if (patch.status !== undefined) dbPatch.status = assertJobOrderStatus(patch.status);
         if (patch.bom !== undefined) dbPatch.bom = patch.bom;
         if (patch.components !== undefined) dbPatch.components = patch.components;
         if (patch.routings !== undefined) dbPatch.routings = patch.routings;
@@ -420,6 +421,7 @@ export async function handlePATCH(request: Request) {
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
         console.error("API Error in planning-engineering PATCH:", e);
-        return NextResponse.json({ error: (e as { message?: string }).message || "Failed to update Job Order" }, { status: 500 });
+        const message = (e as { message?: string }).message || "Failed to update Job Order";
+        return NextResponse.json({ error: message }, { status: message.startsWith("Unknown Job Order status:") ? 400 : 500 });
     }
 }

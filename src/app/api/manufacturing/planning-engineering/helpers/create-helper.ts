@@ -4,6 +4,7 @@ import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finis
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "./inventory-helper";
+import { assertJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 export async function createJobOrder(
@@ -178,16 +179,16 @@ export async function createJobOrder(
             }
         }
 
-        let initialStatus = joData.status || "Draft";
-        if (initialStatus === "Shortage") initialStatus = "Draft";
-        else if (initialStatus === "Proceed") initialStatus = "Released";
-        else if (initialStatus === "Ongoing") initialStatus = "In Progress";
-        else if (initialStatus === "Finished") initialStatus = "Completed";
+        let initialStatus = assertJobOrderStatus(joData.status || JOB_ORDER_STATUS.DRAFT);
+        if (initialStatus === JOB_ORDER_STATUS.SHORTAGE) initialStatus = JOB_ORDER_STATUS.DRAFT;
+        else if (initialStatus === JOB_ORDER_STATUS.PROCEED) initialStatus = JOB_ORDER_STATUS.RELEASED;
+        else if (initialStatus === JOB_ORDER_STATUS.ONGOING) initialStatus = JOB_ORDER_STATUS.IN_PROGRESS;
+        else if (initialStatus === JOB_ORDER_STATUS.FINISHED) initialStatus = JOB_ORDER_STATUS.COMPLETED;
 
         let forcedDraftRemarks = "";
         if (shortfalls.length > 0) {
             console.log("[createJobOrder] Shortfall detected. Forcing status to Draft. shortfalls:", shortfalls);
-            initialStatus = "Draft";
+            initialStatus = JOB_ORDER_STATUS.DRAFT;
             const shortfallMsg = shortfalls.map(s => 
                 `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`
             ).join("; ");
@@ -238,8 +239,8 @@ export async function createJobOrder(
             headers,
             body: JSON.stringify({
                 job_order_id: joIdInt,
-                previous_status: "Draft",
-                new_status: initialStatus === "Draft" ? "Draft" : "Planned",
+                previous_status: JOB_ORDER_STATUS.DRAFT,
+                new_status: initialStatus === JOB_ORDER_STATUS.DRAFT ? JOB_ORDER_STATUS.DRAFT : JOB_ORDER_STATUS.PLANNED,
                 remarks: "Initial Job Order Creation",
                 changed_by: joData.created_by ? Number(joData.created_by) : null,
                 changed_at: new Date().toISOString()
@@ -435,7 +436,7 @@ export async function createJobOrder(
                                  const activeReservedFilter = encodeURIComponent(JSON.stringify({
                                      _and: [
                                          { product_id: { _eq: compProductId } },
-                                         { job_order_id: { status: { _in: ["Proceed", "Ongoing", "On Hold", "Released", "In Progress"] } } }
+                                         { job_order_id: { status: { _in: [JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.RESERVED] } } }
                                      ]
                                  }));
                                  const activeReservedRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter=${activeReservedFilter}&fields=reserved_quantity&limit=-1`, { headers, cache: 'no-store' });
@@ -582,7 +583,7 @@ export async function createJobOrder(
                                                 product_id: compProductId,
                                                 quantity: shortfall,
                                                 due_date: joData.due_date || null,
-                                                status: joData.status || "Released",
+                                                status: assertJobOrderStatus(joData.status || JOB_ORDER_STATUS.RELEASED),
                                                 branch_id: joData.branch_id,
                                                 created_by: joData.created_by,
                                                 parent_job_order_id: joIdInt,
@@ -650,7 +651,7 @@ export async function createJobOrder(
         // 5. Insert junction entries only for the detail lines explicitly
         // selected by Planning Engineering. Buffer JOs intentionally have no
         // Sales Order links or lifecycle transition.
-        if (salesOrderDetailIds.length > 0 && initialStatus !== "Draft") {
+        if (salesOrderDetailIds.length > 0 && initialStatus !== JOB_ORDER_STATUS.DRAFT) {
             const detailIds = [...new Set(salesOrderDetailIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
             const detailRes = await fetch(
                 `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,

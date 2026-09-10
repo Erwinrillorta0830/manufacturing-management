@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { JobOrder, QARejectionReason, TwoPointQAInspectionPayload } from "../types";
+import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 
 interface TwoPointQAInspectionModalProps {
     isOpen: boolean;
@@ -252,8 +253,8 @@ function TwoPointQAFormContent({
                         </div>
                         <div className="bg-background/80 border rounded-lg p-2.5">
                             <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider block">Current Status</span>
-                            <Badge variant={jobOrder.status === "COMPLETED" ? "default" : "secondary"} className="mt-0.5 text-[10px]">
-                                {jobOrder.status}
+                            <Badge variant={isTerminalJobOrderStatus(normalizeJobOrderStatus(jobOrder.status)) ? "default" : "secondary"} className="mt-0.5 text-[10px]">
+                                {displayJobOrderStatus(jobOrder.status)}
                             </Badge>
                         </div>
                     </div>

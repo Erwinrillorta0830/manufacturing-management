@@ -32,6 +32,7 @@ import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { StationScanResponse } from "./types";
 import { toast } from "sonner";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 
 export default function ProductionWorkflowModule() {
     const {
@@ -124,10 +125,17 @@ export default function ProductionWorkflowModule() {
     }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
-        return jobOrders.filter((jo) => jo.status === "Proceed" || jo.status === "Ongoing" || jo.status === "In Progress").length;
+        return jobOrders.filter((jo) => isJobOrderStatus(
+            jo.status,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS
+        )).length;
     }, [jobOrders]);
 
     const totalRuns = jobOrders.length;
+    const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
 
     const completedWorkstations = React.useMemo(() => {
         let count = 0;
@@ -304,7 +312,7 @@ export default function ProductionWorkflowModule() {
                                         </span>
                                     )}
                                     <Badge variant="outline" className="text-[10px] font-mono font-bold">
-                                        Status: {selectedJobOrder?.status}
+                                         Status: {selectedJobOrderStatus ? displayJobOrderStatus(selectedJobOrderStatus) : "Unknown"}
                                     </Badge>
                                 </div>
                                 <DialogTitle className="font-extrabold text-lg sm:text-2xl tracking-tight text-foreground mt-1">
@@ -333,7 +341,7 @@ export default function ProductionWorkflowModule() {
                                 >
                                     <GitBranch className="mr-1.5 h-4 w-4 text-primary" /> Genealogy Audit
                                 </Button>
-                                {selectedJobOrder?.status === "Draft" ? (
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
                                     <Button
                                         onClick={handleReleaseDraftJO}
                                         disabled={releasingDraft}

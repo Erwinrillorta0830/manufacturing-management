@@ -1,22 +1,11 @@
+import type { CanonicalJobOrderStatus } from "../job-order-status";
+
 /**
  * src/modules/manufacturing-management/material-staging/types.ts
  * Type definitions for Material Staging & Floor Holds Module
  */
 
-export type JobOrderStatus =
-    | "PLANNED"
-    | "RESERVED"
-    | "Draft"
-    | "Planned"
-    | "Reserved"
-    | "Released"
-    | "Proceed"
-    | "In Progress"
-    | "Ongoing"
-    | "Completed"
-    | "Finished"
-    | "On Hold"
-    | "Cancelled";
+export type JobOrderStatus = CanonicalJobOrderStatus;
 
 export type ReservationStatus = "SOFT" | "HARD" | "PARTIAL";
 

@@ -26,6 +26,14 @@ import {
 } from "@/components/ui/select";
 import { JobOrder } from "../types";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import {
+    displayJobOrderStatus,
+    isCancelledJobOrderStatus,
+    isJobOrderStatus,
+    isTerminalJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus
+} from "../../job-order-status";
 
 interface JobOrderQAInspectionQueueProps {
     jobOrders: JobOrder[];
@@ -60,13 +68,13 @@ export function JobOrderQAInspectionQueue({
         let totalCompletedUnits = 0;
 
         jobOrders.forEach(jo => {
-            const status = (jo.status || "").toUpperCase();
+            const status = normalizeJobOrderStatus(jo.status);
             const isRework = (jo.job_order_no || jo.jo_id || "").includes("-RWK-") || Number(jo.parent_job_order_id) > 0;
             
             if (isRework) reworkOrders++;
-            if (status === "COMPLETED" || status === "FINISHED") {
+            if (isTerminalJobOrderStatus(status)) {
                 completedRuns++;
-            } else if (status !== "CANCELLED") {
+            } else if (!isCancelledJobOrderStatus(status)) {
                 awaitingQA++;
             }
 
@@ -108,14 +116,14 @@ export function JobOrderQAInspectionQueue({
                 (typeFilter === "rework" && isRework) || 
                 (typeFilter === "standard" && !isRework);
 
-            const status = (jo.status || "").toUpperCase();
+            const status = normalizeJobOrderStatus(jo.status);
             let matchesStatus = true;
             if (statusFilter === "awaiting") {
-                matchesStatus = status !== "COMPLETED" && status !== "FINISHED" && status !== "CANCELLED";
+                matchesStatus = !isTerminalJobOrderStatus(status) && !isCancelledJobOrderStatus(status);
             } else if (statusFilter === "completed") {
-                matchesStatus = status === "COMPLETED" || status === "FINISHED";
+                matchesStatus = isTerminalJobOrderStatus(status);
             } else if (statusFilter === "on_hold") {
-                matchesStatus = status === "ON HOLD" || status === "QA HOLD";
+                matchesStatus = isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
             }
 
             const matchesBranch = branchFilter === "all" || String(jo.branch_id) === String(branchFilter);
@@ -139,7 +147,9 @@ export function JobOrderQAInspectionQueue({
         const targetQty = Number(jo.target_quantity || jo.quantity || 0);
         const passedQty = Number(jo.completed_quantity || jo.actual_quantity_produced || 0);
         const rejectedQty = Number(jo.rejected_quantity || 0);
-        const isCompleted = (jo.status || "").toUpperCase() === "COMPLETED";
+        const status = normalizeJobOrderStatus(jo.status);
+        const isCompleted = isTerminalJobOrderStatus(status);
+        const isOnHold = isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
 
         return (
             <Card key={jo.job_order_id || jo.jo_id} className="border p-4 shadow-xs">
@@ -152,7 +162,7 @@ export function JobOrderQAInspectionQueue({
                         <p className="mt-1 truncate text-sm font-semibold text-foreground">{jo.product_name}</p>
                         {jo.product_code && <p className="font-mono text-sm text-muted-foreground">{jo.product_code}</p>}
                     </div>
-                    <Badge variant={isCompleted ? "default" : jo.status === "On Hold" ? "destructive" : "outline"} className="min-h-7 text-sm">{jo.status}</Badge>
+                    <Badge variant={isCompleted ? "default" : isOnHold ? "destructive" : "outline"} className="min-h-7 text-sm">{displayJobOrderStatus(jo.status)}</Badge>
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                     <div><dt className="text-muted-foreground">Target</dt><dd className="font-mono font-semibold">{targetQty.toLocaleString()}</dd></div>
@@ -347,7 +357,9 @@ export function JobOrderQAInspectionQueue({
                                         const targetQty = Number(jo.target_quantity || jo.quantity || 0);
                                         const passedQty = Number(jo.completed_quantity || jo.actual_quantity_produced || 0);
                                         const rejectedQty = Number(jo.rejected_quantity || 0);
-                                        const isCompleted = (jo.status || "").toUpperCase() === "COMPLETED";
+                                        const status = normalizeJobOrderStatus(jo.status);
+                                        const isCompleted = isTerminalJobOrderStatus(status);
+                                        const isOnHold = isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
 
                                         return (
                                             <TableRow key={jo.job_order_id || jo.jo_id} className="hover:bg-muted/30 transition-colors">
@@ -420,15 +432,15 @@ export function JobOrderQAInspectionQueue({
                                                     <Badge
                                                         variant={
                                                             isCompleted ? "default" :
-                                                            jo.status === "Released" ? "secondary" :
-                                                            jo.status === "In Progress" || jo.status === "Ongoing" ? "outline" :
-                                                            jo.status === "On Hold" ? "destructive" : "outline"
+                                                            isJobOrderStatus(status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED) ? "secondary" :
+                                                            isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING) ? "outline" :
+                                                            isOnHold ? "destructive" : "outline"
                                                         }
                                                         className={`text-[10px] font-bold ${
                                                             isCompleted ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""
                                                         }`}
                                                     >
-                                                        {jo.status}
+                                                        {displayJobOrderStatus(jo.status)}
                                                     </Badge>
                                                 </TableCell>
 

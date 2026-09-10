@@ -8,6 +8,7 @@ import {
 } from "../_stock";
 import { z } from "zod";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -753,14 +754,14 @@ export async function POST(request: Request) {
             return requiredQuantity <= 0 || hardReservedQuantity >= requiredQuantity;
         });
 
-        if (allHard && jobOrder.status !== "RESERVED") {
+        if (allHard && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.RESERVED)) {
             transactionState.previousJobOrderStatus = jobOrder.status ?? null;
             await directusRequest<DirectusRecord>(
                 `/items/manufacturing_job_orders/${data.job_order_id}`,
                 {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "RESERVED" })
+                    body: JSON.stringify({ status: JOB_ORDER_STATUS.RESERVED })
                 },
                 "Update Job Order staging status",
                 true

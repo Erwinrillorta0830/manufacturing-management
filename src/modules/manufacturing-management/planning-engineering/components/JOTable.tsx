@@ -2,6 +2,7 @@
 import React from "react";
 import { Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export interface FamilyGroup {
     familyId: string;
@@ -98,11 +99,11 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            jo.status === "Draft" 
+                                            isJobOrderStatus(jo.status, JOB_ORDER_STATUS.DRAFT)
                                                 ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
                                                 : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
                                         }`}>
-                                            {jo.status}
+                                            {displayJobOrderStatus(jo.status)}
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={jo.remarks || ""}>
@@ -202,11 +203,11 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            fg.parentJo.status === "Draft" 
+                                            isJobOrderStatus(fg.parentJo.status, JOB_ORDER_STATUS.DRAFT)
                                                 ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
                                                 : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
                                         }`}>
-                                            {fg.parentJo.status}
+                                            {displayJobOrderStatus(fg.parentJo.status)}
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={fg.parentJo.remarks || ""}>
@@ -265,11 +266,11 @@ export function JOTable({
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                    cJo.status === "Draft" 
+                                                     isJobOrderStatus(cJo.status, JOB_ORDER_STATUS.DRAFT)
                                                         ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
                                                         : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
                                                 }`}>
-                                                    {cJo.status}
+                                                     {displayJobOrderStatus(cJo.status)}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>

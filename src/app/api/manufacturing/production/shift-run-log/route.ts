@@ -6,6 +6,7 @@ import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementSto
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { mmLotId, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
+import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -192,6 +193,10 @@ export async function POST(request: Request) {
             throw new Error(`Failed to load job order with ID: ${joId}`);
         }
         const joData = (await joRes.json()).data;
+        const canonicalJoStatus = normalizeJobOrderStatus(joData.status || JOB_ORDER_STATUS.DRAFT);
+        if (!canonicalJoStatus) {
+            return NextResponse.json({ error: `Job Order ${joId} has an unknown status and cannot accept a shift run.` }, { status: 409 });
+        }
         const producedProductId = Number(joData.product_id);
         if (!joData.branch_id) {
             return NextResponse.json({ error: `Job Order with ID ${joId} has no branch_id` }, { status: 400 });
@@ -808,14 +813,14 @@ export async function POST(request: Request) {
         };
 
         if (isJobFullyFinished) {
-            joUpdatePayload.status = "Completed";
-        } else if (joData.status !== "In Progress" && joData.status !== "Ongoing") {
-            joUpdatePayload.status = "In Progress";
+            joUpdatePayload.status = JOB_ORDER_STATUS.COMPLETED;
+        } else if (!isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING)) {
+            joUpdatePayload.status = JOB_ORDER_STATUS.IN_PROGRESS;
         }
 
         const expectedStatus = isJobFullyFinished
-            ? "Completed"
-            : (joData.status === "In Progress" || joData.status === "Ongoing" ? joData.status : "In Progress");
+            ? JOB_ORDER_STATUS.COMPLETED
+            : (isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING) ? canonicalJoStatus : JOB_ORDER_STATUS.IN_PROGRESS);
 
         // Keep the PATCH response unscoped. This Directus instance rejects scoped
         // update responses when other records in the collection contain nulls in
@@ -830,18 +835,18 @@ export async function POST(request: Request) {
         const persistedCompletedQuantity = Number(updatedJoData.completed_quantity);
         const hasExpectedCompletedQuantity = Number.isFinite(persistedCompletedQuantity)
             && Math.abs(persistedCompletedQuantity - newCompletedQty) < 0.000001;
-        const persistedStatus = String(updatedJoData.status || "");
+        const persistedStatus = normalizeJobOrderStatus(updatedJoData.status);
 
         if (!hasExpectedCompletedQuantity || persistedStatus !== expectedStatus) {
             throw new Error(`Job Order ${jobOrderNo} did not persist the expected completion state.`);
         }
 
         // 8. RECORD IN MANUFACTURING_JOB_ORDER_STATUS_HISTORY IF COMPLETED OR TRANSITIONED
-        if (isJobFullyFinished && joData.status !== "Completed") {
+        if (isJobFullyFinished && !isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.COMPLETED)) {
             const statusHistoryPayload = {
                 job_order_id: Number(joId),
-                old_status: joData.status,
-                new_status: "Completed",
+                old_status: canonicalJoStatus,
+                new_status: JOB_ORDER_STATUS.COMPLETED,
                 changed_by: effectiveEncoderId,
                 changed_at: manilaTimestamp,
                 remarks: `Job Order completed. Target ${targetQuantity.toLocaleString()} pcs reached with final shift run (${goodYield} pcs).`
@@ -851,7 +856,7 @@ export async function POST(request: Request) {
                 `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?filter=${encodeURIComponent(JSON.stringify({
                     _and: [
                         { job_order_id: { _eq: Number(joId) } },
-                        { new_status: { _eq: "Completed" } }
+                        { new_status: { _eq: JOB_ORDER_STATUS.COMPLETED } }
                     ]
                 }))}&limit=1`,
                 `Existing completion history lookup for Job Order ${joId}`

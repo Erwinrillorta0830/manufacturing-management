@@ -7,6 +7,7 @@ import {
     normalizeBatchNo
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
+import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -560,7 +561,7 @@ export async function GET(request: Request) {
                 target_quantity: Number(jo.target_quantity || 0),
                 completed_quantity: Number(jo.completed_quantity || 0),
                 rejected_quantity: Number(jo.rejected_quantity || 0),
-                status: jo.status,
+                status: normalizeJobOrderStatus(jo.status) || jo.status,
                 primary_work_center_id: jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null,
                 primary_work_center_name: wcName,
                 staging_work_center_id: stagingWorkCenterId,
@@ -590,7 +591,13 @@ export async function GET(request: Request) {
 
         if (statusFilter && statusFilter !== "all") {
             const sf = statusFilter.toUpperCase();
-            filtered = filtered.filter((j: { status: string }) => j.status?.toUpperCase() === sf || (sf === "PLANNED" && (j.status === "Draft" || j.status === "Planned")));
+            filtered = filtered.filter((j: { status: string }) => {
+                if (sf === "PLANNED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED);
+                if (sf === "RESERVED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.RESERVED);
+                if (sf === "RELEASED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED);
+                const normalized = normalizeJobOrderStatus(j.status);
+                return normalized?.toUpperCase() === sf;
+            });
         }
 
         if (search) {
@@ -619,9 +626,20 @@ export async function GET(request: Request) {
 
         // Summary KPI statistics
         const stats = {
-            totalActiveJobs: transformedJOs.filter((j: { status: string }) => ["PLANNED", "RESERVED", "Planned", "Reserved", "Proceed", "In Progress"].includes(j.status)).length,
-            plannedJobs: transformedJOs.filter((j: { status: string }) => ["PLANNED", "Planned", "Draft"].includes(j.status)).length,
-            reservedJobs: transformedJOs.filter((j: { status: string }) => ["RESERVED", "Reserved"].includes(j.status)).length,
+            totalActiveJobs: transformedJOs.filter((j: { status: string }) => isJobOrderStatus(
+                j.status,
+                JOB_ORDER_STATUS.DRAFT,
+                JOB_ORDER_STATUS.PLANNED,
+                JOB_ORDER_STATUS.RELEASED,
+                JOB_ORDER_STATUS.PROCEED,
+                JOB_ORDER_STATUS.ONGOING,
+                JOB_ORDER_STATUS.IN_PROGRESS,
+                JOB_ORDER_STATUS.RESERVED,
+                JOB_ORDER_STATUS.ON_HOLD,
+                JOB_ORDER_STATUS.QA_HOLD
+            )).length,
+            plannedJobs: transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED)).length,
+            reservedJobs: transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.RESERVED)).length,
             fullyStagedJobs: transformedJOs.filter((j: { all_staged: boolean }) => j.all_staged).length,
             pendingStagingJobs: transformedJOs.filter((j: { all_staged: boolean }) => !j.all_staged).length,
             shortageAlertJobs: transformedJOs.filter((j: { has_shortage: boolean }) => j.has_shortage).length

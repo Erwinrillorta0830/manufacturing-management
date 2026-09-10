@@ -7,6 +7,7 @@ import { getActiveVersionForProduct } from "../../finished-goods/versions/versio
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
+import { assertJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
 
@@ -212,7 +213,7 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
 
-            if (joData.status !== "Draft" && joData.status !== "Planned" && joData.status !== "Planning") {
+            if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.PLANNING)) {
                 return NextResponse.json({ error: "Only Draft or Planned Job Orders can be released." }, { status: 400 });
             }
 
@@ -333,7 +334,7 @@ export async function handlePOST(request: Request) {
                 const patchRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "Released" })
+                    body: JSON.stringify({ status: JOB_ORDER_STATUS.RELEASED })
                 });
                 if (patchRes.ok) {
                     return NextResponse.json({ 
@@ -819,7 +820,7 @@ export async function handlePOST(request: Request) {
             product_name: jo.product_name,
             quantity: jo.quantity,
             due_date: jo.due_date,
-            status: jo.status || "Draft",
+            status: assertJobOrderStatus(jo.status || JOB_ORDER_STATUS.DRAFT),
             is_batched: !!jo.is_batched,
             bom: jo.bom || null,
             components: jo.components || null,
