@@ -11,6 +11,7 @@ type PriceTypeRow = {
     price_type_id?: number | string | null;
     price_type_name?: string | null;
     sort?: number | string | null;
+    is_active?: boolean | number | string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,7 +61,8 @@ export async function GET(req: NextRequest) {
 
         const params = new URLSearchParams();
         params.set("limit", "-1");
-        params.set("fields", "price_type_id,price_type_name,sort");
+        params.set("fields", "price_type_id,price_type_name,sort,is_active");
+        params.set("filter[is_active][_eq]", "1");
         params.set("sort", "sort,price_type_id");
 
         const url = `${DIRECTUS_URL}/items/${COLLECTION}?${params.toString()}`;
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
 
         const priceTypes = json.data ?? [];
         const syntheticPriceTypes = [
-            { price_type_id: -1, price_type_name: "List Price", sort: -1 },
+            { price_type_id: -1, price_type_name: "List Price", sort: -1, is_active: true },
             ...priceTypes
         ];
 
