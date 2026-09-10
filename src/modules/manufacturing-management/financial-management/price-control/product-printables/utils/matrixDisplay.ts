@@ -48,20 +48,20 @@ export function matrixPriceTypeColor(index: number) {
 export function getVisibleMatrixPriceTypes(
     priceTypes: PriceType[],
     selectedPriceTypeIds: string[] = [],
-    usedPriceTypeKeys?: Set<string>,
 ): PriceType[] {
+    const activePriceTypes = priceTypes.filter((pt) => {
+        if (pt.is_active === false || pt.is_active === 0 || pt.is_active === "0" || pt.is_active === "false") {
+            return false;
+        }
+        return true;
+    });
+
     if (selectedPriceTypeIds.length > 0) {
         const selectedIds = new Set(selectedPriceTypeIds);
-        return priceTypes.filter((priceType) => selectedIds.has(String(priceType.price_type_id)));
+        return activePriceTypes.filter((priceType) => selectedIds.has(String(priceType.price_type_id)));
     }
 
-    if (usedPriceTypeKeys && usedPriceTypeKeys.size > 0) {
-        return sortPriceTypes(
-            priceTypes.filter((priceType) => usedPriceTypeKeys.has(priceTypeTierKey(priceType))),
-        );
-    }
-
-    return sortPriceTypes(priceTypes);
+    return sortPriceTypes(activePriceTypes);
 }
 
 export function getVisibleMatrixUnits(units: Unit[], usedUnitIds: Set<number>): Unit[] {
