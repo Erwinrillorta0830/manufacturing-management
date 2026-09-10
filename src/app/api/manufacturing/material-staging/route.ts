@@ -326,10 +326,12 @@ export async function GET(request: Request) {
             const branchId = Number(movement.branch_id || 0);
             const batchNo = String(movement.batch_no || "").trim().toLowerCase();
             const quantity = Number(movement.quantity || 0);
+            const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
+            const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
             if (
-                !remarks.includes("[MM-MATERIAL-STAGING]") ||
+                (!isStagingMovement && !isReturnMovement) ||
                 Number(movement.transaction_type_id) !== 4 ||
-                quantity <= 0 ||
+                quantity === 0 ||
                 !productId ||
                 !lotId ||
                 !jobOrderId ||
@@ -343,8 +345,10 @@ export async function GET(request: Request) {
             stagingMovementByKey.set(key, {
                 quantity: (current?.quantity || 0) + quantity,
                 lotId: lotId || current?.lotId || 0,
-                stagingBin: targetBin || current?.stagingBin || null,
-                negativeOverride: Boolean(current?.negativeOverride || remarks.includes("[NEGATIVE OVERRIDE]"))
+                stagingBin: isReturnMovement ? (current?.stagingBin || null) : (targetBin || current?.stagingBin || null),
+                negativeOverride: isReturnMovement
+                    ? Boolean(current?.negativeOverride)
+                    : Boolean(current?.negativeOverride || remarks.includes("[NEGATIVE OVERRIDE]"))
             });
         });
 

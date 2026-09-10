@@ -24,7 +24,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { JobOrder, WorkCenter, StationScanResponse } from "../types";
 import { scanStationStart, fetchWorkCenters } from "../services/production-api";
 import { toast } from "sonner";
-import { displayJobOrderStatus } from "../../job-order-status";
+import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 interface StationStartScannerProps {
     open: boolean;
@@ -417,7 +417,10 @@ export function StationStartScanner({
                                             Active Queue Fast Select:
                                         </span>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[140px] overflow-y-auto pr-1">
-                                            {jobOrders.slice(0, 8).map((jo) => (
+                                            {jobOrders
+                                                .filter((jo) => !isJobOrderStatus(jo.status, JOB_ORDER_STATUS.CANCELLED))
+                                                .slice(0, 8)
+                                                .map((jo) => (
                                                 <button
                                                     key={jo.jo_id}
                                                     type="button"

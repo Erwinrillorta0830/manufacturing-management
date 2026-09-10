@@ -15,7 +15,12 @@ import {
 } from "./_dispositions";
 import { hasPagination, paginate } from "../_pagination";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../services/mm-lots.service";
-import { assertJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { assertJobOrderStatus, isCancelledJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import {
+    cancelJobOrderAndReturnMaterials,
+    JobOrderCancellationError,
+    returnCancelledJobOrderMaterials
+} from "@/app/api/manufacturing/production/job-order-cancellation/_cancellation-service";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -997,7 +1002,47 @@ export async function POST(request: Request) {
             }
             const joIdInt = joInfo.id;
 
-            const targetStatus = decision === "Scrap" ? JOB_ORDER_STATUS.CANCELLED : JOB_ORDER_STATUS.IN_PROGRESS;
+            if (decision === "Scrap") {
+                const cancellationReason = `QA Scrap Batch disposition: ${String(supervisorComments || "").trim() || "No supervisor comments provided."}`;
+                const actorUserId = Number.isSafeInteger(Number(userId)) && Number(userId) > 0 ? Number(userId) : null;
+
+                let execution;
+                try {
+                    execution = isCancelledJobOrderStatus(joInfo.status)
+                        ? await returnCancelledJobOrderMaterials({ joId: joIdInt, reason: cancellationReason, actorUserId })
+                        : await cancelJobOrderAndReturnMaterials({ joId: joIdInt, reason: cancellationReason, actorUserId });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "QA Scrap cancellation failed.";
+                    const status = error instanceof JobOrderCancellationError ? error.status : 502;
+                    throw new DispositionPersistenceError(message, status);
+                }
+
+                try {
+                    await updateDisposition(String(dispositionId), {
+                        disposition_status: "Resolved",
+                        decision,
+                        supervisor_comments: supervisorComments || "",
+                        resolved_at: new Date().toISOString(),
+                        resolved_by: actorUserId
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "QA disposition resolution failed.";
+                    try {
+                        await execution.compensate();
+                    } catch (compensationError) {
+                        const compensationMessage = compensationError instanceof Error ? compensationError.message : "Cancellation rollback failed.";
+                        throw new DispositionPersistenceError(`${message} Cancellation rollback was incomplete: ${compensationMessage}`, 503);
+                    }
+                    throw new DispositionPersistenceError(message);
+                }
+
+                return NextResponse.json({
+                    success: true,
+                    message: `Disposition resolved successfully as ${decision}.`
+                });
+            }
+
+            const targetStatus = JOB_ORDER_STATUS.IN_PROGRESS;
             let jobOrderPatched = false;
             try {
                 await directusMutation(

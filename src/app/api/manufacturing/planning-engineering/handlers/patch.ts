@@ -3,7 +3,29 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { assertJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { assertJobOrderStatus, isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+
+async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
+    const numericId = Number(jobOrderId);
+    const path = Number.isSafeInteger(numericId) && numericId > 0
+        ? `/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,status`
+        : `/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=job_order_id,job_order_no,status&limit=1`;
+    const response = await fetch(`${DIRECTUS_URL}${path}`, { headers, cache: "no-store" });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => ({}));
+    const record = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
+    if (!record || !isCancelledJobOrderStatus(record.status)) return null;
+    return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} is cancelled and cannot be updated.` }, { status: 409 });
+}
+
+async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextResponse | null> {
+    const routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id`, { headers, cache: "no-store" });
+    if (!routeRes.ok) return null;
+    const route = (await routeRes.json()).data;
+    const jobOrderId = Number(route?.job_order_id);
+    if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) return null;
+    return cancelledJobOrderResponse(jobOrderId);
+}
 
 export async function handlePATCH(request: Request) {
     try {
@@ -22,6 +44,9 @@ export async function handlePATCH(request: Request) {
             if (!trimmedHaltReason) {
                 return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
             }
+
+            const cancelledResponse = await cancelledJobOrderResponse(parsedJobOrderId);
+            if (cancelledResponse) return cancelledResponse;
 
             const joPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${parsedJobOrderId}`, {
                 method: "PATCH",
@@ -54,6 +79,8 @@ export async function handlePATCH(request: Request) {
         // 1. Task status/completion update
         if (body.taskId !== undefined && body.taskPatch !== undefined) {
             const { taskId, taskPatch } = body;
+            const cancelledResponse = await cancelledJobOrderResponseForTask(Number(taskId));
+            if (cancelledResponse) return cancelledResponse;
             const res = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, {
                 method: "PATCH",
                 headers,
@@ -164,6 +191,8 @@ export async function handlePATCH(request: Request) {
         // 2. Task personnel assignment update
         if (body.taskId !== undefined && body.assignments !== undefined) {
             const { taskId, assignments } = body as { taskId: number; assignments: { user_id: number; is_team_lead: boolean }[] };
+            const cancelledResponse = await cancelledJobOrderResponseForTask(Number(taskId));
+            if (cancelledResponse) return cancelledResponse;
             
             // Delete existing assignments for this task in both old and new tables
             const existingRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?filter[jo_route_id][_eq]=${taskId}&limit=-1`, { headers });
@@ -273,6 +302,8 @@ export async function handlePATCH(request: Request) {
             if (!routeStepRes.ok) throw new Error("Route step not found");
             const routeStep = (await routeStepRes.json()).data;
             const jobOrderId = routeStep.job_order_id;
+            const cancelledResponse = await cancelledJobOrderResponse(jobOrderId);
+            if (cancelledResponse) return cancelledResponse;
             
             // 2. Fetch the corresponding manufacturing routing to get the qa_template_id
             let qaTemplateId: number | null = null;
@@ -398,6 +429,9 @@ export async function handlePATCH(request: Request) {
         if (!joId || !patch) {
             return NextResponse.json({ error: "Missing joId or patch data" }, { status: 400 });
         }
+
+        const cancelledResponse = await cancelledJobOrderResponse(joId);
+        if (cancelledResponse) return cancelledResponse;
 
         // Map camelCase patch fields to snake_case fields
         const dbPatch: Record<string, unknown> = {};

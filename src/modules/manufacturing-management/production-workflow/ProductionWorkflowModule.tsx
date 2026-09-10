@@ -15,7 +15,10 @@ import {
     Layers,
     Play,
     Building2,
-    CheckCircle
+    CheckCircle,
+    XCircle,
+    Undo2,
+    AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,9 +33,10 @@ import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { StationStartScanner } from "./components/StationStartScanner";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
+import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
 import { StationScanResponse } from "./types";
 import { toast } from "sonner";
-import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
+import { displayJobOrderStatus, isCancellableJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 
 export default function ProductionWorkflowModule() {
     const {
@@ -86,7 +90,16 @@ export default function ProductionWorkflowModule() {
         selectedBranchFilter,
         setSelectedBranchFilter,
         releasingDraft,
-        handleReleaseDraftJO
+        handleReleaseDraftJO,
+        cancellationModalOpen,
+        setCancellationModalOpen,
+        cancellationMode,
+        cancellationPreview,
+        loadingCancellation,
+        submittingCancellation,
+        cancellationError,
+        openCancellationModal,
+        handleConfirmCancellation
     } = useProductionWorkflow();
 
     // UI state
@@ -136,6 +149,8 @@ export default function ProductionWorkflowModule() {
 
     const totalRuns = jobOrders.length;
     const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
+    const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
+    const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
 
     const completedWorkstations = React.useMemo(() => {
         let count = 0;
@@ -341,6 +356,26 @@ export default function ProductionWorkflowModule() {
                                 >
                                     <GitBranch className="mr-1.5 h-4 w-4 text-primary" /> Genealogy Audit
                                 </Button>
+                                {isSelectedJobOrderCancellable && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openCancellationModal("cancel")}
+                                        className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                    >
+                                        <XCircle className="mr-1.5 h-4 w-4" /> Cancel Job Order
+                                    </Button>
+                                )}
+                                {isSelectedJobOrderCancelled && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openCancellationModal("return")}
+                                        className="h-10 text-xs font-bold border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600"
+                                    >
+                                        <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
+                                    </Button>
+                                )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
                                     <Button
                                         onClick={handleReleaseDraftJO}
@@ -349,14 +384,14 @@ export default function ProductionWorkflowModule() {
                                     >
                                         <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> {releasingDraft ? "Releasing..." : "Release Job Order"}
                                     </Button>
-                                ) : (
+                                ) : !isSelectedJobOrderCancelled ? (
                                     <Button
                                         onClick={() => setIsShiftLogOpen(true)}
                                         className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"
                                     >
                                         <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> End-of-Shift / Step Progress
                                     </Button>
-                                )}
+                                ) : null}
                             </div>
                         </div>
 
@@ -373,6 +408,12 @@ export default function ProductionWorkflowModule() {
 
                     {/* Scrollable Workspace Body */}
                     <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-6 min-h-0 bg-muted/5">
+                        {isSelectedJobOrderCancelled && (
+                            <div className="flex items-start gap-2 p-3 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-xs font-semibold">
+                                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                                <span>This Job Order is cancelled. Station, operator, QA, and shift-run actions are disabled. Use "Return Raw Materials" for any outstanding floor stock.</span>
+                            </div>
+                        )}
                         {/* Operation Step Tracker Section */}
                         {selectedJobOrder && (
                             <OperationStepTracker
@@ -384,6 +425,7 @@ export default function ProductionWorkflowModule() {
                                 users={users}
                                 onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
                                 onOpenQAModal={(taskId) => handleCompleteStepClick(taskId)}
+                                readOnly={isSelectedJobOrderCancelled}
                             />
                         )}
 
@@ -476,6 +518,18 @@ export default function ProductionWorkflowModule() {
                 setQaComments={setQaComments}
                 submittingQA={submittingQA}
                 handleSubmitQA={handleSubmitQA}
+            />
+
+            {/* --- JOB ORDER CANCELLATION / RAW MATERIAL RETURN MODAL --- */}
+            <JobOrderCancellationModal
+                open={cancellationModalOpen}
+                onOpenChange={setCancellationModalOpen}
+                mode={cancellationMode}
+                preview={cancellationPreview}
+                loading={loadingCancellation}
+                submitting={submittingCancellation}
+                error={cancellationError}
+                onConfirm={handleConfirmCancellation}
             />
 
         </div>

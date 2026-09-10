@@ -5,7 +5,7 @@ import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-se
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
-import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { JOB_ORDER_STATUS, isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
 
@@ -333,6 +333,9 @@ export async function POST(request: Request) {
             if (joRes.ok) {
                 const joData = (await joRes.json()).data || [];
                 if (joData.length > 0) {
+                    if (isCancelledJobOrderStatus(joData[0].status)) {
+                        return NextResponse.json({ error: `Job Order ${joId} is cancelled and cannot be completed.` }, { status: 409 });
+                    }
                     const resolvedJobOrderId = Number(joData[0].job_order_id);
                     if (sourceDocumentId <= 0 && Number.isSafeInteger(resolvedJobOrderId) && resolvedJobOrderId > 0) {
                         sourceDocumentId = resolvedJobOrderId;

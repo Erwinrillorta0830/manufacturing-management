@@ -10,7 +10,7 @@ import {
 } from "../_stock";
 import { z } from "zod";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -345,6 +345,9 @@ export async function POST(request: Request) {
         if (!canonicalJobOrderNo || canonicalJobOrderNo !== data.job_order_no.trim()) {
             throw new TransferError("The supplied Job Order number does not match the selected Job Order.", 400);
         }
+        if (isCancelledJobOrderStatus(jobOrder.status)) {
+            throw new TransferError("Cancelled Job Orders cannot accept staged material.", 409);
+        }
 
         const workCenterFilter = encodeURIComponent(JSON.stringify({
             work_center_id: { _eq: data.work_center_id }
@@ -552,11 +555,12 @@ export async function POST(request: Request) {
         }
 
         const stagedQuantityForBatch = movements.reduce((total, movement) => {
+            const remarks = String(movement.remarks || "");
             const isStagingMovement = Number(movement.source_document_id) === data.job_order_id &&
                 Number(movement.transaction_type_id) === 4 &&
                 normalizeBatchNo(movement.batch_no) === requestedBatch &&
-                String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]");
-            return isStagingMovement ? total + Math.max(0, Number(movement.quantity || 0)) : total;
+                (remarks.includes("[MM-MATERIAL-STAGING]") || remarks.includes("[MM-MATERIAL-STAGING-RETURN]"));
+            return isStagingMovement ? total + Number(movement.quantity || 0) : total;
         }, 0);
         let stagedQuantityRemaining = stagedQuantityForBatch;
         const stagedQuantityByAllocation = new Map<number, number>();
@@ -764,7 +768,12 @@ export async function POST(request: Request) {
                 { branch_id: { _eq: branchId } },
                 { source_document_id: { _eq: data.job_order_id } },
                 { transaction_type_id: { _eq: 4 } },
-                { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+                {
+                    _or: [
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING]" } },
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING-RETURN]" } }
+                    ]
+                }
             ]
         }));
         const directusJobOrderMovements = await directusRequest<DirectusRecord[]>(
@@ -784,11 +793,14 @@ export async function POST(request: Request) {
         ];
         const stagedQuantityByProductBatch = new Map<string, number>();
         allJobOrderMovements.forEach((movement) => {
-            if (!String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")) return;
+            const remarks = String(movement.remarks || "");
+            const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
+            const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
+            if (!isStagingMovement && !isReturnMovement) return;
             const productId = relationId(movement.product_id, ["product_id"]);
             const batchNo = String(movement.batch_no || "").trim().toLowerCase();
             const quantity = Number(movement.quantity || 0);
-            if (productId && batchNo && quantity > 0) {
+            if (productId && batchNo && quantity !== 0) {
                 const key = `${productId}:${batchNo}`;
                 stagedQuantityByProductBatch.set(key, (stagedQuantityByProductBatch.get(key) || 0) + quantity);
             }
@@ -802,7 +814,7 @@ export async function POST(request: Request) {
                 .reduce((total, reservation) => {
                     const batchNo = normalizeBatchNo(reservation.batch_no);
                     const key = `${productId}:${batchNo}`;
-                    return stagedQuantityByProductBatch.has(key)
+                    return (stagedQuantityByProductBatch.get(key) || 0) > 0
                         ? total + Number(reservation.reserved_quantity || 0)
                         : total;
                 }, 0);

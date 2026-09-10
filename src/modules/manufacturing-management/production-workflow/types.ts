@@ -89,12 +89,67 @@ export interface JobOrder {
     sales_orders?: any[];
 }
 
+export interface JobOrderMaterialReturnLine {
+    joMaterialId: number;
+    productId: number;
+    productName: string;
+    uomId: number;
+    uomShortcut: string;
+    branchId: number;
+    mmLotId: number;
+    batchNo: string;
+    sourceBin: string;
+    targetBin: string;
+    stagedQuantity: number;
+    consumedQuantity: number;
+    returnableQuantity: number;
+    reservationIds: number[];
+    releaseOnly: boolean;
+}
+
+export interface JobOrderCancellationPreview {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    productName: string;
+    branchId: number;
+    status: string;
+    cancellable: boolean;
+    canReturnMaterials: boolean;
+    blockedReason: string | null;
+    lines: JobOrderMaterialReturnLine[];
+    totals: {
+        stagedQuantity: number;
+        consumedQuantity: number;
+        returnableQuantity: number;
+    };
+}
+
+export interface JobOrderCancellationResponse {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    lines: JobOrderMaterialReturnLine[];
+    returnedQuantity: number;
+    releasedReservationCount: number;
+    movementCount: number;
+    alreadyCancelled: boolean;
+}
+
+export interface JobOrderCancellationPayload {
+    action: "cancel-and-return" | "return-materials";
+    joId: string | number;
+    reason?: string;
+    actorUserId?: number | null;
+}
+
 export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
     { value: "Active", label: "Active" },
     { value: "All", label: "All" },
     { value: "Proceed", label: "Released" },
     { value: "Ongoing", label: "In Progress" },
     { value: "On Hold", label: "On Hold" },
+    { value: "Cancelled", label: "Cancelled" },
     { value: "Finished", label: "Finished" }
 ] as const;
 

@@ -1173,6 +1173,14 @@ async function completeYieldClosingInternal(
             );
         }
 
+        if (isCancelledJobOrderStatus(jobOrder.status)) {
+            throw new YieldCompletionError(
+                409,
+                "JOB_ORDER_CANCELLED",
+                `Job Order ${jobOrder.jobOrderNo} is cancelled and cannot be closed.`
+            );
+        }
+
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
         const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
