@@ -31,6 +31,16 @@ import { fetchProvider } from "../../providers/fetchProvider";
 import { UnpaidInvoice, UnpaidInvoiceSearchResponse } from "../../types";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import SettlementInvoiceCartTable from "./SettlementInvoiceCartTable";
 import WalletAssetCard from "./WalletAssetCard";
@@ -66,7 +76,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
         isLoadingRoute, loadRouteInvoices, addToCart, removeFromCart, clearCart, 
         getUsedAmount, getInvoiceApplied, handleAllocate, createAdjustment, createEwt, submitSettlement,
         hasPartialChanges, hasClearableCart, savePartialSettlement,
-        deleteWalletItem, editWalletItem,
+        deleteWalletItem, editWalletItem, deletingItemInfo, setDeletingItemInfo, confirmDeleteWalletItem,
         isLoadingCredits, creditsError, retryCredits, hasMoreCredits, loadMoreCredits, collectionDate
     } = useSettlement(id, activeInvoiceId);
 
@@ -418,6 +428,8 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
         }
     };
 
+    const [isClearCartModalOpen, setIsClearCartModalOpen] = useState(false);
+
     const handleClearCart = async () => {
         const cleared = await clearCart();
         if (cleared) onChanged?.();
@@ -758,7 +770,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
 
                                     </>
                                 )}
-                    {!isPosted && hasClearableCart && <Button onClick={handleClearCart} disabled={isClearing || isSubmitting || isPartialSaving || isSuccess} variant="ghost" size="sm" className="h-6 text-[8px] uppercase font-black tracking-widest text-destructive hover:bg-destructive/10 px-2.5">{isClearing ? <Loader2 size={10} className="mr-1 animate-spin"/> : <Trash2 size={10} className="mr-1"/>}{isClearing ? "Clearing..." : "Clear Cart"}</Button>}
+                    {!isPosted && hasClearableCart && <Button onClick={() => setIsClearCartModalOpen(true)} disabled={isClearing || isSubmitting || isPartialSaving || isSuccess} variant="ghost" size="sm" className="h-6 text-[8px] uppercase font-black tracking-widest text-destructive hover:bg-destructive/10 px-2.5">{isClearing ? <Loader2 size={10} className="mr-1 animate-spin"/> : <Trash2 size={10} className="mr-1"/>}{isClearing ? "Clearing..." : "Clear Cart"}</Button>}
                             </div>
                         </div>
 
@@ -792,6 +804,57 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                     />
                 </div>
             </div>
+
+            <AlertDialog open={isClearCartModalOpen} onOpenChange={setIsClearCartModalOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="font-black text-destructive flex items-center gap-2">
+                            <Trash2 size={18} /> Clear Settlement Session?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="text-xs text-muted-foreground">
+                            Are you sure you want to clear all invoices and allocations from this session? Any linked Variances or EWTs will be destroyed.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="cursor-pointer text-xs font-bold">Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="cursor-pointer text-xs font-black bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                            onClick={async () => {
+                                await handleClearCart();
+                                setIsClearCartModalOpen(false);
+                            }}
+                        >
+                            Clear Cart
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={!!deletingItemInfo} onOpenChange={(open) => !open && setDeletingItemInfo(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="font-black text-destructive flex items-center gap-2">
+                            <Trash2 size={18} /> Delete Record?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="text-xs text-muted-foreground">
+                            Are you sure you want to delete this record? This deletion will be committed once you save the settlement session.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="cursor-pointer text-xs font-bold" onClick={() => setDeletingItemInfo(null)}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="cursor-pointer text-xs font-black bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                            onClick={async () => {
+                                if (deletingItemInfo) {
+                                    await confirmDeleteWalletItem(deletingItemInfo.id, deletingItemInfo.type);
+                                }
+                            }}
+                        >
+                            Delete Record
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

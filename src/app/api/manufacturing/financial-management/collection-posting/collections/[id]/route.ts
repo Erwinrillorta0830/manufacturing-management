@@ -138,27 +138,94 @@ export async function GET(
             };
         });
 
+        // Fetch past posted allocations for history audit trail
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const historyMap = new Map<number, any[]>();
+        if (invoiceIds.length > 0) {
+            try {
+                const pastRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[invoice_id][_in]=${invoiceIds.join(",")}&limit=-1&fields=invoice_id,amount,type,source_temp_id,collection_id`, { headers, cache: "no-store" });
+                if (pastRes.ok) {
+                    const pastData = (await pastRes.json()).data || [];
+                    // Extract collection IDs to query collection status explicitly
+                    const pastCollectionIds = [...new Set(pastData.map((p: { collection_id?: number | Record<string, unknown> }) => {
+                        if (typeof p.collection_id === "object" && p.collection_id !== null) {
+                            return (p.collection_id as { id?: number }).id;
+                        }
+                        return p.collection_id;
+                    }).filter(Boolean))];
+
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const collectionInfoMap = new Map<number, any>();
+                    if (pastCollectionIds.length > 0) {
+                        const colRes = await fetch(`${DIRECTUS_URL}/items/collection?filter[id][_in]=${pastCollectionIds.join(",")}&limit=-1&fields=id,docNo,doc_no,collection_receipt_no,collection_date,isPosted`, { headers, cache: "no-store" });
+                        if (colRes.ok) {
+                            const colData = (await colRes.json()).data || [];
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            colData.forEach((c: any) => {
+                                collectionInfoMap.set(c.id, c);
+                            });
+                        }
+                    }
+
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    pastData.forEach((p: any) => {
+                        const invId = Number(p.invoice_id);
+                        const cId = typeof p.collection_id === "object" && p.collection_id !== null ? p.collection_id.id : p.collection_id;
+                        const col = collectionInfoMap.get(cId) || (typeof p.collection_id === "object" ? p.collection_id : null);
+                        const isPosted = col?.isPosted === true || col?.isPosted === 1 || col?.isPosted === "1";
+                        if (invId && isPosted) {
+                            const item = {
+                                date: String(col?.collection_date || "").split("T")[0] || "Past Date",
+                                type: String(p.type || "CASH").toUpperCase(),
+                                reference: String(col?.docNo || col?.doc_no || col?.collection_receipt_no || p.source_temp_id || "Posted Pouch"),
+                                amount: Math.abs(Number(p.amount) || 0)
+                            };
+                            if (!historyMap.has(invId)) historyMap.set(invId, []);
+                            historyMap.get(invId)!.push(item);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to fetch invoice audit trail history:", err);
+            }
+        }
+
+        const cashBucketByDetailId = new Map(details.map((d) => [d.id, d]));
+
         const invoiceAllocations = collInvoices.map((ci) => {
             const inv = salesInvoices.find((si) => si.invoice_id === ci.invoice_id) || {};
             const code = (inv.customer_code as string) || "";
-            const resolvedCustomerCode = code || "Unassigned Customer";
+            const resolvedCustomerName = customerNameMap.get(code) || (inv.customer_name as string) || "Deleted Customer";
             
             // Numerical field calculations based on DDL schema
             const grossVal = typeof inv.gross_amount === "number" ? inv.gross_amount : (typeof inv.total_amount === "number" ? inv.total_amount : (typeof inv.net_amount === "number" ? inv.net_amount : null));
             const netVal = typeof inv.net_amount === "number" ? inv.net_amount : (typeof inv.total_amount === "number" ? inv.total_amount : (typeof inv.gross_amount === "number" ? inv.gross_amount : null));
 
+            const safeInvId = Number(inv.invoice_id || ci.invoice_id);
+
+            // Resolve reference number from source_temp_id or matching detail
+            let resolvedRef = ci.source_temp_id;
+            if (typeof ci.source_temp_id === "string" && ci.source_temp_id.startsWith("detail-")) {
+                const detailIdNum = Number(ci.source_temp_id.replace("detail-", ""));
+                const matchedDetail = cashBucketByDetailId.get(detailIdNum);
+                if (matchedDetail) {
+                    resolvedRef = matchedDetail.check_no || matchedDetail.remarks || ci.source_temp_id;
+                }
+            }
+
             return {
                 amountApplied: ci.amount,
                 allocationType: ci.type,
                 sourceTempId: ci.source_temp_id,
-                customerName: resolvedCustomerCode,
+                customerName: resolvedCustomerName,
                 customerCode: code,
                 invoiceNo: inv.invoice_no,
-                invoiceId: inv.invoice_id || ci.invoice_id,
+                invoiceId: safeInvId,
                 grossAmount: grossVal,
                 originalAmount: netVal,
                 remainingBalance: inv.remaining_balance ?? netVal,
-                referenceNo: ci.source_temp_id,
+                referenceNo: resolvedRef,
+                history: historyMap.get(safeInvId) || [],
             };
         });
 

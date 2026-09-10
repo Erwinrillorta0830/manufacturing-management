@@ -81,14 +81,14 @@ export default function AllocationSidePanel({
                     {wallet.length === 0 ? (
                         <p className="text-[10px] text-muted-foreground italic">No funds available.</p>
                     ) : wallet.map(w => {
-                        const existingAlloc = allocations.find(a => a.invoiceId === inv.id && a.sourceTempId === w.id);
+                        const existingAlloc = allocations.find(a => a.invoiceId === inv.id && (a.sourceTempId === w.id || a.sourceTempId?.toLowerCase() === w.id.toLowerCase()));
                         const usedElsewhere = getUsedAmount(w.id) - (existingAlloc?.amountApplied || 0);
                         const remaining = getSourceAllocationCapacity(w.originalAmount, usedElsewhere);
                         const invoiceAvailable = getInvoiceAllocationCapacity(
                             requiredBalance,
                             appliedSession - (existingAlloc?.amountApplied || 0)
                         );
-                        const targetMax = capSettlementAllocation(invoiceAvailable, remaining, invoiceAvailable);
+                        const targetMax = capSettlementAllocation(remaining, remaining);
 
                         const isExactMatch = w.invoiceId === inv.id;
                         // Fixed strict null-check linting error here by using ?? 0
@@ -153,7 +153,7 @@ export default function AllocationSidePanel({
                     }).map(c => {
                         if (!c.label.toLowerCase().includes(localSearch.toLowerCase()) && !(c.customerName || "").toLowerCase().includes(localSearch.toLowerCase())) return null;
 
-                        const existingAlloc = allocations.find(a => a.invoiceId === inv.id && a.sourceTempId === c.id);
+                        const existingAlloc = allocations.find(a => a.invoiceId === inv.id && (a.sourceTempId === c.id || a.sourceTempId?.toLowerCase() === c.id.toLowerCase()));
                         const usedElsewhere = getUsedAmount(c.id) - (existingAlloc?.amountApplied || 0);
                         const startingCapacity = c.unappliedAmount !== undefined ? c.unappliedAmount : c.originalAmount;
                         const remaining = getSourceAllocationCapacity(startingCapacity, usedElsewhere);
@@ -161,7 +161,7 @@ export default function AllocationSidePanel({
                             requiredBalance,
                             appliedSession - (existingAlloc?.amountApplied || 0)
                         );
-                        const targetMax = capSettlementAllocation(invoiceAvailable, remaining, invoiceAvailable);
+                        const targetMax = capSettlementAllocation(remaining, remaining);
 
                         return (
                             <div key={`apply-${inv.id}-${c.id}`} className="flex flex-col gap-1.5 py-2 border-b border-border/50 last:border-0">

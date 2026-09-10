@@ -407,12 +407,22 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         }
     };
 
+    const [deletingItemInfo, setDeletingItemInfo] = useState<{ id: string; type: string } | null>(null);
+
+    const confirmDeleteWalletItem = async (itemId: string, type: string) => {
+        await deleteWalletItem(itemId, type, true);
+        setDeletingItemInfo(null);
+    };
+
     const deleteWalletItem = async (itemId: string, type: string, silent = false) => {
         const item = wallet.find(w => w.id === itemId);
         if (!item) return;
 
         if (!item.isLocal && (type === "ADJUSTMENT" || type === "EWT")) {
-            if (!silent && !confirm("Are you sure you want to delete this record? This deletion will be committed once you save the settlement session.")) return;
+            if (!silent) {
+                setDeletingItemInfo({ id: itemId, type });
+                return;
+            }
             const dbId = item.dbId;
             if (!dbId) {
                 if (!silent) toast.error("Database ID missing. Cannot delete.");
@@ -461,16 +471,14 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
     };
 
     const clearCart = async (): Promise<boolean> => {
-        if (!confirm("Are you sure you want to clear all invoices and allocations from this session? Any linked Variances or EWTs will be destroyed.")) {
-            return false;
-        }
-
         setIsClearing(true);
         try {
             await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${pouchId}/allocate/clear`, {});
             setPendingEdits({});
             setPendingDeletions([]);
-            await fetchData();
+            setCartInvoices([]);
+            setAllocations([]);
+            setWallet(prev => prev.filter(w => !w.isLocal));
             setHasPendingCartClear(true);
             toast.success("Cart cleared and staged allocations rolled back.");
             return true;
@@ -518,17 +526,21 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         }
     };
 
-    const getUsedAmount = (sourceId: string) => Math.round(allocations.filter(a => a.sourceTempId === sourceId).reduce((sum, a) => sum + a.amountApplied, 0) * 100) / 100;
+    const getUsedAmount = (sourceId: string) => {
+        const norm = sourceId.toLowerCase();
+        return Math.round(allocations.filter(a => a.sourceTempId?.toLowerCase() === norm || a.sourceTempId === sourceId).reduce((sum, a) => sum + a.amountApplied, 0) * 100) / 100;
+    };
     const getInvoiceApplied = (invoiceId: number) => getInvoiceAppliedForSettlement(allocations, invoiceId);
 
     const handleAllocate = (invoiceId: number, sourceId: string, amountInput: number) => {
         setAllocations(prev => {
-            const filtered = prev.filter(a => !(a.invoiceId === invoiceId && a.sourceTempId === sourceId));
+            const normId = sourceId.toLowerCase();
+            const filtered = prev.filter(a => !(a.invoiceId === invoiceId && (a.sourceTempId?.toLowerCase() === normId || a.sourceTempId === sourceId)));
             const safeInput = Math.abs(amountInput);
 
             if (safeInput > 0.009) {
                 const combinedSources = [...wallet, ...credits];
-                const wItem = combinedSources.find(w => w.id === sourceId);
+                const wItem = combinedSources.find(w => w.id === sourceId || w.id.toLowerCase() === normId);
                 const inv = cartInvoices.find(i => i.id === invoiceId);
 
                 if (wItem && inv) {
@@ -536,17 +548,10 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                     if (isCredit && !isSameCustomer(wItem, inv)) return filtered;
 
                     const walletUsedElsewhere = prev
-                        .filter(a => a.sourceTempId === sourceId && a.invoiceId !== invoiceId)
+                        .filter(a => (a.sourceTempId === sourceId || a.sourceTempId?.toLowerCase() === normId) && a.invoiceId !== invoiceId)
                         .reduce((sum, a) => sum + a.amountApplied, 0);
                     const walletAvailable = getSourceAllocationCapacity(wItem.originalAmount, walletUsedElsewhere);
-                    const invoiceUsedElsewhere = prev
-                        .filter(a => a.invoiceId === invoiceId && a.sourceTempId !== sourceId)
-                        .reduce((sum, a) => sum + a.amountApplied, 0);
-                    const invoiceAvailable = getInvoiceAllocationCapacity(
-                        getInvoiceRequiredBalance(inv),
-                        invoiceUsedElsewhere
-                    );
-                    const finalAmount = capSettlementAllocation(safeInput, walletAvailable, invoiceAvailable);
+                    const finalAmount = capSettlementAllocation(safeInput, walletAvailable);
 
                     if (finalAmount > 0.009) {
                         filtered.push({
@@ -556,7 +561,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                             customerName: inv.customerName || "",
                             amountApplied: finalAmount,
                             allocationType: wItem.type || "CASH",
-                            sourceTempId: sourceId,
+                            sourceTempId: wItem.id,
                             originalAmount: inv.originalAmount || 0,
                             remainingBalance: inv.remainingBalance || 0,
                             maxSettleableAmount: inv.maxSettleableAmount,
@@ -809,7 +814,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
         isLoadingRoute, addToCart, removeFromCart, clearCart, loadRouteInvoices,
         getUsedAmount, getInvoiceApplied, handleAllocate, createAdjustment, createEwt, submitSettlement,
         hasPartialChanges, hasClearableCart, savePartialSettlement,
-        deleteWalletItem, editWalletItem,
+        deleteWalletItem, editWalletItem, deletingItemInfo, setDeletingItemInfo, confirmDeleteWalletItem,
         collectedByName, isLoadingCredits, creditsError, retryCredits, hasMoreCredits, loadMoreCredits, collectionDate
     };
 }

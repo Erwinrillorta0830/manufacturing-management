@@ -125,17 +125,17 @@ export function ReviewSheet({
             let typeLabel = "ADJUSTMENT";
 
             // 1. CASH (Method ID 1 or COA 1)
-            const isCash = b.coaId === 1 || b.paymentMethodId === 1 || tempId.startsWith("cash") || refNo.includes(" x ") || refNo === "cash_summary" || refNo === "physical cash";
+            const isCash = b.coaId === 1 || String(b.paymentMethodId) === "1" || tempId.startsWith("cash") || refNo.includes(" x ") || refNo === "cash_summary" || refNo === "physical cash";
 
             if (isCash) {
                 typeLabel = "CASH";
             }
-            // 2. CHECK (Method ID 2)
-            else if (tempId.startsWith("chk") || b.paymentMethodId === 2) {
+            // 2. CHECK (Method ID 2, or Method ID 4 if check_no present / chk prefix)
+            else if (tempId.startsWith("chk") || String(b.paymentMethodId) === "2" || (String(b.paymentMethodId) === "4" && (b.referenceNo || b.chequeDate))) {
                 typeLabel = "CHECK";
             }
             // 3. EWT (Method ID 10)
-            else if (tempId.startsWith("ewt") || b.paymentMethodId === 10) {
+            else if (tempId.startsWith("ewt") || String(b.paymentMethodId) === "10") {
                 typeLabel = "EWT";
             }
             // 4. OTHER METHODS
@@ -296,14 +296,10 @@ export function ReviewSheet({
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="p-3 bg-muted/30 border border-border rounded-xl">
                                     <p className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1.5 mb-1"><MapPin size={10}/> Route Owner</p>
                                     <p className="font-black text-sm uppercase text-foreground leading-tight">{pouch.salesmanName || pouch.salesmanId || "Unknown Route"}</p>
-                                </div>
-                                <div className="p-3 bg-muted/30 border border-border rounded-xl">
-                                    <p className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1.5 mb-1"><Briefcase size={10}/> Operation Type</p>
-                                    <p className="font-black text-sm uppercase text-foreground leading-tight">{pouch.operationName || "Unassigned Operation"}</p>
                                 </div>
                                 <div className="p-3 bg-muted/30 border border-border rounded-xl">
                                     <p className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1.5 mb-1"><User size={10}/> Cashier / Encoder</p>
@@ -415,8 +411,6 @@ export function ReviewSheet({
                                         {reviewMath.nonCashBuckets.map((b, i) => {
                                             const isCredit = b.balanceTypeId === 1;
                                             const typeLabel = b.resolvedType || "ADJUSTMENT";
-                                            const isCheck = typeLabel === "CHECK";
-                                            const bankLabel = b.bankName || (b.bankId != null ? "Unknown Bank" : null);
 
                                             return (
                                                 <div key={i} className={`flex justify-between items-center p-3.5 rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${isCredit ? 'border-red-200' : 'border-border'}`}>
@@ -426,13 +420,6 @@ export function ReviewSheet({
                                                         </span>
                                                         <span className="text-[9px] font-bold text-muted-foreground uppercase mt-0.5 flex flex-wrap gap-2">
                                                             <span className={isCredit ? "text-red-600 font-black" : ""}>Type: {typeLabel}</span>
-                                                            {isCheck && (
-                                                                <>
-                                                                    {bankLabel && <span>• Bank: <span className="text-foreground">{bankLabel}</span></span>}
-                                                                    {b.referenceNo && <span>• Ref/Chk#: <span className="text-foreground">{b.referenceNo}</span></span>}
-                                                                    {b.chequeDate && <span>• Date: <span className="text-foreground">{b.chequeDate.split('T')[0]}</span></span>}
-                                                                </>
-                                                            )}
                                                         </span>
                                                     </div>
                                                     <span className={`font-mono font-black text-base ${isCredit ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -518,6 +505,8 @@ export function ReviewSheet({
                                                                 typeLabel = typeStr;
                                                             }
 
+                                                            const showReference = typeStr.includes("RETURN") || typeStr.includes("RTN") || typeStr.includes("MEMO") || typeStr.includes("CM") || typeStr.includes("DM");
+
                                                             return (
                                                                 <div key={a.sourceTempId || a.referenceNo || i} className="flex justify-between items-center px-3 py-2 hover:bg-muted/50 rounded-lg transition-colors border border-transparent hover:border-border">
                                                                     <div className="flex flex-col gap-1.5 items-start">
@@ -525,7 +514,7 @@ export function ReviewSheet({
                                                                             <Badge variant="outline" className={`h-4 px-1.5 text-[8px] font-black tracking-widest uppercase rounded-sm ${badgeColor}`}>
                                                                                 <TypeIcon size={8} className="mr-1" /> {typeLabel}
                                                                             </Badge>
-                                                                            {a.referenceNo && (
+                                                                            {showReference && a.referenceNo && (
                                                                                 <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest">
                                                                                     Ref: {a.referenceNo}
                                                                                 </span>

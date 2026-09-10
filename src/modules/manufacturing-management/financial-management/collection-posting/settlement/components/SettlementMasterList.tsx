@@ -171,39 +171,46 @@ export default function SettlementMasterList() {
             {/* SERVER LIST TABLE */}
             <div className="flex-1 bg-card rounded-xl border border-border shadow-md overflow-hidden flex flex-col min-h-0">
                 <div className="flex-1 overflow-y-auto scrollbar-thin relative">
-                    <Table className="relative min-w-[950px]">
+                    <Table className="relative min-w-[1100px]">
                         <TableHeader className="bg-muted/90 backdrop-blur-md sticky top-0 z-20 shadow-sm outline outline-1 outline-border">
                             <TableRow>
-                                <TableHead className="font-black text-[10px] uppercase pl-6 py-3 cursor-pointer hover:bg-muted/80 whitespace-nowrap w-[140px]" onClick={() => handleSort("docNo")}>
+                                <TableHead className="font-black text-[10px] uppercase pl-6 py-3 cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("docNo")}>
                                     <div className="flex items-center gap-1"><span>Reference</span>{sortField === "docNo" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
                                 </TableHead>
-                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap w-[200px]" onClick={() => handleSort("salesmanName")}>
+                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("salesmanName")}>
                                     <div className="flex items-center gap-1"><span>Personnel</span>{sortField === "salesmanName" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
                                 </TableHead>
-                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap w-[140px]" onClick={() => handleSort("collectionDate")}>
-                                    <div className="flex items-center gap-1"><span>Collected</span>{sortField === "collectionDate" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
+                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("collectionDate")}>
+                                    <div className="flex items-center gap-1"><span>Date Collected</span>{sortField === "collectionDate" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
                                 </TableHead>
-                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap w-[140px]" onClick={() => handleSort("encodedDate")}>
-                                    <div className="flex items-center gap-1"><span>Encoded</span>{sortField === "encodedDate" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
+                                <TableHead className="font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("encodedDate")}>
+                                    <div className="flex items-center gap-1"><span>Date Encoded</span>{sortField === "encodedDate" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
                                 </TableHead>
-                                <TableHead className="font-black text-[10px] uppercase text-center whitespace-nowrap" onClick={() => handleSort("discrepancy")}>Status</TableHead>
                                 <TableHead className="text-right font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("pouchAmount")}>
                                     <div className="flex items-center gap-1 justify-end"><span>Pouch Value</span>{sortField === "pouchAmount" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
                                 </TableHead>
-                                <TableHead className="text-right font-black text-[10px] uppercase pr-8 cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("discrepancy")}>
-                                    <div className="flex items-center gap-1 justify-end"><span>Rem. Float</span>{sortField === "discrepancy" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
+                                <TableHead className="text-right font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap">
+                                    <div className="flex items-center gap-1 justify-end"><span>Invoice Amount</span></div>
                                 </TableHead>
-                                <TableHead className="w-[40px]"></TableHead>
+                                <TableHead className="text-right font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap">
+                                    <div className="flex items-center gap-1 justify-end"><span>Applied Amount</span></div>
+                                </TableHead>
+                                <TableHead className="text-right font-black text-[10px] uppercase cursor-pointer hover:bg-muted/80 whitespace-nowrap" onClick={() => handleSort("discrepancy")}>
+                                    <div className="flex items-center gap-1 justify-end"><span>Variance</span>{sortField === "discrepancy" ? (sortDirection === "asc" ? <ArrowUp className="h-3 w-3 text-primary" /> : <ArrowDown className="h-3 w-3 text-primary" />) : <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />}</div>
+                                </TableHead>
+                                <TableHead className="font-black text-[10px] uppercase text-center whitespace-nowrap pr-4">Status</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {isLoading && data.content.length === 0 ? (
-                                <TableRow><TableCell colSpan={8} className="h-[40vh] text-center"><div className="flex flex-col items-center justify-center text-muted-foreground gap-2"><Loader2 className="animate-spin text-primary" size={24} /><p className="font-bold tracking-widest uppercase text-[10px] animate-pulse">Syncing Database...</p></div></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={10} className="h-[40vh] text-center"><div className="flex flex-col items-center justify-center text-muted-foreground gap-2"><Loader2 className="animate-spin text-primary" size={24} /><p className="font-bold tracking-widest uppercase text-[10px] animate-pulse">Syncing Database...</p></div></TableCell></TableRow>
                             ) : data.content.length === 0 ? (
-                                <TableRow><TableCell colSpan={8} className="h-[40vh] text-center"><div className="flex flex-col items-center justify-center text-muted-foreground gap-2 opacity-60"><CircleDashed size={32} /><p className="font-bold tracking-widest uppercase text-xs text-foreground">No records found</p></div></TableCell></TableRow>
+                                <TableRow><TableCell colSpan={10} className="h-[40vh] text-center"><div className="flex flex-col items-center justify-center text-muted-foreground gap-2 opacity-60"><CircleDashed size={32} /><p className="font-bold tracking-widest uppercase text-xs text-foreground">No records found</p></div></TableCell></TableRow>
                             ) : data.content.map((col) => {
                                 const pouchTotal = col.pouchAmount || 0;
-                                const remaining = Math.abs(col.discrepancy || 0);
+                                const invoiceTotal = col.invoiceAmount !== undefined ? col.invoiceAmount : (col.appliedAmount || 0);
+                                const appliedTotal = col.appliedAmount || 0;
+                                const varianceVal = col.variance !== undefined ? col.variance : (invoiceTotal - appliedTotal);
 
                                 let statusColor = "bg-slate-100 text-slate-600 border-slate-200";
                                 let rowBg = "hover:bg-muted/50";
@@ -237,10 +244,11 @@ export default function SettlementMasterList() {
                                         </TableCell>
                                         <TableCell className="py-2.5"><div className="flex items-center gap-1.5 text-foreground"><CalendarDays size={12} className="text-blue-500 opacity-70" /><span className="text-[11px] font-bold tracking-wide">{parseSpecificDate(col.collectionDate) ? format(parseSpecificDate(col.collectionDate)!, "MMM dd, yyyy") : "-"}</span></div></TableCell>
                                         <TableCell className="py-2.5"><div className="flex items-center gap-1.5 text-muted-foreground"><Database size={12} className="opacity-50" /><span className="text-[11px] font-medium tracking-wide">{parseSpecificDate(col.encodedDate) ? format(parseSpecificDate(col.encodedDate)!, "MMM dd, yyyy") : "-"}</span></div></TableCell>
-                                        <TableCell className="py-2.5 text-center"><Badge variant="outline" className={`font-black uppercase text-[9px] px-2 py-0.5 tracking-widest leading-none ${statusColor}`}>{icon} {col.status}</Badge></TableCell>
                                         <TableCell className="text-right py-2.5 font-mono font-black text-xs text-foreground">₱{pouchTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</TableCell>
-                                        <TableCell className="text-right py-2.5 pr-8 font-mono font-black text-xs"><span className={col.status === 'Balanced' ? 'text-emerald-600' : 'text-orange-600'}>₱{remaining.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></TableCell>
-                                        <TableCell className="pr-4 py-2.5"><ChevronRight size={12} className="text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" strokeWidth={3}/></TableCell>
+                                        <TableCell className="text-right py-2.5 font-mono font-black text-xs text-foreground">₱{invoiceTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</TableCell>
+                                        <TableCell className="text-right py-2.5 font-mono font-black text-xs text-emerald-600">₱{appliedTotal.toLocaleString(undefined, {minimumFractionDigits: 2})}</TableCell>
+                                        <TableCell className="text-right py-2.5 font-mono font-black text-xs"><span className={Math.abs(varianceVal) <= 0.01 ? 'text-emerald-600' : 'text-orange-600'}>₱{varianceVal.toLocaleString(undefined, {minimumFractionDigits: 2})}</span></TableCell>
+                                        <TableCell className="py-2.5 text-center pr-4"><Badge variant="outline" className={`font-black uppercase text-[9px] px-2 py-0.5 tracking-widest leading-none ${statusColor}`}>{icon} {col.status}</Badge></TableCell>
                                     </TableRow>
                                 );
                             })}

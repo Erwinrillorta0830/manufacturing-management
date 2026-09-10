@@ -231,6 +231,23 @@ export async function POST(
                 body: JSON.stringify(returnsPayload)
             });
             if (!res.ok) throw new Error(`Failed to insert sales_invoice_sales_return: ${await res.text()}`);
+
+            // Also insert into collection_returns for historical compatibility
+            const collectionReturnsPayload = returnsPayload.map((r) => ({
+                collection_id: id,
+                return_id: r.return_no,
+                date_linked: phDate
+            }));
+
+            try {
+                await fetch(`${DIRECTUS_URL}/items/collection_returns`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(collectionReturnsPayload)
+                });
+            } catch (collRetErr) {
+                console.warn("Failed to insert into collection_returns:", collRetErr);
+            }
         }
         
         return NextResponse.json({ success: true });
