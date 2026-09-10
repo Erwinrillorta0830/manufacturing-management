@@ -2,11 +2,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { isProductionSchedulingStatus } from "@/app/api/manufacturing/sales-order/_status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
 function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return line.parent_order_status === "For Production" && line.is_scheduled !== true;
+    return isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
 }
 
 export function usePlanningEngineering() {

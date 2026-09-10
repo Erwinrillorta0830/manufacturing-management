@@ -6,6 +6,7 @@ import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
 
 
 interface LedgerEntry {
@@ -717,17 +718,15 @@ export async function POST(request: Request) {
                                             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${parentOrderId}&limit=-1`, { headers });
                                             if (allDetailsRes.ok) {
                                                 const allDetails = (await allDetailsRes.json()).data || [];
-                                                const allFullyAllocated = allDetails.every((d: any) => {
-                                                    const ordered = Number(d.ordered_quantity || 0);
-                                                    const alloc = Number(d.allocated_quantity || 0);
-                                                    return alloc >= ordered;
-                                                });
+                                                const nextStatus = areSalesOrderDetailsFullyFulfilled(allDetails)
+                                                    ? "For Invoicing"
+                                                    : "In Production";
 
-                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to For Invoicing`);
+                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${nextStatus}`);
                                                 await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
                                                     method: "PATCH",
                                                     headers,
-                                                    body: JSON.stringify({ order_status: "For Invoicing" })
+                                                    body: JSON.stringify({ order_status: nextStatus })
                                                 });
                                             }
                                         }

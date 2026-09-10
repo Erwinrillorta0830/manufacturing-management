@@ -9,6 +9,7 @@ import type { LotTransferRecord } from "./_types";
 import {
     movementQuantity,
     movementTransactionTypeId,
+    manilaTimestamp,
     numeric,
     relationId,
     stringValue
@@ -31,7 +32,12 @@ export async function resolveMovementType(typeName: string, direction: "IN" | "O
 }
 
 export async function createInventoryMovement(payload: RecordValue): Promise<number> {
-    const row = await mutateDirectus("/items/inventory_movements", "POST", payload, "Lot-transfer inventory movement creation");
+    const row = await mutateDirectus(
+        "/items/inventory_movements",
+        "POST",
+        { ...payload, created_at: payload.created_at || manilaTimestamp() },
+        "Lot-transfer inventory movement creation"
+    );
     const id = row ? relationId(row.movement_id, ["movement_id"]) || relationId(row.id, ["id"]) : 0;
     if (!id) throw new LotTransferError(503, "Directus did not return the created inventory movement ID.");
     return id;

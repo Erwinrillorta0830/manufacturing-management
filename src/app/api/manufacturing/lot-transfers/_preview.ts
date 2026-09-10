@@ -41,6 +41,7 @@ import {
     formatProtectedAllocationQuantity,
     inventoryLotId,
     lotId,
+    manilaCalendarDate,
     normalizeStatus,
     normalizedBatch,
     nullableNumeric,
@@ -218,7 +219,7 @@ export async function buildSingleLinePreview(record: LotTransferRecord, options:
     const targetCapacityRemaining = targetCapacity === null ? null : Math.max(0, targetCapacity - targetLotOccupiedBefore);
     const targetCapacityConfigured = targetCapacity !== null;
     const effectiveExpiry = earliestDate(sourceExpiry, targetExpiry);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = manilaCalendarDate();
     const targetReferenceMatches = !record.targetInventoryLotId || record.targetInventoryLotId === targetInventoryLotIdValue;
     const targetRecordIsActive = destinationBatchResolution.action === "CREATE"
         || normalizeStatus(context.targetInventoryLot.status) === "ACTIVE";

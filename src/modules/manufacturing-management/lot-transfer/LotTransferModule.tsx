@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
+import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
 import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
 
 interface LotTransferModuleProps {
@@ -61,15 +62,12 @@ function formatQuantity(value: number | null | undefined) {
 
 function formatDate(value: string | null | undefined) {
     if (!value) return "-";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+    return formatPhtDate(value);
 }
 
 function formatDateTime(value: string | null | undefined) {
     if (!value) return "-";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+    return formatPhtTimestamp(value);
 }
 
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
@@ -747,7 +745,7 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-qa-review-heading">
             {!record ? <EmptyState message="Select a transfer request to review its status and QA checks." /> : <>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDateTime(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
                 <DestinationBatchPlan preview={preview} />
@@ -788,7 +786,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-posting-review-heading">
             {!record ? <EmptyState message="Select a transfer request to review its status and posting details." /> : <>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDate(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDateTime(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
                 <DestinationBatchAudit record={record} />
@@ -905,7 +903,7 @@ function SummaryTable({ controller, onView }: {
                 </div>
             </div>
             <LotTransferListState controller={controller} variant="table" emptyMessage="No lot-transfer records match the selected report filters.">
-                <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDate(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>
+                <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDateTime(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>
             </LotTransferListState>
         </section>
     );
@@ -949,14 +947,14 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     <div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDateTime(record.submittedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDateTime(record.approvedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDateTime(record.postedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDate(record.cancelledAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDateTime(record.cancelledAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>
                     {record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}
-                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDate(record.reversedAt)}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDateTime(record.reversedAt)}</dd></div>}
                     {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{record.reversedByName || record.reversedBy || "System"}</dd></div>}
                 </dl>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">

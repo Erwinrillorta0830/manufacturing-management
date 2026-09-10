@@ -215,3 +215,19 @@ export function manilaCalendarDate(value = new Date()): string {
     const values = new Map(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
     return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
 }
+
+export function manilaTimestamp(value = new Date()): string {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila",
+        calendar: "gregory",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+    }).formatToParts(value);
+    const values = new Map(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    return `${values.get("year")}-${values.get("month")}-${values.get("day")} ${values.get("hour")}:${values.get("minute")}:${values.get("second")}`;
+}
