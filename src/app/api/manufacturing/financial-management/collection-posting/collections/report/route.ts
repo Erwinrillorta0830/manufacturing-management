@@ -50,23 +50,77 @@ export async function GET(request: Request) {
         const collInvoices = invoicesRes.ok ? (await invoicesRes.json()).data || [] : [];
 
         // Extract relational IDs
-        const salesInvoiceIds = [...new Set(collInvoices.map((ci: Record<string, unknown>) => ci.invoice_id).filter(Boolean))];
+        const detailInvoiceIds = details.map((d: Record<string, unknown>) => d.invoice_id).filter(Boolean);
+        const salesInvoiceIds = [...new Set([
+            ...collInvoices.map((ci: Record<string, unknown>) => ci.invoice_id),
+            ...detailInvoiceIds
+        ].filter(Boolean))];
         const bankIds = [...new Set(details.map((d: Record<string, unknown>) => d.bank).filter(Boolean))];
         const coaIds = [...new Set(details.map((d: Record<string, unknown>) => d.type).filter(Boolean))];
         const findingIds = [...new Set(details.map((d: Record<string, unknown>) => d.finding).filter(Boolean))];
 
+        // Also check if any details remarks contain invoice numbers (e.g. Variance for INV-DIR-000126)
+        const remarkInvoiceNos: string[] = [];
+        details.forEach((d: Record<string, unknown>) => {
+            if (typeof d.remarks === "string") {
+                const matches = d.remarks.match(/INV-[A-Za-z0-9-]+/gi);
+                if (matches) remarkInvoiceNos.push(...matches);
+            }
+        });
+
         // 3. Fetch relational lookups in parallel
+        const siQueryParts: string[] = [];
+        if (salesInvoiceIds.length > 0) siQueryParts.push(`filter[_or][0][invoice_id][_in]=${salesInvoiceIds.join(",")}`);
+        if (remarkInvoiceNos.length > 0) siQueryParts.push(`filter[_or][1][invoice_no][_in]=${[...new Set(remarkInvoiceNos)].map((x: string) => encodeURIComponent(x)).join(",")}`);
+        
+        const siUrl = siQueryParts.length > 0
+            ? `${DIRECTUS_URL}/items/sales_invoice?${siQueryParts.join("&")}&limit=-1`
+            : `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${salesInvoiceIds.join(",")}&limit=-1`;
+
         const [siRes, banksRes, coaRes, findRes] = await Promise.all([
-            salesInvoiceIds.length > 0 ? fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${salesInvoiceIds.join(",")}&limit=-1`, { headers, cache: "no-store" }) : Promise.resolve(null),
+            salesInvoiceIds.length > 0 || remarkInvoiceNos.length > 0 ? fetch(siUrl, { headers, cache: "no-store" }) : Promise.resolve(null),
             bankIds.length > 0 ? fetch(`${DIRECTUS_URL}/items/bank_names?filter[id][_in]=${bankIds.join(",")}&limit=-1`, { headers, cache: "no-store" }) : Promise.resolve(null),
             coaIds.length > 0 ? fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[coa_id][_in]=${coaIds.join(",")}&limit=-1`, { headers, cache: "no-store" }) : Promise.resolve(null),
             findingIds.length > 0 ? fetch(`${DIRECTUS_URL}/items/general_findings?filter[id][_in]=${findingIds.join(",")}&limit=-1`, { headers, cache: "no-store" }) : Promise.resolve(null)
         ]);
 
-        const salesInvoices = siRes?.ok ? (await siRes.json()).data || [] : [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const salesInvoices: any[] = siRes?.ok ? (await siRes.json()).data || [] : [];
         const banks = banksRes?.ok ? (await banksRes.json()).data || [] : [];
         const coas = coaRes?.ok ? (await coaRes.json()).data || [] : [];
         const findings = findRes?.ok ? (await findRes.json()).data || [] : [];
+
+        // 3b. Fetch Customers by customer_code to map customer names
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const customerCodesFromSI = salesInvoices.map((si: any) => si.customer_code).filter((c: unknown): c is string => typeof c === "string" && c.trim().length > 0);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const customerCodesFromCD = details.map((d: any) => d.customer_code).filter((c: unknown): c is string => typeof c === "string" && c.trim().length > 0);
+        const allCustomerCodes = [...new Set([...customerCodesFromSI, ...customerCodesFromCD])];
+
+        const customerMap = new Map<string, string>();
+        if (allCustomerCodes.length > 0) {
+            try {
+                const escCodes = allCustomerCodes.map((c: string) => encodeURIComponent(c)).join(",");
+                const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${escCodes}&fields=customer_code,customer_name&limit=-1`, { headers, cache: "no-store" });
+                if (custRes.ok) {
+                    const custData = (await custRes.json()).data || [];
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    custData.forEach((c: any) => {
+                        if (c.customer_code && c.customer_name) {
+                            customerMap.set(c.customer_code, c.customer_name);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to fetch customer names for collection report:", err);
+            }
+        }
+
+        const resolveCustomerName = (code?: string | null): string => {
+            if (!code || !code.trim()) return "Deleted Customer";
+            const name = customerMap.get(code.trim());
+            return name && name.trim() ? name : "Deleted Customer";
+        };
 
         let globalCash = 0;
         let globalChecks = 0;
@@ -134,11 +188,33 @@ export async function GET(request: Request) {
                         globalOverages += amount;
                     }
 
+                    // Resolve linked sales invoice if any
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    let linkedSi = salesInvoices.find((s: any) => s.invoice_id === d.invoice_id || String(s.invoice_id) === String(d.invoice_id));
+                    if (!linkedSi && typeof d.remarks === "string") {
+                        const match = d.remarks.match(/INV-[A-Za-z0-9-]+/i);
+                        if (match) {
+                            const invNo = match[0];
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            linkedSi = salesInvoices.find((s: any) => s.invoice_no?.toLowerCase() === invNo.toLowerCase());
+                        }
+                    }
+
+                    const varianceInvNo = linkedSi?.invoice_no || (typeof d.remarks === "string" ? d.remarks.match(/INV-[A-Za-z0-9-]+/i)?.[0] : null) || (d.invoice_id ? String(d.invoice_id) : null);
+                    const varianceCustCode = d.customer_code || linkedSi?.customer_code || null;
+
+                    let varianceCustName: string | null = null;
+                    if (varianceCustCode || linkedSi) {
+                        varianceCustName = resolveCustomerName(varianceCustCode);
+                    } else if (varianceInvNo) {
+                        varianceCustName = "Deleted Customer";
+                    }
+
                     variances.push({
                         docNo: d.check_no || d.remarks,
                         type: typeName,
-                        customerName: d.customer_code,
-                        invoiceNo: d.invoice_id?.toString(),
+                        customerName: varianceCustName,
+                        invoiceNo: varianceInvNo,
                         accountTitle: coaObj?.account_title || "Unknown Account",
                         remarks: d.remarks || "",
                         amount: amount
@@ -154,7 +230,7 @@ export async function GET(request: Request) {
                         docNo: d.check_no || "N/A",
                         bankName: bankObj?.bank_name || "Unknown Bank",
                         checkNo: d.check_no || "N/A",
-                        customerName: d.customer_code || "Unknown",
+                        customerName: resolveCustomerName(d.customer_code),
                         amount: amount
                     });
                 } else {
@@ -173,9 +249,10 @@ export async function GET(request: Request) {
                 const amount = Math.abs(ci.amount || 0);
                 
                 if (!invoiceMap[invId]) {
+                    const custCode = si.customer_code || ci.customer_code;
                     invoiceMap[invId] = {
                         invoiceNo: si.invoice_no || String(ci.invoice_id),
-                        customerName: si.customer_code || "Unknown",
+                        customerName: resolveCustomerName(custCode),
                         invoiceTotal: si.net_amount || 0,
                         actualInvoiceTotal: si.gross_amount || si.net_amount || 0,
                         remainingBalance: si.remaining_balance || 0,
@@ -206,7 +283,7 @@ export async function GET(request: Request) {
                 id: pouch.id,
                 docNo: pouch.docNo,
                 date: pouch.collection_date,
-                isPosted: pouch.isPosted === true || pouch.isPosted === 1 || Buffer.isBuffer(pouch.isPosted) && pouch.isPosted[0] === 1,
+                isPosted: pouch.isPosted === true || pouch.isPosted === 1 || (Buffer.isBuffer(pouch.isPosted) && pouch.isPosted[0] === 1),
                 totalCash,
                 totalCheck,
                 shortage,

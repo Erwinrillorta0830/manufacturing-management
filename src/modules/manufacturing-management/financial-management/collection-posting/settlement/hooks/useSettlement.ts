@@ -671,14 +671,22 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 await fetchProvider.delete(endpoint);
             }
 
-            const newAdjustments = wallet.filter(w => w.type === "ADJUSTMENT" && w.isLocal).map(w => ({
-                findingId: w.findingId || w.dbId, coaId: w.coaId || null, amount: w.originalAmount, balanceTypeId: w.balanceTypeId || 1,
-                remarks: w.customerName || "Session Variance", invoiceId: allocations.find(a => a.sourceTempId === w.id)?.invoiceId || null, tempId: w.id
-            }));
+            const newAdjustments = wallet.filter(w => w.type === "ADJUSTMENT" && w.isLocal).map(w => {
+                const targetInvoiceId = allocations.find(a => a.sourceTempId === w.id)?.invoiceId || w.invoiceId || null;
+                const targetInv = targetInvoiceId ? cartInvoices.find(i => i.id === targetInvoiceId) : null;
+                return {
+                    findingId: w.findingId || w.dbId, coaId: w.coaId || null, amount: w.originalAmount, balanceTypeId: w.balanceTypeId || 1,
+                    remarks: w.customerName || "Session Variance", invoiceId: targetInvoiceId, customerCode: w.customerCode || targetInv?.customerCode || null, tempId: w.id
+                };
+            });
 
-            const newEwts = wallet.filter(w => w.type === "EWT" && w.isLocal).map(w => ({
-                amount: w.originalAmount, referenceNo: w.customerName || "Form 2307", tempId: w.id
-            }));
+            const newEwts = wallet.filter(w => w.type === "EWT" && w.isLocal).map(w => {
+                const targetInvoiceId = allocations.find(a => a.sourceTempId === w.id)?.invoiceId || w.invoiceId || null;
+                const targetInv = targetInvoiceId ? cartInvoices.find(i => i.id === targetInvoiceId) : null;
+                return {
+                    amount: w.originalAmount, referenceNo: w.customerName || "Form 2307", invoiceId: targetInvoiceId, customerCode: w.customerCode || targetInv?.customerCode || null, tempId: w.id
+                };
+            });
 
             if (newAdjustments.some(adjustment => !adjustment.findingId)) {
                 throw new Error("Cannot save: An adjustment is missing a valid Finding Type.");
@@ -762,14 +770,22 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             setPendingEdits({});
             setPendingDeletions([]);
 
-            const newAdjustments = wallet.filter(w => w.type === "ADJUSTMENT" && w.isLocal).map(w => ({
-                findingId: w.findingId || w.dbId, amount: w.originalAmount, balanceTypeId: w.balanceTypeId || 1,
-                remarks: w.customerName || "Session Variance", invoiceId: allocations.find(a => a.sourceTempId === w.id)?.invoiceId || null, tempId: w.id
-            }));
+            const newAdjustments = wallet.filter(w => w.type === "ADJUSTMENT" && w.isLocal).map(w => {
+                const targetInvoiceId = allocations.find(a => a.sourceTempId === w.id)?.invoiceId || w.invoiceId || null;
+                const targetInv = targetInvoiceId ? cartInvoices.find(i => i.id === targetInvoiceId) : null;
+                return {
+                    findingId: w.findingId || w.dbId, coaId: w.coaId || null, amount: w.originalAmount, balanceTypeId: w.balanceTypeId || 1,
+                    remarks: w.customerName || "Session Variance", invoiceId: targetInvoiceId, customerCode: w.customerCode || targetInv?.customerCode || null, tempId: w.id
+                };
+            });
 
-            const newEwts = wallet.filter(w => w.type === "EWT" && w.isLocal).map(w => ({
-                amount: w.originalAmount, referenceNo: w.customerName || "Form 2307", tempId: w.id
-            }));
+            const newEwts = wallet.filter(w => w.type === "EWT" && w.isLocal).map(w => {
+                const targetInvoiceId = allocations.find(a => a.sourceTempId === w.id)?.invoiceId || w.invoiceId || null;
+                const targetInv = targetInvoiceId ? cartInvoices.find(i => i.id === targetInvoiceId) : null;
+                return {
+                    amount: w.originalAmount, referenceNo: w.customerName || "Form 2307", invoiceId: targetInvoiceId, customerCode: w.customerCode || targetInv?.customerCode || null, tempId: w.id
+                };
+            });
 
             const invalidAdjustment = newAdjustments.find(a => !a.findingId);
             if (invalidAdjustment) {

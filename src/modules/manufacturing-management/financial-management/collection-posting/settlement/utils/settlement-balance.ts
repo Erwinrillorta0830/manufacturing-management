@@ -63,7 +63,7 @@ export const findUnderAllocatedInvoice = (
 export const findOverAllocatedInvoice = (
     _invoices: UnpaidInvoice[],
     _allocations: SettlementAllocation[]
-) => undefined;
+): UnpaidInvoice | undefined => undefined;
 
 export const getCartBalanceTotals = (
     invoices: UnpaidInvoice[],
