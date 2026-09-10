@@ -21,6 +21,21 @@ function remainingQuantity(line: SalesOrderDetail): number {
     return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
 }
 
+function salesOrderDateValue(value: string | undefined): number {
+    const timestamp = Date.parse(value || "");
+    return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareNewestSalesOrders(left: SalesOrder, right: SalesOrder): number {
+    const createdDateDifference = salesOrderDateValue(right.created_date) - salesOrderDateValue(left.created_date);
+    if (createdDateDifference !== 0) return createdDateDifference;
+
+    const orderDateDifference = salesOrderDateValue(right.order_date) - salesOrderDateValue(left.order_date);
+    if (orderDateDifference !== 0) return orderDateDifference;
+
+    return Number(right.order_id) - Number(left.order_id);
+}
+
 export function usePlanningEngineering() {
     // UI State
     const [loadingBranches, setLoadingBranches] = useState(true);
@@ -253,7 +268,7 @@ export function usePlanningEngineering() {
     const salesOrderLines = useMemo(() => {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
-        salesOrders.forEach((so) => {
+        [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }

@@ -582,13 +582,19 @@ export async function GET(request: Request) {
         const status = searchParams.get("status") || "";
         const selectedIdsParam = searchParams.get("selectedIds") || "";
         const excludeHasJo = searchParams.get("excludeHasJo") === "true";
+        const includeAllStatuses = searchParams.get("includeAllStatuses") === "true";
         const customerCode = searchParams.get("customerCode") || "";
         const dateFrom = searchParams.get("dateFrom") || "";
         const dateTo = searchParams.get("dateTo") || "";
 
+        const plannerStatuses = Object.keys(SALES_ORDER_TRANSITIONS)
+            .filter((orderStatus) => orderStatus !== "Cancelled")
+            .join(",");
         const filters = {
             search,
-            status: excludeHasJo ? "For Production,In Production" : status,
+            status: excludeHasJo
+                ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
+                : status,
             customerCode,
             dateFrom,
             dateTo
@@ -641,7 +647,13 @@ export async function GET(request: Request) {
                         const detailId = Number(detail.detail_id || detail.id);
                         const plannedQuantity = chunkPlannedQuantities.get(detailId) || 0;
                         const isScheduled = detailRemainingQuantity(detail, plannedQuantity) <= 0;
-                        return isPlanningVisibleDetail(detail, candidate.order_status, isScheduled, plannedQuantity);
+                        return isPlanningVisibleDetail(
+                            detail,
+                            candidate.order_status,
+                            isScheduled,
+                            plannedQuantity,
+                            includeAllStatuses
+                        );
                     });
                     if (eligibleOrderDetails.length > 0) {
                         eligibleOrders.push(candidate);
@@ -706,7 +718,8 @@ export async function GET(request: Request) {
                     detail,
                     order?.order_status,
                     detailRemainingQuantity(detail, plannedQuantity) <= 0,
-                    plannedQuantity
+                    plannedQuantity,
+                    includeAllStatuses
                 );
             });
         }
@@ -714,7 +727,8 @@ export async function GET(request: Request) {
             read,
             contextOrders,
             details,
-            excludeHasJo ? plannedQuantities : undefined
+            excludeHasJo ? plannedQuantities : undefined,
+            excludeHasJo
         );
 
         const totalPages = Math.ceil(totalCount / limit);
