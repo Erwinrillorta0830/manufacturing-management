@@ -37,7 +37,7 @@ import {
 import { buildLotTransferPreview, recordForDetail } from "./_preview";
 import { requireSessionUserId } from "./_session";
 import { getLotTransfer } from "./_queries";
-import { transitionLotTransferStatus } from "./_status-history";
+import { getLotTransferStatusHistoryEvent, transitionLotTransferStatus } from "./_status-history";
 import {
     dateOnly,
     movementId,
@@ -116,6 +116,13 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
         throw new LotTransferError(409, "Posted lot-transfer requests cannot be approved again.");
     }
     if (record.status === "Approved") {
+        const approvalHistory = await getLotTransferStatusHistoryEvent(id, "Submitted", "Approved");
+        if (!approvalHistory) {
+            throw new LotTransferError(
+                503,
+                "Lot-transfer approval reached Approved without a durable status history event. Reconciliation is required."
+            );
+        }
         return { record, preview: await buildLotTransferPreview(record), idempotent: true };
     }
     if (record.status !== "Submitted") {
@@ -182,7 +189,7 @@ export async function approveLotTransfer(id: number, actorUserId: number | null)
     if (finalRecord.status !== "Approved" || finalRecord.sourceMovementId !== null || finalRecord.targetMovementId !== null) {
         throw new LotTransferError(503, "Lot-transfer approval was not durably finalized without posting inventory.");
     }
-    return { record: finalRecord, preview, idempotent: false };
+    return { record: finalRecord, preview, idempotent: transition.idempotent };
 }
 
 export async function postLotTransfer(id: number, idempotencyKey: string, actorUserId: number | null): Promise<{ record: LotTransferRecord; preview: LotTransferPreview; idempotent: boolean }> {
