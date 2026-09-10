@@ -1,10 +1,10 @@
 import { LotTransferError } from "./_errors";
 import { LOT_TRANSFER_COLLECTION, LOT_TRANSFER_STATUS_HISTORY_COLLECTION } from "./_config";
-import { directusRows, mutateDirectus, type RecordValue } from "./_directus";
+import { directusRows, mutateDirectus, updateDirectusItems, type RecordValue } from "./_directus";
 import { getLotTransfer } from "./_queries";
 import type { LotTransferRecord, LotTransferStatus, LotTransferStatusHistory } from "./_types";
 import { LOT_TRANSFER_STATUSES } from "./_types";
-import { nullableString, relationId, relationName, rowId, stringValue } from "./_values";
+import { manilaTimestamp, nullableString, relationId, relationName, rowId, stringValue } from "./_values";
 
 interface AppendStatusHistoryOptions {
     transferId: number;
@@ -119,6 +119,14 @@ function eventMatches(event: LotTransferStatusHistory, options: AppendStatusHist
         && event.remarks === options.remarks.trim();
 }
 
+export async function getLotTransferStatusHistoryEvent(
+    transferId: number,
+    oldStatus: LotTransferStatus,
+    newStatus: LotTransferStatus
+): Promise<LotTransferStatusHistory | null> {
+    return findEvent(transferId, eventKey(transferId, oldStatus, newStatus));
+}
+
 export async function appendStatusHistory(options: AppendStatusHistoryOptions): Promise<{ entry: LotTransferStatusHistory; idempotent: boolean }> {
     assertStatusHistoryInput(options);
     const key = eventKey(options.transferId, options.oldStatus, options.newStatus);
@@ -130,7 +138,7 @@ export async function appendStatusHistory(options: AppendStatusHistoryOptions): 
         return { entry: existing, idempotent: true };
     }
 
-    const changedAt = options.changedAt || new Date().toISOString();
+    const changedAt = options.changedAt || manilaTimestamp();
     const body = {
         lot_transfer_id: options.transferId,
         old_status: options.oldStatus,
@@ -174,26 +182,46 @@ export async function transitionLotTransferStatus(options: TransitionStatusOptio
         return { record: current, entry: existing, idempotent: true };
     }
     if (current.status === options.newStatus) {
-        const appended = await appendStatusHistory({
-            transferId: options.transferId,
-            oldStatus: options.expectedOldStatus,
-            newStatus: options.newStatus,
-            changedBy: options.changedBy,
-            changedAt: options.changedAt,
-            remarks: options.remarks
-        });
-        return { record: current, entry: appended.entry, idempotent: true };
+        throw new LotTransferError(
+            503,
+            `Lot-transfer ${options.action} reached ${options.newStatus} without a durable status history event. Reconciliation is required.`
+        );
     }
     if (current.status !== options.expectedOldStatus) {
         throw new LotTransferError(409, `Only ${options.expectedOldStatus} lot-transfer requests can be ${options.action}. Current status: ${current.status}.`);
     }
 
-    await mutateDirectus(
-        `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(options.transferId))}`,
-        "PATCH",
+    const transitionedRows = await updateDirectusItems(
+        `/items/${LOT_TRANSFER_COLLECTION}`,
+        {
+            filter: {
+                lot_transfer_id: { _eq: options.transferId },
+                status: { _eq: options.expectedOldStatus }
+            }
+        },
         options.patch,
-        `Lot-transfer ${options.action}`
+        `Lot-transfer ${options.action} compare-and-set`
     );
+    if (transitionedRows.length !== 1) {
+        const racedRecord = await getLotTransfer(options.transferId).catch(() => null);
+        const racedHistory = await findEvent(options.transferId, key).catch(() => null);
+        if (racedHistory) {
+            if (racedHistory.changedBy !== options.changedBy || racedHistory.remarks !== options.remarks.trim()) {
+                throw new LotTransferError(409, `A conflicting ${options.action} history event already exists.`);
+            }
+            if (racedRecord?.status === options.newStatus) {
+                return { record: racedRecord, entry: racedHistory, idempotent: true };
+            }
+            throw new LotTransferError(503, `Lot-transfer ${options.action} history exists but the header status is not ${options.newStatus}. Reconciliation is required.`);
+        }
+        if (racedRecord?.status === options.newStatus) {
+            throw new LotTransferError(503, `Another ${options.action} operation is finalizing this lot-transfer request. Retry after the audit event is available.`);
+        }
+        if (racedRecord && racedRecord.status !== options.expectedOldStatus) {
+            throw new LotTransferError(409, `Only ${options.expectedOldStatus} lot-transfer requests can be ${options.action}. Current status: ${racedRecord.status}.`);
+        }
+        throw new LotTransferError(503, `Lot-transfer ${options.action} could not acquire the status transition claim. Retry the operation.`);
+    }
     try {
         const appended = await appendStatusHistory({
             transferId: options.transferId,
@@ -226,14 +254,21 @@ export async function transitionLotTransferStatus(options: TransitionStatusOptio
 
         const currentAfterFailure = await getLotTransfer(options.transferId).catch(() => null);
         if (currentAfterFailure?.status === options.newStatus) {
-            await mutateDirectus(
-                `/items/${LOT_TRANSFER_COLLECTION}/${encodeURIComponent(String(options.transferId))}`,
-                "PATCH",
-                { ...options.rollbackPatch, updated_at: new Date().toISOString() },
+            const rollbackUpdatedAt = manilaTimestamp();
+            const rollbackFilter: RecordValue = {
+                lot_transfer_id: { _eq: options.transferId },
+                status: { _eq: options.newStatus }
+            };
+            const transitionUpdatedAt = stringValue(options.patch.updated_at);
+            if (transitionUpdatedAt) rollbackFilter.updated_at = { _eq: transitionUpdatedAt };
+            const rollbackRows = await updateDirectusItems(
+                `/items/${LOT_TRANSFER_COLLECTION}`,
+                { filter: rollbackFilter },
+                { ...options.rollbackPatch, updated_at: rollbackUpdatedAt },
                 `Lot-transfer ${options.action} compensation`
             );
             const compensated = await getLotTransfer(options.transferId).catch(() => null);
-            if (compensated?.status !== options.expectedOldStatus) {
+            if (rollbackRows.length !== 1 || compensated?.status !== options.expectedOldStatus) {
                 throw new LotTransferError(503, `Lot-transfer ${options.action} history failed and the status could not be compensated. Reconciliation is required.`);
             }
         }
@@ -258,7 +293,7 @@ export async function deleteLotTransferStatusHistory(transferId: number): Promis
     try {
         const params = new URLSearchParams({
             "filter[lot_transfer_id][_eq]": String(transferId),
-            fields: "lot_transfer_status_history_id,id",
+            fields: "lot_transfer_status_history_id",
             limit: "-1"
         });
         rows = await directusRows(`/items/${LOT_TRANSFER_STATUS_HISTORY_COLLECTION}?${params.toString()}`, "Lot-transfer status history cleanup");

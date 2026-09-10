@@ -18,6 +18,7 @@ import {
     TableRow
 } from "@/components/ui/table";
 import { SalesOrderDetail } from "../types";
+import { isProductionSchedulingStatus } from "@/app/api/manufacturing/sales-order/_status";
 
 interface DemandLinesTableProps {
     loadingOrders: boolean;
@@ -47,7 +48,7 @@ export function DemandLinesTable({
     }, [salesOrderLines, searchQuery]);
 
     const isSchedulableLine = (line: SalesOrderDetail) =>
-        line.parent_order_status === "For Production" && line.is_scheduled !== true;
+        isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
     const selectableFilteredLines = filteredLines.filter(isSchedulableLine);
 
     return (
@@ -59,7 +60,7 @@ export function DemandLinesTable({
                         Unfulfilled Demand Lines
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        For Production demand can be scheduled; In Production demand remains visible for tracking.
+                        Unfulfilled demand in For Production or In Production can be scheduled; already scheduled lines remain visible for tracking.
                     </CardDescription>
                 </div>
                 <div className="relative w-full md:w-60 shrink-0">

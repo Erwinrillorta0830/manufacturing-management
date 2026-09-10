@@ -18,6 +18,7 @@ import { deleteTransferDetail, mapTransferDetail } from "./_record-mappers";
 import {
     lotId,
     manilaCalendarDate,
+    manilaTimestamp,
     numeric,
     rowId,
     unitId
@@ -219,6 +220,7 @@ export function transientRecordFromInput(input: LotTransferInput, transferUnitId
 export function transferPayload(input: LotTransferInput, actorUserId: number | null, requestNo: string, transferUnitId: number | null): RecordValue {
     const details = normalizedDetails(input);
     const first = details[0];
+    const createdAt = manilaTimestamp();
     return {
         request_no: requestNo,
         status: "Draft",
@@ -234,8 +236,10 @@ export function transferPayload(input: LotTransferInput, actorUserId: number | n
         quantity: details.reduce((sum, detail) => sum + detail.quantity, 0),
         reason: input.reason,
         requested_by: actorUserId,
-        requested_at: new Date().toISOString(),
+        created_at: createdAt,
+        requested_at: createdAt,
         transfer_date: manilaCalendarDate(),
+        updated_at: createdAt,
         reconciliation_required: false
     };
 }
@@ -247,10 +251,13 @@ export function patchPayload(input: LotTransferInput, actorUserId: number | null
     delete payload.status;
     delete payload.request_no;
     delete payload.transfer_date;
+    delete payload.created_at;
+    delete payload.updated_at;
     return payload;
 }
 
 function detailPayload(transferIdValue: number, detail: LotTransferDetailInput | LotTransferDetail, index: number): RecordValue {
+    const createdAt = manilaTimestamp();
     return {
         lot_transfer_id: transferIdValue,
         line_no: detail.lineNo || index + 1,
@@ -265,7 +272,9 @@ function detailPayload(transferIdValue: number, detail: LotTransferDetailInput |
         validation_error: null,
         posting_error: null,
         reconciliation_required: false,
-        destination_batch_action: null
+        destination_batch_action: null,
+        created_at: createdAt,
+        updated_at: createdAt
     };
 }
 
@@ -313,7 +322,7 @@ export async function replaceTransferDetails(transferIdValue: number, details: L
 }
 
 export function generateRequestNo(): string {
-    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    const stamp = manilaTimestamp().replace(/[-: ]/g, "").slice(0, 14);
     const suffix = Math.floor(1000 + Math.random() * 9000);
     return `LTR-${stamp}-${suffix}`;
 }

@@ -21,6 +21,7 @@ import {
     LEGACY_STATUS_MAP,
     mapStatus,
 } from "./_status";
+import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -1080,7 +1081,7 @@ export async function PATCH(request: Request) {
 
             const detailParams = new URLSearchParams({
                 "filter[order_id][_eq]": String(orderId),
-                fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount,product_id,created_date",
+                fields: "detail_id,order_id,unit_price,ordered_quantity,allocated_quantity,served_quantity,net_amount,gross_amount,product_id,created_date",
                 limit: "-1"
             });
             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
@@ -1222,6 +1223,10 @@ export async function PATCH(request: Request) {
 
                 if (!SALES_ORDER_TRANSITIONS[current]?.includes(target)) {
                     throw new ApiError(409, `Cannot transition sales order from ${current} to ${target}.`);
+                }
+
+                if (target === "For Invoicing" && !areSalesOrderDetailsFullyFulfilled(allDetails)) {
+                    throw new ApiError(409, "Sales order cannot move to For Invoicing until every detail line is fully fulfilled.");
                 }
 
                 const isApprovalDecision = (current === "For Approval" || current === "On Hold")

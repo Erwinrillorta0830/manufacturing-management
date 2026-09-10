@@ -353,7 +353,7 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
 }
 
 export async function fetchBatches(lotId: number): Promise<BatchOption[]> {
-    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?lotId=${encodeURIComponent(String(lotId))}`);
+    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?lotId=${encodeURIComponent(String(lotId))}&source=lot-transfer`);
     const rows = Array.isArray(payload) ? payload : unwrap<BatchOption[]>(payload as ApiEnvelope<BatchOption[]>);
     return (Array.isArray(rows) ? rows : [])
         .map((row) => {
