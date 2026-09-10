@@ -102,6 +102,22 @@ export async function mutateDirectus(
     return isRecord(payload.data) ? payload.data : null;
 }
 
+export async function updateDirectusItems(
+    path: string,
+    query: RecordValue,
+    data: RecordValue,
+    action: string
+): Promise<RecordValue[]> {
+    const payload = await directusRequest(path, {
+        method: "PATCH",
+        body: JSON.stringify({ data, query })
+    }, action);
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+        throw new LotTransferError(502, `${action} returned an invalid Directus update response.`);
+    }
+    return payload.data.filter(isRecord);
+}
+
 export async function readById(collections: string[], id: number, action: string): Promise<RecordValue> {
     for (const collection of collections) {
         try {
