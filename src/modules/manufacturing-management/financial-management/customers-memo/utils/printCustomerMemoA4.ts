@@ -55,7 +55,6 @@ export function printCustomerMemoA4(details: DetailedMemo, company: CompanyProfi
                    : "Customer Memo";
 
     const customer  = safeText(header.customer_id?.customer_name) || "—";
-    const supplier  = safeText(header.supplier_id?.supplier_name)  || "—";
     const salesman  = header.salesman_id
         ? `${header.salesman_id.salesman_code} — ${header.salesman_id.salesman_name}`
         : "—";

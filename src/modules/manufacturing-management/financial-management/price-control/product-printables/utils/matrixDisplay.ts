@@ -48,7 +48,6 @@ export function matrixPriceTypeColor(index: number) {
 export function getVisibleMatrixPriceTypes(
     priceTypes: PriceType[],
     selectedPriceTypeIds: string[] = [],
-    _usedPriceTypeKeys?: Set<string>,
 ): PriceType[] {
     const activePriceTypes = priceTypes.filter((pt) => {
         if (pt.is_active === false || pt.is_active === 0 || pt.is_active === "0" || pt.is_active === "false") {

@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Trash2 } from "lucide-react";
-import { useState } from "react";
 import { DiscountType } from "../types/discount-type.schema";
 import { ProductPerSupplierWithDetails } from "../types/product-per-suppplier.schema";
 import { Combobox } from "./ui/Combobox";
