@@ -293,6 +293,9 @@ export async function POST(request: Request) {
         if (!canonicalJoStatus) {
             return NextResponse.json({ error: `Job Order ${joId} has an unknown status and cannot accept a shift run.` }, { status: 409 });
         }
+        if (isCancelledJobOrderStatus(canonicalJoStatus)) {
+            return NextResponse.json({ error: `Job Order ${joId} is cancelled and cannot accept a shift run.` }, { status: 409 });
+        }
         const producedProductId = Number(joData.product_id);
         if (!joData.branch_id) {
             return NextResponse.json({ error: `Job Order with ID ${joId} has no branch_id` }, { status: 400 });

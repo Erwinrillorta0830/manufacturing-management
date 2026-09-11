@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, matchesProductionWorkflowStatus } from "../types";
+import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview, matchesProductionWorkflowStatus } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -9,7 +9,10 @@ import {
     manageRouteOperator,
     patchRoutingTask,
     fetchQATemplate,
-    submitQAVerification
+    submitQAVerification,
+    fetchJobOrderCancellationPreview,
+    cancelJobOrder,
+    returnJobOrderMaterials
 } from "../services/production-api";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -46,6 +49,14 @@ export function useProductionWorkflow() {
     const [qaYieldQty, setQaYieldQty] = useState<string>("");
     const [qaComments, setQaComments] = useState<string>("");
     const [submittingQA, setSubmittingQA] = useState(false);
+
+    // Job Order cancellation / raw material return state
+    const [cancellationModalOpen, setCancellationModalOpen] = useState(false);
+    const [cancellationMode, setCancellationMode] = useState<"cancel" | "return">("cancel");
+    const [cancellationPreview, setCancellationPreview] = useState<JobOrderCancellationPreview | null>(null);
+    const [loadingCancellation, setLoadingCancellation] = useState(false);
+    const [submittingCancellation, setSubmittingCancellation] = useState(false);
+    const [cancellationError, setCancellationError] = useState<string | null>(null);
 
     // Get current Job Order object
     const selectedJobOrder = useMemo(() => {
@@ -396,6 +407,11 @@ export function useProductionWorkflow() {
         const task = sortedTasks.find(t => t.id === taskId);
         if (!task || !selectedJobOrder) return;
 
+        if (isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
+            toast.error("Cancelled Job Orders cannot be progressed.");
+            return;
+        }
+
         setSelectedTaskId(taskId);
 
         const taskOps = routeOperators.filter((op) => op.task_id === taskId);
@@ -580,6 +596,47 @@ export function useProductionWorkflow() {
         }
     };
 
+    const openCancellationModal = useCallback(async (mode: "cancel" | "return", joId?: string) => {
+        const targetJoId = joId || selectedJobOrder?.jo_id;
+        if (!targetJoId) return;
+        setCancellationMode(mode);
+        setCancellationModalOpen(true);
+        setCancellationPreview(null);
+        setCancellationError(null);
+        setLoadingCancellation(true);
+        try {
+            const preview = await fetchJobOrderCancellationPreview(targetJoId);
+            setCancellationPreview(preview);
+        } catch (err: any) {
+            setCancellationError(err.message || "Failed to load the cancellation preview.");
+        } finally {
+            setLoadingCancellation(false);
+        }
+    }, [selectedJobOrder]);
+
+    const handleConfirmCancellation = useCallback(async (reason: string) => {
+        if (!cancellationPreview) return;
+        setSubmittingCancellation(true);
+        setCancellationError(null);
+        try {
+            const response = cancellationMode === "cancel"
+                ? await cancelJobOrder(cancellationPreview.jobOrderId, reason)
+                : await returnJobOrderMaterials(cancellationPreview.jobOrderId, reason);
+            toast.success(
+                cancellationMode === "cancel"
+                    ? `Job Order ${response.jobOrderNo} cancelled. Returned ${response.returnedQuantity.toLocaleString()} unit(s) to MAIN-STORE.`
+                    : `Returned ${response.returnedQuantity.toLocaleString()} unit(s) from Job Order ${response.jobOrderNo} to MAIN-STORE.`
+            );
+            setCancellationModalOpen(false);
+            setCancellationPreview(null);
+            fetchJobs(cancellationPreview.jobOrderNo, true);
+        } catch (err: any) {
+            setCancellationError(err.message || "Failed to process the Job Order cancellation.");
+        } finally {
+            setSubmittingCancellation(false);
+        }
+    }, [cancellationPreview, cancellationMode, fetchJobs]);
+
     const filteredJobOrders = useMemo(() => {
         return jobOrders.filter((jo) => {
             const matchesSearch =
@@ -648,6 +705,15 @@ export function useProductionWorkflow() {
         selectedBranchFilter,
         setSelectedBranchFilter,
         releasingDraft,
-        handleReleaseDraftJO
+        handleReleaseDraftJO,
+        cancellationModalOpen,
+        setCancellationModalOpen,
+        cancellationMode,
+        cancellationPreview,
+        loadingCancellation,
+        submittingCancellation,
+        cancellationError,
+        openCancellationModal,
+        handleConfirmCancellation
     };
 }

@@ -28,6 +28,7 @@ interface OperationStepTrackerProps {
     users: UserType[];
     onOpenShiftLogModal: () => void;
     onOpenQAModal: (taskId: number) => void;
+    readOnly?: boolean;
 }
 
 export function OperationStepTracker({
@@ -38,7 +39,8 @@ export function OperationStepTracker({
     routeOperators,
     users,
     onOpenShiftLogModal,
-    onOpenQAModal
+    onOpenQAModal,
+    readOnly = false
 }: OperationStepTrackerProps) {
     const getUserName = (uId: number) => {
         const u = users.find((x) => (x.user_id || x.id) === uId);
@@ -165,7 +167,7 @@ export function OperationStepTracker({
                                     <span className="flex items-center gap-1">
                                         <ShieldAlert className="h-3.5 w-3.5 text-amber-500" /> QA Checklist Required
                                     </span>
-                                    {!isCompleted && (
+                                    {!isCompleted && !readOnly && (
                                         <Button
                                             size="xs"
                                             variant="ghost"

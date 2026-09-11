@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
-import { isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 interface UserRecord {
     user_id: number;
@@ -474,6 +474,12 @@ export async function POST(request: Request) {
             return NextResponse.json({
                 success: false,
                 error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is already finished and cannot be restarted.`
+            }, { status: 409 });
+        }
+        if (isCancelledJobOrderStatus(oldStatus)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is cancelled and cannot be restarted.`
             }, { status: 409 });
         }
 
