@@ -7,7 +7,7 @@ import { UserDto } from "../../types";
 export interface SettlementQueueItem {
     id: number; docNo?: string; salesmanName?: string; operationName?: string;
     collectionDate?: string | number[]; encodedDate?: string | number[];
-    pouchAmount?: number; discrepancy?: number; receivableAmount?: number;
+    pouchAmount?: number; invoiceAmount?: number; appliedAmount?: number; variance?: number; discrepancy?: number; receivableAmount?: number;
     adjustments?: number; collectedByName?: string; crNo?: string; status?: string;
 }
 

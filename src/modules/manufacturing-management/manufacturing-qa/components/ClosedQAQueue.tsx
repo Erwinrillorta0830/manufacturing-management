@@ -36,7 +36,7 @@ export function ClosedQAQueue({
                 </div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                     <div><dt className="text-muted-foreground">Target</dt><dd className="font-mono font-semibold">{Number(jo.quantity || 0).toLocaleString()} units</dd></div>
-                    <div><dt className="text-muted-foreground">Produced</dt><dd className="font-mono font-semibold text-emerald-600">{Number(jo.producedQty || jo.produced_quantity || 0).toLocaleString()} units</dd></div>
+                    <div><dt className="text-muted-foreground">Produced</dt><dd className="font-mono font-semibold text-emerald-600">{Number(jo.completed_quantity || jo.actual_quantity_produced || jo.producedQty || jo.produced_quantity || 0).toLocaleString()} units</dd></div>
                     <div><dt className="text-muted-foreground">Branch</dt><dd className="truncate font-semibold">{getBranchName(jo.branch_id)}</dd></div>
                     <div className="col-span-2 sm:col-span-3"><dt className="text-muted-foreground">Recipe version</dt><dd className="font-semibold">{verName}</dd></div>
                 </dl>
@@ -105,7 +105,7 @@ export function ClosedQAQueue({
                                             {jo.product_name}
                                         </TableCell>
                                         <TableCell className="text-xs font-mono text-center font-semibold text-muted-foreground">{Number(jo.quantity || 0).toLocaleString()} units</TableCell>
-                                        <TableCell className="text-xs font-mono text-center font-bold text-emerald-500">{Number(jo.producedQty || jo.produced_quantity || 0).toLocaleString()} units</TableCell>
+                                        <TableCell className="text-xs font-mono text-center font-bold text-emerald-500">{Number(jo.completed_quantity || jo.actual_quantity_produced || jo.producedQty || jo.produced_quantity || 0).toLocaleString()} units</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">{getBranchName(jo.branch_id)}</TableCell>
                                         <TableCell className="text-xs font-medium text-muted-foreground">{verName}</TableCell>
                                         <TableCell className="text-right pr-4">

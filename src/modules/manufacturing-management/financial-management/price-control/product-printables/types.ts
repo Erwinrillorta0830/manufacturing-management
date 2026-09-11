@@ -36,6 +36,7 @@ export type PriceType = {
     price_type_id: number;
     price_type_name: string;
     sort: number | null;
+    is_active?: boolean | number | string | null;
 };
 
 export type Category = {

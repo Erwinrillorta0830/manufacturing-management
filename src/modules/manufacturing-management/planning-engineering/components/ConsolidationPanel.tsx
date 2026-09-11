@@ -29,7 +29,21 @@ export function ConsolidationPanel({
     loadingVersionStock,
     handleInitiateDirectAllocate
 }: ConsolidationPanelProps) {
-    const totalDemand = selectedLines.reduce((sum, l) => sum + Number(l.ordered_quantity), 0);
+    const totalOrdered = selectedLines.reduce((sum, line) => sum + Number(line.ordered_quantity || 0), 0);
+    const totalPlanned = selectedLines.reduce((sum, line) => sum + Number(line.planned_quantity || 0), 0);
+    const totalRemaining = selectedLines.reduce((sum, line) => {
+        const ordered = Number(line.ordered_quantity || 0);
+        const allocated = Number(line.allocated_quantity || 0);
+        const served = Number(line.served_quantity || 0);
+        const planned = Number(line.planned_quantity || 0);
+        const remaining = Number(line.remaining_quantity);
+        return sum + (Number.isFinite(remaining)
+            ? Math.max(0, remaining)
+            : Math.max(0, ordered - Math.max(allocated, served) - planned));
+    }, 0);
+    const selectedOrderReferences = Array.from(new Map(
+        selectedLines.map((line) => [line.order_id, line.order_no || `SO #${line.order_id}`])
+    ).entries());
 
     return (
         <Card className="shadow-sm border-primary/20 bg-primary/[0.01]">
@@ -45,7 +59,7 @@ export function ConsolidationPanel({
             <CardContent className="pt-4 space-y-4">
                 {selectedLines.length === 0 ? (
                     <div className="text-center py-6 text-xs text-muted-foreground font-medium">
-                        No lines selected. Use checkboxes in the demand table below to group orders.
+                        No lines selected. Use checkboxes in the demand table on the left to group orders.
                     </div>
                 ) : (
                     <div className="space-y-4">
@@ -64,7 +78,7 @@ export function ConsolidationPanel({
                                     <Check className="h-4 w-4 text-green-600" />
                                     <AlertTitle className="text-xs font-bold text-green-700 uppercase">Valid Consolidation</AlertTitle>
                                     <AlertDescription className="text-xs font-medium text-green-600 mt-1">
-                                        Ready to batch consolidate {selectedLines.length} order lines for {selectedLines[0].product_id.product_name}.
+                                        Ready to consolidate {selectedLines.length} lines from {selectedOrderReferences.length} Sales Orders for {selectedLines[0].product_id.product_name}.
                                     </AlertDescription>
                                 </Alert>
  
@@ -82,10 +96,26 @@ export function ConsolidationPanel({
                                         </Badge>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
-                                        <span className="font-semibold text-muted-foreground">Total SO Demand:</span>
-                                        <span className="font-bold text-foreground">
-                                            {totalDemand.toLocaleString()}
+                                        <span className="font-semibold text-muted-foreground">Selected Sales Orders:</span>
+                                        <span className="font-bold text-foreground text-right">
+                                            {selectedOrderReferences.map(([orderId, orderNo], index) => (
+                                                <React.Fragment key={orderId}>
+                                                    {index > 0 ? ", " : ""}{orderNo}
+                                                </React.Fragment>
+                                            ))}
                                         </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Ordered Quantity:</span>
+                                        <span className="font-bold text-foreground">{totalOrdered.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Planned Quantity:</span>
+                                        <span className="font-bold text-amber-700">{totalPlanned.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-semibold text-muted-foreground">Remaining JO Quantity:</span>
+                                        <span className="font-bold text-emerald-700">{totalRemaining.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="font-semibold text-muted-foreground">Available Version Stock:</span>
@@ -111,7 +141,7 @@ export function ConsolidationPanel({
                                 Consolidate & Release Job Order
                             </Button>
 
-                            {mergeValidation.isValid && versionStock !== null && versionStock >= totalDemand && (
+                            {mergeValidation.isValid && versionStock !== null && versionStock >= totalRemaining && (
                                 <Button
                                     type="button"
                                     variant="outline"
@@ -120,6 +150,14 @@ export function ConsolidationPanel({
                                 >
                                     Direct Allocate & Invoice
                                 </Button>
+                            )}
+
+                            {mergeValidation.isValid && versionStock !== null && versionStock < totalRemaining && (
+                                <p className="text-[10px] text-muted-foreground leading-snug">
+                                    Direct Allocate &amp; Invoice becomes available when available version stock
+                                    ({(versionStock ?? 0).toLocaleString()}) covers the remaining quantity
+                                    ({totalRemaining.toLocaleString()}). Release a Job Order to reserve stock instead.
+                                </p>
                             )}
                         </div>
                     </div>

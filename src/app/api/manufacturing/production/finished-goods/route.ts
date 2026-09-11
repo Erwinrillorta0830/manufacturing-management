@@ -1,10 +1,8 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 
 
 interface LedgerEntry {
@@ -22,35 +20,6 @@ interface Product {
     product_id: number;
     product_name?: string;
     cost_per_unit?: string | number;
-}
-
-interface InventoryLot {
-    id: number;
-    lot_number: string;
-    expiry_date?: string | null;
-    unit_cost?: string | number;
-    quantity?: string | number;
-    created_on?: string;
-    qa_status?: string;
-}
-
-interface ConsumeComponentBody {
-    component_product_id?: string | number;
-    product_id?: string | number;
-    required?: string | number;
-    quantity?: string | number;
-    component_name?: string;
-    product_name?: string;
-}
-
-interface ComponentConsumed {
-    component_product_id: number;
-    product_id?: string | number;
-    required?: string | number;
-    quantity?: string | number;
-    scaledQuantity: number;
-    component_name?: string;
-    product_name?: string;
 }
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -255,7 +224,6 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
-        const todayStr = await getTodayDateString();
         const body = await request.json();
         const {
             joId,
@@ -264,6 +232,7 @@ export async function POST(request: Request) {
             quantityProduced,
             branchId,
             lotNumber,
+            mmLotId,
             expirationDate,
             manufacturingDate,
             unitCost,
@@ -273,483 +242,62 @@ export async function POST(request: Request) {
         } = body;
 
         if (!joId || !productId || !quantityProduced || !branchId) {
-            return NextResponse.json({ error: "Missing required fields (joId, productId, quantityProduced, branchId)" }, { status: 400 });
+            return NextResponse.json(
+                { error: "Missing required fields (joId, productId, quantityProduced, branchId)" },
+                { status: 400 }
+            );
         }
 
-        if (completeJobOrder) {
-            try {
-                const result = await completeYieldClosing({
-                    joId,
-                    productId,
-                    productName,
-                    quantityProduced,
-                    branchId,
-                    lotNumber,
-                    expirationDate,
-                    manufacturingDate,
-                    unitCost,
-                    componentsConsumed,
-                    yieldLedgerId
-                });
-                return NextResponse.json(result);
-            } catch (error) {
-                if (error instanceof YieldCompletionError) {
-                    return NextResponse.json({
-                        success: false,
-                        error: error.message,
-                        code: error.code,
-                        ...(error.operationKey ? { operationKey: error.operationKey } : {}),
-                        reconciliationRequired: error.reconciliationRequired,
-                        ...(error.reconciliation ? { reconciliation: error.reconciliation } : {})
-                    }, { status: error.status });
-                }
-                if (error instanceof YieldMaterialsError) {
-                    return NextResponse.json({
-                        success: false,
-                        error: error.message,
-                        code: error.code,
-                        reconciliationRequired: false
-                    }, { status: error.status });
-                }
-                throw error;
-            }
+        if (completeJobOrder !== true) {
+            return NextResponse.json({
+                success: false,
+                error: "Legacy finished-goods posting is retired. Use the canonical yield-closing flow with an existing mmLotId and batch number.",
+                code: "LEGACY_FINISHED_GOODS_POSTING_RETIRED"
+            }, { status: 410 });
         }
 
-        const qty = Number(quantityProduced);
-        const bId = Number(branchId);
-        const pId = Number(productId);
-        const finalLotNo = lotNumber || `MFG-${joId}`;
-        const finalExpDate = expirationDate || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
-        let sourceDocumentId = Number(joId);
-        if (!Number.isSafeInteger(sourceDocumentId) || sourceDocumentId <= 0) sourceDocumentId = 0;
-
-        // Fetch planned quantity to scale raw material consumption dynamically based on actual yield vs planned yield
-        let scaleFactor = 1;
         try {
-            const joRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joId)}&limit=1`, { headers });
-            if (joRes.ok) {
-                const joData = (await joRes.json()).data || [];
-                if (joData.length > 0) {
-                    const resolvedJobOrderId = Number(joData[0].job_order_id);
-                    if (sourceDocumentId <= 0 && Number.isSafeInteger(resolvedJobOrderId) && resolvedJobOrderId > 0) {
-                        sourceDocumentId = resolvedJobOrderId;
-                    }
-                    const plannedQty = Number(joData[0].target_quantity) || 0;
-                    if (plannedQty > 0) {
-                        scaleFactor = qty / plannedQty;
-                        console.log(`[BFF Finished Goods] Dynamic scaling factor: ${scaleFactor} (Actual: ${qty}, Planned: ${plannedQty})`);
-                    }
-                }
-            }
-        } catch (scaleErr) {
-            console.error("[BFF Finished Goods] Error calculating raw material scale factor:", scaleErr);
-        }
-
-        const scaledComponents: ComponentConsumed[] = (componentsConsumed && Array.isArray(componentsConsumed))
-            ? componentsConsumed.map((comp: ConsumeComponentBody) => {
-                const compId = Number(comp.component_product_id || comp.product_id);
-                const baseQty = Number(comp.required || comp.quantity || 0);
-                return {
-                    ...comp,
-                    component_product_id: compId,
-                    scaledQuantity: baseQty * scaleFactor
-                };
-            })
-            : [];
-
-        // Strict Inventory Sufficiency Check for Consumed Components using cloud product ledger
-        if (scaledComponents.length > 0) {
-            const compIds = scaledComponents
-                .map(c => c.component_product_id)
-                .filter(id => !isNaN(id) && id > 0);
-
-            if (compIds.length > 0) {
-                const compIdsStr = compIds.join(",");
-                let ledgerData: LedgerEntry[] = [];
-                try {
-                    const ledgerRes = await fetch(`${DIRECTUS_URL}/items/product_ledger?filter[productId][_in]=${compIdsStr}&filter[branchId][_eq]=${bId}&limit=-1`, { 
-                        headers, 
-                        cache: "no-store" 
-                    });
-                    if (ledgerRes.ok) {
-                        ledgerData = (await ledgerRes.json()).data || [];
-                    } else {
-                        console.error("[BFF Finished Goods] Failed to fetch ledger items for stock checks:", await ledgerRes.text());
-                    }
-                } catch (ledgerErr) {
-                    console.error("[BFF Finished Goods] Ledger stock check request failed:", ledgerErr);
-                }
-
-                // Map product ID to current accumulated stock
-                const stockMap: Record<number, number> = {};
-                compIds.forEach(id => {
-                    stockMap[id] = 0;
-                });
-
-                ledgerData.forEach(entry => {
-                    const pId = Number(entry.productId);
-                    const entryQty = Number(entry.quantity) || 0;
-                    if (stockMap[pId] !== undefined) {
-                        stockMap[pId] += entryQty;
-                    }
-                });
-
-                const insufficient: string[] = [];
-                for (const comp of scaledComponents) {
-                    const compId = comp.component_product_id;
-                    const compQtyRequired = comp.scaledQuantity;
-                    const compName = comp.component_name || comp.product_name || `Component #${compId}`;
-
-                    if (compId && compQtyRequired > 0) {
-                        const available = stockMap[compId] || 0;
-                        if (available < compQtyRequired) {
-                            insufficient.push(`${compName} (Needed: ${compQtyRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Available: ${available.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
-                        }
-                    }
-                }
-
-                if (insufficient.length > 0) {
-                    return NextResponse.json({ 
-                        error: `You have insufficient stock for: ${insufficient.join(", ")}` 
-                    }, { status: 400 });
-                }
-            }
-        }
-
-        const newReceipt = {
-            id: Date.now(),
-            jo_id: joId,
-            product_id: pId,
-            product_name: productName || "Manufactured Good",
-            quantity_produced: qty,
-            branch_id: bId,
-            lot_number: finalLotNo,
-            expiration_date: finalExpDate,
-            unit_cost: Number(unitCost || 0),
-            date_received: new Date().toISOString()
-        };
-
-        // 1. Automatically register finished goods into the decoupled inventory system
-        let skipStockOperations = false;
-        try {
-            // Check if there is already a positive finished goods movement for this lot and job order in inventory_movements
-            let existingMvts = await fetchMmInventoryMovements({
-                product: pId,
-                batchNo: finalLotNo,
-                transactionTypeId: 2,
-                movementDirection: "IN",
-                referenceId: sourceDocumentId > 0 ? sourceDocumentId : null,
-                referenceNo: sourceDocumentId > 0 ? null : String(joId)
+            const result = await completeYieldClosing({
+                joId,
+                productId,
+                productName,
+                quantityProduced,
+                branchId,
+                lotNumber,
+                mmLotId,
+                expirationDate,
+                manufacturingDate,
+                unitCost,
+                componentsConsumed,
+                yieldLedgerId
             });
-            if (existingMvts.length === 0 && sourceDocumentId > 0) {
-                existingMvts = await fetchMmInventoryMovements({
-                    product: pId,
-                    batchNo: finalLotNo,
-                    transactionTypeId: 2,
-                    movementDirection: "IN",
-                    referenceNo: String(joId)
-                });
+            return NextResponse.json(result);
+        } catch (error) {
+            if (error instanceof YieldCompletionError) {
+                return NextResponse.json({
+                    success: false,
+                    error: error.message,
+                    code: error.code,
+                    ...(error.operationKey ? { operationKey: error.operationKey } : {}),
+                    reconciliationRequired: error.reconciliationRequired,
+                    ...(error.reconciliation ? { reconciliation: error.reconciliation } : {})
+                }, { status: error.status });
             }
-            if (existingMvts.length > 0) {
-                skipStockOperations = true;
-                console.log(`[BFF Finished Goods] Prior yield movement found for JO ${joId} and Lot ${finalLotNo}. Skipping stock operations to prevent duplicates.`);
+            if (error instanceof YieldMaterialsError) {
+                return NextResponse.json({
+                    success: false,
+                    error: error.message,
+                    code: error.code,
+                    reconciliationRequired: false
+                }, { status: error.status });
             }
-        } catch (checkErr) {
-            console.error("[BFF Finished Goods] Error checking for prior yield movements:", checkErr);
-            if (checkErr instanceof MmInventoryMovementError) throw checkErr;
+            throw error;
         }
-
-        if (!skipStockOperations) {
-            try {
-                const finishedLotId = await (async () => {
-                    const unitOfMeasureId = await resolveProductUnitId(pId);
-                    return (await resolveOrCreateMmLot({
-                        lotName: finalLotNo,
-                        branchId: bId,
-                        unitId: unitOfMeasureId,
-                        maxBatchCapacity: 100000,
-                        createdBy: 24
-                    })).lot_id;
-                })();
-
-                // 1b. Log finished yield movement in inventory_movements ledger
-                const finishedMovementPayload = {
-                    product_id: pId,
-                    mm_lot_id: finishedLotId,
-                    lot_id: null,
-                    branch_id: bId,
-                    transaction_type_id: 2, // Job Order Finished Goods
-                    source_document_id: sourceDocumentId || null,
-                    source_document_no: joId,
-                    batch_no: finalLotNo,
-                    expiry_date: finalExpDate,
-                    manufacturing_date: manufacturingDate || todayStr,
-                    quantity: qty,
-                    created_by: 24,
-                    remarks: `Finished yield output from Job Order ${joId}`
-                };
-                const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(finishedMovementPayload)
-                });
-                if (!movRes.ok) {
-                    console.error("[BFF Finished Goods] Failed to create positive inventory movement record:", await movRes.text());
-                }
-            } catch (err) {
-                console.error("[BFF Finished Goods] Error recording stock yield:", err);
-                return NextResponse.json({ error: "Failed to record finished goods lot and movement in cloud" }, { status: 500 });
-            }
-        }
-
-        // 2. Create positive product_ledger entry for produced item
-        const ledgerPosRes = await fetch(`${DIRECTUS_URL}/items/product_ledger`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-                branchId: bId,
-                productId: pId,
-                quantity: qty,
-                documentType: "Job Order Receipt",
-                documentNo: joId,
-                documentDescription: `MFG Run: ${finalLotNo}`,
-                documentDate: todayStr
-            })
-        });
-        if (!ledgerPosRes.ok) {
-            console.error("[BFF Finished Goods] Failed to create positive product ledger record:", await ledgerPosRes.text());
-        }
-
-        // 3. Create negative product_ledger entries for consumed components (Deductions) and update inventory_lots
-        if (scaledComponents.length > 0) {
-            for (const comp of scaledComponents) {
-                const compId = comp.component_product_id;
-                const compQtyRequired = comp.scaledQuantity;
-
-                if (compId && compQtyRequired > 0) {
-                    console.log(`[BFF Finished Goods] Deducting raw material product ID ${compId} (${compQtyRequired} units) consumed for JO ${joId}...`);
-                    
-                    const ledgerNegRes = await fetch(`${DIRECTUS_URL}/items/product_ledger`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            branchId: bId,
-                            productId: compId,
-                            quantity: -compQtyRequired,
-                            documentType: "Job Order Issue",
-                            documentNo: joId,
-                            documentDescription: `Consumed to produce: ${productName || "Finished Goods"}`,
-                            documentDate: todayStr
-                        })
-                    });
-                    if (!ledgerNegRes.ok) {
-                        console.error(`[BFF Finished Goods] Failed to create deduction product ledger record for product ${compId}:`, await ledgerNegRes.text());
-                    }
-
-                    // Deduct from FIFO inventory movements ONLY IF we are not skipping stock operations
-                    if (!skipStockOperations) {
-                        try {
-                            // Fetch PO receivings to resolve batch metadata (qa_status, expiry, created_on)
-                            const recRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${compId}&filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" });
-                            const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
-                            
-                            const batchStatusMap = new Map<string, string>();
-                            const batchExpiryMap = new Map<string, string>();
-                            const batchCreatedMap = new Map<string, string>();
-                            
-                            receipts.forEach((rec: any) => {
-                                const batchNo = String(rec.batch_no || rec.lot_no || "LOT-N/A").trim() || "LOT-N/A";
-                                batchStatusMap.set(batchNo, rec.qa_status || "Passed");
-                                if (rec.expiry_date) batchExpiryMap.set(batchNo, rec.expiry_date);
-                                if (rec.received_date || rec.created_on) batchCreatedMap.set(batchNo, rec.received_date || rec.created_on);
-                            });
-
-                            // Fetch inventory movements to calculate the true ledger stock
-                            const movements = await fetchMmInventoryMovements({
-                                branch: bId,
-                                product: compId
-                            });
-                            const movementStockMap = new Map<string, number>();
-                            movements.forEach((mov: any) => {
-                                const batchNo = mov.batch_no || "LOT-N/A";
-                                const qty = Number(mov.quantity || 0);
-                                movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
-                            });
-
-                            // Construct active lots enriched
-                            const activeLotsEnriched: any[] = [];
-                            movementStockMap.forEach((qty, lotNum) => {
-                                if (qty > 0) {
-                                    const status = batchStatusMap.get(lotNum) || "Passed"; // Default to Passed for legacy stock
-                                    if (status === "Passed" || status === "Partially Accepted") {
-                                        activeLotsEnriched.push({
-                                            lot_number: lotNum,
-                                            quantity: qty,
-                                            expiry_date: batchExpiryMap.get(lotNum) || null,
-                                            created_on: batchCreatedMap.get(lotNum) || null
-                                        });
-                                    }
-                                }
-                            });
-
-                            // Sort in JS to guarantee FIFO/FEFO
-                            activeLotsEnriched.sort((a: any, b: any) => {
-                                if (a.expiry_date && b.expiry_date) {
-                                    return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
-                                }
-                                if (a.expiry_date) return -1;
-                                if (b.expiry_date) return 1;
-                                return new Date(a.created_on || 0).getTime() - new Date(b.created_on || 0).getTime();
-                            });
-
-                            let remainingToDeduct = compQtyRequired;
-                            for (const lot of activeLotsEnriched) {
-                                if (remainingToDeduct <= 0) break;
-                                const available = Number(lot.quantity || 0);
-                                const deduct = Math.min(available, remainingToDeduct);
-                                remainingToDeduct -= deduct;
-                                
-                                console.log(`[BFF Finished Goods] Deducting ${deduct} units from lot number: ${lot.lot_number}.`);
-                                
-                                // Log negative ledger movement in inventory_movements
-                                try {
-                                    const componentUnitOfMeasureId = await resolveProductUnitId(compId);
-                                    const consumedLotId = (await resolveOrCreateMmLot({
-                                        lotName: lot.lot_number || "LOT-N/A",
-                                        branchId: bId,
-                                        unitId: componentUnitOfMeasureId,
-                                        maxBatchCapacity: 100000,
-                                        createdBy: 24
-                                    })).lot_id;
-                                    const componentMovementPayload = {
-                                        product_id: compId,
-                                        mm_lot_id: consumedLotId,
-                                        lot_id: null,
-                                        branch_id: bId,
-                                        transaction_type_id: 1, // Job Order Consumage
-                                        source_document_no: joId,
-                                        batch_no: lot.lot_number || "LOT-N/A",
-                                        expiry_date: lot.expiry_date || null,
-                                        manufacturing_date: lot.created_on ? lot.created_on.split("T")[0] : null,
-                                        quantity: -deduct, // Negative for deduction
-                                        created_by: 24,
-                                        remarks: `Consumed from lot ${lot.lot_number || "N/A"} for JO yield`
-                                    };
-                                    const movRes = await fetch(`${DIRECTUS_URL}/items/inventory_movements`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify(componentMovementPayload)
-                                    });
-                                    if (!movRes.ok) {
-                                        console.error(`[BFF Finished Goods] Failed to create deduction movement record for product ${compId}:`, await movRes.text());
-                                    }
-                                } catch (movErr) {
-                                    console.error(`[BFF Finished Goods] Error creating deduction movement record for product ${compId}:`, movErr);
-                                }
-                            }
-                        } catch (lotDeductErr) {
-                            console.error(`[BFF Finished Goods] Error during inventory movements deduction for component ${compId}:`, lotDeductErr);
-                            if (lotDeductErr instanceof MmInventoryMovementError) throw lotDeductErr;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Update the Job Order status to Completed in the database
-        if (completeJobOrder) {
-            try {
-                const joLookup = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(joId)}&limit=1`, { headers });
-                if (joLookup.ok) {
-                    const joData = (await joLookup.json()).data?.[0];
-                    if (joData) {
-                        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
-                            method: "PATCH",
-                            headers,
-                            body: JSON.stringify({
-                                status: "Completed",
-                                actual_quantity_produced: qty
-                            })
-                        });
-
-                        // 3. Proportional Sales Order Allocation Splitting & status updates
-                        const josoRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${joData.job_order_id}&limit=-1`, { headers });
-                        if (josoRes.ok) {
-                            const linksResponse = await josoRes.json();
-                            const links = linksResponse.data || [];
-                            console.log(`[BFF Finished Goods] Found ${links.length} allocations for Job Order ${joId}`);
-
-                            for (const link of links) {
-                                const detailId = link.sales_order_detail_id;
-                                if (!detailId) continue;
-
-                                let allocatedQty = Number(link.allocated_quantity || 0);
-                                const targetQty = Number(joData.target_quantity || 0);
-                                if (qty < targetQty && targetQty > 0) {
-                                    // Yield loss: split proportionally
-                                    allocatedQty = (allocatedQty * qty) / targetQty;
-                                }
-
-                                // Fetch the sales order detail to get unit price and current allocated_quantity
-                                const detailRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, { headers });
-                                if (detailRes.ok) {
-                                    const detailData = (await detailRes.json()).data;
-                                    if (detailData) {
-                                        const currentAllocated = Number(detailData.allocated_quantity || 0);
-                                        const newAllocated = currentAllocated + allocatedQty;
-                                        const unitPrice = Number(detailData.unit_price || 0);
-                                        const newAllocatedAmount = newAllocated * unitPrice;
-
-                                        // Update sales_order_details
-                                        await fetch(`${DIRECTUS_URL}/items/sales_order_details/${detailId}`, {
-                                            method: "PATCH",
-                                            headers,
-                                            body: JSON.stringify({
-                                                allocated_quantity: newAllocated,
-                                                allocated_amount: newAllocatedAmount
-                                            })
-                                        });
-
-                                        // Check if parent sales order is fully allocated
-                                        const parentOrderId = detailData.order_id;
-                                        if (parentOrderId) {
-                                            const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${parentOrderId}&limit=-1`, { headers });
-                                            if (allDetailsRes.ok) {
-                                                const allDetails = (await allDetailsRes.json()).data || [];
-                                                const allFullyAllocated = allDetails.every((d: any) => {
-                                                    const ordered = Number(d.ordered_quantity || 0);
-                                                    const alloc = Number(d.allocated_quantity || 0);
-                                                    return alloc >= ordered;
-                                                });
-
-                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to For Invoicing`);
-                                                await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                                                    method: "PATCH",
-                                                    headers,
-                                                    body: JSON.stringify({ order_status: "For Invoicing" })
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            console.error(`[BFF Finished Goods] Failed to fetch allocations for Job Order ${joId}: ${josoRes.status}`);
-                        }
-                    }
-                }
-            } catch (joErr) {
-                console.error("[BFF Finished Goods] Failed to update job order status and process allocations:", joErr);
-            }
-        }
-
-        return NextResponse.json({ success: true, data: newReceipt });
-    } catch (e) {
-        console.error("API Error in production finished-goods POST:", e);
+    } catch (error) {
+        console.error("API Error in production finished-goods POST:", error);
         return NextResponse.json(
-            { error: (e as { message?: string }).message || "Failed to create finished goods receipt" },
-            { status: e instanceof MmInventoryMovementError ? e.status : 500 }
+            { error: (error as { message?: string }).message || "Failed to create finished goods receipt" },
+            { status: error instanceof MmInventoryMovementError ? error.status : 500 }
         );
     }
 }
-

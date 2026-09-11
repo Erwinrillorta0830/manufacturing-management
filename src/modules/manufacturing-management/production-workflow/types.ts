@@ -1,4 +1,10 @@
 /* eslint-disable */
+import {
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus,
+    type CanonicalJobOrderStatus
+} from "../job-order-status";
 export interface OperatorAssignment {
     id: number;
     task_id: number;
@@ -62,7 +68,7 @@ export interface JobOrder {
     producedQty?: number;
     produced_quantity?: number;
     due_date: string;
-    status: "Draft" | "Planned" | "Proceed" | "Ongoing" | "In Progress" | "Finished" | "Completed" | "On Hold" | string;
+    status: CanonicalJobOrderStatus | string;
     branch_id: number;
     primary_work_center_id?: number | null;
     work_center_name?: string | null;
@@ -83,21 +89,94 @@ export interface JobOrder {
     sales_orders?: any[];
 }
 
+export interface JobOrderMaterialReturnLine {
+    joMaterialId: number;
+    productId: number;
+    productName: string;
+    uomId: number;
+    uomShortcut: string;
+    branchId: number;
+    mmLotId: number;
+    batchNo: string;
+    sourceBin: string;
+    targetBin: string;
+    stagedQuantity: number;
+    consumedQuantity: number;
+    returnableQuantity: number;
+    reservationIds: number[];
+    releaseOnly: boolean;
+}
+
+export interface JobOrderCancellationPreview {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    productName: string;
+    branchId: number;
+    status: string;
+    cancellable: boolean;
+    canReturnMaterials: boolean;
+    blockedReason: string | null;
+    lines: JobOrderMaterialReturnLine[];
+    totals: {
+        stagedQuantity: number;
+        consumedQuantity: number;
+        returnableQuantity: number;
+    };
+}
+
+export interface JobOrderCancellationResponse {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    lines: JobOrderMaterialReturnLine[];
+    returnedQuantity: number;
+    releasedReservationCount: number;
+    movementCount: number;
+    alreadyCancelled: boolean;
+}
+
+export interface JobOrderCancellationPayload {
+    action: "cancel-and-return" | "return-materials";
+    joId: string | number;
+    reason?: string;
+    actorUserId?: number | null;
+}
+
 export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
     { value: "Active", label: "Active" },
     { value: "All", label: "All" },
     { value: "Proceed", label: "Released" },
+    { value: "Reserved", label: "Ready to run" },
     { value: "Ongoing", label: "In Progress" },
     { value: "On Hold", label: "On Hold" },
+    { value: "QA Hold", label: "QA Hold" },
+    { value: "Shortage", label: "Shortage" },
+    { value: "Cancelled", label: "Cancelled" },
     { value: "Finished", label: "Finished" }
 ] as const;
 
 export function matchesProductionWorkflowStatus(status: string, filter: string): boolean {
     if (filter === "All") return true;
-    if (filter === "Active") return status === "Proceed" || status === "Ongoing";
-    if (filter === "Proceed" || filter === "Released") return status === "Proceed";
-    if (filter === "Ongoing" || filter === "In Progress") return status === "Ongoing";
-    return status === filter;
+    const normalizedStatus = normalizeJobOrderStatus(status);
+    if (!normalizedStatus) return false;
+    if (filter === "Active") {
+        return isJobOrderStatus(
+            normalizedStatus,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.RESERVED,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS
+        );
+    }
+    if (filter === "Proceed" || filter === "Released") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED);
+    }
+    if (filter === "Ongoing" || filter === "In Progress") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+    }
+    return normalizedStatus === normalizeJobOrderStatus(filter);
 }
 
 export interface User {

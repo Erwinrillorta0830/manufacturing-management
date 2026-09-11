@@ -1,7 +1,7 @@
 /* eslint-disable */
 "use client";
 
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,15 @@ import { JOFilterBar } from "./components/JOFilterBar";
 import { JOTable } from "./components/JOTable";
 import { JobOrderTraveler } from "./components/JobOrderTraveler";
 import { fetchJobMaterials } from "./services/planning-api";
+import Link from "next/link";
+import { resolveJobOrderJourney } from "../shared/job-order-journey";
+import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
+import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
+import { NextStepCallout } from "../shared/components/NextStepCallout";
+import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -112,10 +119,15 @@ export default function PlanningEngineeringModule() {
         unreleasedJobs,
         loadingJobs,
         releasingDraftId,
-        handleReleaseDraftFromPlanning
+        handleReleaseDraftFromPlanning,
+        deepLinkJo,
+        clearDeepLinkJo,
+        deepLinkNotice,
+        setDeepLinkNotice
     } = usePlanningEngineering();
 
     const [activeMainTab, setActiveMainTab] = useState<"demand" | "inventory" | "queue">("demand");
+    const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
     const [joMaterials, setJoMaterials] = useState<any[]>([]);
@@ -130,6 +142,14 @@ export default function PlanningEngineeringModule() {
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
+
+    // Deep link support: /mm/planning-engineering?jo=JO-XXXX opens the item.
+    useEffect(() => {
+        if (!deepLinkJo) return;
+        setActiveMainTab("queue");
+        void handleOpenDetails(deepLinkJo);
+        clearDeepLinkJo();
+    }, [deepLinkJo]);
 
     const [confirmReserveData, setConfirmReserveData] = useState<{
         joId: string;
@@ -157,7 +177,14 @@ export default function PlanningEngineeringModule() {
     // Filter unreleased jobs
     const filteredUnreleasedJobs = useMemo(() => {
         return unreleasedJobs.filter((jo: any) => {
-            const matchesStatus = statusFilter === "all" || jo.status === statusFilter;
+            const normalizedFilter = normalizeJobOrderStatus(statusFilter);
+            // The queue API normalizes persisted "Released" to "Proceed", so the
+            // Released filter must accept both canonical values.
+            const matchesStatus = statusFilter === "all" || (normalizedFilter !== null && isJobOrderStatus(
+                jo.status,
+                normalizedFilter,
+                ...(normalizedFilter === JOB_ORDER_STATUS.RELEASED ? [JOB_ORDER_STATUS.PROCEED] : [])
+            ));
             const query = searchQuery.toLowerCase().trim();
             const matchesQuery = !query ||
                 String(jo.jo_id || "").toLowerCase().includes(query) ||
@@ -267,6 +294,19 @@ export default function PlanningEngineeringModule() {
     }, [activeFamilyJo, childJoMaterials, familyActiveTab, joMaterials]);
 
     const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
+
+    // Only Draft/Planned/Planning Job Orders can be released by the API; the
+    // footer action should not be offered for already-released family members.
+    const releasableFamilyMembers = useMemo(() => {
+        if (!activeFamilyJo) return [];
+        const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
+        return members.filter((jo: any) => isJobOrderStatus(
+            jo?.status,
+            JOB_ORDER_STATUS.DRAFT,
+            JOB_ORDER_STATUS.PLANNED,
+            JOB_ORDER_STATUS.PLANNING
+        ));
+    }, [activeFamilyJo, familyChildJobs, isFamilyOverview]);
 
     const activeMaterialLoadState = useMemo<MaterialLoadState>(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
@@ -699,21 +739,15 @@ export default function PlanningEngineeringModule() {
             toast.error("Required materials are unavailable. Retry the materials lookup before releasing the Job Order.");
             return;
         }
-        if (!activeFamilyJo) return;
+        if (releasableFamilyMembers.length === 0) return;
 
-        const targetJo = activeFamilyJo;
-        const familyChildrenToRelease = familyChildJobs;
-        const shouldReleaseFamily = isFamilyOverview;
+        const membersToRelease = releasableFamilyMembers;
 
         clearDetails();
 
-        await handleReleaseDraftFromPlanning(targetJo.order_id);
-
-        if (shouldReleaseFamily) {
-            for (const child of familyChildrenToRelease) {
-                if (child.order_id) {
-                    await handleReleaseDraftFromPlanning(child.order_id);
-                }
+        for (const member of membersToRelease) {
+            if (member.order_id) {
+                await handleReleaseDraftFromPlanning(member.order_id);
             }
         }
     };
@@ -779,10 +813,54 @@ export default function PlanningEngineeringModule() {
 
             {/* Tabs-based Layout Dashboard */}
             <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "inventory" | "queue")} className="w-full space-y-6">
+                {deepLinkNotice && (
+                    <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        <span className="flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                            {deepLinkNotice}
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeepLinkNotice(null)}
+                            className="h-7 shrink-0 px-2 text-[11px] font-bold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                        >
+                            Dismiss
+                        </Button>
+                    </div>
+                )}
+                {showWorkflowGuide && (
+                    <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-xs font-bold uppercase tracking-wider text-primary">How this page works</p>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                <span><strong className="text-foreground">1.</strong> Review demand</span>
+                                <span className="text-border">→</span>
+                                <span><strong className="text-foreground">2.</strong> Release a Job Order</span>
+                                <span className="text-border">→</span>
+                                <span>
+                                    <strong className="text-foreground">3.</strong>{" "}
+                                    <Link href="/mm/material-staging" className="text-primary underline underline-offset-2">Stage materials</Link>
+                                </span>
+                                <span className="text-border">→</span>
+                                <span>
+                                    <strong className="text-foreground">4.</strong>{" "}
+                                    <Link href="/mm/production-workflow" className="text-primary underline underline-offset-2">Produce</Link>
+                                </span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <StatusLegendPopover />
+                            <Button variant="ghost" size="sm" onClick={() => setShowWorkflowGuide(false)} className="h-8 text-xs">
+                                Dismiss
+                            </Button>
+                        </div>
+                    </div>
+                )}
                 <TabsList className="grid w-full grid-cols-3 max-w-2xl bg-muted/60 p-1 rounded-xl">
                     <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <ClipboardList className="h-4 w-4 text-primary" />
-                        <span>Demand Harvesting</span>
+                        <span>Sales Order Demand</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                             {salesOrderLines.length}
                         </Badge>
@@ -798,7 +876,7 @@ export default function PlanningEngineeringModule() {
                     </TabsTrigger>
                     <TabsTrigger value="queue" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <Layers className="h-4 w-4 text-sky-500" />
-                        <span>Unreleased Job Orders</span>
+                        <span>Job Order Queue</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
                             {unreleasedJobs.length}
                         </Badge>
@@ -851,10 +929,10 @@ export default function PlanningEngineeringModule() {
                             <div className="space-y-1">
                                 <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
                                     <Layers className="h-5 w-5 text-primary" />
-                                    Unreleased Job Orders Queue
+                                    Job Order Queue
                                 </h2>
                                 <p className="text-sm text-muted-foreground">
-                                    Monitor Draft or Planned Job Orders waiting for raw material stock replenishment or crew planning.
+                                    Track scheduled and released Job Orders from release through staging. Each row shows the current stage and the next step.
                                 </p>
                             </div>
                             {loadingJobs && (
@@ -952,7 +1030,7 @@ export default function PlanningEngineeringModule() {
                                         <div><strong>Available Version Stock:</strong> {versionStock?.toLocaleString()}</div>
                                     </div>
                                     <p className="text-xs">
-                                        This action will immediately deduct inventory lots using FIFO selection, post negative ledger entries, and transition the Sales Order to &quot;For Invoicing&quot;. This cannot be undone.
+                                        This action will immediately deduct inventory lots using FIFO selection, post negative ledger entries, and transition the Sales Order to &quot;For Consolidation&quot; when all detail lines are fulfilled. This cannot be undone.
                                     </p>
                                 </div>
                             )}
@@ -1006,13 +1084,13 @@ export default function PlanningEngineeringModule() {
                                     Product: <span className="font-bold text-foreground">{activeFamilyJo?.product_name}</span> • Quantity: <span className="font-bold text-foreground">{activeFamilyJo?.quantity?.toLocaleString()} pcs</span>
                                 </DialogDescription>
                             </div>
-                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
-                                activeFamilyJo?.status === "Draft"
-                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                    : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                            }`}>
-                                {activeFamilyJo?.status}
-                            </span>
+                            <div className="flex flex-col items-end gap-2">
+                                <JobOrderStatusBadge status={activeFamilyJo?.status} className="px-3 py-1 text-xs font-bold" />
+                                <JobOrderJourneyBar
+                                    journey={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id })}
+                                    compact
+                                />
+                            </div>
                         </div>
 
                         {/* Family Job Order Switcher Bar */}
@@ -1045,6 +1123,11 @@ export default function PlanningEngineeringModule() {
 
                     {/* Body */}
                     <div className="flex-1 overflow-y-auto p-6 space-y-6 min-h-0 bg-muted/5">
+                        <NextStepCallout
+                            action={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).nextAction}
+                            blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).blockers}
+                            title="What's next"
+                        />
                         {isFamilyOverview ? (
                             /* DUAL / MULTI FAMILY VIEW: Render Parent & Child JOs side-by-side / stacked */
                             <div className="space-y-8">
@@ -1638,17 +1721,21 @@ export default function PlanningEngineeringModule() {
                             >
                                 Close Details
                             </Button>
-                            <Button
-                                onClick={handleReleaseCurrentView}
-                                disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
-                            >
-                                {releasingDraftId === activeFamilyJo?.order_id
-                                    ? "Releasing..."
-                                    : isFamilyOverview
-                                        ? `Release Entire Family (${1 + familyChildJobs.length} Job Orders)`
-                                        : "Release to Shop Floor"}
-                            </Button>
+                            {releasableFamilyMembers.length > 0 && (
+                                <Button
+                                    onClick={handleReleaseCurrentView}
+                                    disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
+                                >
+                                    {releasingDraftId === activeFamilyJo?.order_id
+                                        ? "Releasing..."
+                                        : isFamilyOverview
+                                            ? releasableFamilyMembers.length === 1 + familyChildJobs.length
+                                                ? `Release Entire Family (${releasableFamilyMembers.length} Job Orders)`
+                                                : `Release Releasable Members (${releasableFamilyMembers.length})`
+                                            : "Release to Shop Floor"}
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </DialogContent>

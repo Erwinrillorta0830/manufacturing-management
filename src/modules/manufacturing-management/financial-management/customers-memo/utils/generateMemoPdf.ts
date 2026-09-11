@@ -108,7 +108,6 @@ export async function generateMemoPdf(details: DetailedMemo, options: MemoPdfOpt
 
     const infoRows = [
         ["Customer:", header.customer_id?.customer_name],
-        ["Supplier:", header.supplier_id?.supplier_name],
         ["Salesman:", `${header.salesman_id?.salesman_code} — ${header.salesman_id?.salesman_name}`],
         ["Reason:", header.reason]
     ];

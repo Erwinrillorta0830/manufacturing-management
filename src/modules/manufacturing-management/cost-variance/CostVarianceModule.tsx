@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { TrendingUp, TrendingDown, ClipboardList, Hammer, AlertTriangle, CheckCircle, BarChart3, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
+import { FinishedGoodsLotSelect } from "../shared/FinishedGoodsLotSelect";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../shared/finished-goods-lots-api";
 
 interface CostVarianceJobOrder {
     jo_id: string;
@@ -41,6 +44,9 @@ export default function CostVarianceModule() {
     // Selection state for form
     const [selectedJoId, setSelectedJoId] = useState("");
     const [selectedJO, setSelectedJO] = useState<CostVarianceJobOrder | null>(null);
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [selectedMmLotId, setSelectedMmLotId] = useState<string>("");
+    const [loadingLots, setLoadingLots] = useState(false);
 
     // Logging form state
     const [form, setForm] = useState({
@@ -137,7 +143,15 @@ export default function CostVarianceModule() {
 
     // Filter job orders currently eligible for shopfloor log submissions
     const activeJOs = useMemo(() => {
-        return jobOrders.filter(jo => ["Ongoing", "Proceed", "On Hold"].includes(jo.status));
+        return jobOrders.filter(jo => isJobOrderStatus(
+            jo.status,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.ON_HOLD,
+            JOB_ORDER_STATUS.QA_HOLD
+        ));
     }, [jobOrders]);
 
     // Handle Job Order selection inside form
@@ -147,6 +161,8 @@ export default function CostVarianceModule() {
 
         if (!joId) {
             setSelectedJO(null);
+            setEligibleLots([]);
+            setSelectedMmLotId("");
             setForm({
                 expectedQty: "",
                 actualQty: "",
@@ -172,12 +188,34 @@ export default function CostVarianceModule() {
                 actualMaterialUsedKg: ""
             });
         }
+
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+        const eligibleBranchId = Number(jo?.branch_id || 0);
+        const eligibleProductId = Number(jo?.product_id || 0);
+        if (eligibleBranchId > 0 && eligibleProductId > 0) {
+            setLoadingLots(true);
+            fetchEligibleFinishedGoodsLots(eligibleBranchId, eligibleProductId)
+                .then((response) => {
+                    setEligibleLots(response.lots);
+                    setSelectedMmLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+                })
+                .catch((error) => {
+                    console.error("Error loading eligible finished-goods lots:", error);
+                    toast.error("Failed to load eligible storage lots.");
+                })
+                .finally(() => setLoadingLots(false));
+        }
     };
 
     const handleLogSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedJO || !form.actualQty) {
             toast.error("Please select a Job Order and input the actual produced quantity");
+            return;
+        }
+        if (!selectedMmLotId) {
+            toast.error("Select an existing storage lot for the finished-goods output.");
             return;
         }
 
@@ -193,6 +231,7 @@ export default function CostVarianceModule() {
                 productName: selectedJO.product_name,
                 quantityProduced: Number(form.actualQty),
                 branchId: Number(selectedJO.branch_id) || 182, // Default fallback branch
+                mmLotId: Number(selectedMmLotId),
                 lotNumber: form.lotNumber || `LOT-SF-${selectedJO.jo_id}`,
                 expirationDate: form.expirationDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
                 unitCost: Number(unitCost),
@@ -215,6 +254,8 @@ export default function CostVarianceModule() {
             // Reset states
             setSelectedJoId("");
             setSelectedJO(null);
+            setEligibleLots([]);
+            setSelectedMmLotId("");
             setForm({
                 expectedQty: "",
                 actualQty: "",
@@ -395,13 +436,26 @@ export default function CostVarianceModule() {
                                     </div>
                                 </div>
 
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Storage Lot</label>
+                                    <FinishedGoodsLotSelect
+                                        lots={eligibleLots}
+                                        value={selectedMmLotId}
+                                        onValueChange={setSelectedMmLotId}
+                                        loading={loadingLots}
+                                        disabled={!selectedJO}
+                                        placeholder="Select storage lot..."
+                                        className="h-9 w-full justify-between text-xs"
+                                    />
+                                </div>
+
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Lot Number</label>
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Batch No.</label>
                                         <input
                                             type="text"
                                             disabled={!selectedJO}
-                                            placeholder="Lot code"
+                                            placeholder="Batch code"
                                             value={form.lotNumber}
                                             onChange={e => setForm({...form, lotNumber: e.target.value})}
                                             className="w-full bg-background border rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary font-mono text-foreground"
@@ -446,7 +500,7 @@ export default function CostVarianceModule() {
 
                                 <button
                                     type="submit"
-                                    disabled={!selectedJO || submitting}
+                                    disabled={!selectedJO || submitting || !selectedMmLotId}
                                     className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/95 transition-all shadow-sm disabled:opacity-50"
                                 >
                                     {submitting ? (

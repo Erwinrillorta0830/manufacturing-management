@@ -10,6 +10,13 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/select";
+import {
     Table,
     TableBody,
     TableCell,
@@ -18,6 +25,18 @@ import {
     TableRow
 } from "@/components/ui/table";
 import { SalesOrderDetail } from "../types";
+import {
+    isProductionSchedulingStatus,
+    SALES_ORDER_TRANSITIONS
+} from "@/app/api/manufacturing/sales-order/_status";
+import { displayJobOrderStatus } from "../../job-order-status";
+
+const DEMAND_STATUS_OPTIONS = [
+    { value: "ALL", label: "All" },
+    ...Object.keys(SALES_ORDER_TRANSITIONS)
+        .filter((status) => status !== "Cancelled")
+        .map((status) => ({ value: status, label: status }))
+];
 
 interface DemandLinesTableProps {
     loadingOrders: boolean;
@@ -33,21 +52,25 @@ export function DemandLinesTable({
     handleSelectLine
 }: DemandLinesTableProps) {
     const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState("ALL");
 
-    // Filter lines based on search query (by product name, SO number, or customer name)
+    // Filter lines based on status and search query (by product name, SO number, or customer name)
     const filteredLines = useMemo(() => {
-        if (!searchQuery.trim()) return salesOrderLines;
+        const statusFilteredLines = statusFilter === "ALL"
+            ? salesOrderLines
+            : salesOrderLines.filter((line) => line.parent_order_status === statusFilter);
+        if (!searchQuery.trim()) return statusFilteredLines;
         const q = searchQuery.toLowerCase();
-        return salesOrderLines.filter(line => 
+        return statusFilteredLines.filter(line =>
             (line.product_id?.product_name || "").toLowerCase().includes(q) ||
             (line.order_no || "").toLowerCase().includes(q) ||
             (line.customer_name || "").toLowerCase().includes(q) ||
             (line.product_id?.product_code || "").toLowerCase().includes(q)
         );
-    }, [salesOrderLines, searchQuery]);
+    }, [salesOrderLines, searchQuery, statusFilter]);
 
     const isSchedulableLine = (line: SalesOrderDetail) =>
-        line.parent_order_status === "For Production" && line.is_scheduled !== true;
+        isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
     const selectableFilteredLines = filteredLines.filter(isSchedulableLine);
 
     return (
@@ -59,17 +82,31 @@ export function DemandLinesTable({
                         Unfulfilled Demand Lines
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        For Production demand can be scheduled; In Production demand remains visible for tracking.
+                        Filter Sales Order demand by status. Only For Production and In Production lines can be scheduled; other statuses are view-only.
                     </CardDescription>
                 </div>
-                <div className="relative w-full md:w-60 shrink-0">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search product or SO #..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-9 h-9 text-xs"
-                    />
+                <div className="flex w-full md:w-auto flex-col sm:flex-row gap-2 shrink-0">
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger className="w-full sm:w-[170px] h-9 text-xs" aria-label="Filter by Sales Order status">
+                            <SelectValue placeholder="Filter status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {DEMAND_STATUS_OPTIONS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <div className="relative w-full md:w-60">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search product or SO #..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-9 h-9 text-xs"
+                        />
+                    </div>
                 </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -118,7 +155,10 @@ export function DemandLinesTable({
                                     <TableHead className="font-bold text-xs">SO No.</TableHead>
                                     <TableHead className="font-bold text-xs">Product / Version</TableHead>
                                     <TableHead className="font-bold text-xs">Production Status</TableHead>
-                                    <TableHead className="font-bold text-xs text-right">Qty</TableHead>
+                                    <TableHead className="font-bold text-xs">Connected JO</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Ordered</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Planned</TableHead>
+                                    <TableHead className="font-bold text-xs text-right">Remaining</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody className="divide-y divide-border">
@@ -154,11 +194,44 @@ export function DemandLinesTable({
                                         </TableCell>
                                         <TableCell className="py-2 text-xs">
                                             <span className={isSchedulableLine(line) ? "font-semibold text-amber-700" : "font-semibold text-blue-700"}>
-                                                {line.is_scheduled ? "Already scheduled" : line.parent_order_status || "Unknown"}
+                                                {line.is_partially_scheduled
+                                                    ? "Partially scheduled"
+                                                    : line.is_scheduled
+                                                        ? "Fully scheduled"
+                                                        : line.parent_order_status || "Unknown"}
                                             </span>
                                         </TableCell>
+                                        <TableCell className="py-2 text-xs">
+                                            {line.parent_order_status === "For Production" ? (
+                                                <span className="text-muted-foreground">—</span>
+                                            ) : line.linkedJobOrders && line.linkedJobOrders.length > 0 ? (
+                                                <div className="space-y-1">
+                                                    {line.linkedJobOrders.map((jobOrder) => (
+                                                        <div key={jobOrder.jobOrderId}>
+                                                            <div className="font-mono font-semibold text-foreground">
+                                                                {jobOrder.jobOrderNo}
+                                                            </div>
+                                                            <div className="text-[10px] text-muted-foreground">
+                                                                {displayJobOrderStatus(jobOrder.status)}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-muted-foreground">No linked JO</span>
+                                            )}
+                                        </TableCell>
                                         <TableCell className="py-2 text-right font-bold text-xs">
-                                            <span>{line.ordered_quantity.toLocaleString()}</span>
+                                            {Number(line.ordered_quantity || 0).toLocaleString()}
+                                            <span className="text-[10px] text-muted-foreground font-normal ml-1 lowercase">
+                                                {line.product_id?.uom || "pcs"}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell className="py-2 text-right font-semibold text-xs text-amber-700">
+                                            {Number(line.planned_quantity || 0).toLocaleString()}
+                                        </TableCell>
+                                        <TableCell className="py-2 text-right font-bold text-xs text-emerald-700">
+                                            {(line.remaining_quantity ?? Math.max(0, Number(line.ordered_quantity || 0) - Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0)) - Number(line.planned_quantity || 0))).toLocaleString()}
                                             <span className="text-[10px] text-muted-foreground font-normal ml-1 lowercase">
                                                 {line.product_id?.uom || "pcs"}
                                             </span>

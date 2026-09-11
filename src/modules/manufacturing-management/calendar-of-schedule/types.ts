@@ -1,3 +1,5 @@
+import type { CanonicalJobOrderStatus } from "../job-order-status";
+
 export interface DailyBreakdownItem {
     day: number;
     date: string;
@@ -19,7 +21,7 @@ export interface JobOrder {
     product_name: string;
     quantity: number;
     due_date: string;
-    status: "Draft" | "Shortage" | "Proceed" | "Ongoing" | "Finished" | "On Hold" | "Cancelled";
+    status: CanonicalJobOrderStatus;
     is_batched?: boolean;
     bom?: unknown;
     routings?: RoutingStep[];

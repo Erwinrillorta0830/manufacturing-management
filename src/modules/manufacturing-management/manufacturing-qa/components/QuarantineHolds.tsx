@@ -11,6 +11,9 @@ import { ResponsiveDataView } from "./ResponsiveDataView";
 interface QuarantineHoldsProps {
     loadingDispositions: boolean;
     pendingHolds: DispositionRecord[];
+    dispositions: DispositionRecord[];
+    statusFilter: "pending" | "resolved" | "all";
+    onStatusFilterChange: (filter: "pending" | "resolved" | "all") => void;
     handleOpenOverrideDialog: (disp: DispositionRecord) => void;
     onFiltersChange?: (search: string) => void;
 }
@@ -18,15 +21,23 @@ interface QuarantineHoldsProps {
 export function QuarantineHolds({
     loadingDispositions,
     pendingHolds,
+    dispositions,
+    statusFilter,
+    onStatusFilterChange,
     handleOpenOverrideDialog,
     onFiltersChange
 }: QuarantineHoldsProps) {
     const [searchQuery, setSearchQuery] = React.useState("");
+    const statusRecords = React.useMemo(() => {
+        if (statusFilter === "pending") return pendingHolds;
+        if (statusFilter === "resolved") return dispositions.filter((hold) => hold.disposition_status !== "Pending");
+        return dispositions;
+    }, [statusFilter, pendingHolds, dispositions]);
     const visibleHolds = React.useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
-        if (!query) return pendingHolds;
-        return pendingHolds.filter((hold) => `${hold.jo_id} ${hold.product_name} ${hold.station_name || ""} ${hold.task_name} ${hold.inspection_remarks || ""}`.toLowerCase().includes(query));
-    }, [pendingHolds, searchQuery]);
+        if (!query) return statusRecords;
+        return statusRecords.filter((hold) => `${hold.jo_id} ${hold.product_name} ${hold.station_name || ""} ${hold.task_name} ${hold.inspection_remarks || ""}`.toLowerCase().includes(query));
+    }, [statusRecords, searchQuery]);
 
     const renderCard = (hold: DispositionRecord) => (
         <div key={hold.id} className="rounded-lg border border-destructive/20 bg-card p-4 shadow-xs">
@@ -55,9 +66,27 @@ export function QuarantineHolds({
                     Quarantined Batches & Override Locks
                 </CardTitle>
                 <CardDescription>
-                    Highlighted list of critical checklist parameter failures that blocked step completion and locked Job Orders.
+                    Critical checklist failures that blocked step completion, plus previously resolved override decisions.
                 </CardDescription>
                 <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
+                    <div className="flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Filter holds by status">
+                        {([
+                            { value: "pending", label: "Pending" },
+                            { value: "resolved", label: "Resolved" },
+                            { value: "all", label: "All" },
+                        ] as const).map((option) => (
+                            <Button
+                                key={option.value}
+                                type="button"
+                                variant={statusFilter === option.value ? "default" : "ghost"}
+                                size="sm"
+                                className="min-h-9 rounded-md px-3 text-xs font-bold"
+                                onClick={() => onStatusFilterChange(option.value)}
+                            >
+                                {option.label}
+                            </Button>
+                        ))}
+                    </div>
                     <div className="relative min-w-0 flex-1 md:w-64 md:flex-none">
                         <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                         <Input value={searchQuery} onChange={(event) => { const search = event.target.value; setSearchQuery(search); onFiltersChange?.(search); }} placeholder="Search holds..." aria-label="Search quarantine holds" className="h-11 pl-9 text-sm" />
@@ -73,10 +102,16 @@ export function QuarantineHolds({
                     </div>
                 ) : visibleHolds.length === 0 ? (
                     <div className="flex flex-col items-center justify-center p-16 border rounded-lg border-dashed text-center">
-                        <CheckCircle2 className="h-10 w-10 text-emerald-500 mb-3" />
-                        <h3 className="font-semibold text-lg text-foreground">Zero Active Holds</h3>
+                        <CheckCircle2 className={`h-10 w-10 mb-3 ${statusFilter === "resolved" ? "text-muted-foreground" : "text-emerald-500"}`} />
+                        <h3 className="font-semibold text-lg text-foreground">
+                            {statusFilter === "pending" ? "Zero Active Holds" : statusFilter === "resolved" ? "No Resolved Holds" : "No Holds Recorded"}
+                        </h3>
                         <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                            All production lines are currently passing critical parameter ranges. No quarantined batches require overrides.
+                            {statusFilter === "pending"
+                                ? "All production lines are currently passing critical parameter ranges. No quarantined batches require overrides."
+                                : statusFilter === "resolved"
+                                ? "No quarantine holds have been resolved yet. Resolved decisions appear here for audit."
+                                : "No quarantine holds match the current search."}
                         </p>
                     </div>
                 ) : (

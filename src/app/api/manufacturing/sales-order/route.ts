@@ -4,9 +4,10 @@ import { cookies } from "next/headers";
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import {
     addSalesOrderFilters,
+    detailRemainingQuantity,
     enrichSalesOrderReadModel,
     fetchDetailsForOrders,
-    findScheduledDetailIds,
+    findPlannedQuantities,
     isPlanningVisibleDetail,
     SALES_ORDER_FIELDS
 } from "./_read";
@@ -21,6 +22,7 @@ import {
     LEGACY_STATUS_MAP,
     mapStatus,
 } from "./_status";
+import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -580,20 +582,26 @@ export async function GET(request: Request) {
         const status = searchParams.get("status") || "";
         const selectedIdsParam = searchParams.get("selectedIds") || "";
         const excludeHasJo = searchParams.get("excludeHasJo") === "true";
+        const includeAllStatuses = searchParams.get("includeAllStatuses") === "true";
         const customerCode = searchParams.get("customerCode") || "";
         const dateFrom = searchParams.get("dateFrom") || "";
         const dateTo = searchParams.get("dateTo") || "";
 
+        const plannerStatuses = Object.keys(SALES_ORDER_TRANSITIONS)
+            .filter((orderStatus) => orderStatus !== "Cancelled")
+            .join(",");
         const filters = {
             search,
-            status: excludeHasJo ? "For Production,In Production" : status,
+            status: excludeHasJo
+                ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
+                : status,
             customerCode,
             dateFrom,
             dateTo
         };
         let salesOrders: any[] = [];
         let prefetchedDetails: any[] = [];
-        let scheduledDetailIds = new Set<number>();
+        let plannedQuantities = new Map<number, number>();
         let totalCount = 0;
         let countExact = true;
         let hasMore = false;
@@ -622,8 +630,10 @@ export async function GET(request: Request) {
                 if (candidates.length === 0) break;
 
                 const candidateDetails = await fetchDetailsForOrders(read, candidates.map((order: any) => Number(order.order_id)));
-                const chunkScheduledIds = await findScheduledDetailIds(read, candidateDetails);
-                chunkScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
+                const chunkPlannedQuantities = await findPlannedQuantities(read, candidateDetails);
+                for (const [detailId, quantity] of chunkPlannedQuantities) {
+                    plannedQuantities.set(detailId, quantity);
+                }
                 const detailsByOrder = new Map<number, any[]>();
                 for (const detail of candidateDetails) {
                     const detailOrderId = Number(detail.order_id);
@@ -634,8 +644,16 @@ export async function GET(request: Request) {
                 for (const candidate of candidates) {
                     const orderDetails = detailsByOrder.get(Number(candidate.order_id)) || [];
                     const eligibleOrderDetails = orderDetails.filter((detail) => {
-                        const isScheduled = chunkScheduledIds.has(Number(detail.detail_id || detail.id));
-                        return isPlanningVisibleDetail(detail, candidate.order_status, isScheduled);
+                        const detailId = Number(detail.detail_id || detail.id);
+                        const plannedQuantity = chunkPlannedQuantities.get(detailId) || 0;
+                        const isScheduled = detailRemainingQuantity(detail, plannedQuantity) <= 0;
+                        return isPlanningVisibleDetail(
+                            detail,
+                            candidate.order_status,
+                            isScheduled,
+                            plannedQuantity,
+                            includeAllStatuses
+                        );
                     });
                     if (eligibleOrderDetails.length > 0) {
                         eligibleOrders.push(candidate);
@@ -690,19 +708,28 @@ export async function GET(request: Request) {
             ? [...prefetchedDetails, ...(missingSelectedIds.length > 0 ? await fetchDetailsForOrders(read, missingSelectedIds) : [])]
             : await fetchDetailsForOrders(read, [...orderIdsToFetch]);
         if (excludeHasJo) {
-            const discoveredScheduledIds = await findScheduledDetailIds(read, details);
-            discoveredScheduledIds.forEach((detailId) => scheduledDetailIds.add(detailId));
+            plannedQuantities = await findPlannedQuantities(read, details);
             const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
             details = details.filter((detail: any) => {
                 const order = orderById.get(Number(detail.order_id));
+                const detailId = Number(detail.detail_id || detail.id);
+                const plannedQuantity = plannedQuantities.get(detailId) || 0;
                 return isPlanningVisibleDetail(
                     detail,
                     order?.order_status,
-                    scheduledDetailIds.has(Number(detail.detail_id || detail.id))
+                    detailRemainingQuantity(detail, plannedQuantity) <= 0,
+                    plannedQuantity,
+                    includeAllStatuses
                 );
             });
         }
-        const detailsMap = await enrichSalesOrderReadModel(read, contextOrders, details, scheduledDetailIds);
+        const detailsMap = await enrichSalesOrderReadModel(
+            read,
+            contextOrders,
+            details,
+            excludeHasJo ? plannedQuantities : undefined,
+            excludeHasJo
+        );
 
         const totalPages = Math.ceil(totalCount / limit);
 
@@ -1080,7 +1107,7 @@ export async function PATCH(request: Request) {
 
             const detailParams = new URLSearchParams({
                 "filter[order_id][_eq]": String(orderId),
-                fields: "detail_id,order_id,unit_price,ordered_quantity,net_amount,gross_amount,product_id,created_date",
+                fields: "detail_id,order_id,unit_price,ordered_quantity,allocated_quantity,served_quantity,net_amount,gross_amount,product_id,created_date",
                 limit: "-1"
             });
             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?${detailParams.toString()}`, {
@@ -1222,6 +1249,10 @@ export async function PATCH(request: Request) {
 
                 if (!SALES_ORDER_TRANSITIONS[current]?.includes(target)) {
                     throw new ApiError(409, `Cannot transition sales order from ${current} to ${target}.`);
+                }
+
+                if (target === "For Invoicing" && !areSalesOrderDetailsFullyFulfilled(allDetails)) {
+                    throw new ApiError(409, "Sales order cannot move to For Invoicing until every detail line is fully fulfilled.");
                 }
 
                 const isApprovalDecision = (current === "For Approval" || current === "On Hold")

@@ -21,8 +21,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLotTransfer } from "./hooks/useLotTransfer";
 import { LotTransferSearchableSelect } from "./components/LotTransferSearchableSelect";
+import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
 import type { BatchOption, DestinationBatchResolutionAction, LotBalanceSnapshot, LotOption, LotTransferMode, LotTransferStatus, LotTransferStatusHistory } from "./types";
 
 interface LotTransferModuleProps {
@@ -59,15 +62,12 @@ function formatQuantity(value: number | null | undefined) {
 
 function formatDate(value: string | null | undefined) {
     if (!value) return "-";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+    return formatPhtDate(value);
 }
 
 function formatDateTime(value: string | null | undefined) {
     if (!value) return "-";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+    return formatPhtTimestamp(value);
 }
 
 function uomLabel(unitId: number | null | undefined, lots: LotOption[]) {
@@ -218,6 +218,51 @@ function EmptyState({ message }: { message: string }) {
     return <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{message}</div>;
 }
 
+function LotTransferListSkeleton({ variant }: { variant: "cards" | "table" }) {
+    return (
+        <div role="status" aria-label="Loading lot-transfer records" className="space-y-2">
+            <span className="sr-only">Loading lot-transfer records...</span>
+            {variant === "table" ? (
+                <div className="overflow-hidden rounded-lg border" aria-hidden="true">
+                    <div className="grid grid-cols-5 gap-3 bg-muted/50 p-3">
+                        {Array.from({ length: 5 }, (_, index) => <Skeleton key={`lot-transfer-heading-${index}`} className="h-3" />)}
+                    </div>
+                    {Array.from({ length: 5 }, (_, rowIndex) => (
+                        <div key={`lot-transfer-row-${rowIndex}`} className="grid grid-cols-5 gap-3 border-t p-3">
+                            {Array.from({ length: 5 }, (_, cellIndex) => <Skeleton key={`lot-transfer-cell-${rowIndex}-${cellIndex}`} className="h-4" />)}
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                Array.from({ length: 4 }, (_, rowIndex) => (
+                    <div key={`lot-transfer-card-${rowIndex}`} className="space-y-3 rounded-lg border p-3" aria-hidden="true">
+                        <div className="flex items-center justify-between gap-3"><Skeleton className="h-4 w-32" /><Skeleton className="h-5 w-20 rounded-full" /></div>
+                        <Skeleton className="h-3 w-64 max-w-full" />
+                        <Skeleton className="h-3 w-48 max-w-full" />
+                        <Skeleton className="h-4 w-28" />
+                    </div>
+                ))
+            )}
+        </div>
+    );
+}
+
+function LotTransferListState({
+    controller,
+    emptyMessage,
+    variant,
+    children
+}: {
+    controller: LotTransferController;
+    emptyMessage: string;
+    variant: "cards" | "table";
+    children: ReactNode;
+}) {
+    if (controller.isLoading) return <LotTransferListSkeleton variant={variant} />;
+    if (controller.records.length === 0) return controller.error ? null : <EmptyState message={emptyMessage} />;
+    return <>{children}</>;
+}
+
 function ProtectedAllocationBreakdown({ snapshot }: { snapshot?: LotBalanceSnapshot }) {
     if (!snapshot) return null;
     const sourceLabels: Record<string, string> = {
@@ -347,6 +392,78 @@ function StatusHistoryTimeline({ controller, record }: { controller: LotTransfer
     );
 }
 
+function movementUserLabel(userId: number | null, users: LotTransferController["users"]) {
+    if (!userId) return "System";
+    return users.find((user) => user.id === userId)?.name || `User #${userId}`;
+}
+
+function movementLineLabel(detailId: number | null, record: LotTransferController["records"][number]) {
+    if (!detailId) return "Header / legacy line";
+    const detail = record.details.find((item) => item.detailId === detailId);
+    return detail ? `Line ${detail.lineNo}` : `Line detail #${detailId}`;
+}
+
+function MovementHistoryTimeline({ controller, record }: { controller: LotTransferController; record: LotTransferController["records"][number] }) {
+    const result = controller.movementHistory;
+    const groups = useMemo(() => {
+        const grouped = new Map<string, { label: string; rows: NonNullable<typeof result>["data"] }>();
+        for (const movement of result?.data || []) {
+            const key = movement.detailId ? String(movement.detailId) : "header";
+            const existing = grouped.get(key);
+            if (existing) existing.rows.push(movement);
+            else grouped.set(key, { label: movementLineLabel(movement.detailId, record), rows: [movement] });
+        }
+        return [...grouped.values()];
+    }, [record, result]);
+
+    return (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-label="Inventory movement history">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-semibold">Movement history</h3>
+                    <p className="text-xs text-muted-foreground">Authoritative inventory ledger entries grouped by transfer detail line.</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => void controller.loadMovementHistory(record.id)} disabled={controller.movementHistoryLoading}>
+                    <RefreshCw className={controller.movementHistoryLoading ? "animate-spin" : ""} />
+                    Refresh
+                </Button>
+            </div>
+            {controller.movementHistoryLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading inventory movements...</p>
+                : controller.movementHistoryError ? <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-red-700 dark:text-red-300"><span role="alert">{controller.movementHistoryError}</span><Button type="button" variant="outline" size="sm" onClick={() => void controller.loadMovementHistory(record.id)}>Retry</Button></div>
+                    : !result ? <p className="mt-3 text-sm text-muted-foreground">Select the Movement history tab to load the inventory ledger.</p>
+                        : <>
+                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                <span>Expected movements: <strong className="text-foreground">{result.expectedMovementCount}</strong></span>
+                                <span>Recorded movements: <strong className="text-foreground">{result.actualMovementCount}</strong></span>
+                                <span>Paired lines: <strong className="text-foreground">{result.pairedLineCount}/{result.expectedLineCount}</strong></span>
+                            </div>
+                            {result.reconciliationRequired && <p role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Movement reconciliation is required: the recorded ledger rows do not form the expected canonical OUT/IN pair for every transfer line.</p>}
+                            {groups.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No inventory movements are recorded for this transfer.</p> : <div className="mt-3 space-y-3">
+                                {groups.map((group) => <div key={group.label} className="rounded-lg border bg-background p-2">
+                                    <h4 className="px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h4>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[980px] text-left text-xs">
+                                            <thead className="border-y bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground"><tr><th className="px-2 py-2">Direction</th><th className="px-2 py-2">Transaction type</th><th className="px-2 py-2">Product</th><th className="px-2 py-2">MM lot</th><th className="px-2 py-2">Batch</th><th className="px-2 py-2">Quantity</th><th className="px-2 py-2">Created</th><th className="px-2 py-2">User</th><th className="px-2 py-2">Remarks</th></tr></thead>
+                                            <tbody className="divide-y">{group.rows.map((movement) => <tr key={movement.movementId}>
+                                                <td className="px-2 py-2 font-semibold">{movement.movementDirection}</td>
+                                                <td className="px-2 py-2 font-medium">{movement.transactionType}</td>
+                                                <td className="px-2 py-2">{productLabel(movement.productId, controller.products)}</td>
+                                                <td className="px-2 py-2">{movement.mmLotId ? lotLabel(movement.mmLotId, controller.lots) : "Not recorded"}</td>
+                                                <td className="px-2 py-2">{movement.batchNo || "-"}</td>
+                                                <td className="px-2 py-2">{formatQuantity(movement.quantity)}</td>
+                                                <td className="px-2 py-2">{formatDateTime(movement.createdAt)}</td>
+                                                <td className="px-2 py-2">{movementUserLabel(movement.createdBy, controller.users)}</td>
+                                                <td className="max-w-[260px] whitespace-pre-wrap px-2 py-2">{movement.remarks || movement.sourceDocumentNo || "-"}</td>
+                                            </tr>)}</tbody>
+                                        </table>
+                                    </div>
+                                </div>)}
+                            </div>}
+                        </>}
+        </div>
+    );
+}
+
 function RequestList({ controller, onCreate, onEdit, onViewStatus, onDelete }: {
     controller: LotTransferController;
     onCreate: () => void;
@@ -369,7 +486,7 @@ function RequestList({ controller, onCreate, onEdit, onViewStatus, onDelete }: {
                     </Button>
                 </div>
             </div>
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer requests found." /> : (
+            <LotTransferListState controller={controller} variant="table" emptyMessage="No lot-transfer requests found.">
                 <div className="overflow-x-auto rounded-lg border">
                     <table className="w-full min-w-[720px] text-left text-sm">
                         <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
@@ -394,7 +511,7 @@ function RequestList({ controller, onCreate, onEdit, onViewStatus, onDelete }: {
                         </tbody>
                     </table>
                 </div>
-            )}
+            </LotTransferListState>
         </section>
     );
 }
@@ -598,7 +715,9 @@ function ApprovalQueue({ controller, onReview }: {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-approval-queue-heading">
             <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-approval-queue-heading" className="font-semibold">Lot transfer QA status</h2><p className="text-xs text-muted-foreground">All transfer statuses remain visible. Submitted requests can be approved or rejected; other statuses are read-only.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records found." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
+            <LotTransferListState controller={controller} variant="cards" emptyMessage="No lot-transfer records found.">
+                <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>
+            </LotTransferListState>
         </section>
     );
 }
@@ -626,7 +745,7 @@ function ApprovalReview({ controller }: { controller: LotTransferController }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-qa-review-heading">
             {!record ? <EmptyState message="Select a transfer request to review its status and QA checks." /> : <>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDate(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-qa-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Requested {formatDateTime(record.requestedAt)} by {record.requestedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
                 <DestinationBatchPlan preview={preview} />
@@ -648,7 +767,9 @@ function PostingQueue({ controller, onReview }: {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-posting-queue-heading">
             <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lot-transfer-posting-queue-heading" className="font-semibold">Lot transfer posting status</h2><p className="text-xs text-muted-foreground">All transfer statuses remain visible. Approved requests can be posted; other statuses are read-only.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} /></Button></div>
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records found." /> : <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>}
+            <LotTransferListState controller={controller} variant="cards" emptyMessage="No lot-transfer records found.">
+                <div className="space-y-2">{controller.records.map((row) => <button type="button" key={row.id} onClick={() => onReview(row)} className={`w-full rounded-lg border p-3 text-left transition hover:border-primary ${controller.selectedId === row.id ? "border-primary bg-primary/5" : ""}`}><div className="flex items-center justify-between gap-2"><strong>{row.requestNo}</strong><StatusBadge status={row.status} /></div><div className="mt-2 text-xs text-muted-foreground">Transfer date: {formatDate(row.transferDate)} · UOM: {uomLabel(row.unitId, controller.lots)} · {row.lineCount} line(s)</div><div className="mt-1 text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} / {row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {lotLabel(row.targetLotId, controller.lots)} / {row.targetBatchNo}</div><div className="mt-1 text-sm">Total quantity: <strong>{formatQuantity(row.totalQuantity)}</strong></div></button>)}</div>
+            </LotTransferListState>
         </section>
     );
 }
@@ -665,7 +786,7 @@ function PostingReview({ controller }: { controller: LotTransferController }) {
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-posting-review-heading">
             {!record ? <EmptyState message="Select a transfer request to review its status and posting details." /> : <>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDate(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 id="lot-transfer-posting-review-heading" className="font-semibold">{record.requestNo}</h2><p className="text-xs text-muted-foreground">Transfer date {formatDate(record.transferDate)} · Approved {formatDateTime(record.approvedAt)} by {record.approvedByName || "System"}</p></div><StatusBadge status={record.status} /></div>
                 <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2 text-sm"><strong>{productLabel(record.productId, controller.products)}</strong><span className="text-muted-foreground"> | {branchLabel(record.branchId, controller.branches)} | UOM {uomLabel(record.unitId, controller.lots)}</span></div>
                 <LineSummary record={record} controller={controller} />
                 <DestinationBatchAudit record={record} />
@@ -767,17 +888,38 @@ function SummaryTable({ controller, onView }: {
     controller: LotTransferController;
     onView: (record: LotTransferController["records"][number]) => void;
 }) {
+    const firstRecordNumber = controller.totalCount === 0 ? 0 : controller.reportPage * controller.reportPageSize + 1;
+    const lastRecordNumber = Math.min((controller.reportPage + 1) * controller.reportPageSize, controller.totalCount);
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-summary-heading">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 id="lot-transfer-summary-heading" className="font-semibold">Master LOT Transfer Summary</h2><p className="text-xs text-muted-foreground">Searchable audit history for lot-transfer lifecycle records.</p></div><Button type="button" variant="outline" size="sm" onClick={() => void controller.refresh()} disabled={controller.isLoading}><RefreshCw className={controller.isLoading ? "animate-spin" : ""} />Refresh</Button></div>
             <SummaryReportFilters controller={controller} />
-            {controller.records.length === 0 ? <EmptyState message="No lot-transfer records match the selected report filters." /> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDate(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-3 text-xs text-muted-foreground" aria-label="Lot-transfer report pagination">
+                <span>{firstRecordNumber}-{lastRecordNumber} of {controller.totalCount} record(s)</span>
+                <div className="flex items-center gap-2">
+                    <span>Page {controller.reportPage + 1} of {controller.reportPageCount}</span>
+                    <Button type="button" variant="outline" size="sm" onClick={() => controller.goToReportPage(controller.reportPage - 1)} disabled={controller.reportPage === 0 || controller.isLoading}>Previous</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => controller.goToReportPage(controller.reportPage + 1)} disabled={controller.reportPage >= controller.reportPageCount - 1 || controller.isLoading}>Next</Button>
+                </div>
+            </div>
+            <LotTransferListState controller={controller} variant="table" emptyMessage="No lot-transfer records match the selected report filters.">
+                <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr><th className="px-3 py-2.5">Request</th><th className="px-3 py-2.5">Product / branch</th><th className="px-3 py-2.5">Source -&gt; target</th><th className="px-3 py-2.5">Qty</th><th className="px-3 py-2.5">Decision</th><th className="px-3 py-2.5">Audit</th></tr></thead><tbody className="divide-y">{controller.records.map((row) => <tr key={row.id} className={controller.selectedId === row.id ? "bg-primary/5" : ""}><td className="px-3 py-2.5 font-semibold">{row.requestNo}<br /><span className="text-xs text-muted-foreground">Transfer: {formatDate(row.transferDate)}<br />Requested: {formatDateTime(row.requestedAt)}<br />{row.lineCount} line(s)</span></td><td className="px-3 py-2.5">{productLabel(row.productId, controller.products)}<br /><span className="text-xs text-muted-foreground">{branchLabel(row.branchId, controller.branches)} · UOM {uomLabel(row.unitId, controller.lots)}</span></td><td className="px-3 py-2.5">{row.sourceBatchNo} <ArrowRight className="mx-1 inline h-3 w-3" /> {row.targetBatchNo}<br /><span className="text-xs text-muted-foreground">{lotLabel(row.sourceLotId, controller.lots)} -&gt; {lotLabel(row.targetLotId, controller.lots)}</span></td><td className="px-3 py-2.5">{formatQuantity(row.totalQuantity)}</td><td className="px-3 py-2.5"><StatusBadge status={row.status} /></td><td className="px-3 py-2.5"><Button type="button" variant="outline" size="sm" onClick={() => onView(row)}><Eye />View</Button></td></tr>)}</tbody></table></div>
+            </LotTransferListState>
         </section>
     );
 }
 
 function SummaryAudit({ controller, allowCancel = false }: { controller: LotTransferController; allowCancel?: boolean }) {
     const record = controller.selectedRecord;
+    const [auditTab, setAuditTab] = useState("approval");
+
+    const handleAuditTabChange = (value: string) => {
+        setAuditTab(value);
+        if (value === "movement" && record && !controller.movementHistory && !controller.movementHistoryLoading) {
+            void controller.loadMovementHistory(record.id);
+        }
+    };
+
     return (
         <section className={panelClassName} aria-labelledby="lot-transfer-audit-heading">
             {!record ? <EmptyState message="Select a terminal request to view its audit record." /> : <>
@@ -805,14 +947,14 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     <div><dt className="text-xs text-muted-foreground">Target balance</dt><dd>{formatQuantity(record.targetBalanceBefore)} -&gt; {formatQuantity(record.targetBalanceAfter)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Effective expiry</dt><dd>{formatDate(record.effectiveExpiryDate)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Submitted by</dt><dd>{record.submittedBy || "System"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDate(record.submittedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDate(record.approvedAt)}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDate(record.postedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Submitted at</dt><dd>{formatDateTime(record.submittedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Approved at</dt><dd>{formatDateTime(record.approvedAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Posted at</dt><dd>{formatDateTime(record.postedAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Posted by</dt><dd>{record.postedByName || record.postedBy || "Not posted"}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDate(record.cancelledAt)}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Cancelled at</dt><dd>{formatDateTime(record.cancelledAt)}</dd></div>
                     <div><dt className="text-xs text-muted-foreground">Cancelled by</dt><dd>{record.cancelledByName || record.cancelledBy || "Not cancelled"}</dd></div>
                     {record.reversalOfId !== null && <div><dt className="text-xs text-muted-foreground">Reversal of</dt><dd className="font-semibold">Transfer #{record.reversalOfId}</dd></div>}
-                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDate(record.reversedAt)}</dd></div>}
+                    {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed at</dt><dd>{formatDateTime(record.reversedAt)}</dd></div>}
                     {record.reversedAt && <div><dt className="text-xs text-muted-foreground">Reversed by</dt><dd>{record.reversedByName || record.reversedBy || "System"}</dd></div>}
                 </dl>
                 <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-sm">
@@ -823,7 +965,14 @@ function SummaryAudit({ controller, allowCancel = false }: { controller: LotTran
                     {record.reversalReason && <><strong className="mt-3 block">Reversal reason</strong><p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reversalReason}</p></>}
                     {record.postingError && <><strong className="mt-3 block text-red-700">Posting error</strong><p className="mt-1 whitespace-pre-wrap text-red-700">{record.postingError}</p></>}
                 </div>
-                <StatusHistoryTimeline controller={controller} record={record} />
+                <Tabs value={auditTab} onValueChange={handleAuditTabChange} className="mt-4" aria-label="Lot-transfer audit history">
+                    <TabsList className="w-full sm:w-fit">
+                        <TabsTrigger value="approval">Approval history</TabsTrigger>
+                        <TabsTrigger value="movement">Movement history</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="approval"><StatusHistoryTimeline controller={controller} record={record} /></TabsContent>
+                    <TabsContent value="movement"><MovementHistoryTimeline controller={controller} record={record} /></TabsContent>
+                </Tabs>
                 <div className="mt-4 flex justify-end gap-2">
                     <ReverseTransferAction controller={controller} record={record} />
                     {allowCancel && <CancelTransferAction controller={controller} record={record} />}
@@ -926,7 +1075,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogTitle>Lot transfer status</DialogTitle>
                         <DialogDescription>Read-only status and audit details for the selected transfer request.</DialogDescription>
                     </DialogHeader>
-                    <SummaryAudit controller={controller} allowCancel />
+                    <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} allowCancel />
                 </DialogContent>
             </Dialog>}
             {mode === "approval" && <Dialog open={approvalDialogOpen} onOpenChange={(open) => open ? setApprovalDialogOpen(true) : closeApprovalDialog()}>
@@ -953,7 +1102,7 @@ export default function LotTransferModule({ mode, userBranchId }: LotTransferMod
                         <DialogTitle>Lot transfer audit</DialogTitle>
                         <DialogDescription>Read-only details for the selected terminal transfer request.</DialogDescription>
                     </DialogHeader>
-                    <SummaryAudit controller={controller} />
+                    <SummaryAudit key={controller.selectedId ?? "empty"} controller={controller} />
                 </DialogContent>
             </Dialog>}
             <div className="mt-auto flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><ClipboardCheck className="h-4 w-4" />Draft and rejection operations do not change inventory. Approval authorizes the request; posting creates one source OUT and one target IN movement.</div>

@@ -21,12 +21,15 @@ export const getInvoiceAllocationCapacity = (invoiceBalance: number, appliedElse
 export const capSettlementAllocation = (
     requestedAmount: number,
     sourceAvailable: number,
-    invoiceAvailable: number
+    invoiceAvailable?: number
 ) => {
     const requestedCents = Math.max(0, toCurrencyCents(Math.abs(requestedAmount)));
     const sourceCents = Math.max(0, toCurrencyCents(sourceAvailable));
-    const invoiceCents = Math.max(0, toCurrencyCents(invoiceAvailable));
-    return Math.min(requestedCents, sourceCents, invoiceCents) / 100;
+    if (invoiceAvailable !== undefined) {
+        const invoiceCents = Math.max(0, toCurrencyCents(invoiceAvailable));
+        return Math.min(requestedCents, sourceCents, invoiceCents) / 100;
+    }
+    return Math.min(requestedCents, sourceCents) / 100;
 };
 
 export const getInvoiceSettlementCap = (invoice: UnpaidInvoice) => roundCurrency(Math.max(
@@ -60,7 +63,7 @@ export const findUnderAllocatedInvoice = (
 export const findOverAllocatedInvoice = (
     invoices: UnpaidInvoice[],
     allocations: SettlementAllocation[]
-) => invoices.find(invoice => {
+): UnpaidInvoice | undefined => invoices.find(invoice => {
     const required = getInvoiceRequiredBalance(invoice);
     const applied = getInvoiceAppliedForSettlement(allocations, invoice.id);
     return applied - required > SETTLEMENT_BALANCE_TOLERANCE;
@@ -85,3 +88,44 @@ export const getCartBalanceTotals = (
         difference: roundCurrency(required - applied),
     };
 };
+
+export interface UnallocatedPoolItem {
+    id: string;
+    label: string;
+    type: string;
+    originalAmount: number;
+    allocatedAmount: number;
+    unallocatedAmount: number;
+}
+
+export const getUnallocatedPoolItems = (
+    wallet: { id: string; label: string; type: string; originalAmount: number }[],
+    allocations: SettlementAllocation[]
+): UnallocatedPoolItem[] => {
+    return wallet.map(w => {
+        const normId = w.id.toLowerCase();
+        const allocatedAmount = roundCurrency(
+            allocations
+                .filter(a => a.sourceTempId?.toLowerCase() === normId || a.sourceTempId === w.id)
+                .reduce((sum, a) => sum + Number(a.amountApplied || 0), 0)
+        );
+        const unallocatedAmount = roundCurrency(Math.max(0, w.originalAmount - allocatedAmount));
+        return {
+            id: w.id,
+            label: w.label,
+            type: w.type,
+            originalAmount: w.originalAmount,
+            allocatedAmount,
+            unallocatedAmount,
+        };
+    }).filter(item => item.unallocatedAmount > SETTLEMENT_BALANCE_TOLERANCE);
+};
+
+export const getUnallocatedPoolTotal = (
+    wallet: { id: string; label: string; type: string; originalAmount: number }[],
+    allocations: SettlementAllocation[]
+): number => {
+    const unallocatedItems = getUnallocatedPoolItems(wallet, allocations);
+    return roundCurrency(unallocatedItems.reduce((sum, item) => sum + item.unallocatedAmount, 0));
+};
+

@@ -43,7 +43,6 @@ export default function PrintablesMatrixTable({
     priceTypes, 
     units, 
     usedUnitIds,
-    usedPriceTypeKeys,
     selectedPriceTypeIds = []
 }: Props) {
     if (loading) {
@@ -100,7 +99,7 @@ export default function PrintablesMatrixTable({
     if (rows.length === 0) return <div className="p-8 text-center text-muted-foreground">No products found.</div>;
 
     const visibleUnits = getVisibleMatrixUnits(units, usedUnitIds);
-    const activePriceTypes = getVisibleMatrixPriceTypes(priceTypes, selectedPriceTypeIds, usedPriceTypeKeys);
+    const activePriceTypes = getVisibleMatrixPriceTypes(priceTypes, selectedPriceTypeIds);
     const totalMatrixCols = activePriceTypes.length * (visibleUnits.length || 1);
 
     return (

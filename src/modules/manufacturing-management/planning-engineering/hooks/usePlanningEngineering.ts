@@ -1,11 +1,39 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { isProductionSchedulingStatus } from "@/app/api/manufacturing/sales-order/_status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
 function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return line.parent_order_status === "For Production" && line.is_scheduled !== true;
+    return isProductionSchedulingStatus(line.parent_order_status) && remainingQuantity(line) > 0;
+}
+
+function remainingQuantity(line: SalesOrderDetail): number {
+    const ordered = Number(line.ordered_quantity || 0);
+    const allocated = Number(line.allocated_quantity || 0);
+    const served = Number(line.served_quantity || 0);
+    const planned = Number(line.planned_quantity || 0);
+    const resolved = Number(line.remaining_quantity);
+    if (Number.isFinite(resolved)) return Math.max(0, resolved);
+    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
+    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
+}
+
+function salesOrderDateValue(value: string | undefined): number {
+    const timestamp = Date.parse(value || "");
+    return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareNewestSalesOrders(left: SalesOrder, right: SalesOrder): number {
+    const createdDateDifference = salesOrderDateValue(right.created_date) - salesOrderDateValue(left.created_date);
+    if (createdDateDifference !== 0) return createdDateDifference;
+
+    const orderDateDifference = salesOrderDateValue(right.order_date) - salesOrderDateValue(left.order_date);
+    if (orderDateDifference !== 0) return orderDateDifference;
+
+    return Number(right.order_id) - Number(left.order_id);
 }
 
 export function usePlanningEngineering() {
@@ -49,6 +77,9 @@ export function usePlanningEngineering() {
     const [rawUnreleasedJobs, setRawUnreleasedJobs] = useState<any[]>([]);
     const [loadingJobs, setLoadingJobs] = useState(false);
     const [releasingDraftId, setReleasingDraftId] = useState<string | null>(null);
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
+    const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -64,8 +95,18 @@ export function usePlanningEngineering() {
             const res = await fetch("/api/manufacturing/planning-engineering");
             if (res.ok) {
                 const data = await res.json();
-                const draftOrPlanned = data.filter((j: any) => j.status === "Draft" || j.status === "Planned" || j.status === "Planning");
-                setRawUnreleasedJobs(draftOrPlanned);
+                // The queue keeps released Job Orders visible so users can see
+                // where they moved after scheduling instead of losing them.
+                const queuedJobs = data.filter((j: any) => isJobOrderStatus(
+                    j.status,
+                    JOB_ORDER_STATUS.DRAFT,
+                    JOB_ORDER_STATUS.PLANNED,
+                    JOB_ORDER_STATUS.PLANNING,
+                    JOB_ORDER_STATUS.RELEASED,
+                    JOB_ORDER_STATUS.PROCEED,
+                    JOB_ORDER_STATUS.RESERVED
+                ));
+                setRawUnreleasedJobs(queuedJobs);
             }
         } catch (err) {
             console.error("Error loading unreleased job orders:", err);
@@ -87,8 +128,16 @@ export function usePlanningEngineering() {
             });
             const data = await res.json();
             if (!res.ok || data.success === false) {
-                const shortfallMsg = data.error || "Failed to release job order.";
-                if (window.confirm(`${shortfallMsg}\n\nDo you want to forcibly release this Job Order anyway?`)) {
+                const errorMsg = data.error || "Failed to release job order.";
+                // Only material shortfalls offer the force-release escape hatch;
+                // other failures (e.g. wrong status, missing branch) must not
+                // prompt for a forced release that cannot succeed.
+                const isShortfall = /Still insufficient raw materials/i.test(errorMsg);
+                if (!isShortfall) {
+                    toast.error(errorMsg);
+                    return;
+                }
+                if (window.confirm(`${errorMsg}\n\nDo you want to forcibly release this Job Order anyway?`)) {
                     const forceRes = await fetch("/api/manufacturing/planning-engineering", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -102,13 +151,13 @@ export function usePlanningEngineering() {
                     if (!forceRes.ok || forceData.success === false) {
                         throw new Error(forceData.error || "Failed to forcibly release job order.");
                     }
-                    toast.success("Job Order forcibly released successfully!");
+                    toast.success("Job Order forcibly released. It stays in the queue — next step: stage materials.");
                     await loadInitialData(true);
                     return;
                 }
                 return;
             }
-            toast.success("Job Order released successfully!");
+            toast.success("Job Order released. Next step: stage its materials on the shop floor.");
             await loadInitialData(true);
         } catch (err: any) {
             console.error("Failed to release Draft JO:", err);
@@ -126,13 +175,21 @@ export function usePlanningEngineering() {
             setLoadingJobs(true);
         }
         try {
-            const [activeBranches, soResult, draftOrPlanned] = await Promise.all([
+            const [activeBranches, soResult, queuedJobs] = await Promise.all([
                 fetchBranches(),
                 fetchSalesOrders(),
                 fetch("/api/manufacturing/planning-engineering").then(async (res) => {
                     if (res.ok) {
                         const data = await res.json();
-                        return data.filter((j: any) => j.status === "Draft" || j.status === "Planned" || j.status === "Planning");
+                        return data.filter((j: any) => isJobOrderStatus(
+                            j.status,
+                            JOB_ORDER_STATUS.DRAFT,
+                            JOB_ORDER_STATUS.PLANNED,
+                            JOB_ORDER_STATUS.PLANNING,
+                            JOB_ORDER_STATUS.RELEASED,
+                            JOB_ORDER_STATUS.PROCEED,
+                            JOB_ORDER_STATUS.RESERVED
+                        ));
                     }
                     return [];
                 }).catch(() => [])
@@ -145,7 +202,7 @@ export function usePlanningEngineering() {
 
             setSalesOrders(soResult.data || []);
             setDetailsMap(soResult.detailsMap || {});
-            setRawUnreleasedJobs(draftOrPlanned);
+            setRawUnreleasedJobs(queuedJobs);
         } catch (err: any) {
             console.error("Error loading initial data:", err);
             toast.error(err.message || "An error occurred while loading planning data.");
@@ -161,6 +218,26 @@ export function usePlanningEngineering() {
     useEffect(() => {
         loadInitialData();
     }, []);
+
+    // Deep link support: /mm/planning-engineering?jo=JO-XXXX selects the
+    // Job Order's branch and opens its planning details.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        setPendingDeepLinkJo(params.get("jo"));
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || loadingJobs) return;
+        const match = rawUnreleasedJobs.find((jo: any) => String(jo.jo_id || jo.job_order_no || "") === pendingDeepLinkJo);
+        if (match) {
+            setSelectedBranchId(Number(match.branch_id) || null);
+            setDeepLinkJo(match);
+        } else {
+            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the planning queue. It may already be released or in production, belongs to another branch, or does not exist.`);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, rawUnreleasedJobs, loadingJobs]);
 
     // Establish Realtime SSE (Server-Sent Events) Connection for inventory movements
     useEffect(() => {
@@ -230,7 +307,7 @@ export function usePlanningEngineering() {
     const salesOrderLines = useMemo(() => {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
-        salesOrders.forEach((so) => {
+        [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }
@@ -461,22 +538,19 @@ export function usePlanningEngineering() {
         const targetProductId = firstLine.product_id?.product_id;
         
         // Sum total demand
-        const totalDemand = selectedLines.reduce((sum, l) => {
-            return sum + Number(l.ordered_quantity || 0);
-        }, 0);
-
-        // Find matching shortfall if any to prefill target quantity
-        const matchingShortfall = netRequirements.find(
-            (r) => r.product_id === targetProductId
-        );
-        const suggestedQty = matchingShortfall && matchingShortfall.net_shortfall > 0 
-            ? matchingShortfall.net_shortfall 
-            : totalDemand;
+        // Sales-Order-linked JO quantity is authoritative: it is the sum of
+        // each selected line's remaining unfulfilled quantity. Net
+        // requirements may inform planning, but must not change this link.
+        const totalRemaining = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (totalRemaining <= 0) {
+            toast.error("The selected Sales Order lines have no remaining quantity to schedule.");
+            return;
+        }
 
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(suggestedQty);
+        setTargetQuantity(totalRemaining);
         setJoNumber(code);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption("8");
@@ -487,6 +561,12 @@ export function usePlanningEngineering() {
     // Release JO Submit
     const handleConfirmRelease = async (selectedSubAssemblyVersions?: Record<number, number>) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
+
+        const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity) {
+            toast.error(`Enter a Job Order quantity from 1 to ${maxAvailableQuantity.toLocaleString()}.`);
+            return;
+        }
 
         setReleasingJO(true);
         try {
@@ -528,9 +608,13 @@ export function usePlanningEngineering() {
                 salesOrderDetailIds: selectedLines.map((line) => line.detail_id)
             };
 
-            await releaseJobOrder(payload);
+            const result = await releaseJobOrder(payload);
 
-            toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+            if (result.status === JOB_ORDER_STATUS.DRAFT) {
+                toast.warning(`Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
+            } else {
+                toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+            }
             setIsConfirmOpen(false);
             setSelectedDetailIds([]);
             // Reload data to show updated unfulfilled lines & requirements
@@ -565,7 +649,7 @@ export function usePlanningEngineering() {
                 recipeVersionId: targetVersionId,
                 lines: selectedLines.map(l => ({
                     detail_id: l.detail_id,
-                    ordered_quantity: l.ordered_quantity
+                    ordered_quantity: remainingQuantity(l)
                 }))
             };
  
@@ -668,6 +752,10 @@ export function usePlanningEngineering() {
         joNumber,
         setJoNumber,
         loadInitialData,
+        deepLinkJo,
+        clearDeepLinkJo: () => setDeepLinkJo(null),
+        deepLinkNotice,
+        setDeepLinkNotice,
         salesOrderLines,
         selectedLines,
         mergeValidation,

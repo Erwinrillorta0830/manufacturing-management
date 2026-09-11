@@ -294,6 +294,17 @@ export function PouchDetailSheet({ pouch, isOpen, onClose, onPrint, isPrinting =
                                                                 </tr>
                                                             )}
 
+                                                            {!!invoice.ewtAmount && invoice.ewtAmount > 0 && (
+                                                                <tr className="border-none hover:bg-transparent">
+                                                                    <td colSpan={3} className="py-2 pl-5">
+                                                                        <div className="ml-4 flex items-center gap-2.5 border-l-2 border-amber-300 pl-3 text-[11px] font-semibold text-amber-700">
+                                                                            <CornerDownRight size={14} className="opacity-60" /> EWT / Form 2307 Applied {invoice.ewtRef ? `(Ref: ${invoice.ewtRef})` : ""}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="py-2 pr-5 text-right font-mono text-[11px] font-medium text-amber-700">- {formatMoney(invoice.ewtAmount)}</td>
+                                                                </tr>
+                                                            )}
+
                                                             <tr className="border-b border-border/60">
                                                                 <td colSpan={3} className="py-3 pl-5">
                                                                     <div className="ml-4 flex items-center gap-2.5 border-l-2 border-emerald-300 pl-3 text-[11px] font-black text-emerald-700">

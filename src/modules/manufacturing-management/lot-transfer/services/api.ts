@@ -9,7 +9,9 @@ import type {
     ProductOption,
     UserOption,
     LotTransferStatus,
-    LotTransferStatusHistory
+    LotTransferStatusHistory,
+    LotTransferMovementDirection,
+    LotTransferMovementHistoryResult
 } from "../types";
 
 interface ApiEnvelope<T> {
@@ -78,6 +80,8 @@ export async function fetchLotTransfers(options: {
     requestedBy?: number;
     approvedBy?: number;
     postedBy?: number;
+    limit?: number;
+    offset?: number;
 } = {}): Promise<LotTransferListResponse> {
     const params = new URLSearchParams();
     const statusValue = Array.isArray(options.status) ? options.status.join(",") : options.status;
@@ -96,7 +100,8 @@ export async function fetchLotTransfers(options: {
     if (options.requestedBy && options.requestedBy > 0) params.set("requestedBy", String(options.requestedBy));
     if (options.approvedBy && options.approvedBy > 0) params.set("approvedBy", String(options.approvedBy));
     if (options.postedBy && options.postedBy > 0) params.set("postedBy", String(options.postedBy));
-    params.set("limit", "500");
+    params.set("limit", String(Math.min(500, Math.max(1, options.limit ?? 500))));
+    params.set("offset", String(Math.max(0, options.offset ?? 0)));
     const payload = await requestJson<ApiEnvelope<LotTransfer[]>>(`/api/manufacturing/lot-transfers?${params.toString()}`);
     return {
         data: Array.isArray(payload.data) ? payload.data : [],
@@ -144,6 +149,42 @@ export async function fetchLotTransferStatusHistory(id: number): Promise<LotTran
             remarks: stringValue(row.remarks)
         };
     }).filter((row) => row.id > 0 && row.lotTransferId === id && row.changedAt && row.newStatus);
+}
+
+export async function fetchLotTransferMovementHistory(id: number): Promise<LotTransferMovementHistoryResult> {
+    const payload = await requestJson<LotTransferMovementHistoryResult & { success?: boolean }>(`/api/manufacturing/lot-transfers/${id}/movement-history`);
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    return {
+        data: rows.map((row) => {
+            const raw = row as unknown as Record<string, unknown>;
+            const direction = String(row.movementDirection ?? raw.movement_direction ?? "UNKNOWN").toUpperCase();
+            const movementDirection: LotTransferMovementDirection = direction === "IN" || direction === "OUT" ? direction : "UNKNOWN";
+            return {
+                movementId: numberValue(row.movementId ?? raw.movement_id),
+                lotTransferId: numberValue(row.lotTransferId ?? raw.lot_transfer_id),
+                detailId: numberValue(row.detailId ?? raw.detail_id) || null,
+                transactionTypeId: numberValue(row.transactionTypeId ?? raw.transaction_type_id) || null,
+                transactionType: stringValue(row.transactionType ?? raw.transaction_type ?? "UNKNOWN_TRANSACTION_TYPE"),
+                movementDirection,
+                sourceDocumentNo: stringValue(row.sourceDocumentNo ?? raw.source_document_no) || null,
+                productId: numberValue(row.productId ?? raw.product_id),
+                branchId: numberValue(row.branchId ?? raw.branch_id),
+                mmLotId: numberValue(row.mmLotId ?? raw.mm_lot_id) || null,
+                batchNo: stringValue(row.batchNo ?? raw.batch_no),
+                quantity: numberValue(row.quantity),
+                manufacturingDate: stringValue(row.manufacturingDate ?? raw.manufacturing_date) || null,
+                expirationDate: stringValue(row.expirationDate ?? raw.expiration_date ?? raw.expiry_date) || null,
+                createdBy: numberValue(row.createdBy ?? raw.created_by) || null,
+                createdAt: stringValue(row.createdAt ?? raw.created_at) || null,
+                remarks: stringValue(row.remarks) || null
+            };
+        }).filter((row) => row.movementId > 0 && row.lotTransferId === id),
+        expectedMovementCount: numberValue(payload.expectedMovementCount),
+        actualMovementCount: numberValue(payload.actualMovementCount),
+        expectedLineCount: numberValue(payload.expectedLineCount),
+        pairedLineCount: numberValue(payload.pairedLineCount),
+        reconciliationRequired: Boolean(payload.reconciliationRequired)
+    };
 }
 
 export async function createLotTransfer(form: LotTransferForm): Promise<LotTransfer> {
@@ -312,7 +353,7 @@ export async function fetchLots(branchId?: number): Promise<LotOption[]> {
 }
 
 export async function fetchBatches(lotId: number): Promise<BatchOption[]> {
-    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?lotId=${encodeURIComponent(String(lotId))}`);
+    const payload = await requestJson<unknown>(`/api/manufacturing/lots/batches?lotId=${encodeURIComponent(String(lotId))}&source=lot-transfer`);
     const rows = Array.isArray(payload) ? payload : unwrap<BatchOption[]>(payload as ApiEnvelope<BatchOption[]>);
     return (Array.isArray(rows) ? rows : [])
         .map((row) => {

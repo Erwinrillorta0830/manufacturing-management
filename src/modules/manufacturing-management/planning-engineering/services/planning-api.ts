@@ -29,7 +29,7 @@ export async function fetchBranches(): Promise<Branch[]> {
 }
 
 export async function fetchSalesOrders(): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
-    const soRes = await fetch("/api/manufacturing/sales-order?excludeHasJo=true&limit=200");
+    const soRes = await fetch("/api/manufacturing/sales-order?excludeHasJo=true&includeAllStatuses=true&limit=200");
     if (!soRes.ok) {
         throw new Error("Failed to fetch unfulfilled sales orders.");
     }
@@ -97,7 +97,13 @@ export interface ReleaseJOPayload {
     salesOrderDetailIds: number[];
 }
 
-export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<void> {
+export interface ReleaseJOResult {
+    jo_id?: string | null;
+    status?: string;
+    shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
+}
+
+export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<ReleaseJOResult> {
     const res = await fetch("/api/manufacturing/planning-engineering", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -107,6 +113,8 @@ export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<void> 
         const errData = await res.json();
         throw new Error(errData.error || "Failed to release Job Order.");
     }
+    const json = await res.json().catch(() => null);
+    return json?.data ?? {};
 }
 
 export async function directAllocate(payload: {

@@ -9,7 +9,10 @@ import {
     JobOrderStatusHistoryRecord, 
     RejectionReason, 
     MaterialGenealogyRecord,
-    ShiftRunLogPayload 
+    ShiftRunLogPayload,
+    JobOrderCancellationPayload,
+    JobOrderCancellationPreview,
+    JobOrderCancellationResponse
 } from "../types";
 
 export type { ShiftRunLogPayload };
@@ -188,4 +191,33 @@ export async function fetchGenealogyAndMovements(joId: string | number, batchNo?
         genealogy: json.genealogy || [],
         movements: json.movements || []
     };
+}
+
+export async function fetchJobOrderCancellationPreview(joId: string | number): Promise<JobOrderCancellationPreview> {
+    const res = await fetch(
+        `/api/manufacturing/production/job-order-cancellation?joId=${encodeURIComponent(String(joId))}`,
+        { cache: "no-store" }
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to load the Job Order cancellation preview.");
+    return json.data;
+}
+
+async function submitJobOrderCancellation(payload: JobOrderCancellationPayload): Promise<JobOrderCancellationResponse> {
+    const res = await fetch("/api/manufacturing/production/job-order-cancellation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to process the Job Order cancellation.");
+    return json.data;
+}
+
+export async function cancelJobOrder(joId: string | number, reason: string): Promise<JobOrderCancellationResponse> {
+    return submitJobOrderCancellation({ action: "cancel-and-return", joId, reason });
+}
+
+export async function returnJobOrderMaterials(joId: string | number, reason?: string): Promise<JobOrderCancellationResponse> {
+    return submitJobOrderCancellation({ action: "return-materials", joId, reason });
 }

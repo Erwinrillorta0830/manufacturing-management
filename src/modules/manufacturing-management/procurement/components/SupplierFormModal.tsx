@@ -39,7 +39,12 @@ export default function SupplierFormModal({
     onCreateSupplier
 }: SupplierFormModalProps) {
     const [isSubmittingSupplier, setIsSubmittingSupplier] = useState(false);
+    const [mounted, setMounted] = useState(false);
     const supplierSubmitLock = useRef(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     const [provinces, setProvinces] = useState<PSGCItem[]>([]);
     const [cities, setCities] = useState<PSGCItem[]>([]);
@@ -283,6 +288,8 @@ export default function SupplierFormModal({
             }
         }
     }, [isOpen, isPH, barangays, supplierForm.brgy, selectedBarangayCode]);
+
+    if (!mounted) return null;
 
     return (
         <AnimatePresence>

@@ -19,6 +19,7 @@ import {
     JobOrderOperation, 
     JobOrderAllocation 
 } from "../types";
+import { displayJobOrderStatus } from "../../job-order-status";
 
 export interface JobOrderTravelerProps {
     isOpen?: boolean;
@@ -78,7 +79,7 @@ export function JobOrderTraveler({
         const cUom = currentJo.unit_of_measurement || "PCS";
         const cBatchNo = `LOT-${cJoNo}`;
         const cShiftHours = currentJo.shift_option || "8";
-        const cStatus = currentJo.status || "Planned";
+        const cStatus = displayJobOrderStatus(currentJo.status || "Planned");
         const cVersionName = currentJo.version_name || (currentJo.version_id ? `v${currentJo.version_id}` : "Standard");
         const parentJoNo = currentJo.parent_job_order_id || (cJoNo.includes("-SUB") ? cJoNo.split("-SUB")[0] : null);
 

@@ -42,7 +42,7 @@ export function printSettlementReceiptA4(
     targetWindow?: Window | null,
 ): void {
     const printedAt = format(new Date(), "yyyy-MM-dd HH:mm");
-    const companyName = companyProfile?.companyName?.trim() || "MEN2 MARKETING CORPORATION";
+    const companyName = companyProfile?.companyName?.trim() || "Mama Pina's Products";
     const companyDetails = [
         companyProfile?.address?.trim(),
         companyProfile?.tin?.trim() ? `TIN: ${companyProfile.tin.trim()}` : null,

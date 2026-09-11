@@ -9,9 +9,7 @@ import {
     Clock,
     Search,
     Building2,
-    Warehouse,
-    Lock,
-    Unlock
+    Warehouse
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -27,8 +25,13 @@ import {
 } from "@/components/ui/select";
 import { useMaterialStaging } from "./hooks/useMaterialStaging";
 import { StagingPickList } from "./components/StagingPickList";
-import { BinTransferModal } from "./components/BinTransferModal";
-import { ShortageWarningDialog } from "./components/ShortageWarningDialog";
+import { AllocationModal } from "./components/AllocationModal";
+import { StagingSlipPrint } from "./components/StagingSlipPrint";
+import { isCancelledJobOrderStatus } from "../job-order-status";
+import { resolveJobOrderJourney, stagingStateInfo } from "../shared/job-order-journey";
+import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
+import { JobOrderStatusBadge } from "../shared/components/JobOrderStatusBadge";
+import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 
 export default function MaterialStagingModule() {
     const {
@@ -49,20 +52,17 @@ export default function MaterialStagingModule() {
         setSelectedStatusFilter,
         onlyShortages,
         setOnlyShortages,
-        // Modal states
-        isTransferModalOpen,
-        activeTransferItem,
+        // Allocation modal state
+        isAllocationModalOpen,
+        activeAllocationItem,
         transferring,
         batchStageResult,
-        handleOpenTransferModal,
-        handleCloseTransferModal,
-        handlePerformTransfer,
+        stageProgressLabel,
+        handleDismissBatchStageResult,
+        handleOpenAllocationModal,
+        handleCloseAllocationModal,
+        handleCommitAllocation,
         handleStageAllAvailable,
-        // Shortage dialog states
-        isShortageDialogOpen,
-        setIsShortageDialogOpen,
-        shortageWarningInfo,
-        handleProceedWithNegativeStock,
         refreshData
     } = useMaterialStaging();
 
@@ -70,6 +70,7 @@ export default function MaterialStagingModule() {
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
+            <div className="flex flex-col space-y-6 print:hidden">
             {/* Header Toolbar */}
             <div className="relative overflow-hidden bg-gradient-to-br from-card via-card to-muted/30 p-6 rounded-2xl border shadow-sm transition-all duration-300">
                 <div className="absolute -right-16 -top-16 w-36 h-36 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
@@ -93,7 +94,8 @@ export default function MaterialStagingModule() {
                         </p>
                     </div>
 
-                    <div className="flex gap-2 w-full md:w-auto shrink-0">
+                    <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
+                        <StatusLegendPopover includeStaging />
                         <Button
                             variant="outline"
                             size="default"
@@ -159,7 +161,9 @@ export default function MaterialStagingModule() {
                         <Clock className="h-5 w-5" />
                     </div>
                     <div>
-                        <div className="text-xs font-medium text-muted-foreground">Active Staging JOs</div>
+                        <div className="text-xs font-medium text-muted-foreground" title="In-flight Job Orders that still need staging attention. Cancelled and completed runs are excluded.">
+                            Active Staging JOs
+                        </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-foreground font-mono">
                             {stats.totalActiveJobs}
                         </div>
@@ -171,7 +175,9 @@ export default function MaterialStagingModule() {
                         <PackageCheck className="h-5 w-5" />
                     </div>
                     <div>
-                        <div className="text-xs font-medium text-muted-foreground">Floor Ready (HARD)</div>
+                        <div className="text-xs font-medium text-muted-foreground" title="Active Job Orders whose required materials are all staged on the floor (HARD).">
+                            Floor Ready
+                        </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-emerald-500 font-mono">
                             {stats.fullyStagedJobs}
                         </div>
@@ -183,7 +189,9 @@ export default function MaterialStagingModule() {
                         <Boxes className="h-5 w-5" />
                     </div>
                     <div>
-                        <div className="text-xs font-medium text-muted-foreground">Pending Staging (SOFT)</div>
+                        <div className="text-xs font-medium text-muted-foreground" title="Active Job Orders with materials still reserved in the Main Store (SOFT).">
+                            To Stage
+                        </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-amber-500 font-mono">
                             {stats.pendingStagingJobs}
                         </div>
@@ -195,7 +203,9 @@ export default function MaterialStagingModule() {
                         <AlertTriangle className="h-5 w-5" />
                     </div>
                     <div>
-                        <div className="text-xs font-medium text-muted-foreground">Floor Holds / Shortages</div>
+                        <div className="text-xs font-medium text-muted-foreground" title="Active Job Orders with a material shortage in the Main Store.">
+                            Floor Holds / Shortages
+                        </div>
                         <div className="text-xl sm:text-2xl font-extrabold text-red-500 font-mono">
                             {stats.shortageAlertJobs}
                         </div>
@@ -313,8 +323,15 @@ export default function MaterialStagingModule() {
                         <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
                             {filteredJobOrders.map((jo) => {
                                 const isSelected = selectedJobOrder?.job_order_id === jo.job_order_id;
-                                const isHard = jo.reservation_status === "HARD";
-                                const isPartial = jo.reservation_status === "PARTIAL";
+                                const cancelled = isCancelledJobOrderStatus(jo.status);
+                                const stagingState = stagingStateInfo(jo.reservation_status);
+                                const journey = resolveJobOrderJourney({
+                                    status: jo.status,
+                                    allMaterialsStaged: jo.all_staged,
+                                    hasShortage: jo.has_shortage,
+                                    hasActiveDestination: Boolean(jo.staging_work_center_id),
+                                    jobOrderNo: jo.job_order_no
+                                });
 
                                 return (
                                     <div
@@ -324,46 +341,41 @@ export default function MaterialStagingModule() {
                                             isSelected
                                                 ? "bg-primary/[0.04] border-primary ring-1 ring-primary/20 shadow-sm"
                                                 : "bg-card border-border hover:border-border/80 hover:bg-muted/30"
-                                        }`}
+                                        } ${cancelled ? "opacity-75" : ""}`}
                                     >
                                         <div className="flex items-start justify-between gap-2">
-                                            <div className="space-y-0.5">
-                                                <div className="flex items-center gap-2">
+                                            <div className="space-y-0.5 min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
                                                     <span className="font-mono font-bold text-xs text-primary">
                                                         {jo.job_order_no}
                                                     </span>
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={
-                                                            jo.status === "RESERVED"
-                                                                ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]"
-                                                                : "bg-blue-500/10 text-blue-500 border-blue-500/30 text-[10px]"
-                                                        }
-                                                    >
-                                                        {jo.status}
-                                                    </Badge>
+                                                    <JobOrderStatusBadge status={jo.status} />
                                                 </div>
                                                 <div className="font-bold text-sm text-foreground line-clamp-1">
                                                     {jo.product_name}
                                                 </div>
+                                                <JobOrderJourneyBar journey={journey} compact className="pt-0.5" />
                                             </div>
 
-                                            {/* Reservation Badge */}
-                                            {isHard ? (
-                                                <Badge className="bg-emerald-600 text-white text-[10px] shrink-0 font-medium">
-                                                    <Lock className="h-2.5 w-2.5 mr-1" />
-                                                    HARD (READY)
+                                            {cancelled ? (
+                                                <Badge variant="outline" className="border-destructive/30 text-destructive text-[10px] shrink-0">
+                                                    Cancelled
                                                 </Badge>
-                                            ) : isPartial ? (
-                                                <Badge variant="secondary" className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] shrink-0">
-                                                    PARTIAL
+                                            ) : stagingState ? (
+                                                <Badge
+                                                    variant="secondary"
+                                                    title={`${stagingState.canonical}: ${stagingState.description}`}
+                                                    className={`text-[10px] shrink-0 border ${
+                                                        stagingState.key === "HARD"
+                                                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+                                                            : stagingState.key === "PARTIAL"
+                                                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                                                                : "bg-muted text-muted-foreground border-border"
+                                                    }`}
+                                                >
+                                                    {stagingState.label}
                                                 </Badge>
-                                            ) : (
-                                                <Badge variant="secondary" className="bg-muted text-muted-foreground text-[10px] shrink-0">
-                                                    <Unlock className="h-2.5 w-2.5 mr-1" />
-                                                    SOFT HOLD
-                                                </Badge>
-                                            )}
+                                            ) : null}
                                         </div>
 
                                         {/* Meta & Destination */}
@@ -377,22 +389,31 @@ export default function MaterialStagingModule() {
                                             </div>
                                         </div>
 
-                                        {/* Progress Bar & Shortage Tag */}
-                                        <div className="space-y-1">
-                                            <div className="flex justify-between items-center text-[11px]">
-                                                <span className="text-muted-foreground">
-                                                    Staging: {jo.staged_materials_count}/{jo.total_materials_count} components
-                                                </span>
-                                                <span className="font-mono font-bold text-primary">{jo.staging_percentage}%</span>
-                                            </div>
-                                            <Progress value={jo.staging_percentage} className="h-1.5 bg-muted" />
-                                        </div>
-
-                                        {jo.has_shortage && (
-                                            <div className="flex items-center gap-1.5 text-[11px] text-red-500 font-medium bg-red-500/10 px-2 py-1 rounded-md border border-red-500/20">
+                                        {cancelled ? (
+                                            <div className="flex items-center gap-1.5 text-[11px] text-destructive font-medium bg-destructive/10 px-2 py-1 rounded-md border border-destructive/20">
                                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                                                Material shortage detected in Main Store
+                                                Cancelled — no staging required.
                                             </div>
+                                        ) : (
+                                            <>
+                                                {/* Progress Bar & Shortage Tag */}
+                                                <div className="space-y-1">
+                                                    <div className="flex justify-between items-center text-[11px]">
+                                                        <span className="text-muted-foreground">
+                                                            Staging: {jo.staged_materials_count}/{jo.total_materials_count} components
+                                                        </span>
+                                                        <span className="font-mono font-bold text-primary">{jo.staging_percentage}%</span>
+                                                    </div>
+                                                    <Progress value={jo.staging_percentage} className="h-1.5 bg-muted" />
+                                                </div>
+
+                                                {jo.has_shortage && (
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-red-500 font-medium bg-red-500/10 px-2 py-1 rounded-md border border-red-500/20">
+                                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                                        Material shortage detected in Main Store
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 );
@@ -405,9 +426,11 @@ export default function MaterialStagingModule() {
                 <div className="lg:col-span-7">
                     <StagingPickList
                         jobOrder={selectedJobOrder}
-                        onOpenTransferModal={handleOpenTransferModal}
+                        onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
                         batchStageResult={batchStageResult}
+                        stageProgressLabel={stageProgressLabel}
+                        onDismissBatchStageResult={handleDismissBatchStageResult}
                         isProcessing={transferring}
                     />
                 </div>
@@ -415,26 +438,19 @@ export default function MaterialStagingModule() {
                 </>
             )}
 
-            {/* Bin Transfer Modal */}
-            <BinTransferModal
-                isOpen={isTransferModalOpen}
-                onClose={handleCloseTransferModal}
-                activeItem={activeTransferItem}
+            {/* Canonical lot/batch allocation modal */}
+            <AllocationModal
+                isOpen={isAllocationModalOpen}
+                onClose={handleCloseAllocationModal}
+                activeItem={activeAllocationItem}
                 workCenters={workCenters}
-                onConfirmTransfer={handlePerformTransfer}
+                onCommit={handleCommitAllocation}
                 isLoading={transferring}
             />
+            </div>
 
-            {/* Shortage Warning Dialog (Option A / Option B) */}
-            <ShortageWarningDialog
-                isOpen={isShortageDialogOpen}
-                onClose={() => {
-                    setIsShortageDialogOpen(false);
-                }}
-                warningInfo={shortageWarningInfo}
-                onProceedWithNegative={handleProceedWithNegativeStock}
-                isLoading={transferring}
-            />
+            {/* Printable staging slip (print-only) */}
+            <StagingSlipPrint jobOrder={selectedJobOrder} />
         </div>
     );
 }

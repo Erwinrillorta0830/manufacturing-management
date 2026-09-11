@@ -14,7 +14,8 @@ import {
     Printer,
     Sparkles,
     ShieldCheck,
-    History
+    History,
+    AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +53,7 @@ export default function ManufacturingQAModule() {
         inspectionLogs,
         qaLogs,
         dispositions,
-        loadingJobOrders,
+        branches,        loadingJobOrders,
         loadingInspectionLogs,
         loadingDispositions,
         loadingLogs,
@@ -74,6 +75,10 @@ export default function ManufacturingQAModule() {
         handleHoldsFiltersChange,
         handleDailyFiltersChange,
         handleFinalFiltersChange,
+        holdsStatusFilter,
+        setHoldsStatusFilter,
+        deepLinkNotice,
+        setDeepLinkNotice,
 
         // 2-Point QA Inspection Modal
         selectedQAJobOrder,
@@ -96,6 +101,20 @@ export default function ManufacturingQAModule() {
         setYieldQty,
         lotNumber,
         setLotNumber,
+        eligibleLots,
+        selectedMmLotId,
+        setSelectedMmLotId,
+        loadingEligibleLots,
+        postingBranchMode,
+        postingBranchId,
+        newPostingBranchName,
+        setNewPostingBranchName,
+        newPostingBranchCode,
+        setNewPostingBranchCode,
+        branchActionLoading,
+        handlePostingBranchModeChange,
+        handlePostingBranchChange,
+        handleCreatePostingBranch,
         manufacturingDate,
         setManufacturingDate,
         expiryDate,
@@ -270,14 +289,68 @@ export default function ManufacturingQAModule() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">QA Job Orders</p><p className="mt-1 text-xl font-bold">{qaSummary?.jobOrderCount ?? "—"}</p></div>
-                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Active Runs</p><p className="mt-1 text-xl font-bold">{qaSummary?.activeJobOrderCount ?? "—"}</p></div>
-                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Inspection Logs</p><p className="mt-1 text-xl font-bold">{qaSummary?.inspectionLogCount ?? "—"}</p></div>
-                <div className="rounded-lg border bg-card p-3"><p className="text-xs font-medium text-muted-foreground">Pending Holds</p><p className="mt-1 text-xl font-bold text-destructive">{qaSummary?.pendingHoldCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3" title="Job Orders awaiting QA inspection in the current console view."><p className="text-xs font-medium text-muted-foreground">QA Job Orders</p><p className="mt-1 text-xl font-bold">{qaSummary?.jobOrderCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3" title="Job Orders currently in production that QA is tracking."><p className="text-xs font-medium text-muted-foreground">Active Runs</p><p className="mt-1 text-xl font-bold">{qaSummary?.activeJobOrderCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3" title="Recorded 2-point inspection logs matching the current filters."><p className="text-xs font-medium text-muted-foreground">Inspection Logs</p><p className="mt-1 text-xl font-bold">{qaSummary?.inspectionLogCount ?? "—"}</p></div>
+                <div className="rounded-lg border bg-card p-3" title="Unresolved quarantine holds requiring a supervisor decision."><p className="text-xs font-medium text-muted-foreground">Pending Holds</p><p className="mt-1 text-xl font-bold text-destructive">{qaSummary?.pendingHoldCount ?? "—"}</p></div>
             </div>
 
+            {/* Process-order guide for operators navigating QA */}
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1.5 rounded-xl border bg-muted/30 px-3 py-2 text-[11px]">
+                <span className="mr-1 font-bold uppercase tracking-wider text-muted-foreground">Process order:</span>
+                {[
+                    { id: "jo-inspection", label: "1. Inspect & sign off" },
+                    { id: "closing", label: "2. Close yield" },
+                    { id: "daily-qa", label: "3. Daily yield QA" },
+                    { id: "final-qa", label: "4. Release finished goods" },
+                    { id: "closed-qa", label: "5. Reprint / audit" },
+                ].map((step) => (
+                    <button
+                        key={step.id}
+                        type="button"
+                        onClick={() => setActiveTab(step.id)}
+                        className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${activeTab === step.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                    >
+                        {step.label}
+                    </button>
+                ))}
+                <span className="mx-0.5 text-muted-foreground/50">|</span>
+                <span className="text-muted-foreground">Reference:</span>
+                {[
+                    { id: "qa-inspection-logs", label: "Inspection Logs" },
+                    { id: "holds", label: "Quarantine Holds" },
+                ].map((step) => (
+                    <button
+                        key={step.id}
+                        type="button"
+                        onClick={() => setActiveTab(step.id)}
+                        className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${activeTab === step.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                    >
+                        {step.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Deep-link miss feedback */}
+            {deepLinkNotice && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <span className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                        {deepLinkNotice}
+                    </span>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeepLinkNotice(null)}
+                        className="h-7 shrink-0 px-2 text-[11px] font-bold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                    >
+                        Dismiss
+                    </Button>
+                </div>
+            )}
+
             {/* Quarantine/Active Holds Banner if any holds exist */}
-            {(holdsMeta.total > 0 || pendingHolds.length > 0) && (
+            {((qaSummary?.pendingHoldCount ?? pendingHolds.length) > 0) && (
                 <div className="relative overflow-hidden rounded-xl border border-destructive/30 bg-destructive/5 p-4 md:p-6 text-destructive-foreground flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300">
                     <div className="flex items-start gap-4">
                         <div className="p-3 bg-destructive/15 rounded-lg text-destructive shrink-0 mt-0.5 md:mt-0">
@@ -286,7 +359,7 @@ export default function ManufacturingQAModule() {
                         <div>
                             <h2 className="text-lg font-bold text-destructive flex items-center gap-2">
                                 Active Quarantine Hold Detected
-                                <Badge variant="destructive" className="animate-pulse">{holdsMeta.total || pendingHolds.length} Pending</Badge>
+                                <Badge variant="destructive" className="animate-pulse">{qaSummary?.pendingHoldCount ?? pendingHolds.length} Pending</Badge>
                             </h2>
                             <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
                                 Job Order routing steps have recorded critical limits failures. All subsequent execution holds are locked pending Supervisor overrides.
@@ -331,9 +404,9 @@ export default function ManufacturingQAModule() {
                     <TabsTrigger value="holds" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
                         <BadgeAlert className="h-3.5 w-3.5" />
                         Quarantine Holds
-                        {pendingHolds.length > 0 && (
+                        {(qaSummary?.pendingHoldCount ?? pendingHolds.length) > 0 && (
                             <Badge variant="destructive" className="text-[10px] px-1 py-0 ml-1">
-                                {holdsMeta.total || pendingHolds.length}
+                                {qaSummary?.pendingHoldCount ?? pendingHolds.length}
                             </Badge>
                         )}
                     </TabsTrigger>
@@ -406,6 +479,9 @@ export default function ManufacturingQAModule() {
                         <QuarantineHolds
                             loadingDispositions={loadingDispositions}
                             pendingHolds={pendingHolds}
+                            dispositions={dispositions}
+                            statusFilter={holdsStatusFilter}
+                            onStatusFilterChange={setHoldsStatusFilter}
                             handleOpenOverrideDialog={handleOpenOverrideDialog}
                             onFiltersChange={handleHoldsFiltersChange}
                         />
@@ -538,10 +614,25 @@ export default function ManufacturingQAModule() {
                 setIsYieldDialogOpen={setIsYieldDialogOpen}
                 selectedJO={selectedJO}
                 getBranchName={getBranchName}
+                branches={branches}
+                postingBranchMode={postingBranchMode}
+                postingBranchId={postingBranchId}
+                handlePostingBranchModeChange={handlePostingBranchModeChange}
+                handlePostingBranchChange={handlePostingBranchChange}
+                newPostingBranchName={newPostingBranchName}
+                setNewPostingBranchName={setNewPostingBranchName}
+                newPostingBranchCode={newPostingBranchCode}
+                setNewPostingBranchCode={setNewPostingBranchCode}
+                handleCreatePostingBranch={handleCreatePostingBranch}
+                branchActionLoading={branchActionLoading}
                 yieldQty={yieldQty}
                 setYieldQty={setYieldQty}
                 lotNumber={lotNumber}
                 setLotNumber={setLotNumber}
+                eligibleLots={eligibleLots}
+                selectedMmLotId={selectedMmLotId}
+                setSelectedMmLotId={setSelectedMmLotId}
+                loadingEligibleLots={loadingEligibleLots}
                 manufacturingDate={manufacturingDate}
                 setManufacturingDate={setManufacturingDate}
                 expiryDate={expiryDate}

@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, fetchJobOrders } from "@/app/api/manufacturing/directus-api";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
 
 
 interface ComponentVarianceDetail {
@@ -71,9 +73,15 @@ export async function GET(request: Request) {
             activeJOs = jobOrders.filter(jo => jo.jo_id === joId);
         } else {
             // Otherwise, filter for Ongoing (in production) or Finished (to view history)
-            activeJOs = jobOrders.filter(jo => 
-                jo.status === "Ongoing" || jo.status === "Proceed" || jo.status === "Finished"
-            );
+            activeJOs = jobOrders.filter(jo => isJobOrderStatus(
+                jo.status,
+                JOB_ORDER_STATUS.ONGOING,
+                JOB_ORDER_STATUS.IN_PROGRESS,
+                JOB_ORDER_STATUS.RELEASED,
+                JOB_ORDER_STATUS.PROCEED,
+                JOB_ORDER_STATUS.FINISHED,
+                JOB_ORDER_STATUS.COMPLETED
+            ));
         }
 
         if (activeJOs.length === 0) {
@@ -376,14 +384,15 @@ export async function POST(request: Request) {
                 const filterDetails = encodeURIComponent(JSON.stringify({
                     detail_id: { _in: detailIds }
                 }));
-                const detailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter=${filterDetails}&limit=-1`, {
+                const detailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter=${filterDetails}&fields=detail_id,order_id,quantity,ordered_quantity,allocated_quantity,served_quantity,unit_price&limit=-1`, {
                     headers,
                     cache: "no-store"
                 });
                 details = detailsRes.ok ? (await detailsRes.json()).data || [] : [];
             }
 
-            const totalTargetQty = details.reduce((sum, d) => sum + Number(d.quantity || 0), 0);
+            const totalTargetQty = details.reduce((sum, d) => sum + Number(d.ordered_quantity ?? d.quantity ?? 0), 0);
+            const affectedOrderIds = new Set<number>();
 
             if (totalTargetQty > 0) {
                 // Fetch Sales Order headers to get the Order Number and Client Name
@@ -404,7 +413,7 @@ export async function POST(request: Request) {
                 for (const link of links) {
                     const d = details.find(det => Number(det.detail_id) === Number(link.sales_order_detail_id));
                     if (d) {
-                        const targetQty = Number(d.quantity || 0);
+                        const targetQty = Number(d.ordered_quantity ?? d.quantity ?? 0);
                         const parentOrderId = Number(d.order_id);
                         const orderNo = (ordersMap.get(parentOrderId) as any)?.order_no || `SO-#${parentOrderId}`;
                         const customerName = (ordersMap.get(parentOrderId) as any)?.customer_id?.customer_name || "Unknown Customer";
@@ -422,23 +431,42 @@ export async function POST(request: Request) {
                         });
 
                         // Patch detail record
-                        await fetch(`${DIRECTUS_URL}/items/sales_order_details/${d.detail_id}`, {
+                        const detailUpdate = await fetch(`${DIRECTUS_URL}/items/sales_order_details/${d.detail_id}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({
                                 allocated_quantity: allocatedQty,
                                 allocated_amount: allocatedAmt
                             })
-                        }).catch(err => console.error(`[Receiving API] Failed to update detail allocation:`, err));
-
-                        // Transition Sales Order status to 'For Invoicing'
-                        console.log(`[Receiving API] Updating Sales Order ${parentOrderId} status to "For Invoicing"`);
-                        await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                            method: "PATCH",
-                            headers,
-                            body: JSON.stringify({ order_status: "For Invoicing" })
-                        }).catch(err => console.error(`[Receiving API] Failed to update Sales Order status:`, err));
+                        }).catch(err => {
+                            console.error(`[Receiving API] Failed to update detail allocation:`, err);
+                            return null;
+                        });
+                        if (detailUpdate?.ok && Number.isInteger(parentOrderId) && parentOrderId > 0) {
+                            affectedOrderIds.add(parentOrderId);
+                        }
                     }
+                }
+
+                for (const parentOrderId of affectedOrderIds) {
+                    const allDetailsRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${parentOrderId}&fields=detail_id,ordered_quantity,quantity,allocated_quantity,served_quantity&limit=-1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (!allDetailsRes.ok) {
+                        console.error(`[Receiving API] Failed to verify Sales Order ${parentOrderId} detail fulfillment.`);
+                        continue;
+                    }
+                    const allDetails = (await allDetailsRes.json()).data || [];
+                    const nextStatus = areSalesOrderDetailsFullyFulfilled(allDetails)
+                        ? "For Invoicing"
+                        : "In Production";
+                    console.log(`[Receiving API] Updating Sales Order ${parentOrderId} status to "${nextStatus}"`);
+                    await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ order_status: nextStatus })
+                    }).catch(err => console.error(`[Receiving API] Failed to update Sales Order status:`, err));
                 }
             }
         }
@@ -512,7 +540,7 @@ export async function POST(request: Request) {
 
         // 7. Update Job Order: status = "Completed", save actual_quantity_produced & variances
         const patchPayload = {
-            status: "Completed",
+            status: JOB_ORDER_STATUS.COMPLETED,
             actual_quantity_produced: qty,
             remarks: `Completed yield receiving. Variance details logged.`
         };

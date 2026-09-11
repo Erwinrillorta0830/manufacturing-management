@@ -11,6 +11,7 @@ export type ServerPriceType = {
     price_type_id: number;
     price_type_name: string;
     sort: number | null;
+    is_active?: boolean | number;
 };
 
 export type ServerPriceRow = {
@@ -177,6 +178,7 @@ type DirectusPriceTypeRow = {
     price_type_id?: number | string | null;
     price_type_name?: string | null;
     sort?: number | string | null;
+    is_active?: boolean | number | string | null;
 };
 
 export async function fetchServerPriceTypes(): Promise<ServerPriceType[]> {
@@ -184,7 +186,8 @@ export async function fetchServerPriceTypes(): Promise<ServerPriceType[]> {
 
     const params = new URLSearchParams();
     params.set("limit", "-1");
-    params.set("fields", "price_type_id,price_type_name,sort");
+    params.set("fields", "price_type_id,price_type_name,sort,is_active");
+    params.set("filter[is_active][_eq]", "1");
     params.set("sort", "sort,price_type_id");
 
     const url = `${DIRECTUS_URL}/items/${PRICE_TYPES}?${params.toString()}`;
@@ -198,6 +201,7 @@ export async function fetchServerPriceTypes(): Promise<ServerPriceType[]> {
             price_type_id: priceTypeId,
             price_type_name: String(row.price_type_name ?? ""),
             sort: toNullableNumber(row.sort),
+            is_active: row.is_active === true || row.is_active === 1 || row.is_active === "1",
         });
     }
 

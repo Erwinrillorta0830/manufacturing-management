@@ -25,8 +25,8 @@ interface OverrideDialogProps {
     isOverrideDialogOpen: boolean;
     setIsOverrideDialogOpen: (open: boolean) => void;
     selectedDisp: DispositionRecord | null;
-    overrideDecision: "Release with Deviation" | "Rework" | "Scrap";
-    setOverrideDecision: (decision: "Release with Deviation" | "Rework" | "Scrap") => void;
+    overrideDecision: "" | "Release with Deviation" | "Rework" | "Scrap";
+    setOverrideDecision: (decision: "" | "Release with Deviation" | "Rework" | "Scrap") => void;
     overrideComments: string;
     setOverrideComments: (comments: string) => void;
     actionLoading: boolean;
@@ -104,7 +104,7 @@ export function OverrideDialog({
                                     onValueChange={(val: any) => setOverrideDecision(val)}
                                 >
                                     <SelectTrigger className="w-full min-h-11 text-sm font-semibold">
-                                        <SelectValue />
+                                        <SelectValue placeholder="Select a supervisor decision..." />
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="Release with Deviation">
@@ -167,7 +167,7 @@ export function OverrideDialog({
                     <Button 
                         variant="destructive"
                         onClick={handleSubmitOverride}
-                        disabled={actionLoading}
+                        disabled={actionLoading || !overrideDecision}
                         className="min-h-11 text-sm font-semibold gap-1.5"
                     >
                         {actionLoading ? (

@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { selectPreferredActiveVersion } from "../finished-goods/versions/versions-helper";
+import { isProductionSchedulingStatus } from "./_status";
+import { isCancelledJobOrderStatus, isTerminalJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 type Row = Record<string, any>;
 
@@ -62,15 +64,30 @@ export function isDetailUnfulfilled(detail: Row): boolean {
         && served < ordered;
 }
 
-export function isPlanningVisibleDetail(detail: Row, orderStatus: unknown, isScheduled: boolean): boolean {
-    const status = String(orderStatus || "").trim();
-    if (status === "For Production") return isDetailUnfulfilled(detail) && !isScheduled;
-    if (status === "In Production") return isDetailUnfulfilled(detail) || isScheduled;
-    return false;
+export function detailRemainingQuantity(detail: Row, plannedQuantity = 0): number {
+    const ordered = Number(detail.ordered_quantity || 0);
+    const allocated = Number(detail.allocated_quantity || 0);
+    const served = Number(detail.served_quantity || 0);
+    const planned = Number(plannedQuantity || 0);
+    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
+    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
 }
 
-function isCancelled(value: unknown): boolean {
-    return String(value || "").trim().toLowerCase() === "cancelled";
+export function isPlanningVisibleDetail(
+    detail: Row,
+    orderStatus: unknown,
+    isScheduled: boolean,
+    plannedQuantity = 0,
+    includeAllStatuses = false
+): boolean {
+    const status = String(orderStatus || "").trim();
+    const remaining = detailRemainingQuantity(detail, plannedQuantity);
+    if (status === "For Production") return remaining > 0 && !isScheduled;
+    if (status === "In Production") return isDetailUnfulfilled(detail) || isScheduled || remaining > 0;
+    if (includeAllStatuses && status !== "Cancelled") {
+        return isDetailUnfulfilled(detail) || isScheduled || remaining > 0;
+    }
+    return false;
 }
 
 function relationId(value: unknown): number {
@@ -87,13 +104,25 @@ function relationId(value: unknown): number {
     return Number(value || 0);
 }
 
-export async function findScheduledDetailIds(read: DirectusReader, details: Row[]) {
+export interface LinkedJobOrder {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    allocatedQuantity: number;
+}
+
+type JobOrderAssociationData = {
+    activeAllocations: Row[];
+    jobOrders: Row[];
+};
+
+async function fetchJobOrderAssociations(read: DirectusReader, details: Row[]): Promise<JobOrderAssociationData> {
     const detailIds = details.map((detail) => relationId(detail.detail_id || detail.id)).filter(Boolean);
-    if (detailIds.length === 0) return new Set<number>();
+    if (detailIds.length === 0) return { activeAllocations: [], jobOrders: [] };
 
     const allocationParams = new URLSearchParams({
         "filter[sales_order_detail_id][_in]": detailIds.join(","),
-        fields: "sales_order_detail_id,job_order_id,status",
+        fields: "sales_order_detail_id,job_order_id,allocated_quantity,status",
         limit: "-1"
     });
     let allocations: Row[];
@@ -104,33 +133,94 @@ export async function findScheduledDetailIds(read: DirectusReader, details: Row[
         // the status-aware query for environments that support cancellation,
         // then fall back only for Directus field-validation failures.
         if (!/:\s*(400|403)$/.test(String(error))) throw error;
-        allocationParams.set("fields", "sales_order_detail_id,job_order_id");
+        allocationParams.set("fields", "sales_order_detail_id,job_order_id,allocated_quantity");
         allocations = (await read("manufacturing_job_order_allocations", allocationParams)).data;
     }
-    const activeAllocations = allocations.filter((allocation) => !isCancelled(allocation.status));
+
+    const activeAllocations = allocations.filter((allocation) => !isCancelledJobOrderStatus(allocation.status));
     const jobOrderIds = [...new Set(activeAllocations.map((allocation) => relationId(allocation.job_order_id)).filter(Boolean))];
-    if (jobOrderIds.length === 0) return new Set<number>();
+    if (jobOrderIds.length === 0) return { activeAllocations, jobOrders: [] };
 
     const jobOrderParams = new URLSearchParams({
         "filter[job_order_id][_in]": jobOrderIds.join(","),
-        fields: "job_order_id,status",
+        fields: "job_order_id,job_order_no,status",
         limit: "-1"
     });
     const jobOrders = (await read("manufacturing_job_orders", jobOrderParams)).data;
-    const cancelledJobOrderIds = new Set(
+    return { activeAllocations, jobOrders };
+}
+
+export async function findPlannedQuantities(read: DirectusReader, details: Row[]) {
+    const { activeAllocations, jobOrders } = await fetchJobOrderAssociations(read, details);
+    if (activeAllocations.length === 0) return new Map<number, number>();
+
+    const terminalJobOrderIds = new Set(
         jobOrders
-            .filter((jobOrder) => isCancelled(jobOrder.status))
+            .filter((jobOrder) => isCancelledJobOrderStatus(jobOrder.status) || isTerminalJobOrderStatus(jobOrder.status))
             .map((jobOrder) => relationId(jobOrder.job_order_id))
     );
 
-    // A non-cancelled allocation remains a scheduling conflict even when its
-    // linked JO cannot be resolved. This prevents an orphaned link from being
-    // silently scheduled a second time.
-    return new Set(
-        activeAllocations
-            .filter((allocation) => !cancelledJobOrderIds.has(relationId(allocation.job_order_id)))
-            .map((allocation) => relationId(allocation.sales_order_detail_id))
+    // An unresolved linked JO is treated as active so an orphaned allocation
+    // cannot silently make the same demand available a second time.
+    const plannedQuantities = new Map<number, number>();
+    for (const allocation of activeAllocations) {
+        if (terminalJobOrderIds.has(relationId(allocation.job_order_id))) continue;
+        const detailId = relationId(allocation.sales_order_detail_id);
+        const quantity = Number(allocation.allocated_quantity ?? allocation.quantity ?? 0);
+        if (!detailId || !Number.isFinite(quantity) || quantity <= 0) continue;
+        plannedQuantities.set(detailId, (plannedQuantities.get(detailId) || 0) + quantity);
+    }
+    return plannedQuantities;
+}
+
+export async function findLinkedJobOrders(read: DirectusReader, details: Row[]) {
+    const { activeAllocations, jobOrders } = await fetchJobOrderAssociations(read, details);
+    const jobOrdersById = new Map(
+        jobOrders.map((jobOrder) => [relationId(jobOrder.job_order_id), jobOrder])
     );
+    const linkedByKey = new Map<string, LinkedJobOrder>();
+
+    for (const allocation of activeAllocations) {
+        const detailId = relationId(allocation.sales_order_detail_id);
+        const jobOrderId = relationId(allocation.job_order_id);
+        const jobOrder = jobOrdersById.get(jobOrderId);
+        if (!detailId || !jobOrderId || !jobOrder || isCancelledJobOrderStatus(jobOrder.status)) continue;
+
+        const allocatedQuantity = Number(allocation.allocated_quantity ?? allocation.quantity ?? 0);
+        const safeQuantity = Number.isFinite(allocatedQuantity) ? Math.max(0, allocatedQuantity) : 0;
+        const key = `${detailId}:${jobOrderId}`;
+        const existing = linkedByKey.get(key);
+        if (existing) {
+            existing.allocatedQuantity += safeQuantity;
+            continue;
+        }
+
+        linkedByKey.set(key, {
+            jobOrderId,
+            jobOrderNo: String(jobOrder.job_order_no || `JO-${jobOrderId}`),
+            status: String(jobOrder.status || "Unknown"),
+            allocatedQuantity: safeQuantity
+        });
+    }
+
+    const linkedByDetail = new Map<number, LinkedJobOrder[]>();
+    for (const [key, jobOrder] of linkedByKey) {
+        const detailId = Number(key.split(":", 1)[0]);
+        const linked = linkedByDetail.get(detailId) || [];
+        linked.push(jobOrder);
+        linkedByDetail.set(detailId, linked);
+    }
+    for (const linked of linkedByDetail.values()) {
+        linked.sort((left, right) => left.jobOrderNo.localeCompare(right.jobOrderNo));
+    }
+    return linkedByDetail;
+}
+
+export async function findScheduledDetailIds(read: DirectusReader, details: Row[]) {
+    const plannedQuantities = await findPlannedQuantities(read, details);
+    return new Set([...plannedQuantities.entries()]
+        .filter(([, quantity]) => quantity > 0)
+        .map(([detailId]) => detailId));
 }
 
 async function fetchProductGraph(read: DirectusReader, initialProductIds: number[]) {
@@ -250,7 +340,8 @@ export async function enrichSalesOrderReadModel(
     read: DirectusReader,
     salesOrders: Row[],
     details: Row[],
-    scheduledDetailIds = new Set<number>()
+    plannedQuantities?: Map<number, number>,
+    includeLinkedJobOrders = false
 ) {
     const customerCodes = [...new Set(salesOrders.map((order) => String(order.customer_code || "")).filter(Boolean))];
     const customerParams = new URLSearchParams({ fields: "id,customer_code,customer_name", limit: "-1" });
@@ -261,14 +352,18 @@ export async function enrichSalesOrderReadModel(
     const termsParams = new URLSearchParams({ fields: "id,payment_name,payment_days", limit: "-1" });
     if (paymentTermIds.length > 0) termsParams.set("filter[id][_in]", paymentTermIds.join(","));
     const termsPromise = paymentTermIds.length > 0 ? read("payment_terms", termsParams) : Promise.resolve({ data: [] });
+    const linkedJobOrdersPromise = includeLinkedJobOrders
+        ? findLinkedJobOrders(read, details)
+        : Promise.resolve(new Map<number, LinkedJobOrder[]>());
 
     const productIds = [...new Set(details.map((detail) => Number(detail.product_id)).filter(Boolean))];
     const unitsPromise = read("units", new URLSearchParams({ fields: "unit_id,unit_name,unit_shortcut", limit: "-1" }));
-    const [customerResult, termsResult, products, unitsResult] = await Promise.all([
+    const [customerResult, termsResult, products, unitsResult, linkedJobOrdersByDetail] = await Promise.all([
         customersPromise,
         termsPromise,
         fetchProductGraph(read, productIds),
-        unitsPromise
+        unitsPromise,
+        linkedJobOrdersPromise
     ]);
 
     const unitsMap = new Map<number, any>((unitsResult.data || []).map((u: any) => [Number(u.unit_id), u]));
@@ -278,6 +373,7 @@ export async function enrichSalesOrderReadModel(
     const extraVersionIds = details.map((detail) => Number(detail.bom_version_id)).filter(Boolean);
     const { resolve: resolveVersion, versionById } = await resolveVersions(read, products, customerIds, extraVersionIds);
     const orderById = new Map(salesOrders.map((order) => [Number(order.order_id), order]));
+    const resolvedPlannedQuantities = plannedQuantities ?? await findPlannedQuantities(read, details);
 
     for (const order of salesOrders) {
         const customer = customersByCode.get(String(order.customer_code));
@@ -331,8 +427,16 @@ export async function enrichSalesOrderReadModel(
         const order = orderById.get(orderId);
         const parentOrderStatus = String(order?.order_status || detail.parent_order_status || "").trim() || null;
         detail.parent_order_status = parentOrderStatus;
-        detail.is_scheduled = scheduledDetailIds.has(detailId);
-        detail.is_read_only = parentOrderStatus !== "For Production" || detail.is_scheduled;
+        const plannedQuantity = Math.max(0, Number(resolvedPlannedQuantities.get(detailId) || 0));
+        const remainingQuantity = detailRemainingQuantity(detail, plannedQuantity);
+        detail.planned_quantity = plannedQuantity;
+        detail.is_partially_scheduled = plannedQuantity > 0 && remainingQuantity > 0;
+        detail.is_scheduled = remainingQuantity <= 0;
+        detail.is_read_only = !isProductionSchedulingStatus(parentOrderStatus) || detail.is_scheduled;
+        detail.remaining_quantity = remainingQuantity;
+        if (includeLinkedJobOrders) {
+            detail.linkedJobOrders = linkedJobOrdersByDetail.get(detailId) || [];
+        }
         const customer = order ? customersByCode.get(String(order.customer_code)) : undefined;
         const customerId = Number(customer?.id || customer?.customer_id) || undefined;
         const storedVersionId = detail.bom_version_id ? Number(detail.bom_version_id) : null;

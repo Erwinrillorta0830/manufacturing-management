@@ -12,42 +12,59 @@ if (DIRECTUS_STATIC_TOKEN) {
 
 export async function GET() {
     try {
-        const url = `${DIRECTUS_URL}/items/collection?limit=1000&fields=*.*`;
-        const res = await fetch(url, { headers, cache: "no-store" });
-        if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
-        
-        const data = await res.json();
+        const [colRes, userRes] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/collection?limit=1000&fields=*.*`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/user?limit=-1`, { headers, cache: "no-store" })
+        ]);
+
+        if (!colRes.ok) throw new Error(`Directus returned status ${colRes.status}`);
+        const data = await colRes.json();
         const items = data.data || [];
-        
+
         const salesmen = new Set<string>();
-        const encoderIds = new Set<number>();
-        
+        const cashiers = new Set<string>();
+        const userMap = new Map<number | string, string>();
+
+        if (userRes.ok) {
+            const userData = await userRes.json();
+            const users = userData.data || [];
+            users.forEach((u: Record<string, unknown>) => {
+                const fname = (u.user_fname || u.first_name || "") as string;
+                const lname = (u.user_lname || u.last_name || "") as string;
+                const fullName = `${fname} ${lname}`.trim();
+                if (fullName) {
+                    if (u.user_id != null) userMap.set(Number(u.user_id), fullName);
+                    if (u.id != null) userMap.set(Number(u.id), fullName);
+                    // Also populate cashiers with all available system users as option fallback
+                    cashiers.add(fullName);
+                }
+            });
+        }
+
+        const getFullName = (uVal: unknown): string | null => {
+            if (!uVal) return null;
+            if (typeof uVal === "object") {
+                const obj = uVal as Record<string, unknown>;
+                const fname = (obj.user_fname || obj.first_name || "") as string;
+                const lname = (obj.user_lname || obj.last_name || "") as string;
+                const fullName = `${fname} ${lname}`.trim();
+                return fullName || null;
+            }
+            return userMap.get(Number(uVal)) || userMap.get(String(uVal)) || null;
+        };
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         items.forEach((item: any) => {
             if (item.salesman_id?.salesman_name) {
                 salesmen.add(item.salesman_id.salesman_name);
             }
-            if (item.encoder_id && typeof item.encoder_id === "number") {
-                encoderIds.add(item.encoder_id);
-            }
+
+            [item.encoder_id, item.collected_by].forEach((uVal) => {
+                const name = getFullName(uVal);
+                if (name) cashiers.add(name);
+            });
         });
-        
-        const cashiers = new Set<string>();
-        
-        if (encoderIds.size > 0) {
-            const userUrl = `${DIRECTUS_URL}/items/user?filter[user_id][_in]=${Array.from(encoderIds).join(",")}`;
-            const userRes = await fetch(userUrl, { headers, cache: "no-store" });
-            if (userRes.ok) {
-                const userData = await userRes.json();
-                const users = userData.data || [];
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                users.forEach((u: any) => {
-                    const name = `${u.user_fname || u.first_name || ""} ${u.user_lname || u.last_name || ""}`.trim();
-                    if (name) cashiers.add(name);
-                });
-            }
-        }
-        
+
         return NextResponse.json({
             operations: [],
             salesmen: Array.from(salesmen).sort(),
@@ -58,3 +75,5 @@ export async function GET() {
         return NextResponse.json({ error: (e as Error).message }, { status: 500 });
     }
 }
+
+

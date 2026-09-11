@@ -115,8 +115,8 @@ const DEFAULT_QUERY: PostingQueueQuery = {
     dateTo: "",
     page: 1,
     size: 25,
-    sortField: "docNo",
-    sortDir: "asc",
+    sortField: "collectionDate",
+    sortDir: "desc",
 };
 
 const getErrorMessage = (error: unknown, fallback: string) =>

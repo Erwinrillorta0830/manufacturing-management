@@ -22,16 +22,22 @@ import {
     Sparkles,
     ChevronDown,
     ChevronRight,
-    Lock,
-    Unlock
+    X
 } from "lucide-react";
 import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } from "../types";
+import { isCancelledJobOrderStatus } from "../../job-order-status";
+import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
+import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
+import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
+import { NextStepCallout } from "../../shared/components/NextStepCallout";
 
 interface StagingPickListProps {
     jobOrder: StagingJobOrder | null;
     onOpenTransferModal: (jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => void;
     onStageAllAvailable: (jobOrder: StagingJobOrder) => Promise<void>;
     batchStageResult?: BatchStageResult | null;
+    stageProgressLabel?: string | null;
+    onDismissBatchStageResult?: () => void;
     isProcessing?: boolean;
 }
 
@@ -40,6 +46,8 @@ export function StagingPickList({
     onOpenTransferModal,
     onStageAllAvailable,
     batchStageResult,
+    stageProgressLabel = null,
+    onDismissBatchStageResult,
     isProcessing = false
 }: StagingPickListProps) {
     const [expandedMaterials, setExpandedMaterials] = useState<Record<number, boolean>>({});
@@ -70,7 +78,15 @@ export function StagingPickList({
     };
 
     const isAllStaged = jobOrder.all_staged;
-    const isPartiallyStaged = jobOrder.reservation_status === "PARTIAL";
+    const isCancelled = isCancelledJobOrderStatus(jobOrder.status);
+    const stagingState = stagingStateInfo(jobOrder.reservation_status);
+    const journey = resolveJobOrderJourney({
+        status: jobOrder.status,
+        allMaterialsStaged: jobOrder.all_staged,
+        hasShortage: jobOrder.has_shortage,
+        hasActiveDestination: Boolean(jobOrder.staging_work_center_id),
+        jobOrderNo: jobOrder.job_order_no
+    });
 
     return (
         <div className="flex flex-col space-y-5 bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-sm">
@@ -81,37 +97,30 @@ export function StagingPickList({
                         <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-md bg-primary/10 text-primary border border-primary/20">
                             {jobOrder.job_order_no}
                         </span>
-                        <Badge
-                            variant="outline"
-                            className={
-                                jobOrder.status === "RESERVED"
-                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 font-semibold"
-                                    : jobOrder.status === "PLANNED" || jobOrder.status === "Planned"
-                                        ? "bg-blue-500/10 text-blue-500 border-blue-500/30 font-semibold"
-                                        : "bg-muted text-muted-foreground"
-                            }
-                        >
-                            {jobOrder.status?.toUpperCase()}
-                        </Badge>
-                        {jobOrder.reservation_status === "HARD" ? (
-                            <Badge className="bg-emerald-600 text-white font-medium text-[11px]">
-                                <Lock className="h-3 w-3 mr-1" />
-                                HARD RESERVED (READY)
+                        <JobOrderStatusBadge status={jobOrder.status} className="font-semibold" />
+                        {isCancelled ? (
+                            <Badge variant="outline" className="border-destructive/30 text-destructive text-[11px]">
+                                Cancelled
                             </Badge>
-                        ) : isPartiallyStaged ? (
-                            <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px]">
-                                PARTIAL RESERVATION
+                        ) : stagingState ? (
+                            <Badge
+                                variant="secondary"
+                                title={`${stagingState.canonical}: ${stagingState.description}`}
+                                className={`text-[11px] border ${
+                                    stagingState.key === "HARD"
+                                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+                                        : stagingState.key === "PARTIAL"
+                                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30"
+                                            : "bg-muted text-muted-foreground border-border"
+                                }`}
+                            >
+                                {stagingState.label}
                             </Badge>
-                        ) : (
-                            <Badge variant="secondary" className="bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[11px]">
-                                <Unlock className="h-3 w-3 mr-1" />
-                                SOFT RESERVATION
-                            </Badge>
-                        )}
+                        ) : null}
                         {jobOrder.has_shortage && (
-                            <Badge variant="destructive" className="animate-pulse text-[11px]">
+                            <Badge variant="destructive" className="text-[11px]">
                                 <AlertTriangle className="h-3 w-3 mr-1" />
-                                STOCK SHORTAGE HOLD
+                                Material shortage in Main Store
                             </Badge>
                         )}
                     </div>
@@ -149,11 +158,14 @@ export function StagingPickList({
                     <Button
                         size="sm"
                         onClick={() => onStageAllAvailable(jobOrder)}
-                        disabled={isProcessing || isAllStaged}
+                        disabled={isProcessing || isAllStaged || isCancelled}
+                        title={isCancelled ? "Cancelled Job Orders cannot accept staged material." : undefined}
                         className="text-xs h-9 font-semibold shadow-sm"
                     >
                         {isProcessing ? (
                             "Staging..."
+                        ) : isCancelled ? (
+                            "Cancelled — no staging"
                         ) : isAllStaged ? (
                             <>
                                 <CheckCircle2 className="h-4 w-4 mr-1.5 text-emerald-300" />
@@ -168,6 +180,40 @@ export function StagingPickList({
                     </Button>
                 </div>
             </div>
+
+            <div className="space-y-3">
+                <JobOrderJourneyBar journey={journey} />
+                {(() => {
+                    const calloutAction = isCancelled
+                        ? null
+                        : isAllStaged
+                            ? {
+                                label: "Open Production Workflow",
+                                description: "All materials are on the floor. Start the shop-floor shift run when production begins.",
+                                href: "/mm/production-workflow"
+                            }
+                            : {
+                                label: "Stage available materials",
+                                description: jobOrder.has_shortage
+                                    ? "Some materials are short in the Main Store. Stage what is available, then follow up on the missing quantity."
+                                    : "Move the remaining required materials from the Main Store to the floor bin."
+                            };
+                    return (
+                        <NextStepCallout
+                            action={calloutAction}
+                            title="What's next"
+                            onAction={!isCancelled && !isAllStaged ? () => { void onStageAllAvailable(jobOrder); } : undefined}
+                        />
+                    );
+                })()}
+            </div>
+
+            {isProcessing && stageProgressLabel && (
+                <div className="flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2 text-xs font-semibold text-primary">
+                    <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+                    {stageProgressLabel}
+                </div>
+            )}
 
             {batchStageResult?.job_order_id === jobOrder.job_order_id && (
                 <div className={`rounded-xl border p-4 space-y-3 ${
@@ -189,15 +235,28 @@ export function StagingPickList({
                                 </div>
                             </div>
                         </div>
-                        <Badge
-                            variant="outline"
-                            className={batchStageResult.full_success
-                                ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/10 text-[10px]"
-                                : "text-amber-600 border-amber-500/30 bg-amber-500/10 text-[10px]"
-                            }
-                        >
-                            {batchStageResult.full_success ? "COMPLETE" : `${batchStageResult.exception_material_count} EXCEPTION(S)`}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                            <Badge
+                                variant="outline"
+                                className={batchStageResult.full_success
+                                    ? "text-emerald-600 border-emerald-500/30 bg-emerald-500/10 text-[10px]"
+                                    : "text-amber-600 border-amber-500/30 bg-amber-500/10 text-[10px]"
+                                }
+                            >
+                                {batchStageResult.full_success ? "COMPLETE" : `${batchStageResult.exception_material_count} EXCEPTION(S)`}
+                            </Badge>
+                            {onDismissBatchStageResult && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={onDismissBatchStageResult}
+                                    aria-label="Dismiss batch staging results"
+                                    className="h-6 w-6 p-0 text-muted-foreground"
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            )}
+                        </div>
                     </div>
 
                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
@@ -321,7 +380,7 @@ export function StagingPickList({
                                                         {mat.product_name}
                                                         {hasShortage && (
                                                             <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded font-mono font-medium">
-                                                                Shortage: -{mat.shortage_quantity} {mat.uom}
+                                                                Shortage: {mat.shortage_quantity} {mat.uom}
                                                             </span>
                                                         )}
                                                     </div>
@@ -353,18 +412,27 @@ export function StagingPickList({
                                             </TableCell>
                                             <TableCell>
                                                 {isHard ? (
-                                                    <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold">
-                                                        <Lock className="h-2.5 w-2.5 mr-1" />
-                                                        HARD
+                                                    <Badge
+                                                        title="HARD: all required quantity for this component is staged on the floor."
+                                                        className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold"
+                                                    >
+                                                        Floor ready
                                                     </Badge>
                                                 ) : isPartial ? (
-                                                    <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold">
-                                                        PARTIAL
+                                                    <Badge
+                                                        variant="secondary"
+                                                        title="PARTIAL: some of this component is staged on the floor."
+                                                        className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold"
+                                                    >
+                                                        Partially staged
                                                     </Badge>
                                                 ) : (
-                                                    <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold">
-                                                        <Unlock className="h-2.5 w-2.5 mr-1" />
-                                                        SOFT
+                                                    <Badge
+                                                        variant="secondary"
+                                                        title="SOFT: reserved in the Main Store; not staged yet."
+                                                        className="bg-muted text-muted-foreground border border-border text-[10px] font-semibold"
+                                                    >
+                                                        To stage
                                                     </Badge>
                                                 )}
                                             </TableCell>
@@ -430,13 +498,14 @@ export function StagingPickList({
                                                                         </div>
                                                                         <Badge
                                                                             variant="outline"
+                                                                            title={stagingStateInfo(lot.reservation_status)?.description}
                                                                             className={
                                                                                 lot.reservation_status === "HARD"
                                                                                     ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]"
                                                                                     : "bg-amber-500/10 text-amber-500 border-amber-500/30 text-[10px]"
                                                                             }
                                                                         >
-                                                                            {lot.reservation_status}
+                                                                            {stagingStateInfo(lot.reservation_status)?.label || lot.reservation_status}
                                                                         </Badge>
                                                                         <Button
                                                                             variant="ghost"

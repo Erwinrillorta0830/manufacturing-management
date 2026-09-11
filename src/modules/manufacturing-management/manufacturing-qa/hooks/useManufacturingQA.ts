@@ -18,6 +18,8 @@ import {
     fetchDispositions,
     fetchJobOrders,
     fetchBranchesList,
+    createManufacturingBranch,
+    assignManufacturingJobOrderBranch,
     fetchJobOrderMaterials,
     fetchQARejectionReasons,
     fetchQAInspectionLogs,
@@ -40,6 +42,7 @@ import {
     fetchFinalQAQueuePage
 } from "../services/qa-api";
 import type { FinalQACoa } from "../services/qa-api";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 function relationNumber(value: any, keys: string[] = ["id"]): number {
     if (value && typeof value === "object") {
@@ -349,6 +352,8 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
 export function useManufacturingQA() {
     // Primary Tab State (defaults to QA & Rework Inspection Workcenter)
     const [activeTab, setActiveTab] = useState("jo-inspection");
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const [closingLoaded, setClosingLoaded] = useState(false);
 
     // Core Data Lists
     const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
@@ -384,6 +389,8 @@ export function useManufacturingQA() {
         reason: "all"
     });
     const [holdsSearch, setHoldsSearch] = useState("");
+    const [holdsStatusFilter, setHoldsStatusFilter] = useState<"pending" | "resolved" | "all">("pending");
+    const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
     const [dailySearch, setDailySearch] = useState("");
     const [finalSearch, setFinalSearch] = useState("");
     const setJobOrderSearch = useCallback((value: string) => {
@@ -427,6 +434,9 @@ export function useManufacturingQA() {
     const [isYieldDialogOpen, setIsYieldDialogOpen] = useState(false);
     const [yieldQty, setYieldQty] = useState("");
     const [lotNumber, setLotNumber] = useState("");
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [selectedMmLotId, setSelectedMmLotId] = useState<string>("");
+    const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [manufacturingDate, setManufacturingDate] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
@@ -434,11 +444,36 @@ export function useManufacturingQA() {
     const [yieldMaterials, setYieldMaterials] = useState<YieldJobOrderMaterial[]>([]);
     const [yieldMaterialsLoading, setYieldMaterialsLoading] = useState(false);
     const [yieldMaterialsError, setYieldMaterialsError] = useState<string | null>(null);
+    const [postingBranchMode, setPostingBranchMode] = useState<"existing" | "new">("existing");
+    const [postingBranchId, setPostingBranchId] = useState("");
+    const [newPostingBranchName, setNewPostingBranchName] = useState("");
+    const [newPostingBranchCode, setNewPostingBranchCode] = useState("");
+    const [branchActionLoading, setBranchActionLoading] = useState(false);
+
+    const loadEligibleLotsFor = useCallback(async (branchId: number, productId: number) => {
+        if (!Number.isSafeInteger(branchId) || branchId <= 0 || !Number.isSafeInteger(productId) || productId <= 0) {
+            setEligibleLots([]);
+            setSelectedMmLotId("");
+            setLoadingEligibleLots(false);
+            return;
+        }
+
+        setLoadingEligibleLots(true);
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+        try {
+            const response = await fetchEligibleFinishedGoodsLots(branchId, productId);
+            setEligibleLots(response.lots);
+            setSelectedMmLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+        } finally {
+            setLoadingEligibleLots(false);
+        }
+    }, []);
 
     // Supervisor Override Dialog states
     const [selectedDisp, setSelectedDisp] = useState<DispositionRecord | null>(null);
     const [isOverrideDialogOpen, setIsOverrideDialogOpen] = useState(false);
-    const [overrideDecision, setOverrideDecision] = useState<"Release with Deviation" | "Rework" | "Scrap">("Release with Deviation");
+    const [overrideDecision, setOverrideDecision] = useState<"" | "Release with Deviation" | "Rework" | "Scrap">("");
     const [overrideComments, setOverrideComments] = useState("");
 
     // Daily Yield QA & Final release QA states
@@ -499,7 +534,7 @@ export function useManufacturingQA() {
     const [microbiologicalStatus, setMicrobiologicalStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
     const [packagingSealPassed, setPackagingSealPassed] = useState(true);
     const [labelCompliancePassed, setLabelCompliancePassed] = useState(true);
-    const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
+    const [overallDisposition, setOverallDisposition] = useState<"" | "Approved" | "Quarantined" | "Rejected">("");
     const [coaRefNo, setCoaRefNo] = useState("");
     const [finalRemarks, setFinalRemarks] = useState("");
     const [isFinalQAAuditOpen, setIsFinalQAAuditOpen] = useState(false);
@@ -715,7 +750,9 @@ export function useManufacturingQA() {
                     page: holdsPage,
                     pageSize: holdsPageSize,
                     search: holdsSearch,
-                    status: "Pending",
+                    // Fetch every status; the tab filters client-side so the
+                    // pending list used for quarantine gating stays populated.
+                    status: "",
                     signal: controller.signal
                 });
                 setDispositions(result.data);
@@ -764,7 +801,10 @@ export function useManufacturingQA() {
             if (!silent) console.error(`Manufacturing QA ${tab} fetch error:`, error);
             throw error instanceof Error ? error : new Error(message);
         } finally {
-            if (!controller.signal.aborted) setTabLoading(false);
+            if (!controller.signal.aborted) {
+                setTabLoading(false);
+                if (tab === "closing") setClosingLoaded(true);
+            }
         }
     }, [
         inspectionPage,
@@ -980,6 +1020,11 @@ export function useManufacturingQA() {
     // Handle Open Yield Dialog
     const handleOpenYieldDialog = (jo: JobOrder) => {
         setSelectedJO(jo);
+        setPostingBranchMode("existing");
+        setPostingBranchId(String(jo.branch_id || ""));
+        setNewPostingBranchName("");
+        setNewPostingBranchCode("");
+        setBranchActionLoading(false);
         setYieldMaterials([]);
         setYieldMaterialsError(null);
         setYieldMaterialsLoading(false);
@@ -994,17 +1039,132 @@ export function useManufacturingQA() {
         const joNo = jo.job_order_no || jo.jo_id;
         
         if (firstLog) {
-            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || `MFG-${joNo}`);
+            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || "");
             setManufacturingDate(firstLog.manufacturing_date || firstLog.mfg_date || "");
             setExpiryDate(firstLog.expiry_date || "");
         } else {
-            setLotNumber(`MFG-${joNo}`);
+            setLotNumber("");
             setManufacturingDate("");
             setExpiryDate("");
         }
         
         setUnitCost("0");
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+        const eligibleBranchId = Number(jo.branch_id || 0);
+        const eligibleProductId = Number(jo.product_id || 0);
+        void loadEligibleLotsFor(eligibleBranchId, eligibleProductId).catch((error) => {
+            console.error("Error loading eligible finished-goods lots:", error);
+        });
         setIsYieldDialogOpen(true);
+    };
+
+    // Deep link support:
+    //   /mm/manufacturing-qa?jo=JO-XXXX opens yield closing for that JO
+    //   /mm/manufacturing-qa?tab=final-qa opens a specific tab
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        const tab = params.get("tab");
+        const validTabs = ["jo-inspection", "qa-inspection-logs", "closing", "holds", "daily-qa", "final-qa", "closed-qa"];
+        if (tab && validTabs.includes(tab)) {
+            setActiveTab(tab);
+        }
+        const jo = params.get("jo");
+        if (jo) {
+            setPendingDeepLinkJo(jo);
+            // The closing queue only loads when its tab is active.
+            setActiveTab("closing");
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || !closingLoaded) return;
+        const match = closingJobOrders.find((jo) => String(jo.job_order_no || jo.jo_id || "") === pendingDeepLinkJo);
+        if (match) {
+            setActiveTab("closing");
+            handleOpenYieldDialog(match);
+        } else {
+            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the Yield Closing queue. It may already be closed (check Closed Runs) or not yet eligible for closing.`);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, closingJobOrders, closingLoaded]);
+
+    const handlePostingBranchModeChange = (mode: "existing" | "new") => {
+        setPostingBranchMode(mode);
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+
+        if (mode === "new") {
+            setPostingBranchId("");
+            return;
+        }
+
+        const branchId = Number(selectedJO?.branch_id || 0);
+        setPostingBranchId(branchId > 0 ? String(branchId) : "");
+        void loadEligibleLotsFor(branchId, Number(selectedJO?.product_id || 0)).catch((error) => {
+            console.error("Error reloading Job Order branch lots:", error);
+        });
+    };
+
+    const handlePostingBranchChange = async (branchIdValue: string) => {
+        if (!selectedJO) return;
+        const branchId = Number(branchIdValue);
+        if (!Number.isSafeInteger(branchId) || branchId <= 0) return;
+
+        const previousBranchId = postingBranchId;
+        setPostingBranchId(branchIdValue);
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+        setBranchActionLoading(true);
+        try {
+            const jobOrderIdentifier = selectedJO.job_order_id || selectedJO.id || selectedJO.jo_id;
+            const result = await assignManufacturingJobOrderBranch({
+                jobOrderId: jobOrderIdentifier as number | string,
+                branchId
+            });
+            const selectedBranch = branches.find((branch) => Number(branch.id || branch.branch_id) === branchId);
+            setSelectedJO((current) => current ? {
+                ...current,
+                branch_id: result.branchId,
+                branch_name: result.branchName || selectedBranch?.branch_name || selectedBranch?.name || undefined
+            } : current);
+            await loadEligibleLotsFor(result.branchId, Number(selectedJO.product_id || 0));
+        } catch (error: any) {
+            setPostingBranchId(previousBranchId);
+            setEligibleLots([]);
+            setSelectedMmLotId("");
+            toast.error(error?.message || "Failed to assign the Job Order branch.");
+            if (previousBranchId) {
+                void loadEligibleLotsFor(Number(previousBranchId), Number(selectedJO.product_id || 0)).catch(() => undefined);
+            }
+        } finally {
+            setBranchActionLoading(false);
+        }
+    };
+
+    const handleCreatePostingBranch = async () => {
+        const branchName = newPostingBranchName.trim();
+        const branchCode = newPostingBranchCode.trim();
+        if (!branchName || !branchCode) {
+            toast.error("Enter both a branch name and branch code before creating the branch.");
+            return;
+        }
+
+        setBranchActionLoading(true);
+        try {
+            const createdBranch = await createManufacturingBranch({ branchName, branchCode });
+            setBranches((current) => [...current, createdBranch].sort((left, right) =>
+                String(left.branch_name || left.name || "").localeCompare(String(right.branch_name || right.name || ""))
+            ));
+            setNewPostingBranchName("");
+            setNewPostingBranchCode("");
+            setPostingBranchMode("existing");
+            await handlePostingBranchChange(String(createdBranch.id));
+        } catch (error: any) {
+            setBranchActionLoading(false);
+            toast.error(error?.message || "Failed to create the new branch.");
+        }
     };
 
     const handleReprintReceipt = async (jo: JobOrder) => {
@@ -1104,7 +1264,11 @@ export function useManufacturingQA() {
             return;
         }
         if (!lotNumber.trim()) {
-            toast.error("Please enter a lot number.");
+            toast.error("Please enter a batch number.");
+            return;
+        }
+        if (!selectedMmLotId) {
+            toast.error("Please select an existing storage lot for the finished-goods output.");
             return;
         }
 
@@ -1119,8 +1283,13 @@ export function useManufacturingQA() {
             return;
         }
 
-        if (!selectedJO.branch_id) {
-            toast.error("Error: Job Order is missing branch_id allocation.");
+        const selectedPostingBranchId = Number(postingBranchId || selectedJO.branch_id || 0);
+        if (!Number.isSafeInteger(selectedPostingBranchId) || selectedPostingBranchId <= 0) {
+            toast.error("Select or create the Job Order's posting branch before continuing.");
+            return;
+        }
+        if (Number(selectedJO.branch_id || 0) !== selectedPostingBranchId) {
+            toast.error("Assign the selected branch to the Job Order before posting.");
             return;
         }
 
@@ -1153,10 +1322,11 @@ export function useManufacturingQA() {
             const closeResult = await postFinishedGoodsReceipt({
                 joId: joNo,
                 yieldLedgerId: selectedYieldLog ? selectedYieldLedgerId : null,
+                mmLotId: Number(selectedMmLotId),
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
-                branchId: Number(selectedJO.branch_id),
+                branchId: selectedPostingBranchId,
                 lotNumber: lotNumber.trim(),
                 expirationDate: expiryDate,
                 manufacturingDate,
@@ -1210,7 +1380,7 @@ export function useManufacturingQA() {
     // Handle Open Supervisor Override Dialog
     const handleOpenOverrideDialog = (disp: DispositionRecord) => {
         setSelectedDisp(disp);
-        setOverrideDecision("Release with Deviation");
+        setOverrideDecision("");
         setOverrideComments("");
         setIsOverrideDialogOpen(true);
     };
@@ -1218,6 +1388,10 @@ export function useManufacturingQA() {
     // Submit Supervisor Override resolution
     const handleSubmitOverride = async () => {
         if (!selectedDisp) return;
+        if (!overrideDecision) {
+            toast.error("Select a disposition decision before applying the override.");
+            return;
+        }
         if (!overrideComments.trim()) {
             toast.error("Please enter supervisor reasoning comments.");
             return;
@@ -1392,7 +1566,7 @@ export function useManufacturingQA() {
         setMicrobiologicalStatus("Passed");
         setPackagingSealPassed(true);
         setLabelCompliancePassed(true);
-        setOverallDisposition("Approved");
+        setOverallDisposition("");
         setCoaRefNo(`COA-${lot.lot_number}`);
         setFinalRemarks("");
         setIsFinalReleaseOpen(true);
@@ -1426,6 +1600,11 @@ export function useManufacturingQA() {
     // Submit Final QA Release
     const handleSubmitFinalRelease = async () => {
         if (!selectedLot) return;
+
+        if (!overallDisposition) {
+            toast.error("Select an overall lot disposition before recording the release.");
+            return;
+        }
 
         if (getFinalReleaseForLot(selectedLot)) {
             toast.error("This lot already has a final QA result and cannot be released again.");
@@ -1629,6 +1808,10 @@ export function useManufacturingQA() {
         handleHoldsFiltersChange,
         handleDailyFiltersChange,
         handleFinalFiltersChange,
+        holdsStatusFilter,
+        setHoldsStatusFilter,
+        deepLinkNotice,
+        setDeepLinkNotice,
         inspectionPage,
         inspectionPageSize,
         inspectionMeta,
@@ -1686,6 +1869,20 @@ export function useManufacturingQA() {
         setYieldQty,
         lotNumber,
         setLotNumber,
+        eligibleLots,
+        selectedMmLotId,
+        setSelectedMmLotId,
+        loadingEligibleLots,
+        postingBranchMode,
+        postingBranchId,
+        newPostingBranchName,
+        setNewPostingBranchName,
+        newPostingBranchCode,
+        setNewPostingBranchCode,
+        branchActionLoading,
+        handlePostingBranchModeChange,
+        handlePostingBranchChange,
+        handleCreatePostingBranch,
         manufacturingDate,
         setManufacturingDate,
         expiryDate,

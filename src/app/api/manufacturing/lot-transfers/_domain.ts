@@ -22,6 +22,9 @@ export type {
     LotTransferPatchInput,
     LotTransferPreview,
     LotTransferRecord,
+    LotTransferMovementDirection,
+    LotTransferMovementHistory,
+    LotTransferMovementHistoryResult,
     LotTransferStatusHistory,
     LotTransferStatus,
     ProtectedAllocation,
@@ -33,6 +36,7 @@ export { getSessionUserId, getSessionUserBranchId } from "./_session";
 export { getLotTransfer, listLotTransfers } from "./_queries";
 export type { LotTransferListOptions } from "./_queries";
 export { getLotTransferStatusHistory } from "./_status-history";
+export { getLotTransferMovementHistory } from "./_movement-history";
 export { createLotTransfer, deleteLotTransfer, updateLotTransfer } from "./_records";
 export {
     approveLotTransfer,

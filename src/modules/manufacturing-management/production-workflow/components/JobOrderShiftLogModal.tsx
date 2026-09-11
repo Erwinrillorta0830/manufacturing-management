@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { toast } from "sonner";
 
 interface JobOrderShiftLogModalProps {
@@ -55,7 +57,8 @@ export function JobOrderShiftLogModal({
     const [batchNo, setBatchNo] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [manufacturingDate, setManufacturingDate] = useState("");
-    const [lots, setLots] = useState<any[]>([]);
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [selectedLotId, setSelectedLotId] = useState<string>("");
     const [shiftQAStatus, setShiftQAStatus] = useState<"Passed" | "QA Hold" | "Pending">("Pending");
     const [shiftMaterials, setShiftMaterials] = useState<any[]>([]);
@@ -64,6 +67,7 @@ export function JobOrderShiftLogModal({
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
+    const [targetTaskId, setTargetTaskId] = useState<number>(0);
 
     const totalPlannedHours = selectedJobOrder?.routing_tasks 
         ? selectedJobOrder.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
@@ -138,6 +142,7 @@ export function JobOrderShiftLogModal({
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
+            setTargetTaskId(activeStep?.id ?? (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0));
             
             const todayStr = new Date().toISOString().split("T")[0];
             setManufacturingDate(todayStr);
@@ -149,16 +154,21 @@ export function JobOrderShiftLogModal({
                 setShiftName(available[0].value);
             }
 
-            // Fetch physical warehouse lots/locations
-            fetch(`/api/manufacturing/planning-engineering?action=lots&_t=${Date.now()}`)
-                .then((res) => res.json())
-                .then((data) => {
-                    setLots(data);
-                    if (data && data.length > 0) {
-                        setSelectedLotId(String(data[0].lot_id || data[0].id || "1"));
-                    }
-                })
-                .catch((err) => console.error("Error loading physical lots:", err));
+            // Load eligible finished-goods storage lots for the JO branch + UOM
+            const eligibleBranchId = Number(selectedJobOrder.branch_id || 0);
+            const eligibleProductId = Number(selectedJobOrder.product_id || 0);
+            setEligibleLots([]);
+            setSelectedLotId("");
+            if (eligibleBranchId > 0 && eligibleProductId > 0) {
+                setLoadingEligibleLots(true);
+                fetchEligibleFinishedGoodsLots(eligibleBranchId, eligibleProductId)
+                    .then((response) => {
+                        setEligibleLots(response.lots);
+                        setSelectedLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+                    })
+                    .catch((err) => console.error("Error loading eligible finished-goods lots:", err))
+                    .finally(() => setLoadingEligibleLots(false));
+            }
 
             // Fetch rejection reasons
             fetchRejectionReasons()
@@ -256,16 +266,22 @@ export function JobOrderShiftLogModal({
             return;
         }
 
+        if (newYield > 0 && !selectedLotId) {
+            toast.error("Select an existing storage lot for the finished-goods output.");
+            return;
+        }
+
         setSubmittingShiftLog(true);
         try {
             const activeUser = allJobOperators.find(o => o.stopped_at === null);
             const fullShiftName = `Day ${productionDay} - ${shiftName}`;
             
-            // Target routing task
-            const targetTaskId = activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
+            // Target routing task (explicit selection wins over the inferred
+            // first-incomplete step).
+            const resolvedTaskId = targetTaskId || activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
 
             const payload: ShiftRunLogPayload = {
-                taskId: targetTaskId,
+                taskId: resolvedTaskId,
                 joId: selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0,
                 shiftName: fullShiftName,
                 yieldQty: newYield,
@@ -289,7 +305,16 @@ export function JobOrderShiftLogModal({
 
             const res = await submitShiftRunLog(payload);
             if (res.success) {
-                toast.success(`Shift closed successfully for ${fullShiftName}! Point-of-use materials backflushed into inventory movements (${selectedJobOrder.order_no || selectedJobOrder.jo_id}).`);
+                const targetStep = sortedTasks.find((t) => t.id === resolvedTaskId);
+                const targetQty = Number(selectedJobOrder.quantity || 0);
+                const producedAfter = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0) + newYield;
+                const reachedTarget = targetQty > 0 && producedAfter >= targetQty;
+
+                if (reachedTarget) {
+                    toast.success(`Shift closed for ${fullShiftName}. Output target reached (${producedAfter.toLocaleString()}/${targetQty.toLocaleString()} pcs) — route this Job Order to QA.`);
+                } else {
+                    toast.success(`Shift closed for ${fullShiftName}. Posted to Step ${targetStep?.sequence_order ?? "?"} — ${targetStep?.name ?? "routing step"}; staging materials backflushed.`);
+                }
                 onOpenChange(false);
                 if (onSuccess) onSuccess();
             } else {
@@ -388,7 +413,7 @@ export function JobOrderShiftLogModal({
     };
 
     const hasInsufficiency = shiftMaterials.some(m => Number(m.actual_qty || 0) > Number(m.available_stock || 0));
-    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
+    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || loadingEligibleLots || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim() || !selectedLotId;
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
 
     return (
@@ -471,6 +496,23 @@ export function JobOrderShiftLogModal({
                                                 required
                                             />
                                         </div>
+
+                                        <div className="space-y-1.5 sm:col-span-3">
+                                            <Label htmlFor="targetStep" className="text-muted-foreground font-medium text-[11px]">Post Output To Routing Step</Label>
+                                            <select
+                                                id="targetStep"
+                                                value={targetTaskId}
+                                                onChange={(e) => setTargetTaskId(Number(e.target.value))}
+                                                className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 cursor-pointer"
+                                            >
+                                                {sortedTasks.map((t) => (
+                                                    <option key={t.id} value={t.id}>
+                                                        Step {t.sequence_order} — {t.name}{t.status === "Completed" ? " (Completed)" : ""}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[9px] text-muted-foreground">Shift yield and backflushed materials are posted against this routing step.</p>
+                                        </div>
                                     </div>
 
                                     {/* Scrap / Rejection Log Section */}
@@ -548,23 +590,17 @@ export function JobOrderShiftLogModal({
 
                                             <div className="space-y-1.5">
                                                 <Label htmlFor="targetLotSelect" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Location
+                                                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Location <span className="text-destructive">*</span>
                                                 </Label>
-                                                <div className="relative">
-                                                    <select
-                                                        id="targetLotSelect"
-                                                        value={selectedLotId}
-                                                        onChange={(e) => setSelectedLotId(e.target.value)}
-                                                        className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all duration-200 cursor-pointer appearance-none"
-                                                        required
-                                                    >
-                                                        {lots.map((l) => (
-                                                            <option key={l.lot_id || l.id} value={l.lot_id || l.id}>
-                                                                {l.lot_name || `Location #${l.lot_id || l.id}`}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
+                                                <FinishedGoodsLotSelect
+                                                    lots={eligibleLots}
+                                                    value={selectedLotId}
+                                                    onValueChange={setSelectedLotId}
+                                                    loading={loadingEligibleLots}
+                                                    disabled={submittingShiftLog}
+                                                    placeholder="Select storage lot..."
+                                                    className="h-10 w-full justify-between rounded-xl border-border/80 text-xs font-semibold"
+                                                />
                                             </div>
 
                                             <div className="space-y-1.5">

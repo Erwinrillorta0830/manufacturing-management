@@ -17,6 +17,37 @@ export interface LotTransferStatusHistory {
     remarks: string;
 }
 
+export type LotTransferMovementDirection = "IN" | "OUT" | "UNKNOWN";
+
+export interface LotTransferMovementHistory {
+    movementId: number;
+    lotTransferId: number;
+    detailId: number | null;
+    transactionTypeId: number | null;
+    transactionType: string;
+    movementDirection: LotTransferMovementDirection;
+    sourceDocumentNo: string | null;
+    productId: number;
+    branchId: number;
+    mmLotId: number | null;
+    batchNo: string;
+    quantity: number;
+    manufacturingDate: string | null;
+    expirationDate: string | null;
+    createdBy: number | null;
+    createdAt: string | null;
+    remarks: string | null;
+}
+
+export interface LotTransferMovementHistoryResult {
+    data: LotTransferMovementHistory[];
+    expectedMovementCount: number;
+    actualMovementCount: number;
+    expectedLineCount: number;
+    pairedLineCount: number;
+    reconciliationRequired: boolean;
+}
+
 export interface LotTransferInput {
     branchId: number;
     sourceLotId: number;

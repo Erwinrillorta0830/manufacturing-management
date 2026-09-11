@@ -61,29 +61,61 @@ export async function POST(
         const newAdjustments = payload.newAdjustments || [];
         const newEwts = payload.newEwts || [];
 
+        // Fetch sales_invoice customer_code map for any target invoices
+        const targetInvoiceIds = [...new Set([
+            ...allocations.map((a: { invoiceId?: number }) => a.invoiceId).filter(Boolean),
+            ...newAdjustments.map((a: { invoiceId?: number }) => a.invoiceId).filter(Boolean)
+        ])];
+
+        const invoiceCustomerMap = new Map<number, string>();
+        if (targetInvoiceIds.length > 0) {
+            try {
+                const siRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${targetInvoiceIds.join(",")}&fields=invoice_id,customer_code&limit=-1`, { headers, cache: "no-store" });
+                if (siRes.ok) {
+                    const siData = (await siRes.json()).data || [];
+                    siData.forEach((s: { invoice_id?: number; customer_code?: string }) => {
+                        if (s.invoice_id && s.customer_code) {
+                            invoiceCustomerMap.set(Number(s.invoice_id), s.customer_code);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to fetch sales_invoice customer_codes for allocation:", err);
+            }
+        }
+
         // 1.5 Handle virtual items mapping to collection_details
         const tempIdToDbIdMap: Record<string, string> = {};
 
         // Fetch EWT COA ID
-        let ewtCoaId: number | null = null;
+        let ewtCoaId: number = 438;
+        let ewtBalanceTypeId: number = 1;
         if (newEwts.length > 0) {
-            const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[_or][0][gl_name][_icontains]=ewt&filter[_or][1][gl_name][_icontains]=withholding`, { headers });
+            const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[_or][0][coa_id][_eq]=438&filter[_or][1][gl_name][_icontains]=ewt&filter[_or][2][gl_name][_icontains]=withholding`, { headers });
             if (coaRes.ok) {
                 const coaData = await coaRes.json();
                 if (coaData.data && coaData.data.length > 0) {
-                    ewtCoaId = coaData.data[0].coa_id;
+                    const coaObj = coaData.data[0];
+                    ewtCoaId = Number(coaObj.coa_id) || 438;
+                    ewtBalanceTypeId = Number(coaObj.balance_type) || 1;
                 }
             }
         }
 
         // Insert Adjustments
         for (const adj of newAdjustments) {
-            const detailData = {
+            const invId = adj.invoiceId ? Number(adj.invoiceId) : null;
+            const custCode = adj.customerCode || (invId ? invoiceCustomerMap.get(invId) : null);
+            const detailData: Record<string, unknown> = {
                 collection_id: id,
                 finding: adj.findingId,
+                type: adj.coaId || null,
                 balance_type_id: adj.balanceTypeId,
                 amount: adj.amount,
-                remarks: adj.remarks
+                remarks: adj.remarks,
+                invoice_id: invId || null,
+                customer_code: custCode || null,
+                encoder_id: linkedBy
             };
             const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
             if (res.ok) {
@@ -94,12 +126,18 @@ export async function POST(
 
         // Insert EWTs
         for (const ewt of newEwts) {
-            const detailData = {
+            const invId = ewt.invoiceId ? Number(ewt.invoiceId) : null;
+            const custCode = ewt.customerCode || (invId ? invoiceCustomerMap.get(invId) : null);
+            const detailData: Record<string, unknown> = {
                 collection_id: id,
                 type: ewtCoaId,
+                balance_type_id: ewtBalanceTypeId,
                 amount: ewt.amount,
                 check_no: ewt.referenceNo,
-                remarks: ewt.referenceNo
+                remarks: ewt.referenceNo,
+                invoice_id: invId || null,
+                customer_code: custCode || null,
+                encoder_id: linkedBy
             };
             const res = await fetch(`${DIRECTUS_URL}/items/collection_details`, { method: "POST", headers, body: JSON.stringify(detailData) });
             if (res.ok) {
@@ -112,19 +150,39 @@ export async function POST(
         const returnAmountMap = new Map<string, { returnNo: number; invoiceNo: number; amount: number }>();
         const memoAmountMap = new Map<number, number>();
 
+        const activeDetailAllocatedDbIds = new Set<string>();
+
         for (const alloc of allocations) {
             if (alloc.amountApplied <= 0) continue; // Skip zero allocations
 
             const type = alloc.allocationType;
 
             if (["CASH", "CHECK", "ADJUSTMENT", "EWT", "MEMO"].includes(type)) {
+                const mappedSourceId = tempIdToDbIdMap[alloc.sourceTempId] || alloc.sourceTempId;
                 invoicesPayload.push({
                     collection_id: id,
                     invoice_id: alloc.invoiceId,
                     amount: alloc.amountApplied,
                     type: type,
-                    source_temp_id: tempIdToDbIdMap[alloc.sourceTempId] || alloc.sourceTempId
+                    source_temp_id: mappedSourceId
                 });
+
+                if (alloc.invoiceId && typeof mappedSourceId === "string") {
+                    const detailDbIdMatch = mappedSourceId.match(/detail-(\d+)/);
+                    if (detailDbIdMatch) {
+                        const detailId = detailDbIdMatch[1];
+                        activeDetailAllocatedDbIds.add(detailId);
+                        const targetCustCode = invoiceCustomerMap.get(Number(alloc.invoiceId));
+                        void fetch(`${DIRECTUS_URL}/items/collection_details/${detailId}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({
+                                invoice_id: alloc.invoiceId,
+                                customer_code: targetCustCode || null
+                            })
+                        }).catch((err: unknown) => console.warn(`Failed to update collection_detail #${detailId} with invoice linkage:`, err));
+                    }
+                }
             }
             
             if (type === "MEMO") {
@@ -144,6 +202,28 @@ export async function POST(
                     }
                 }
             }
+        }
+
+        // Unlink collection_details that are no longer allocated to an invoice in this pouch
+        try {
+            const existingDetailsRes = await fetch(`${DIRECTUS_URL}/items/collection_details?filter[collection_id][_eq]=${id}&fields=id,invoice_id`, { headers, cache: "no-store" });
+            if (existingDetailsRes.ok) {
+                const existingDetails = (await existingDetailsRes.json()).data || [];
+                for (const d of existingDetails) {
+                    if (d.id && !activeDetailAllocatedDbIds.has(String(d.id))) {
+                        await fetch(`${DIRECTUS_URL}/items/collection_details/${d.id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({
+                                invoice_id: null,
+                                customer_code: null
+                            })
+                        }).catch((err: unknown) => console.warn(`Failed to clear invoice linkage for detail #${d.id}:`, err));
+                    }
+                }
+            }
+        } catch (unlinkedErr) {
+            console.warn("Failed to check unlinked collection_details:", unlinkedErr);
         }
 
         for (const item of returnAmountMap.values()) {
@@ -231,6 +311,23 @@ export async function POST(
                 body: JSON.stringify(returnsPayload)
             });
             if (!res.ok) throw new Error(`Failed to insert sales_invoice_sales_return: ${await res.text()}`);
+
+            // Also insert into collection_returns for historical compatibility
+            const collectionReturnsPayload = returnsPayload.map((r) => ({
+                collection_id: id,
+                return_id: r.return_no,
+                date_linked: phDate
+            }));
+
+            try {
+                await fetch(`${DIRECTUS_URL}/items/collection_returns`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(collectionReturnsPayload)
+                });
+            } catch (collRetErr) {
+                console.warn("Failed to insert into collection_returns:", collRetErr);
+            }
         }
         
         return NextResponse.json({ success: true });
