@@ -783,22 +783,53 @@ export function CashIssuanceCreateDialog({
     };
 
     const handleSubmit = async () => {
-        if (loading || isReadOnly || submitLockRef.current) return;
-        const isPartialReleasePaymentEdit = isPaymentEditorEnabled && editData?.status === "Partially Released";
-        if (!transactionTypeId) return toast.error("Transaction Type is required.");
-        if (!payeeId) return toast.error("Please select a Payee.");
-        if (!departmentId && !isPartialReleasePaymentEdit) return toast.error("Department is required.");
-        if (totalAmount <= 0) return toast.error("Voucher total must be greater than 0.");
-        if (memoSupplierMismatchIndices.size > 0) {
-            return toast.error("Remove and reapply memo lines that belong to a different supplier.");
-        }
-        if (!isPaymentOnlyEdit && !validatePayables()) return;
-        const memoAmountError = Object.values(memoAmountErrors)[0];
-        if (memoAmountError) return toast.error(memoAmountError);
-        if (isPaymentEditorEnabled && !validatePayments()) return;
-
+        if (loading || localSubmitting || isReadOnly || submitLockRef.current) return;
         submitLockRef.current = true;
         setLocalSubmitting(true);
+
+        const isPartialReleasePaymentEdit = isPaymentEditorEnabled && editData?.status === "Partially Released";
+        if (!transactionTypeId) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error("Transaction Type is required.");
+        }
+        if (!payeeId) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error("Please select a Payee.");
+        }
+        if (!departmentId && !isPartialReleasePaymentEdit) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error("Department is required.");
+        }
+        if (totalAmount <= 0) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error("Voucher total must be greater than 0.");
+        }
+        if (memoSupplierMismatchIndices.size > 0) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error("Remove and reapply memo lines that belong to a different supplier.");
+        }
+        if (!isPaymentOnlyEdit && !validatePayables()) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return;
+        }
+        const memoAmountError = Object.values(memoAmountErrors)[0];
+        if (memoAmountError) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return toast.error(memoAmountError);
+        }
+        if (isPaymentEditorEnabled && !validatePayments()) {
+            submitLockRef.current = false;
+            setLocalSubmitting(false);
+            return;
+        }
+
         try {
             const paymentLines = payments.map((line) => {
                 const selectedBank = banks.find((bank) => bank.bankId === Number(line.bankId));
@@ -851,8 +882,23 @@ export function CashIssuanceCreateDialog({
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
+            <Dialog
+                open={open}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen && (loading || localSubmitting || submitLockRef.current)) return;
+                    onOpenChange(nextOpen);
+                }}
+            >
                 <DialogContent
+                    onInteractOutside={(e) => {
+                        if (isPayeeRegistrationOpen || loading || localSubmitting || submitLockRef.current) e.preventDefault();
+                    }}
+                    onFocusOutside={(e) => {
+                        if (isPayeeRegistrationOpen || loading || localSubmitting || submitLockRef.current) e.preventDefault();
+                    }}
+                    onEscapeKeyDown={(e) => {
+                        if (loading || localSubmitting || submitLockRef.current) e.preventDefault();
+                    }}
                     className="max-w-[98vw] sm:max-w-[98vw] w-[98vw] h-[96vh] p-0 flex flex-col bg-background overflow-hidden border border-border shadow-2xl rounded-xl">
                     <DialogHeader className="px-6 py-4 border-b border-border bg-card shrink-0 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                         <div className="space-y-1">
@@ -962,24 +1008,26 @@ export function CashIssuanceCreateDialog({
                         </div>
                         <div className="flex gap-2">
                             <Button variant="outline" onClick={() => onOpenChange(false)}
-                                className="border-input text-foreground hover:bg-accent font-bold text-xs h-9 px-5 rounded-sm">Cancel</Button>
-                            <Button onClick={handleSubmit} disabled={loading || localSubmitting || isReadOnly}
-                                className="text-xs font-bold h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-sm shadow-sm transition-colors">
+                                disabled={loading || localSubmitting || submitLockRef.current}
+                                className="border-input text-foreground hover:bg-accent font-bold text-xs h-9 px-5 rounded-sm disabled:opacity-50 disabled:cursor-not-allowed">Cancel</Button>
+                            <Button onClick={handleSubmit} disabled={loading || localSubmitting || submitLockRef.current || isReadOnly}
+                                className="text-xs font-bold h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                                 {loading || localSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> :
                                     <Save className="w-4 h-4 mr-2" />}
                                 {editData ? "Save and Close" : "Save and Close"}
                             </Button>
                         </div>
                     </div>
+
+                    <AddPayeeModal
+                        open={isPayeeRegistrationOpen}
+                        onClose={() => setIsPayeeRegistrationOpen(false)}
+                        onSuccess={handlePayeeCreated}
+                        supplierType={payeeSupplierType}
+                        allowSupplierTypeSelect
+                    />
                 </DialogContent>
             </Dialog>
-
-            <AddPayeeModal
-                open={isPayeeRegistrationOpen}
-                onClose={() => setIsPayeeRegistrationOpen(false)}
-                onSuccess={handlePayeeCreated}
-                supplierType={payeeSupplierType}
-            />
 
             <Dialog open={isPoModalOpen} onOpenChange={handlePoModalOpenChange}>
                 <DialogContent className="sm:max-w-[750px] bg-background border-border">
