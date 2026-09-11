@@ -121,7 +121,9 @@ export default function PlanningEngineeringModule() {
         releasingDraftId,
         handleReleaseDraftFromPlanning,
         deepLinkJo,
-        clearDeepLinkJo
+        clearDeepLinkJo,
+        deepLinkNotice,
+        setDeepLinkNotice
     } = usePlanningEngineering();
 
     const [activeMainTab, setActiveMainTab] = useState<"demand" | "inventory" | "queue">("demand");
@@ -292,6 +294,19 @@ export default function PlanningEngineeringModule() {
     }, [activeFamilyJo, childJoMaterials, familyActiveTab, joMaterials]);
 
     const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
+
+    // Only Draft/Planned/Planning Job Orders can be released by the API; the
+    // footer action should not be offered for already-released family members.
+    const releasableFamilyMembers = useMemo(() => {
+        if (!activeFamilyJo) return [];
+        const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
+        return members.filter((jo: any) => isJobOrderStatus(
+            jo?.status,
+            JOB_ORDER_STATUS.DRAFT,
+            JOB_ORDER_STATUS.PLANNED,
+            JOB_ORDER_STATUS.PLANNING
+        ));
+    }, [activeFamilyJo, familyChildJobs, isFamilyOverview]);
 
     const activeMaterialLoadState = useMemo<MaterialLoadState>(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
@@ -724,21 +739,15 @@ export default function PlanningEngineeringModule() {
             toast.error("Required materials are unavailable. Retry the materials lookup before releasing the Job Order.");
             return;
         }
-        if (!activeFamilyJo) return;
+        if (releasableFamilyMembers.length === 0) return;
 
-        const targetJo = activeFamilyJo;
-        const familyChildrenToRelease = familyChildJobs;
-        const shouldReleaseFamily = isFamilyOverview;
+        const membersToRelease = releasableFamilyMembers;
 
         clearDetails();
 
-        await handleReleaseDraftFromPlanning(targetJo.order_id);
-
-        if (shouldReleaseFamily) {
-            for (const child of familyChildrenToRelease) {
-                if (child.order_id) {
-                    await handleReleaseDraftFromPlanning(child.order_id);
-                }
+        for (const member of membersToRelease) {
+            if (member.order_id) {
+                await handleReleaseDraftFromPlanning(member.order_id);
             }
         }
     };
@@ -804,6 +813,22 @@ export default function PlanningEngineeringModule() {
 
             {/* Tabs-based Layout Dashboard */}
             <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "inventory" | "queue")} className="w-full space-y-6">
+                {deepLinkNotice && (
+                    <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        <span className="flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                            {deepLinkNotice}
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeepLinkNotice(null)}
+                            className="h-7 shrink-0 px-2 text-[11px] font-bold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                        >
+                            Dismiss
+                        </Button>
+                    </div>
+                )}
                 {showWorkflowGuide && (
                     <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -1696,17 +1721,21 @@ export default function PlanningEngineeringModule() {
                             >
                                 Close Details
                             </Button>
-                            <Button
-                                onClick={handleReleaseCurrentView}
-                                disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
-                            >
-                                {releasingDraftId === activeFamilyJo?.order_id
-                                    ? "Releasing..."
-                                    : isFamilyOverview
-                                        ? `Release Entire Family (${1 + familyChildJobs.length} Job Orders)`
-                                        : "Release to Shop Floor"}
-                            </Button>
+                            {releasableFamilyMembers.length > 0 && (
+                                <Button
+                                    onClick={handleReleaseCurrentView}
+                                    disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
+                                >
+                                    {releasingDraftId === activeFamilyJo?.order_id
+                                        ? "Releasing..."
+                                        : isFamilyOverview
+                                            ? releasableFamilyMembers.length === 1 + familyChildJobs.length
+                                                ? `Release Entire Family (${releasableFamilyMembers.length} Job Orders)`
+                                                : `Release Releasable Members (${releasableFamilyMembers.length})`
+                                            : "Release to Shop Floor"}
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </DialogContent>

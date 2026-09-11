@@ -113,7 +113,7 @@ export async function createJobOrder(
     salesOrderIds: number[] = [],
     salesOrderDetailIds: number[] = [],
     schedulingPlan?: SalesOrderSchedulingPlan | null
-): Promise<{ jo_id?: string | null }> {
+): Promise<{ jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
     const previousParentStatuses = new Map<number, string>();
     try {
@@ -852,7 +852,7 @@ export async function createJobOrder(
             }
         }
 
-        return { jo_id: joNoStr };
+        return { jo_id: joNoStr, status: initialStatus, shortfalls };
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
         if (createdJobOrderNo) {

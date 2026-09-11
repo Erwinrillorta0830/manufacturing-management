@@ -823,7 +823,12 @@ export function CreateBufferJODialog({
                 throw new Error(errData.error || "Failed to create Buffer Job Order.");
             }
 
-            toast.success(`Buffer Job Order ${joNumber} released successfully!`);
+            const json = await res.json().catch(() => null);
+            if (json?.data?.status === "Draft") {
+                toast.warning(`Buffer Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
+            } else {
+                toast.success(`Buffer Job Order ${joNumber} released successfully!`);
+            }
             printPickingList(
                 joNumber,
                 selectedProduct?.product_name || `Product #${selectedProductId}`,
