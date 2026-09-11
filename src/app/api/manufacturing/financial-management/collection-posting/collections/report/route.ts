@@ -150,7 +150,6 @@ export async function GET(request: Request) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const variances: any[] = [];
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const ewtDetailsMap: Record<number, { amount: number; ref?: string }> = {};
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any

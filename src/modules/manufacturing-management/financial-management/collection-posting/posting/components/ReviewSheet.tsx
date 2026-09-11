@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
 
     Lock, Loader2, Wallet, Receipt, Calculator, User,
-    Calendar, Briefcase, MapPin, MessageSquare, ShieldAlert, CheckCircle2,
+    Calendar, MapPin, MessageSquare, ShieldAlert, CheckCircle2,
     Banknote, Percent, Undo2, FileSignature, Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";

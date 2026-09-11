@@ -9,7 +9,6 @@ import {
     ChevronsRight,
     ChevronsUpDown,
     FilterX,
-    Layers,
     Loader2,
     Search,
 } from "lucide-react";

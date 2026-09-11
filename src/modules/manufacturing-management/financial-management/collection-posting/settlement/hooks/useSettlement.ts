@@ -15,7 +15,6 @@ import {
     findOverAllocatedInvoice,
     findUnderAllocatedInvoice,
     getCartBalanceTotals,
-    getInvoiceAllocationCapacity,
     getInvoiceAppliedForSettlement,
     getInvoiceRequiredBalance,
     getSourceAllocationCapacity,

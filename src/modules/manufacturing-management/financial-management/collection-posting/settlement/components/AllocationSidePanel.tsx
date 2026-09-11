@@ -88,7 +88,7 @@ export default function AllocationSidePanel({
                             requiredBalance,
                             appliedSession - (existingAlloc?.amountApplied || 0)
                         );
-                        const targetMax = capSettlementAllocation(remaining, remaining);
+                        const targetMax = capSettlementAllocation(remaining, remaining, invoiceAvailable);
 
                         const isExactMatch = w.invoiceId === inv.id;
                         // Fixed strict null-check linting error here by using ?? 0
@@ -161,7 +161,7 @@ export default function AllocationSidePanel({
                             requiredBalance,
                             appliedSession - (existingAlloc?.amountApplied || 0)
                         );
-                        const targetMax = capSettlementAllocation(remaining, remaining);
+                        const targetMax = capSettlementAllocation(remaining, remaining, invoiceAvailable);
 
                         return (
                             <div key={`apply-${inv.id}-${c.id}`} className="flex flex-col gap-1.5 py-2 border-b border-border/50 last:border-0">
