@@ -511,7 +511,7 @@ function TwoPointQAFormContent({
                                 <div className="space-y-1">
                                     <Label htmlFor="lot-number" className="text-xs font-semibold flex items-center gap-1">
                                         <Tag className="h-3 w-3 text-muted-foreground" />
-                                        Batch Number
+                                        Batch Number <span className="text-destructive">*</span>
                                     </Label>
                                     <Input
                                         id="lot-number"
@@ -548,6 +548,11 @@ function TwoPointQAFormContent({
                                     />
                                 </div>
                             </div>
+                            {numPass > 0 && (!selectedMmLotId || !lotNumber.trim()) && (
+                                <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                                    Storage lot and batch number are required before releasing passed units.
+                                </p>
+                            )}
                         </div>
                     )}
 
@@ -579,7 +584,7 @@ function TwoPointQAFormContent({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={actionLoading || numInsp <= 0 || (hasRejections && !rejectionReasonId)}
+                            disabled={actionLoading || numInsp <= 0 || (hasRejections && !rejectionReasonId) || (numPass > 0 && (!selectedMmLotId || !lotNumber.trim()))}
                             className="min-h-11 text-sm font-bold gap-1.5 shadow-sm"
                         >
                             {actionLoading ? (

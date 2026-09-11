@@ -147,8 +147,11 @@ export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
     { value: "Active", label: "Active" },
     { value: "All", label: "All" },
     { value: "Proceed", label: "Released" },
+    { value: "Reserved", label: "Ready to run" },
     { value: "Ongoing", label: "In Progress" },
     { value: "On Hold", label: "On Hold" },
+    { value: "QA Hold", label: "QA Hold" },
+    { value: "Shortage", label: "Shortage" },
     { value: "Cancelled", label: "Cancelled" },
     { value: "Finished", label: "Finished" }
 ] as const;
@@ -158,7 +161,14 @@ export function matchesProductionWorkflowStatus(status: string, filter: string):
     const normalizedStatus = normalizeJobOrderStatus(status);
     if (!normalizedStatus) return false;
     if (filter === "Active") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+        return isJobOrderStatus(
+            normalizedStatus,
+            JOB_ORDER_STATUS.PROCEED,
+            JOB_ORDER_STATUS.RELEASED,
+            JOB_ORDER_STATUS.RESERVED,
+            JOB_ORDER_STATUS.ONGOING,
+            JOB_ORDER_STATUS.IN_PROGRESS
+        );
     }
     if (filter === "Proceed" || filter === "Released") {
         return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED);

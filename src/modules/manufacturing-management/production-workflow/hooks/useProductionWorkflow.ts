@@ -34,6 +34,7 @@ export function useProductionWorkflow() {
     const [statusFilter, setStatusFilter] = useState<string>("Active");
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
 
     // Operator Assignment State
     const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("");
@@ -70,9 +71,11 @@ export function useProductionWorkflow() {
         return [...tasks].sort((a, b) => a.sequence_order - b.sequence_order);
     }, [selectedJobOrder]);
 
-    // Identify active step (first sequence step)
+    // Identify active step: the first incomplete routing step (falls back to
+    // the last step so QA gates on the final step stay reachable).
     const activeStep = useMemo(() => {
-        return sortedTasks.length > 0 ? sortedTasks[0] : null;
+        if (sortedTasks.length === 0) return null;
+        return sortedTasks.find((task) => task.status !== "Completed") || sortedTasks[sortedTasks.length - 1];
     }, [sortedTasks]);
 
     // Selected step object
@@ -80,6 +83,24 @@ export function useProductionWorkflow() {
         if (selectedTaskId === null) return null;
         return sortedTasks.find((t) => t.id === selectedTaskId) || null;
     }, [sortedTasks, selectedTaskId]);
+
+    // Deep link support: /mm/production-workflow?jo=JO-XXXX selects the Job Order.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        setPendingDeepLinkJo(params.get("jo"));
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || jobOrders.length === 0) return;
+        const match = jobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
+        if (match) {
+            setStatusFilter("All");
+            setSelectedJobOrderId(match.jo_id);
+            setSelectedTaskId(null);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, jobOrders]);
 
     // Fetch Job Orders
     const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {

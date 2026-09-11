@@ -44,11 +44,37 @@ export function useMaterialStaging() {
     } | null>(null);
     const [transferring, setTransferring] = useState(false);
     const [batchStageResult, setBatchStageResult] = useState<BatchStageResult | null>(null);
+    const [stageProgressLabel, setStageProgressLabel] = useState<string | null>(null);
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+
+    // Debounce the server search so typing does not refetch on every keystroke.
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    // Deep link support: /mm/material-staging?jo=JO-XXXX
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        setPendingDeepLinkJo(params.get("jo"));
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || jobOrders.length === 0) return;
+        const match = jobOrders.find(jobOrder => jobOrder.job_order_no === pendingDeepLinkJo);
+        if (match) {
+            setSelectedStatusFilter("all");
+            setSelectedJobOrderId(match.job_order_id);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, jobOrders]);
 
     const loadData = useCallback(async (showToast = false) => {
         try {
             setLoading(true);
-            const response = await fetchStagingJobOrders({ branchId: selectedBranchId, search: searchQuery });
+            const response = await fetchStagingJobOrders({ branchId: selectedBranchId, search: debouncedSearch });
             if (!response.success) throw new Error(response.error || "Failed to load data");
             setLoadError(null);
             setJobOrders(response.data);
@@ -65,7 +91,7 @@ export function useMaterialStaging() {
         } finally {
             setLoading(false);
         }
-    }, [selectedBranchId, searchQuery]);
+    }, [selectedBranchId, debouncedSearch]);
 
     useEffect(() => {
         void loadData();
@@ -91,19 +117,21 @@ export function useMaterialStaging() {
     }), [jobOrders, selectedStatusFilter, onlyShortages, searchQuery]);
 
     useEffect(() => {
+        // A pending deep link owns the initial selection.
+        if (pendingDeepLinkJo) return;
         const visible = selectedJobOrderId !== null && filteredJobOrders.some(jobOrder => jobOrder.job_order_id === selectedJobOrderId);
         const nextId = visible ? selectedJobOrderId : filteredJobOrders[0]?.job_order_id ?? null;
         if (nextId !== selectedJobOrderId) setSelectedJobOrderId(nextId);
-    }, [filteredJobOrders, selectedJobOrderId]);
+    }, [filteredJobOrders, selectedJobOrderId, pendingDeepLinkJo]);
 
     const selectedJobOrder = useMemo(
         () => filteredJobOrders.find(jobOrder => jobOrder.job_order_id === selectedJobOrderId) || filteredJobOrders[0] || null,
         [filteredJobOrders, selectedJobOrderId]
     );
 
-    useEffect(() => {
+    const handleDismissBatchStageResult = useCallback(() => {
         setBatchStageResult(null);
-    }, [selectedJobOrderId]);
+    }, []);
 
     const handleOpenAllocationModal = useCallback((jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => {
         setActiveAllocationItem({ jobOrder, material, lot });
@@ -118,6 +146,7 @@ export function useMaterialStaging() {
     const handleCommitAllocation = useCallback(async (payload: StagingCommitPayload) => {
         try {
             setTransferring(true);
+            setStageProgressLabel("Moving materials to the floor bin...");
             const result = await commitMaterialStaging(payload);
             setBatchStageResult({
                 job_order_id: result.data.job_order_id,
@@ -136,10 +165,15 @@ export function useMaterialStaging() {
             throw error;
         } finally {
             setTransferring(false);
+            setStageProgressLabel(null);
         }
     }, [handleCloseAllocationModal, loadData]);
 
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
+        if (isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
+            toast.error(`Cannot stage JO #${jobOrder.job_order_no}: it is cancelled.`);
+            return;
+        }
         const workCenterId = jobOrder.staging_work_center_id;
         if (!workCenterId) {
             toast.error(`Cannot stage JO #${jobOrder.job_order_no}: no active work-center destination is configured.`);
@@ -153,6 +187,7 @@ export function useMaterialStaging() {
 
         try {
             setTransferring(true);
+            setStageProgressLabel("Matching available stock (Auto FEFO)...");
             const preview = await fetchAllocationPreview({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
@@ -174,6 +209,7 @@ export function useMaterialStaging() {
                 toast.warning("Auto FEFO could not fully allocate every material. Review the lot-level shortages.");
                 return;
             }
+            setStageProgressLabel("Moving materials to the floor bin...");
             const result = await commitMaterialStaging({
                 job_order_id: jobOrder.job_order_id,
                 job_order_no: jobOrder.job_order_no,
@@ -201,6 +237,7 @@ export function useMaterialStaging() {
             toast.error(error instanceof Error ? error.message : "Batch staging failed.");
         } finally {
             setTransferring(false);
+            setStageProgressLabel(null);
         }
     }, [loadData]);
 
@@ -228,6 +265,8 @@ export function useMaterialStaging() {
         activeAllocationItem,
         transferring,
         batchStageResult,
+        stageProgressLabel,
+        handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,

@@ -28,8 +28,8 @@ interface FinalQAReleasesProps {
     setPackagingSealPassed: (val: boolean) => void;
     labelCompliancePassed: boolean;
     setLabelCompliancePassed: (val: boolean) => void;
-    overallDisposition: "Approved" | "Quarantined" | "Rejected";
-    setOverallDisposition: (val: "Approved" | "Quarantined" | "Rejected") => void;
+    overallDisposition: "" | "Approved" | "Quarantined" | "Rejected";
+    setOverallDisposition: (val: "" | "Approved" | "Quarantined" | "Rejected") => void;
     coaRefNo: string;
     setCoaRefNo: (val: string) => void;
     finalRemarks: string;
@@ -384,6 +384,7 @@ export function FinalQAReleases({
                                     onChange={(e) => setOverallDisposition(e.target.value as any)}
                                     className="flex min-h-11 w-full rounded-md border border-border bg-background text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                                 >
+                                    <option value="" disabled>Select disposition...</option>
                                     <option value="Approved">Approved (Release to WMS)</option>
                                     <option value="Quarantined">Quarantine Hold (Audit Lock)</option>
                                     <option value="Rejected">Rejected (Scrap/Rework)</option>
@@ -436,7 +437,7 @@ export function FinalQAReleases({
                             </Button>
                             <Button
                                 type="submit"
-                                disabled={actionLoading}
+                                disabled={actionLoading || !overallDisposition}
                                 className="bg-primary hover:bg-primary/95 text-white font-bold min-h-11 text-sm px-4"
                             >
                                 {actionLoading ? "Saving Release..." : "Save & Release Lot"}

@@ -67,6 +67,7 @@ export function JobOrderShiftLogModal({
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
+    const [targetTaskId, setTargetTaskId] = useState<number>(0);
 
     const totalPlannedHours = selectedJobOrder?.routing_tasks 
         ? selectedJobOrder.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
@@ -141,6 +142,7 @@ export function JobOrderShiftLogModal({
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
+            setTargetTaskId(activeStep?.id ?? (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0));
             
             const todayStr = new Date().toISOString().split("T")[0];
             setManufacturingDate(todayStr);
@@ -274,11 +276,12 @@ export function JobOrderShiftLogModal({
             const activeUser = allJobOperators.find(o => o.stopped_at === null);
             const fullShiftName = `Day ${productionDay} - ${shiftName}`;
             
-            // Target routing task
-            const targetTaskId = activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
+            // Target routing task (explicit selection wins over the inferred
+            // first-incomplete step).
+            const resolvedTaskId = targetTaskId || activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
 
             const payload: ShiftRunLogPayload = {
-                taskId: targetTaskId,
+                taskId: resolvedTaskId,
                 joId: selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0,
                 shiftName: fullShiftName,
                 yieldQty: newYield,
@@ -302,7 +305,16 @@ export function JobOrderShiftLogModal({
 
             const res = await submitShiftRunLog(payload);
             if (res.success) {
-                toast.success(`Shift closed successfully for ${fullShiftName}! Point-of-use materials backflushed into inventory movements (${selectedJobOrder.order_no || selectedJobOrder.jo_id}).`);
+                const targetStep = sortedTasks.find((t) => t.id === resolvedTaskId);
+                const targetQty = Number(selectedJobOrder.quantity || 0);
+                const producedAfter = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0) + newYield;
+                const reachedTarget = targetQty > 0 && producedAfter >= targetQty;
+
+                if (reachedTarget) {
+                    toast.success(`Shift closed for ${fullShiftName}. Output target reached (${producedAfter.toLocaleString()}/${targetQty.toLocaleString()} pcs) — route this Job Order to QA.`);
+                } else {
+                    toast.success(`Shift closed for ${fullShiftName}. Posted to Step ${targetStep?.sequence_order ?? "?"} — ${targetStep?.name ?? "routing step"}; staging materials backflushed.`);
+                }
                 onOpenChange(false);
                 if (onSuccess) onSuccess();
             } else {
@@ -483,6 +495,23 @@ export function JobOrderShiftLogModal({
                                                 placeholder="e.g. 5000"
                                                 required
                                             />
+                                        </div>
+
+                                        <div className="space-y-1.5 sm:col-span-3">
+                                            <Label htmlFor="targetStep" className="text-muted-foreground font-medium text-[11px]">Post Output To Routing Step</Label>
+                                            <select
+                                                id="targetStep"
+                                                value={targetTaskId}
+                                                onChange={(e) => setTargetTaskId(Number(e.target.value))}
+                                                className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 cursor-pointer"
+                                            >
+                                                {sortedTasks.map((t) => (
+                                                    <option key={t.id} value={t.id}>
+                                                        Step {t.sequence_order} — {t.name}{t.status === "Completed" ? " (Completed)" : ""}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[9px] text-muted-foreground">Shift yield and backflushed materials are posted against this routing step.</p>
                                         </div>
                                     </div>
 

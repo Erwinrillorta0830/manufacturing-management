@@ -45,7 +45,7 @@ export function Step3Scheduling({
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-2">
                                             <span className="text-[9px] font-black bg-muted text-muted-foreground border border-border px-2 py-0.5 rounded-md">
-                                                Step {seq}0
+                                                Step {seq}
                                             </span>
                                             <h5 className="text-xs font-bold text-foreground">{route.operation_name || "Production Operation"}</h5>
                                         </div>

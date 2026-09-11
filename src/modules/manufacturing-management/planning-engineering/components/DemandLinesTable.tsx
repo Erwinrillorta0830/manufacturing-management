@@ -29,6 +29,7 @@ import {
     isProductionSchedulingStatus,
     SALES_ORDER_TRANSITIONS
 } from "@/app/api/manufacturing/sales-order/_status";
+import { displayJobOrderStatus } from "../../job-order-status";
 
 const DEMAND_STATUS_OPTIONS = [
     { value: "ALL", label: "All" },
@@ -211,7 +212,7 @@ export function DemandLinesTable({
                                                                 {jobOrder.jobOrderNo}
                                                             </div>
                                                             <div className="text-[10px] text-muted-foreground">
-                                                                {jobOrder.status}
+                                                                {displayJobOrderStatus(jobOrder.status)}
                                                             </div>
                                                         </div>
                                                     ))}

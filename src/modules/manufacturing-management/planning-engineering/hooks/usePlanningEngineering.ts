@@ -77,6 +77,8 @@ export function usePlanningEngineering() {
     const [rawUnreleasedJobs, setRawUnreleasedJobs] = useState<any[]>([]);
     const [loadingJobs, setLoadingJobs] = useState(false);
     const [releasingDraftId, setReleasingDraftId] = useState<string | null>(null);
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -92,13 +94,18 @@ export function usePlanningEngineering() {
             const res = await fetch("/api/manufacturing/planning-engineering");
             if (res.ok) {
                 const data = await res.json();
-                const draftOrPlanned = data.filter((j: any) => isJobOrderStatus(
+                // The queue keeps released Job Orders visible so users can see
+                // where they moved after scheduling instead of losing them.
+                const queuedJobs = data.filter((j: any) => isJobOrderStatus(
                     j.status,
                     JOB_ORDER_STATUS.DRAFT,
                     JOB_ORDER_STATUS.PLANNED,
-                    JOB_ORDER_STATUS.PLANNING
+                    JOB_ORDER_STATUS.PLANNING,
+                    JOB_ORDER_STATUS.RELEASED,
+                    JOB_ORDER_STATUS.PROCEED,
+                    JOB_ORDER_STATUS.RESERVED
                 ));
-                setRawUnreleasedJobs(draftOrPlanned);
+                setRawUnreleasedJobs(queuedJobs);
             }
         } catch (err) {
             console.error("Error loading unreleased job orders:", err);
@@ -120,8 +127,16 @@ export function usePlanningEngineering() {
             });
             const data = await res.json();
             if (!res.ok || data.success === false) {
-                const shortfallMsg = data.error || "Failed to release job order.";
-                if (window.confirm(`${shortfallMsg}\n\nDo you want to forcibly release this Job Order anyway?`)) {
+                const errorMsg = data.error || "Failed to release job order.";
+                // Only material shortfalls offer the force-release escape hatch;
+                // other failures (e.g. wrong status, missing branch) must not
+                // prompt for a forced release that cannot succeed.
+                const isShortfall = /Still insufficient raw materials/i.test(errorMsg);
+                if (!isShortfall) {
+                    toast.error(errorMsg);
+                    return;
+                }
+                if (window.confirm(`${errorMsg}\n\nDo you want to forcibly release this Job Order anyway?`)) {
                     const forceRes = await fetch("/api/manufacturing/planning-engineering", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -135,13 +150,13 @@ export function usePlanningEngineering() {
                     if (!forceRes.ok || forceData.success === false) {
                         throw new Error(forceData.error || "Failed to forcibly release job order.");
                     }
-                    toast.success("Job Order forcibly released successfully!");
+                    toast.success("Job Order forcibly released. It stays in the queue — next step: stage materials.");
                     await loadInitialData(true);
                     return;
                 }
                 return;
             }
-            toast.success("Job Order released successfully!");
+            toast.success("Job Order released. Next step: stage its materials on the shop floor.");
             await loadInitialData(true);
         } catch (err: any) {
             console.error("Failed to release Draft JO:", err);
@@ -159,7 +174,7 @@ export function usePlanningEngineering() {
             setLoadingJobs(true);
         }
         try {
-            const [activeBranches, soResult, draftOrPlanned] = await Promise.all([
+            const [activeBranches, soResult, queuedJobs] = await Promise.all([
                 fetchBranches(),
                 fetchSalesOrders(),
                 fetch("/api/manufacturing/planning-engineering").then(async (res) => {
@@ -169,7 +184,10 @@ export function usePlanningEngineering() {
                             j.status,
                             JOB_ORDER_STATUS.DRAFT,
                             JOB_ORDER_STATUS.PLANNED,
-                            JOB_ORDER_STATUS.PLANNING
+                            JOB_ORDER_STATUS.PLANNING,
+                            JOB_ORDER_STATUS.RELEASED,
+                            JOB_ORDER_STATUS.PROCEED,
+                            JOB_ORDER_STATUS.RESERVED
                         ));
                     }
                     return [];
@@ -183,7 +201,7 @@ export function usePlanningEngineering() {
 
             setSalesOrders(soResult.data || []);
             setDetailsMap(soResult.detailsMap || {});
-            setRawUnreleasedJobs(draftOrPlanned);
+            setRawUnreleasedJobs(queuedJobs);
         } catch (err: any) {
             console.error("Error loading initial data:", err);
             toast.error(err.message || "An error occurred while loading planning data.");
@@ -199,6 +217,24 @@ export function usePlanningEngineering() {
     useEffect(() => {
         loadInitialData();
     }, []);
+
+    // Deep link support: /mm/planning-engineering?jo=JO-XXXX selects the
+    // Job Order's branch and opens its planning details.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        setPendingDeepLinkJo(params.get("jo"));
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || rawUnreleasedJobs.length === 0) return;
+        const match = rawUnreleasedJobs.find((jo: any) => String(jo.jo_id || jo.job_order_no || "") === pendingDeepLinkJo);
+        if (match) {
+            setSelectedBranchId(Number(match.branch_id) || null);
+            setDeepLinkJo(match);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, rawUnreleasedJobs]);
 
     // Establish Realtime SSE (Server-Sent Events) Connection for inventory movements
     useEffect(() => {
@@ -709,6 +745,8 @@ export function usePlanningEngineering() {
         joNumber,
         setJoNumber,
         loadInitialData,
+        deepLinkJo,
+        clearDeepLinkJo: () => setDeepLinkJo(null),
         salesOrderLines,
         selectedLines,
         mergeValidation,
