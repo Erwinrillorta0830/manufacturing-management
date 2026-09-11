@@ -12,7 +12,8 @@ import {
     YieldJobOrderMaterial,
     PageMeta,
     QASummary,
-    MaterialReturnConfirmation
+    MaterialReturnConfirmation,
+    FinalizeHaltedJobPayload
 } from "../types";
 import {
     fetchQALogs,
@@ -40,7 +41,8 @@ import {
     fetchQAInspectionLogsPage,
     fetchDispositionsPage,
     fetchDailyQAQueuePage,
-    fetchFinalQAQueuePage
+    fetchFinalQAQueuePage,
+    postFinalizeHaltedJob
 } from "../services/qa-api";
 import type { FinalQACoa } from "../services/qa-api";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
@@ -476,6 +478,10 @@ export function useManufacturingQA() {
     const [isOverrideDialogOpen, setIsOverrideDialogOpen] = useState(false);
     const [overrideDecision, setOverrideDecision] = useState<"" | "Release with Deviation" | "Rework" | "Scrap">("");
     const [overrideComments, setOverrideComments] = useState("");
+
+    // Halted Job Order finalization (partial FG receipt + leftover return)
+    const [isFinalizeDialogOpen, setIsFinalizeDialogOpen] = useState(false);
+    const [finalizeJobOrderId, setFinalizeJobOrderId] = useState<number | null>(null);
 
     // Daily Yield QA & Final release QA states
     const [yieldLedger, setYieldLedger] = useState<any[]>([]);
@@ -1420,6 +1426,37 @@ export function useManufacturingQA() {
         }
     };
 
+    const handleOpenFinalizeDialog = useCallback((jobOrderId: number | string) => {
+        const numericId = Number(jobOrderId);
+        if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+            toast.error("The Job Order identifier is invalid. Refresh the queue and try again.");
+            return;
+        }
+        setFinalizeJobOrderId(numericId);
+        setIsFinalizeDialogOpen(true);
+    }, []);
+
+    const handleCloseFinalizeDialog = useCallback(() => {
+        setIsFinalizeDialogOpen(false);
+        setFinalizeJobOrderId(null);
+    }, []);
+
+    const handleSubmitHaltFinalize = async (payload: FinalizeHaltedJobPayload) => {
+        setActionLoading(true);
+        try {
+            const result = await postFinalizeHaltedJob(payload);
+            toast.success(`Job Order ${result.job_order_no} finalized: ${Number(result.quantity_produced).toLocaleString()} unit(s) receipted, ${Number(result.returned_quantity).toLocaleString()} returned to store.`);
+            setIsFinalizeDialogOpen(false);
+            setFinalizeJobOrderId(null);
+            await refreshAll(true);
+        } catch (error: any) {
+            console.error("Halt finalization error:", error);
+            toast.error(error?.message || "Failed to finalize the halted Job Order.");
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     // Handle Open Daily QA Dialog
     const handleOpenDailyAuditDialog = (ledgerEntry: any) => {
         setSelectedLedgerEntry(ledgerEntry);
@@ -1909,6 +1946,13 @@ export function useManufacturingQA() {
         setOverrideComments,
         handleOpenOverrideDialog,
         handleSubmitOverride,
+
+        // Halted Job Order finalization
+        isFinalizeDialogOpen,
+        finalizeJobOrderId,
+        handleOpenFinalizeDialog,
+        handleCloseFinalizeDialog,
+        handleSubmitHaltFinalize,
 
         // Daily Yield QA
         yieldLedger,

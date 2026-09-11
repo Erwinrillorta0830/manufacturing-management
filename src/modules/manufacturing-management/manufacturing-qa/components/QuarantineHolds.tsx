@@ -1,5 +1,5 @@
 import React from "react";
-import { Lock, RefreshCw, CheckCircle2, XCircle, Unlock, Search } from "lucide-react";
+import { Lock, RefreshCw, CheckCircle2, XCircle, Unlock, Search, ClipboardCheck } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ interface QuarantineHoldsProps {
     onStatusFilterChange: (filter: "pending" | "resolved" | "all") => void;
     handleOpenOverrideDialog: (disp: DispositionRecord) => void;
     onFiltersChange?: (search: string) => void;
+    onFinalize?: (jobOrderId: number) => void;
 }
 
 export function QuarantineHolds({
@@ -25,7 +26,8 @@ export function QuarantineHolds({
     statusFilter,
     onStatusFilterChange,
     handleOpenOverrideDialog,
-    onFiltersChange
+    onFiltersChange,
+    onFinalize
 }: QuarantineHoldsProps) {
     const [searchQuery, setSearchQuery] = React.useState("");
     const statusRecords = React.useMemo(() => {
@@ -54,7 +56,12 @@ export function QuarantineHolds({
                 <div className="sm:col-span-2"><dt className="text-muted-foreground">Failed parameters</dt><dd className="mt-1 flex flex-wrap gap-1.5">{hold.failed_parameters.map((parameter, index) => <Badge key={`${hold.id}-${parameter.parameter_id}-${index}`} variant="destructive" className="min-h-7 gap-1 text-sm"><XCircle className="h-3.5 w-3.5" />{parameter.test_name}: {parameter.value}{parameter.is_critical ? " (Critical)" : ""}</Badge>)}</dd></div>
                 <div className="sm:col-span-2 break-words"><dt className="text-muted-foreground">Remarks</dt><dd>{hold.inspection_remarks || "No remarks recorded."}</dd></div>
             </dl>
-            <Button variant="outline" className="mt-4 min-h-11 w-full gap-2 border-destructive/30 hover:bg-destructive hover:text-destructive-foreground" onClick={() => handleOpenOverrideDialog(hold)}><Unlock className="h-4 w-4" />Override Hold</Button>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <Button variant="outline" className="min-h-11 flex-1 gap-2 border-destructive/30 hover:bg-destructive hover:text-destructive-foreground" onClick={() => handleOpenOverrideDialog(hold)}><Unlock className="h-4 w-4" />Override Hold</Button>
+                {onFinalize && hold.disposition_status === "Pending" && Number(hold.job_order_id) > 0 && (
+                    <Button variant="outline" className="min-h-11 flex-1 gap-2 border-primary/40 text-primary hover:bg-primary/10" onClick={() => onFinalize(Number(hold.job_order_id))}><ClipboardCheck className="h-4 w-4" />Finalize / Partial Yield</Button>
+                )}
+            </div>
         </div>
     );
 
@@ -160,15 +167,28 @@ export function QuarantineHolds({
                                             {new Date(hold.recorded_at).toLocaleString()}
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <Button 
-                                                variant="outline" 
-                                                size="sm" 
-                                                className="min-h-11 font-semibold text-sm border-destructive/30 hover:bg-destructive hover:text-destructive-foreground transition-all"
-                                                onClick={() => handleOpenOverrideDialog(hold)}
-                                            >
-                                                <Unlock className="h-3 w-3 mr-1.5" />
-                                                Override Hold
-                                            </Button>
+                                            <div className="flex flex-col items-end gap-2 sm:flex-row sm:justify-end">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="min-h-11 font-semibold text-sm border-destructive/30 hover:bg-destructive hover:text-destructive-foreground transition-all"
+                                                    onClick={() => handleOpenOverrideDialog(hold)}
+                                                >
+                                                    <Unlock className="h-3 w-3 mr-1.5" />
+                                                    Override Hold
+                                                </Button>
+                                                {onFinalize && hold.disposition_status === "Pending" && Number(hold.job_order_id) > 0 && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="min-h-11 font-semibold text-sm border-primary/40 text-primary hover:bg-primary/10 transition-all"
+                                                        onClick={() => onFinalize(Number(hold.job_order_id))}
+                                                    >
+                                                        <ClipboardCheck className="h-3 w-3 mr-1.5" />
+                                                        Finalize / Partial Yield
+                                                    </Button>
+                                                )}
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}

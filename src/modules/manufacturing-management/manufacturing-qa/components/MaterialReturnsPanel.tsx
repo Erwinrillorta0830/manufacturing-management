@@ -2,7 +2,7 @@
 "use client";
 
 import React from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Loader2, RotateCcw, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Loader2, RotateCcw, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +25,7 @@ function formatQty(value: number): string {
     return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-export function MaterialReturnsPanel() {
+export function MaterialReturnsPanel({ onFinalize }: { onFinalize?: (jobOrderId: number) => void }) {
     const [scope, setScope] = React.useState<Scope>("pending");
     const [candidates, setCandidates] = React.useState<MaterialReturnCandidate[]>([]);
     const [loadingCandidates, setLoadingCandidates] = React.useState(true);
@@ -275,15 +275,28 @@ export function MaterialReturnsPanel() {
                                                                 ? "One or more source batches are retired. Enter an active MM Lot ID per line to create the return batch."
                                                                 : "Stock returns to the source lot/batch (or a new RTN batch under the same lot)."}
                                                         </p>
-                                                        <Button
-                                                            type="button"
-                                                            onClick={() => void handleConfirm()}
-                                                            disabled={confirming || !preview.canReturn || Boolean(preview.reconciliationError) || missingDestination}
-                                                            className="min-h-10 gap-2 font-bold"
-                                                        >
-                                                            {confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                                                            {confirming ? "Returning..." : `Confirm Return (${formatQty(preview.totals.returnableQuantity)})`}
-                                                        </Button>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            {onFinalize && (candidate.status === "On Hold" || candidate.status === "QA Hold") && (
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    onClick={() => onFinalize(candidate.jobOrderId)}
+                                                                    className="min-h-10 gap-1.5 border-primary/40 text-xs font-bold text-primary hover:bg-primary/10"
+                                                                >
+                                                                    <ClipboardCheck className="h-3.5 w-3.5" />
+                                                                    Finalize / Partial Yield
+                                                                </Button>
+                                                            )}
+                                                            <Button
+                                                                type="button"
+                                                                onClick={() => void handleConfirm()}
+                                                                disabled={confirming || !preview.canReturn || Boolean(preview.reconciliationError) || missingDestination}
+                                                                className="min-h-10 gap-2 font-bold"
+                                                            >
+                                                                {confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                                                                {confirming ? "Returning..." : `Confirm Return (${formatQty(preview.totals.returnableQuantity)})`}
+                                                            </Button>
+                                                        </div>
                                                     </div>
                                                 </>
                                             ) : null}
