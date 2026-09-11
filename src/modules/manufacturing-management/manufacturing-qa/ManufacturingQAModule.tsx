@@ -32,6 +32,7 @@ import { TwoPointQAInspectionModal } from "./components/TwoPointQAInspectionModa
 import { JobOrderStatusHistoryModal } from "./components/JobOrderStatusHistoryModal";
 import { QuarantineHolds } from "./components/QuarantineHolds";
 import { MaterialReturnsPanel } from "./components/MaterialReturnsPanel";
+import { FinalizeHaltedJobDialog } from "./components/FinalizeHaltedJobDialog";
 import { YieldClosingQueue } from "./components/YieldClosingQueue";
 import { CheckpointLogsTable } from "./components/CheckpointLogsTable";
 import { YieldClosingDialog } from "./components/YieldClosingDialog";
@@ -139,6 +140,13 @@ export default function ManufacturingQAModule() {
         setOverrideComments,
         handleOpenOverrideDialog,
         handleSubmitOverride,
+
+        // Halted Job Order finalization
+        isFinalizeDialogOpen,
+        finalizeJobOrderId,
+        handleOpenFinalizeDialog,
+        handleCloseFinalizeDialog,
+        handleSubmitHaltFinalize,
 
         // Daily Yield QA
         yieldLedger,
@@ -485,8 +493,9 @@ export default function ManufacturingQAModule() {
                             onStatusFilterChange={setHoldsStatusFilter}
                             handleOpenOverrideDialog={handleOpenOverrideDialog}
                             onFiltersChange={handleHoldsFiltersChange}
+                            onFinalize={handleOpenFinalizeDialog}
                         />
-                        <MaterialReturnsPanel />
+                        <MaterialReturnsPanel onFinalize={handleOpenFinalizeDialog} />
                         <PaginationControls meta={holdsMeta} onPageChange={setHoldsPage} onPageSizeChange={(size) => { setHoldsPageSize(size); setHoldsPage(1); }} />
                     </>}
                 </TabsContent>
@@ -659,6 +668,15 @@ export default function ManufacturingQAModule() {
                 setOverrideComments={setOverrideComments}
                 actionLoading={actionLoading}
                 handleSubmitOverride={handleSubmitOverride}
+            />
+
+            {/* MODAL 5: Finalize halted Job Order with partial yield + leftover return */}
+            <FinalizeHaltedJobDialog
+                isOpen={isFinalizeDialogOpen}
+                onClose={handleCloseFinalizeDialog}
+                jobOrderId={finalizeJobOrderId}
+                onSubmit={handleSubmitHaltFinalize}
+                actionLoading={actionLoading}
             />
         </div>
     );

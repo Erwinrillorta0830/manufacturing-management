@@ -301,3 +301,61 @@ export interface MaterialReturnConfirmResult {
     movementCount: number;
     noop?: boolean;
 }
+
+export interface HaltFinalizePreviewMaterial {
+    joMaterialId: number;
+    productId: number;
+    productName: string;
+    unitOfMeasure: string;
+    allocatedQuantity: number;
+    remainingQuantity: number;
+    stagedQuantity: number;
+    consumedQuantity: number;
+    returnableQuantity: number;
+    requiresLotSelection: boolean;
+    destinationAction: "REUSE" | "CREATE" | "MIXED" | "NONE";
+}
+
+export interface HaltFinalizePreview {
+    jobOrder: {
+        jobOrderId: number;
+        jobOrderNo: string;
+        productId: number;
+        productName: string;
+        branchId: number;
+        targetQuantity: number;
+        producedQuantity: number;
+        status: string;
+    };
+    materials: HaltFinalizePreviewMaterial[];
+    defaultLotNumber: string;
+    previewToken: string;
+}
+
+export interface FinalizeHaltedJobPayload {
+    joId: number;
+    productId: number;
+    productName?: string;
+    quantityProduced: number;
+    branchId: number;
+    lotNumber: string;
+    mmLotId: number;
+    manufacturingDate: string;
+    expirationDate: string;
+    unitCost: number;
+    materials: Array<{ joMaterialId: number; consumedQty: number }>;
+    remarks?: string;
+    previewToken: string;
+}
+
+export interface FinalizeHaltedJobResult {
+    job_order_id: number;
+    job_order_no: string;
+    job_order_status: string;
+    quantity_produced: number;
+    consumed_quantity: number;
+    returned_quantity: number;
+    lot_number: string;
+    movement_id: number;
+    yield_ledger_id: number | null;
+}

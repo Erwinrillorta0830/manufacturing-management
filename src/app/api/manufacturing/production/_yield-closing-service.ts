@@ -22,6 +22,7 @@ import {
 } from "@/app/api/manufacturing/services/mm-lots.service";
 import {
     isCancelledJobOrderStatus,
+    isJobOrderStatus,
     isTerminalJobOrderStatus,
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
@@ -34,7 +35,10 @@ import {
     computeJobOrderMaterialReturns,
     executeJobOrderMaterialReturns,
     fetchJobOrder,
-    JobOrderCancellationExecution
+    JobOrderCancellationError,
+    JobOrderCancellationExecution,
+    resolveJobOrderProductName,
+    returnJobOrderMaterialLeftovers
 } from "./_material-return";
 
 const EPSILON = 0.000001;
@@ -158,6 +162,7 @@ function recordId(value: unknown): number {
             ?? record.movement_id
             ?? record.ledger_id
             ?? record.genealogy_id
+            ?? record.jo_materials_reservation_id
             ?? record.lot_id
             ?? record.inventory_lot_id
             ?? record.history_id
@@ -286,16 +291,19 @@ class MutationJournal {
                 body: JSON.stringify(payload)
             }
         );
+        // The PATCH has already been applied; register it for rollback before
+        // validating the response so a malformed/sparse response can never
+        // leave an unjournaled partial write behind.
+        const previousFields = Object.fromEntries(
+            Object.keys(payload).map(field => [field, previous[field]])
+        );
+        this.updated.push({ collection, id, previous: previousFields });
         if (!data || typeof data !== "object") {
             throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", `${label} returned an invalid record.`);
         }
         if (recordId(data) !== id) {
             throw new YieldCompletionError(502, "DIRECTUS_RESPONSE_INVALID", `${label} returned an unexpected record identifier.`);
         }
-        const previousFields = Object.fromEntries(
-            Object.keys(payload).map(field => [field, previous[field]])
-        );
-        this.updated.push({ collection, id, previous: previousFields });
         return data;
     }
 
@@ -1549,5 +1557,642 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
         if (inFlightYieldClosures.get(requestKey) === operation) {
             inFlightYieldClosures.delete(requestKey);
         }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Halted Job Order finalization: partial FG receipt + leftover return       */
+/* ------------------------------------------------------------------------- */
+
+export interface HaltFinalizeMaterialInput {
+    joMaterialId: number;
+    consumedQty: number;
+}
+
+export interface FinalizeHaltedJobOrderInput {
+    joId: string | number;
+    productId: string | number;
+    productName?: string;
+    quantityProduced: string | number;
+    branchId: string | number;
+    lotNumber: string;
+    mmLotId: string | number;
+    manufacturingDate: string;
+    expirationDate: string;
+    unitCost?: string | number | null;
+    materials?: HaltFinalizeMaterialInput[];
+    remarks?: string;
+    actorUserId?: number | null;
+}
+
+export interface HaltFinalizePreviewMaterial {
+    joMaterialId: number;
+    productId: number;
+    productName: string;
+    unitOfMeasure: string;
+    allocatedQuantity: number;
+    remainingQuantity: number;
+    stagedQuantity: number;
+    consumedQuantity: number;
+    returnableQuantity: number;
+    requiresLotSelection: boolean;
+    destinationAction: "REUSE" | "CREATE" | "MIXED" | "NONE";
+}
+
+export interface HaltFinalizePreview {
+    jobOrder: {
+        jobOrderId: number;
+        jobOrderNo: string;
+        productId: number;
+        productName: string;
+        branchId: number;
+        targetQuantity: number;
+        producedQuantity: number;
+        status: string;
+    };
+    materials: HaltFinalizePreviewMaterial[];
+    defaultLotNumber: string;
+    fingerprint: string;
+}
+
+interface FinalizeConsumptionPlan {
+    material: YieldMaterial;
+    quantity: number;
+    lots: LotAllocation[];
+}
+
+function haltFinalizeFingerprint(
+    lines: Array<{ joMaterialId: number; stagedQuantity: number; consumedQuantity: number; returnableQuantity: number }>
+): string {
+    return lines
+        .map(line => [
+            Number(line.joMaterialId),
+            Number(line.stagedQuantity || 0).toFixed(4),
+            Number(line.consumedQuantity || 0).toFixed(4),
+            Number(line.returnableQuantity || 0).toFixed(4)
+        ].join(":"))
+        .sort()
+        .join("|");
+}
+
+async function loadHaltFinalizeState(joId: string | number): Promise<{
+    jobOrder: ResolvedYieldJobOrder;
+    materials: YieldMaterial[];
+    computed: Awaited<ReturnType<typeof computeJobOrderMaterialReturns>>;
+}> {
+    const { jobOrder, materials } = await loadYieldMaterials(joId);
+    const returnOrder = await fetchJobOrder(jobOrder.jobOrderId);
+    const computed = await computeJobOrderMaterialReturns(returnOrder);
+    return { jobOrder, materials, computed };
+}
+
+export async function previewHaltFinalize(joId: string | number): Promise<HaltFinalizePreview> {
+    const { jobOrder, materials, computed } = await loadHaltFinalizeState(joId);
+    const productName = await resolveJobOrderProductName(jobOrder.productId);
+
+    const previewMaterials = materials.map(material => {
+        const lines = computed.lines.filter(line => Number(line.joMaterialId) === Number(material.materialId));
+        const staged = roundTo4(lines.reduce((sum, line) => sum + Number(line.stagedQuantity || 0), 0));
+        const consumed = roundTo4(lines.reduce((sum, line) => sum + Number(line.consumedQuantity || 0), 0));
+        const returnable = roundTo4(lines.reduce((sum, line) => sum + Number(line.returnableQuantity || 0), 0));
+        const actions = new Set(
+            lines
+                .filter(line => !line.releaseOnly && Number(line.returnableQuantity || 0) > EPSILON)
+                .map(line => line.destination?.action || "NONE")
+        );
+        const destinationAction = actions.size === 0
+            ? "NONE"
+            : actions.size === 1
+                ? (Array.from(actions)[0] as HaltFinalizePreviewMaterial["destinationAction"])
+                : "MIXED";
+        return {
+            joMaterialId: Number(material.materialId),
+            productId: Number(material.productId),
+            productName: material.productName,
+            unitOfMeasure: material.unitOfMeasure || "units",
+            allocatedQuantity: roundTo4(Number(material.allocatedQuantity || 0)),
+            remainingQuantity: roundTo4(Number(material.remainingQuantity || 0)),
+            stagedQuantity: staged,
+            consumedQuantity: consumed,
+            returnableQuantity: returnable,
+            requiresLotSelection: lines.some(line => Boolean(line.requiresLotSelection)),
+            destinationAction
+        };
+    });
+
+    const today = await getTodayDateString();
+    return {
+        jobOrder: {
+            jobOrderId: jobOrder.jobOrderId,
+            jobOrderNo: jobOrder.jobOrderNo,
+            productId: jobOrder.productId,
+            productName,
+            branchId: jobOrder.branchId ?? 0,
+            targetQuantity: roundTo4(Number(jobOrder.targetQuantity || 0)),
+            producedQuantity: roundTo4(Number(jobOrder.actualQuantityProduced || 0)),
+            status: String(jobOrder.status || "")
+        },
+        materials: previewMaterials,
+        defaultLotNumber: `${jobOrder.jobOrderNo}-YLD-${today.replace(/-/g, "")}`,
+        fingerprint: haltFinalizeFingerprint(computed.lines)
+    };
+}
+
+async function buildFinalizeConsumptionPlans(
+    materials: YieldMaterial[],
+    jobOrder: ResolvedYieldJobOrder,
+    consumptionByMaterial: Map<number, number>
+): Promise<FinalizeConsumptionPlan[]> {
+    const plans: FinalizeConsumptionPlan[] = [];
+    for (const material of materials) {
+        const requested = consumptionByMaterial.get(Number(material.materialId)) ?? 0;
+        if (requested <= EPSILON) continue;
+
+        const reservationRows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_eq]=${encodeURIComponent(String(material.materialId))}&fields=*&limit=-1`,
+            `Staged reservation lookup for ${material.productName}`
+        );
+        const stagedReservations = reservationRows
+            .map(row => ({
+                row,
+                reservationId: recordId(row.jo_materials_reservation_id ?? row.id),
+                productId: numericRelationId(row.product_id),
+                branchId: numericRelationId(row.branch_id),
+                mmLotId: numericRelationId(row.mm_lot_id),
+                inventoryLotId: numericRelationId(row.inventory_lot_id),
+                batchNumber: String(row.batch_no || "").trim(),
+                stagedQuantity: Number(row.staged_quantity || 0),
+                actualUsedQuantity: Number(row.actual_used_quantity || 0)
+            }))
+            .filter(reservation =>
+                reservation.reservationId > 0
+                && reservation.productId === material.productId
+                && reservation.branchId === jobOrder.branchId
+                && reservation.mmLotId > 0
+                && reservation.inventoryLotId > 0
+                && reservation.batchNumber.length > 0
+                && Number.isFinite(reservation.stagedQuantity)
+                && reservation.stagedQuantity > EPSILON
+            )
+            .map(reservation => ({
+                ...reservation,
+                availableQuantity: Math.max(0, reservation.stagedQuantity - Math.max(0, reservation.actualUsedQuantity))
+            }))
+            .filter(reservation => reservation.availableQuantity > EPSILON)
+            .sort((left, right) => {
+                const leftCreated = new Date(left.row.created_at || 0).getTime();
+                const rightCreated = new Date(right.row.created_at || 0).getTime();
+                return leftCreated - rightCreated || left.reservationId - right.reservationId;
+            });
+
+        const totalAvailable = stagedReservations.reduce((sum, reservation) => sum + reservation.availableQuantity, 0);
+        if (totalAvailable + EPSILON < requested) {
+            throw new YieldCompletionError(
+                422,
+                "CONSUMPTION_EXCEEDS_STAGED",
+                `Consumed quantity for ${material.productName} (${formatQuantity(requested)}) exceeds the staged remainder (${formatQuantity(totalAvailable)}).`
+            );
+        }
+
+        const plan: FinalizeConsumptionPlan = { material, quantity: requested, lots: [] };
+        let remaining = requested;
+        for (const reservation of stagedReservations) {
+            if (remaining <= EPSILON) break;
+            const portion = Math.min(remaining, reservation.availableQuantity);
+            plan.lots.push({
+                lotId: reservation.mmLotId,
+                inventoryLotId: reservation.inventoryLotId,
+                reservationId: reservation.reservationId,
+                lotNumber: reservation.batchNumber,
+                expiryDate: reservation.row.expiry_date || null,
+                createdOn: reservation.row.created_at || null,
+                quantity: portion,
+                expectedActualUsedQuantity: reservation.actualUsedQuantity + portion
+            });
+            remaining -= portion;
+        }
+        plans.push(plan);
+    }
+    return plans;
+}
+
+async function resolvePendingDispositionsForJobOrder(
+    jobOrderId: number,
+    actorUserId: number,
+    closeRemarks: string
+): Promise<void> {
+    try {
+        const filter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { job_order_id: { _eq: jobOrderId } },
+                { disposition_status: { _eq: "Pending" } }
+            ]
+        }));
+        const rows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_qa_dispositions?filter=${filter}&limit=-1`,
+            `Pending QA disposition lookup for Job Order ${jobOrderId}`
+        );
+        for (const row of rows) {
+            const dispositionId = Number(row?.id ?? row?.disposition_id ?? 0);
+            if (!Number.isSafeInteger(dispositionId) || dispositionId <= 0) continue;
+            await directusJson(
+                `${DIRECTUS_URL}/items/manufacturing_qa_dispositions/${dispositionId}`,
+                `Resolve QA disposition ${dispositionId}`,
+                {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        disposition_status: "Resolved",
+                        decision: "Finalized (Partial Yield)",
+                        supervisor_comments: closeRemarks,
+                        resolved_at: new Date().toISOString(),
+                        resolved_by: actorUserId
+                    })
+                }
+            );
+        }
+    } catch (error) {
+        console.error("Halted Job Order finalized but pending QA dispositions could not be resolved automatically:", error);
+    }
+}
+
+export async function finalizeHaltedJobOrder(input: FinalizeHaltedJobOrderInput): Promise<Record<string, unknown>> {
+    let operationKey = "halt-finalize";
+    let journal: MutationJournal | null = null;
+    let leftoverExecution: JobOrderCancellationExecution | null = null;
+
+    try {
+        const quantityProduced = finiteNumber(input.quantityProduced, "Produced quantity", { positive: true });
+        const branchId = finiteNumber(input.branchId, "Branch ID", { positive: true });
+        const requestedProductId = finiteNumber(input.productId, "Product ID", { positive: true });
+        const requestedMmLotId = finiteNumber(input.mmLotId, "Storage lot", { positive: true });
+        const requestedJoId = String(input.joId ?? "").trim();
+        const lotNumber = String(input.lotNumber ?? "").trim();
+        if (!requestedJoId) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Job order ID or number is required.");
+        }
+        if (!lotNumber) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "A batch/lot number is required.");
+        }
+
+        const manufacturingDate = normalizeDate(input.manufacturingDate, "Manufacturing date");
+        const expirationDate = normalizeDate(input.expirationDate, "Expiration date");
+        if (manufacturingDate > expirationDate) {
+            throw new YieldCompletionError(400, "INVALID_YIELD_REQUEST", "Expiration date cannot be earlier than manufacturing date.");
+        }
+        finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true });
+        const actorUserId = Number.isSafeInteger(Number(input.actorUserId)) && Number(input.actorUserId) > 0
+            ? Number(input.actorUserId)
+            : 24;
+
+        const { jobOrder, materials, computed } = await loadHaltFinalizeState(requestedJoId);
+        if (requestedProductId !== jobOrder.productId) {
+            throw new YieldCompletionError(422, "JOB_ORDER_PRODUCT_MISMATCH", "The selected product does not belong to this Job Order.");
+        }
+        if (jobOrder.branchId === null || jobOrder.branchId <= 0) {
+            throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISSING", "The Job Order must have a persisted branch before finalizing.");
+        }
+        if (jobOrder.branchId !== branchId) {
+            throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISMATCH", "The selected branch does not belong to this Job Order.");
+        }
+
+        operationKey = `halt-finalize:${jobOrder.jobOrderId}:${lotNumber}:${requestedMmLotId}:${roundTo4(quantityProduced)}`;
+
+        const existingMovements = await findExistingFinishedMovements(
+            jobOrder.productId,
+            branchId,
+            jobOrder.jobOrderId,
+            jobOrder.jobOrderNo,
+            lotNumber
+        );
+        if (existingMovements.length > 1) {
+            throw new YieldCompletionError(409, "YIELD_DUPLICATE_MOVEMENTS", `More than one finished-goods movement exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}. Reconciliation is required.`);
+        }
+        if (existingMovements.length === 1) {
+            const persisted = existingMovements[0];
+            const sameQuantity = Math.abs(Number(persisted.quantity || 0) - quantityProduced) <= EPSILON;
+            if (sameQuantity && isTerminalJobOrderStatus(jobOrder.status)) {
+                const ledgerRows = await directusRows<any>(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
+                        _and: [
+                            { job_order_id: { _eq: jobOrder.jobOrderId } },
+                            { lot_number: { _eq: lotNumber } }
+                        ]
+                    }))}&limit=-1`,
+                    `Yield ledger lookup for ${jobOrder.jobOrderNo}`
+                ).catch(() => [] as any[]);
+                return {
+                    success: true,
+                    idempotent: true,
+                    data: {
+                        job_order_id: jobOrder.jobOrderId,
+                        job_order_status: JOB_ORDER_STATUS.COMPLETED,
+                        movement_id: recordId(persisted),
+                        yield_ledger_id: ledgerRows.length === 1 ? recordId(ledgerRows[0]) : null,
+                        quantity_produced: quantityProduced,
+                        lot_number: lotNumber
+                    }
+                };
+            }
+            throw new YieldCompletionError(
+                409,
+                "YIELD_ALREADY_POSTED_INCOMPLETE",
+                `A finished-goods movement already exists for ${jobOrder.jobOrderNo} and lot ${lotNumber}. Reconciliation is required.`
+            );
+        }
+
+        if (!isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD)) {
+            throw new YieldCompletionError(
+                409,
+                "JOB_ORDER_NOT_HALTED",
+                `Only On Hold or QA Hold Job Orders can be finalized with a partial yield. Current status: ${jobOrder.status || "Unknown"}.`
+            );
+        }
+
+        const remainingTarget = Math.max(0, Number(jobOrder.targetQuantity || 0) - Number(jobOrder.actualQuantityProduced || 0));
+        if (remainingTarget > EPSILON && quantityProduced > remainingTarget + EPSILON) {
+            throw new YieldCompletionError(
+                422,
+                "YIELD_EXCEEDS_TARGET",
+                `Produced quantity ${formatQuantity(quantityProduced)} exceeds the remaining target ${formatQuantity(remainingTarget)}.`
+            );
+        }
+
+        try {
+            await loadEligibleFinishedGoodsLot({ mmLotId: requestedMmLotId, branchId, productId: jobOrder.productId });
+        } catch (error) {
+            if (error instanceof MmLotError) {
+                throw new YieldCompletionError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+
+        const consumptionByMaterial = new Map<number, number>();
+        for (const entry of Array.isArray(input.materials) ? input.materials : []) {
+            const materialId = Number(entry?.joMaterialId);
+            const consumedQty = Number(entry?.consumedQty);
+            if (!Number.isSafeInteger(materialId) || materialId <= 0 || !Number.isFinite(consumedQty) || consumedQty < -EPSILON) {
+                throw new YieldCompletionError(400, "CONSUMPTION_INVALID", "Material consumption entries must reference a Job Order material and a non-negative quantity.");
+            }
+            consumptionByMaterial.set(materialId, roundTo4(Math.max(0, consumedQty)));
+        }
+        const unknownMaterialId = [...consumptionByMaterial.keys()].find(
+            materialId => !materials.some(material => Number(material.materialId) === materialId)
+        );
+        if (unknownMaterialId) {
+            throw new YieldCompletionError(400, "CONSUMPTION_INVALID", `Material #${unknownMaterialId} does not belong to ${jobOrder.jobOrderNo}.`);
+        }
+
+        const consumptionPlans = await buildFinalizeConsumptionPlans(materials, jobOrder, consumptionByMaterial);
+        const totalConsumed = roundTo4(consumptionPlans.reduce((sum, plan) => sum + plan.quantity, 0));
+
+        if (computed.reconciliationError) {
+            throw new YieldCompletionError(409, "JOB_ORDER_RECONCILIATION_FAILED", computed.reconciliationError);
+        }
+        const expectedReturned = roundTo4(Math.max(0, Number(computed.totals.returnableQuantity || 0) - totalConsumed));
+        if (expectedReturned > EPSILON) {
+            const requiresDestination = computed.lines.some(
+                line => !line.releaseOnly && line.requiresLotSelection && Number(line.returnableQuantity || 0) > EPSILON
+            );
+            if (requiresDestination) {
+                throw new YieldCompletionError(422, "JOB_ORDER_RETURN_DESTINATION_REQUIRED", "One or more leftover return lines need an active destination lot before the halt can be finalized.");
+            }
+        }
+
+        journal = new MutationJournal();
+        const phtMovementTimestamp = formatPhtDateTime();
+        const finishedLotId = requestedMmLotId;
+        const inventoryLot = await resolveOrCreateMmInventoryLot({
+            mmLotId: requestedMmLotId,
+            branchId,
+            productId: jobOrder.productId,
+            batchNo: lotNumber,
+            manufacturingDate,
+            expiryDate: expirationDate,
+            unitCost: Number(input.unitCost ?? 0),
+            qaStatus: "GOOD",
+            sourceType: "JOB_ORDER_YIELD",
+            sourceReference: jobOrder.jobOrderNo,
+            remarks: `Partially finished halted run from Job Order ${jobOrder.jobOrderNo}`,
+            createdBy: actorUserId,
+            onCreate: (body) => journal!.create("mm_inventory_lots", { ...body }, `Create partial-close batch ${lotNumber}`)
+        });
+        const inventoryLotId = mmInventoryLotId(inventoryLot.inventory_lot_id) ?? 0;
+
+        const yieldLedgerRow = await journal.create<any>(
+            "manufacturing_job_order_yield_ledger",
+            {
+                job_order_id: jobOrder.jobOrderId,
+                shift_name: "Partial close (halt)",
+                yield_quantity: quantityProduced,
+                scrap_quantity: 0,
+                lot_number: lotNumber,
+                qa_status: "Pending",
+                mm_lot_id: requestedMmLotId,
+                logged_at: phtMovementTimestamp,
+                logged_by: actorUserId
+            },
+            `Create partial-close yield ledger for ${jobOrder.jobOrderNo}`
+        );
+        const yieldLedgerId = recordId(yieldLedgerRow);
+
+        const finishedMovement = await journal.create<any>(
+            "inventory_movements",
+            {
+                product_id: jobOrder.productId,
+                mm_lot_id: finishedLotId,
+                lot_id: null,
+                branch_id: branchId,
+                transaction_type_id: 2,
+                source_document_id: jobOrder.jobOrderId,
+                source_document_no: jobOrder.jobOrderNo,
+                batch_no: lotNumber,
+                expiry_date: expirationDate,
+                manufacturing_date: manufacturingDate,
+                quantity: quantityProduced,
+                created_by: actorUserId,
+                remarks: `Partial yield output from halted Job Order ${jobOrder.jobOrderNo}`
+            },
+            "Create partial finished-goods movement"
+        );
+        const finishedMovementId = recordId(finishedMovement);
+
+        const finishedLedger = await journal.create<any>(
+            "product_ledger",
+            {
+                branchId,
+                productId: jobOrder.productId,
+                quantity: quantityProduced,
+                documentType: "Job Order Receipt",
+                documentNo: jobOrder.jobOrderNo,
+                documentDescription: `Partial close: ${lotNumber}`,
+                documentDate: await getTodayDateString()
+            },
+            "Create partial finished-goods product ledger"
+        );
+        const finishedLedgerId = recordId(finishedLedger);
+
+        const persistedGenealogy: number[] = [];
+        for (const plan of consumptionPlans) {
+            for (const lot of plan.lots) {
+                const genealogy = await journal.create<any>(
+                    "jo_material_genealogy",
+                    {
+                        job_order_id: jobOrder.jobOrderId,
+                        batch_no: lotNumber,
+                        component_product_id: plan.material.productId,
+                        component_mm_lot_id: lot.lotId,
+                        component_lot_id: null,
+                        component_batch_no: lot.lotNumber,
+                        consumed_quantity: lot.quantity,
+                        created_at: phtMovementTimestamp
+                    },
+                    `Create partial-close genealogy for ${plan.material.productName}`
+                );
+                persistedGenealogy.push(recordId(genealogy));
+                await journal.patch(
+                    "manufacturing_job_order_materials_reservations",
+                    lot.reservationId,
+                    { actual_used_quantity: lot.expectedActualUsedQuantity },
+                    `Update staged reservation usage for ${lot.lotNumber}`
+                );
+            }
+            await journal.patch(
+                "manufacturing_job_order_materials",
+                plan.material.materialId,
+                {
+                    actual_consumed_quantity: roundTo4(plan.material.actualConsumedQuantity + plan.quantity),
+                    reserved_quantity: roundTo4(Math.max(0, plan.material.reservedQuantity - plan.quantity))
+                },
+                `Update consumed material ${plan.material.productName}`
+            );
+        }
+
+        leftoverExecution = await returnJobOrderMaterialLeftovers({
+            joId: jobOrder.jobOrderId,
+            reason: `Finalize halted Job Order ${jobOrder.jobOrderNo} — return leftover raw materials`,
+            actorUserId
+        });
+        const returnedQuantity = roundTo4(Number(leftoverExecution.response.returnedQuantity || 0));
+
+        const previousProduced = Number(jobOrder.actualQuantityProduced || 0);
+        await journal.patch(
+            "manufacturing_job_orders",
+            jobOrder.jobOrderId,
+            {
+                status: JOB_ORDER_STATUS.COMPLETED,
+                actual_quantity_produced: roundTo4(previousProduced + quantityProduced),
+                completed_quantity: roundTo4(previousProduced + quantityProduced),
+                modified_at: new Date().toISOString()
+            },
+            `Complete halted Job Order ${jobOrder.jobOrderNo}`
+        );
+
+        const existingHistory = await findCompletionHistory(jobOrder.jobOrderId);
+        if (!existingHistory) {
+            await journal.create(
+                "manufacturing_job_order_status_history",
+                {
+                    job_order_id: jobOrder.jobOrderId,
+                    old_status: jobOrder.status || JOB_ORDER_STATUS.ON_HOLD,
+                    new_status: JOB_ORDER_STATUS.COMPLETED,
+                    changed_by: actorUserId,
+                    changed_at: new Date().toISOString(),
+                    remarks: `Halted run finalized: partial yield ${formatQuantity(quantityProduced)} unit(s); ${formatQuantity(returnedQuantity)} unit(s) returned to store.`
+                },
+                `Record finalization history for ${jobOrder.jobOrderNo}`
+            );
+        }
+
+        const persistedJobOrder = await directusJson<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrder.jobOrderId}?fields=status,actual_quantity_produced,completed_quantity`,
+            `Finalization verification for ${jobOrder.jobOrderNo}`
+        );
+        if (normalizeJobOrderStatus(persistedJobOrder?.status) !== JOB_ORDER_STATUS.COMPLETED) {
+            throw new YieldCompletionError(502, "PERSISTENCE_VERIFICATION_FAILED", "The Job Order did not persist the Completed status after finalization.");
+        }
+        const finishedLedgerPersisted = await hasFinishedGoodsLedger(jobOrder.productId, branchId, jobOrder.jobOrderNo, quantityProduced);
+        if (!finishedLedgerPersisted) {
+            throw new YieldCompletionError(502, "PERSISTENCE_VERIFICATION_FAILED", "The partial finished-goods receipt ledger could not be verified.");
+        }
+
+        await resolvePendingDispositionsForJobOrder(
+            jobOrder.jobOrderId,
+            actorUserId,
+            `Halted run finalized with partial yield (${formatQuantity(quantityProduced)} unit(s)); leftovers returned to store.`
+        );
+
+        return {
+            success: true,
+            data: {
+                job_order_id: jobOrder.jobOrderId,
+                job_order_no: jobOrder.jobOrderNo,
+                job_order_status: JOB_ORDER_STATUS.COMPLETED,
+                product_id: jobOrder.productId,
+                quantity_produced: quantityProduced,
+                consumed_quantity: totalConsumed,
+                returned_quantity: returnedQuantity,
+                lot_number: lotNumber,
+                batch_no: lotNumber,
+                mm_lot_id: requestedMmLotId,
+                inventory_lot_id: inventoryLotId || null,
+                yield_ledger_id: yieldLedgerId,
+                movement_id: finishedMovementId,
+                product_ledger_id: finishedLedgerId,
+                genealogy_ids: persistedGenealogy,
+                manufacturing_date: manufacturingDate,
+                expiration_date: expirationDate,
+                unit_cost: Number(input.unitCost ?? 0)
+            }
+        };
+    } catch (error) {
+        if (leftoverExecution) {
+            try {
+                await leftoverExecution.compensate();
+            } catch (compensateError) {
+                console.error("Unable to compensate the leftover material return:", compensateError);
+            }
+        }
+        if (journal) {
+            try {
+                await journal.rollback();
+            } catch (rollbackError) {
+                if (rollbackError instanceof YieldCompletionError) {
+                    rollbackError.operationKey = operationKey;
+                    rollbackError.reconciliationRequired = true;
+                    throw rollbackError;
+                }
+                const reconciliationError = new YieldCompletionError(
+                    502,
+                    "PARTIAL_WRITE_RECONCILIATION_REQUIRED",
+                    "Halt finalization failed and automatic rollback was incomplete. Reconciliation is required.",
+                    journal.reconciliationIds
+                );
+                reconciliationError.operationKey = operationKey;
+                reconciliationError.reconciliationRequired = true;
+                throw reconciliationError;
+            }
+        }
+        if (error instanceof YieldCompletionError) {
+            error.operationKey = operationKey;
+            throw error;
+        }
+        if (error instanceof YieldMaterialsError) {
+            const materialsError = new YieldCompletionError(error.status, error.code, error.message);
+            materialsError.operationKey = operationKey;
+            throw materialsError;
+        }
+        if (error instanceof MmLotError) {
+            const lotError = new YieldCompletionError(error.status, error.code, error.message);
+            lotError.operationKey = operationKey;
+            throw lotError;
+        }
+        if (error instanceof JobOrderCancellationError) {
+            const returnError = new YieldCompletionError(error.status, error.code, error.message);
+            returnError.operationKey = operationKey;
+            throw returnError;
+        }
+        const finalizeError = new YieldCompletionError(502, "HALT_FINALIZE_FAILED", "Halted Job Order finalization could not be completed.");
+        finalizeError.operationKey = operationKey;
+        throw finalizeError;
     }
 }
