@@ -155,7 +155,10 @@ export async function fetchBranchesList(): Promise<Branch[]> {
             branch_id?: number | string;
             branchName?: string | null;
             branch_name?: string | null;
+            branchCode?: string | null;
+            branch_code?: string | null;
             name?: string | null;
+            isActive?: boolean | number | string | null;
         }): Branch => {
             const id = Number(row.id ?? row.branch_id);
             const name = String(row.branchName ?? row.branch_name ?? row.name ?? "").trim();
@@ -164,9 +167,67 @@ export async function fetchBranchesList(): Promise<Branch[]> {
                 branch_id: id,
                 name,
                 branch_name: name,
+                branchCode: String(row.branchCode ?? row.branch_code ?? "").trim() || undefined,
+                branch_code: String(row.branchCode ?? row.branch_code ?? "").trim() || undefined,
+                isActive: row.isActive === true || row.isActive === 1 || row.isActive === "1",
             };
         })
         .filter((branch) => Number.isFinite(branch.id) && Number(branch.id) > 0 && Boolean(branch.branch_name));
+}
+
+export async function createManufacturingBranch(input: {
+    branchName: string;
+    branchCode: string;
+}): Promise<Branch> {
+    const res = await fetch("/api/manufacturing/branches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+    });
+    const payload = await res.json().catch(() => ({})) as { data?: unknown; error?: string };
+    if (!res.ok) throw new Error(payload.error || "Failed to create branch.");
+
+    const row = payload.data as {
+        id?: number | string;
+        branchName?: string | null;
+        branchCode?: string | null;
+    } | undefined;
+    const id = Number(row?.id || 0);
+    const name = String(row?.branchName || input.branchName).trim();
+    if (!Number.isSafeInteger(id) || id <= 0 || !name) {
+        throw new Error("The branch creation response was invalid.");
+    }
+    return {
+        id,
+        branch_id: id,
+        name,
+        branch_name: name,
+        branchCode: String(row?.branchCode || input.branchCode).trim(),
+        branch_code: String(row?.branchCode || input.branchCode).trim(),
+        isActive: true
+    };
+}
+
+export async function assignManufacturingJobOrderBranch(input: {
+    jobOrderId: number | string;
+    branchId: number;
+}): Promise<{ jobOrderId: number; branchId: number; branchName?: string | null }> {
+    const res = await fetch("/api/manufacturing/production/job-order-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+    });
+    const payload = await res.json().catch(() => ({})) as {
+        data?: { jobOrderId?: number; branchId?: number; branchName?: string | null };
+        error?: string;
+    };
+    if (!res.ok) throw new Error(payload.error || "Failed to assign the Job Order branch.");
+    const jobOrderId = Number(payload.data?.jobOrderId || input.jobOrderId || 0);
+    const branchId = Number(payload.data?.branchId || input.branchId || 0);
+    if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(branchId) || branchId <= 0) {
+        throw new Error("The Job Order branch assignment response was invalid.");
+    }
+    return { jobOrderId, branchId, branchName: payload.data?.branchName };
 }
 
 export async function fetchJobOrderMaterials(joId: string): Promise<YieldJobOrderMaterial[]> {

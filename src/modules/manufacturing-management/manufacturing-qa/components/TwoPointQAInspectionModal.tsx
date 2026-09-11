@@ -226,11 +226,17 @@ function TwoPointQAFormContent({
             }
         }
 
+        const persistedBranchId = Number(jobOrder.branch_id || 0);
+        if (!Number.isSafeInteger(persistedBranchId) || persistedBranchId <= 0) {
+            toast.error("This Job Order has no persisted branch. Assign a branch before submitting QA.");
+            return;
+        }
+
         const payload: TwoPointQAInspectionPayload = {
             job_order_id: Number(jobOrder.job_order_id || jobOrder.id || jobOrder.order_id),
             job_order_no: joNo,
             product_id: Number(jobOrder.product_id),
-            branch_id: Number(jobOrder.branch_id || 1),
+            branch_id: persistedBranchId,
             inspected_quantity: numInsp,
             passed_quantity: numPass,
             rejected_quantity: numRej,

@@ -4,7 +4,7 @@ import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
+import { loadEligibleFinishedGoodsLot, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS, isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
@@ -280,6 +280,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing required fields (joId, productId, quantityProduced, branchId)" }, { status: 400 });
         }
 
+        if (completeJobOrder !== true) {
+            return NextResponse.json({
+                success: false,
+                error: "Legacy finished-goods posting is retired. Use the canonical yield-closing flow with an existing mmLotId and batch number.",
+                code: "LEGACY_FINISHED_GOODS_POSTING_RETIRED"
+            }, { status: 410 });
+        }
+
         if (completeJobOrder) {
             try {
                 const result = await completeYieldClosing({
@@ -469,16 +477,19 @@ export async function POST(request: Request) {
 
         if (!skipStockOperations) {
             try {
-                const finishedLotId = await (async () => {
-                    const unitOfMeasureId = await resolveProductUnitId(pId);
-                    return (await resolveOrCreateMmLot({
-                        lotName: finalLotNo,
-                        branchId: bId,
-                        unitId: unitOfMeasureId,
-                        maxBatchCapacity: 100000,
-                        createdBy: 24
-                    })).lot_id;
-                })();
+                const finishedLotId = Number(mmLotId);
+                if (!Number.isSafeInteger(finishedLotId) || finishedLotId <= 0) {
+                    return NextResponse.json({
+                        success: false,
+                        error: "An existing mmLotId is required for finished-goods posting.",
+                        code: "FINISHED_GOODS_LOT_REQUIRED"
+                    }, { status: 422 });
+                }
+                await loadEligibleFinishedGoodsLot({
+                    mmLotId: finishedLotId,
+                    branchId: bId,
+                    productId: pId
+                });
 
                 // 1b. Log finished yield movement in inventory_movements ledger
                 const finishedMovementPayload = {

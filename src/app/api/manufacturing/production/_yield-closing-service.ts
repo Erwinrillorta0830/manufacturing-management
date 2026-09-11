@@ -1120,7 +1120,10 @@ async function completeYieldClosingInternal(
         if (requestedProductId !== jobOrder.productId) {
             throw new YieldCompletionError(422, "JOB_ORDER_PRODUCT_MISMATCH", "The selected product does not belong to this Job Order.");
         }
-        if (jobOrder.branchId !== null && jobOrder.branchId !== branchId) {
+        if (jobOrder.branchId === null || jobOrder.branchId <= 0) {
+            throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISSING", "The Job Order must have a persisted branch before finished-goods posting.");
+        }
+        if (jobOrder.branchId !== branchId) {
             throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISMATCH", "The selected branch does not belong to this Job Order.");
         }
 
