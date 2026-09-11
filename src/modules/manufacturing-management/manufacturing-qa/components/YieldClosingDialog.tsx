@@ -12,7 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Branch, JobOrder } from "../types";
+import { Branch, JobOrder, MaterialReturnConfirmation, MaterialReturnPreview } from "../types";
+import { fetchMaterialReturnPreview } from "../services/qa-api";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { SearchableSelect } from "../../shared/components/SearchableSelect";
 import { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
@@ -51,7 +52,7 @@ interface YieldClosingDialogProps {
     yieldMaterialsError: string | null;
     handleRetryYieldMaterials: () => void;
     actionLoading: boolean;
-    handleSubmitYieldClosing: () => void;
+    handleSubmitYieldClosing: (confirmation?: MaterialReturnConfirmation) => void;
 }
 
 export function YieldClosingDialog({
@@ -90,6 +91,41 @@ export function YieldClosingDialog({
     actionLoading,
     handleSubmitYieldClosing
 }: YieldClosingDialogProps) {
+    const [returnPreview, setReturnPreview] = React.useState<MaterialReturnPreview | null>(null);
+    const [loadingReturnPreview, setLoadingReturnPreview] = React.useState(false);
+    const [returnAcknowledged, setReturnAcknowledged] = React.useState(false);
+
+    const jobReference = selectedJO?.job_order_id || selectedJO?.jo_id;
+
+    React.useEffect(() => {
+        if (!isYieldDialogOpen || !jobReference) {
+            setReturnPreview(null);
+            setReturnAcknowledged(false);
+            return;
+        }
+        let cancelled = false;
+        setLoadingReturnPreview(true);
+        setReturnAcknowledged(false);
+        fetchMaterialReturnPreview(jobReference as string | number)
+            .then((preview) => {
+                if (!cancelled) setReturnPreview(preview);
+            })
+            .catch(() => {
+                if (!cancelled) setReturnPreview(null);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingReturnPreview(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isYieldDialogOpen, jobReference]);
+
+    const leftoverReturnable = returnPreview?.totals.returnableQuantity || 0;
+    const hasLeftovers = leftoverReturnable > 0;
+    const requiresReturnDestination = Boolean(returnPreview?.requiresDestination);
+    const requiresReturnAck = hasLeftovers && !returnAcknowledged;
+
     return (
         <Dialog open={isYieldDialogOpen} onOpenChange={setIsYieldDialogOpen}>
             <DialogContent className="w-[calc(100vw-1rem)] max-w-[480px] max-h-[calc(100dvh-1rem)] flex flex-col overflow-hidden">
@@ -263,6 +299,33 @@ export function YieldClosingDialog({
                             )}
                         </div>
 
+                        {hasLeftovers && (
+                            <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                                <p className="flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-400">
+                                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                    Leftover raw material: {leftoverReturnable.toLocaleString(undefined, { maximumFractionDigits: 4 })} unit(s)
+                                </p>
+                                <p className="text-[11px] text-muted-foreground">
+                                    Unused staged material will be returned to its lot/batch when this yield is closed.
+                                </p>
+                                {requiresReturnDestination && (
+                                    <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                                        The source batch is retired. Return it from the Raw Material Returns panel so a destination lot can be selected first.
+                                    </p>
+                                )}
+                                <label className="flex items-start gap-2 text-[11px] font-semibold text-foreground">
+                                    <input
+                                        type="checkbox"
+                                        checked={returnAcknowledged}
+                                        onChange={(event) => setReturnAcknowledged(event.target.checked)}
+                                        disabled={requiresReturnDestination}
+                                        className="mt-0.5 h-4 w-4 rounded border-border"
+                                    />
+                                    Confirm the leftover raw-material return as part of this closing.
+                                </label>
+                            </div>
+                        )}
+
                         {/* Inputs */}
                         <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2 space-y-1.5">
@@ -365,8 +428,8 @@ export function YieldClosingDialog({
                     </Button>
                     <Button 
                         variant="default"
-                        onClick={handleSubmitYieldClosing}
-                        disabled={actionLoading || branchActionLoading || yieldMaterialsLoading || Boolean(yieldMaterialsError) || !postingBranchId || !selectedMmLotId || !lotNumber.trim()}
+                        onClick={() => handleSubmitYieldClosing(hasLeftovers ? { acknowledge: true } : undefined)}
+                        disabled={actionLoading || branchActionLoading || yieldMaterialsLoading || loadingReturnPreview || Boolean(yieldMaterialsError) || !postingBranchId || !selectedMmLotId || !lotNumber.trim() || requiresReturnAck || (hasLeftovers && requiresReturnDestination)}
                         className="min-h-11 text-sm font-semibold gap-1.5"
                     >
                         {yieldMaterialsLoading ? (

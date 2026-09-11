@@ -238,6 +238,7 @@ export async function POST(request: Request) {
             unitCost,
             componentsConsumed,
             yieldLedgerId,
+            materialReturnConfirmation,
             completeJobOrder = true
         } = body;
 
@@ -269,6 +270,7 @@ export async function POST(request: Request) {
                 manufacturingDate,
                 unitCost,
                 componentsConsumed,
+                materialReturnConfirmation,
                 yieldLedgerId
             });
             return NextResponse.json(result);
