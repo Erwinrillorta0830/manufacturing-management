@@ -15,7 +15,10 @@ import {
     MaterialReturnPreview,
     MaterialReturnCandidate,
     MaterialReturnConfirmation,
-    MaterialReturnConfirmResult
+    MaterialReturnConfirmResult,
+    HaltFinalizePreview,
+    FinalizeHaltedJobPayload,
+    FinalizeHaltedJobResult
 } from "../types";
 
 export const QA_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
@@ -593,4 +596,25 @@ export async function confirmMaterialReturn(payload: {
         throw new Error(data?.error || "Failed to confirm the raw-material return.");
     }
     return data.data as MaterialReturnConfirmResult;
+}
+
+// Finalize a halted Job Order with a partial finished-goods receipt + leftover return
+export async function fetchHaltFinalizePreview(joId: string | number): Promise<HaltFinalizePreview> {
+    const res = await fetch(`/api/manufacturing/qa/finalize-halt?joId=${encodeURIComponent(String(joId))}`, { cache: "no-store" });
+    const data = await readApiResponse<{ success: boolean; data: HaltFinalizePreview }>(res, "Failed to load the finalize preview");
+    if (!data?.data) throw new Error("The finalize preview returned no data.");
+    return data.data;
+}
+
+export async function postFinalizeHaltedJob(payload: FinalizeHaltedJobPayload): Promise<FinalizeHaltedJobResult> {
+    const res = await fetch("/api/manufacturing/qa/finalize-halt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || "Failed to finalize the halted Job Order.");
+    }
+    return data.data as FinalizeHaltedJobResult;
 }

@@ -21,7 +21,7 @@ import {
     MmInventoryLotWritePayload,
     MmLotError
 } from "../services/mm-lots.service";
-import { assertJobOrderStatus, isCancelledJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { assertJobOrderStatus, isCancelledJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import {
     cancelJobOrderAndReturnMaterials,
     JobOrderCancellationError,
@@ -1151,6 +1151,18 @@ export async function POST(request: Request) {
                     success: true,
                     message: `Disposition resolved successfully as ${decision}.`
                 });
+            }
+
+            // A Completed/Finished/Closed Job Order must not be regressed by a
+            // disposition; it can only be finalized through the halt flow.
+            if (isTerminalJobOrderStatus(joInfo.status)) {
+                return NextResponse.json(
+                    {
+                        error: `Job Order ${dispositionJobOrderNo || joIdInt} is already ${joInfo.status} and cannot be resumed by a disposition.`,
+                        code: "JOB_ORDER_TERMINAL"
+                    },
+                    { status: 409 }
+                );
             }
 
             // Pending raw-material returns must be resolved before a hold can
