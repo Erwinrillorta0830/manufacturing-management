@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Building2, AlertCircle, UserSquare2, Plus, Trash2, Globe, UserPlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "@/modules/manufacturing-management/procurement/services/supplier.service";

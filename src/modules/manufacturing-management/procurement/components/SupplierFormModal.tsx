@@ -289,6 +289,8 @@ export default function SupplierFormModal({
         }
     }, [isOpen, isPH, barangays, supplierForm.brgy, selectedBarangayCode]);
 
+    if (!mounted) return null;
+
     return (
         <AnimatePresence>
             {isOpen && (
