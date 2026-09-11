@@ -28,6 +28,7 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../sales-order/_status";
 import { salesOrderStatusAfterFulfillment } from "../sales-order/_fulfillment";
+import { hasJobOrderReceipt } from "./_finished-goods-ledger";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
@@ -605,20 +606,17 @@ async function hasFinishedGoodsLedger(
     quantity: number,
     expectedLedgerId?: number
 ): Promise<boolean> {
-    const filter = encodeURIComponent(JSON.stringify({
-        _and: [
-            { productId: { _eq: productId } },
-            { branchId: { _eq: branchId } },
-            { documentNo: { _eq: joNo } },
-            { documentType: { _eq: "Job Order Receipt" } },
-            { quantity: { _eq: quantity } }
-        ]
-    }));
-    const rows = await directusRows<any>(
-        `${DIRECTUS_URL}/items/product_ledger?filter=${filter}&limit=-1`,
-        `Existing finished-goods ledger lookup for ${joNo}`
-    );
-    return rows.some(row => expectedLedgerId === undefined || recordId(row) === expectedLedgerId);
+    try {
+        return await hasJobOrderReceipt({ productId, branchId, jobOrderNo: joNo, quantity, expectedLedgerId });
+    } catch (error) {
+        throw error instanceof YieldCompletionError
+            ? error
+            : new YieldCompletionError(
+                502,
+                "DIRECTUS_RESPONSE_INVALID",
+                error instanceof Error ? error.message : `Finished-goods ledger lookup for ${joNo} failed.`
+            );
+    }
 }
 
 async function findCompletionHistory(jobOrderId: number): Promise<any | null> {

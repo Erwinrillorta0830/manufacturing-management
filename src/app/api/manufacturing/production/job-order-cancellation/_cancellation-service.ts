@@ -835,9 +835,20 @@ async function executeCancellation(
     };
 }
 
+async function resolveJobOrderProductName(productId: number): Promise<string> {
+    if (!Number.isSafeInteger(productId) || productId <= 0) return `Product #${productId}`;
+    const rows = await directusGet<RawRecord[]>(
+        `/items/products?filter[product_id][_eq]=${productId}&fields=product_id,product_name,description&limit=1`,
+        "load the Job Order product"
+    ).catch(() => [] as RawRecord[]);
+    const product = rows[0];
+    return String(product?.description || product?.product_name || `Product #${productId}`);
+}
+
 export async function previewJobOrderCancellation(joId: string | number): Promise<JobOrderCancellationPreview> {
     const jobOrder = await fetchJobOrder(joId);
     const computed = await computeCancellation(jobOrder);
+    const productName = await resolveJobOrderProductName(jobOrder.productId);
     const status = jobOrder.status;
     const cancellable = isCancellableJobOrderStatus(status) && !computed.reconciliationError;
     const canReturnMaterials = isCancelledJobOrderStatus(status)
@@ -855,7 +866,7 @@ export async function previewJobOrderCancellation(joId: string | number): Promis
         jobOrderId: jobOrder.jobOrderId,
         jobOrderNo: jobOrder.jobOrderNo,
         productId: jobOrder.productId,
-        productName: `Product #${jobOrder.productId}`,
+        productName,
         branchId: jobOrder.branchId,
         status,
         cancellable,

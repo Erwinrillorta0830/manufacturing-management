@@ -79,6 +79,7 @@ export function usePlanningEngineering() {
     const [releasingDraftId, setReleasingDraftId] = useState<string | null>(null);
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
     const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
+    const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -227,14 +228,16 @@ export function usePlanningEngineering() {
     }, []);
 
     useEffect(() => {
-        if (!pendingDeepLinkJo || rawUnreleasedJobs.length === 0) return;
+        if (!pendingDeepLinkJo || loadingJobs) return;
         const match = rawUnreleasedJobs.find((jo: any) => String(jo.jo_id || jo.job_order_no || "") === pendingDeepLinkJo);
         if (match) {
             setSelectedBranchId(Number(match.branch_id) || null);
             setDeepLinkJo(match);
+        } else {
+            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the planning queue. It may already be released or in production, belongs to another branch, or does not exist.`);
         }
         setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, rawUnreleasedJobs]);
+    }, [pendingDeepLinkJo, rawUnreleasedJobs, loadingJobs]);
 
     // Establish Realtime SSE (Server-Sent Events) Connection for inventory movements
     useEffect(() => {
@@ -605,9 +608,13 @@ export function usePlanningEngineering() {
                 salesOrderDetailIds: selectedLines.map((line) => line.detail_id)
             };
 
-            await releaseJobOrder(payload);
+            const result = await releaseJobOrder(payload);
 
-            toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+            if (result.status === JOB_ORDER_STATUS.DRAFT) {
+                toast.warning(`Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
+            } else {
+                toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+            }
             setIsConfirmOpen(false);
             setSelectedDetailIds([]);
             // Reload data to show updated unfulfilled lines & requirements
@@ -747,6 +754,8 @@ export function usePlanningEngineering() {
         loadInitialData,
         deepLinkJo,
         clearDeepLinkJo: () => setDeepLinkJo(null),
+        deepLinkNotice,
+        setDeepLinkNotice,
         salesOrderLines,
         selectedLines,
         mergeValidation,

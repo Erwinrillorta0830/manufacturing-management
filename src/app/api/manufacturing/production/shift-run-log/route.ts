@@ -19,6 +19,7 @@ import {
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
+import { ensureJobOrderReceipt } from "../_finished-goods-ledger";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -819,6 +820,18 @@ export async function POST(request: Request) {
                     }
                 );
             }
+
+            // Keep the WMS receipt trail in step with the finished-goods
+            // movement so yield closing can treat shift-completed runs as
+            // idempotent instead of demanding reconciliation.
+            await ensureJobOrderReceipt({
+                productId: producedProductId,
+                branchId,
+                jobOrderNo,
+                quantity: goodYield,
+                description: `MFG Run: ${finalBatchNo}`,
+                documentDate: todayStr
+            });
         }
 
         // 7. UPDATE JOB ORDER ACCUMULATED COMPLETED QUANTITY, REJECTED QUANTITY, AND STATUS

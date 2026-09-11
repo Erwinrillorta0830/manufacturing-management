@@ -413,7 +413,7 @@ export function JobOrderShiftLogModal({
     };
 
     const hasInsufficiency = shiftMaterials.some(m => Number(m.actual_qty || 0) > Number(m.available_stock || 0));
-    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
+    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || loadingEligibleLots || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim() || !selectedLotId;
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
 
     return (
