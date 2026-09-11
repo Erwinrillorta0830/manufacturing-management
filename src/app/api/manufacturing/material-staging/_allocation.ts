@@ -474,11 +474,15 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         }
 
         const remarks = movementRemarks(movement);
-        if (movementSourceId(movement) === jobOrderId && remarks.includes("[MM-MATERIAL-STAGING]") && !remarks.includes("[MM-MATERIAL-STAGING-RETURN]")) {
+        const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
+        const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
+        if (movementSourceId(movement) === jobOrderId && (isStagingMovement || isReturnMovement)) {
             const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
             if (materialMatch) {
                 const stagingQuantity = movementQuantity(movement);
-                const issueQuantity = stagingQuantity < 0 ? Math.abs(stagingQuantity) : stagingQuantity;
+                const issueQuantity = isReturnMovement
+                    ? -Math.abs(stagingQuantity)
+                    : stagingQuantity < 0 ? Math.abs(stagingQuantity) : stagingQuantity;
                 const materialKey = `${Number(materialMatch[1])}:${key}`;
                 stagedByMaterialLotBatch.set(materialKey, (stagedByMaterialLotBatch.get(materialKey) || 0) + issueQuantity);
             }

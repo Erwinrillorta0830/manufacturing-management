@@ -11,7 +11,8 @@ import {
     TwoPointQAInspectionPayload,
     YieldJobOrderMaterial,
     PageMeta,
-    QASummary
+    QASummary,
+    MaterialReturnConfirmation
 } from "../types";
 import {
     fetchQALogs,
@@ -1249,7 +1250,7 @@ export function useManufacturingQA() {
     };
 
     // Submit Finished Goods Yield closing
-    const handleSubmitYieldClosing = async () => {
+    const handleSubmitYieldClosing = async (materialReturnConfirmation?: MaterialReturnConfirmation) => {
         if (!selectedJO) return;
         if (!yieldQty || isNaN(Number(yieldQty)) || Number(yieldQty) <= 0) {
             toast.error("Please enter a valid yield quantity.");
@@ -1332,7 +1333,8 @@ export function useManufacturingQA() {
                 manufacturingDate,
                 unitCost: Number(unitCost || 0),
                 componentsConsumed: componentsConsumed,
-                completeJobOrder: true
+                completeJobOrder: true,
+                ...(materialReturnConfirmation ? { materialReturnConfirmation } : {})
             });
 
             const persistedReceipt = closeResult.data;

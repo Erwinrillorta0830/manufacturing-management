@@ -29,9 +29,33 @@ import {
 import { isProductionSchedulingStatus } from "../sales-order/_status";
 import { salesOrderStatusAfterFulfillment } from "../sales-order/_fulfillment";
 import { hasJobOrderReceipt } from "./_finished-goods-ledger";
+import {
+    applyMaterialReturnDestinations,
+    computeJobOrderMaterialReturns,
+    executeJobOrderMaterialReturns,
+    fetchJobOrder,
+    JobOrderCancellationExecution
+} from "./_material-return";
 
 const EPSILON = 0.000001;
 const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>();
+
+function roundTo4(value: number): number {
+    return Math.round(value * 10000) / 10000;
+}
+
+function parseMaterialReturnConfirmation(
+    value: unknown
+): { destinations?: Array<{ joMaterialId: number; mmLotId: number; inventoryLotId?: number; batchNo?: string }> } | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const hasToken = typeof record.previewToken === "string" && record.previewToken.trim().length > 0;
+    if (record.acknowledge !== true && !hasToken) return null;
+    const destinations = Array.isArray(record.destinations)
+        ? record.destinations as Array<{ joMaterialId: number; mmLotId: number; inventoryLotId?: number; batchNo?: string }>
+        : undefined;
+    return { destinations };
+}
 
 export interface CompleteYieldClosingInput {
     joId: string | number;
@@ -46,6 +70,7 @@ export interface CompleteYieldClosingInput {
     manufacturingDate?: string | null;
     unitCost?: string | number | null;
     componentsConsumed?: unknown;
+    materialReturnConfirmation?: unknown;
 }
 
 interface ComponentPlan {
@@ -1009,6 +1034,7 @@ async function completeYieldClosingInternal(
 ): Promise<Record<string, unknown>> {
     let operationKey = requestOperationKey;
     let journal: MutationJournal | null = null;
+    let leftoverReturnExecution: JobOrderCancellationExecution | null = null;
 
     try {
         const quantityProduced = finiteNumber(input.quantityProduced, "Produced quantity", { positive: true });
@@ -1177,6 +1203,38 @@ async function completeYieldClosingInternal(
 
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced);
         const phtMovementTimestamp = formatPhtDateTime();
+
+        // Leftover staged material must be explicitly confirmed by QA before
+        // the close consumes what it needs; returns post after verification so
+        // the component-consumption checks still see the staged quantities.
+        const leftoverOrder = await fetchJobOrder(jobOrder.jobOrderId);
+        const leftoverComputed = await computeJobOrderMaterialReturns(leftoverOrder);
+        for (const plan of componentPlans) {
+            for (const lot of plan.lots) {
+                const line = leftoverComputed.lines.find((entry) => entry.reservationIds.includes(lot.reservationId));
+                if (!line) continue;
+                line.consumedQuantity = roundTo4(line.consumedQuantity + lot.quantity);
+                line.returnableQuantity = Math.max(0, roundTo4(line.stagedQuantity - line.consumedQuantity));
+            }
+        }
+        if (leftoverComputed.reconciliationError) {
+            throw new YieldCompletionError(409, "JOB_ORDER_RECONCILIATION_FAILED", leftoverComputed.reconciliationError);
+        }
+        const returnConfirmation = parseMaterialReturnConfirmation(input.materialReturnConfirmation);
+        const hasLeftovers = leftoverComputed.lines.some(
+            (line) => !line.releaseOnly && line.returnableQuantity > EPSILON
+        );
+        if (hasLeftovers && !returnConfirmation) {
+            throw new YieldCompletionError(
+                422,
+                "MATERIAL_RETURN_CONFIRMATION_REQUIRED",
+                "This Job Order has leftover staged material. Review and confirm the raw-material return before closing the yield."
+            );
+        }
+        if (returnConfirmation) {
+            applyMaterialReturnDestinations(leftoverComputed, leftoverOrder, returnConfirmation.destinations);
+        }
+
         journal = new MutationJournal();
         const finishedLotId = requestedMmLotId;
         const inventoryLot = await resolveOrCreateMmInventoryLot({
@@ -1365,6 +1423,26 @@ async function completeYieldClosingInternal(
         const allocationExpectations = await processSalesOrderAllocations(journal, jobOrder, quantityProduced);
         await verifySalesOrderAllocations(allocationExpectations);
 
+        // Post leftover returns after the closing writes and verification so
+        // the staged-consumption checks above still see the hard-staged stock.
+        if (hasLeftovers) {
+            const needsDestination = leftoverComputed.lines.some(
+                (line) => !line.releaseOnly && line.returnableQuantity > EPSILON && line.requiresLotSelection
+            );
+            if (needsDestination) {
+                throw new YieldCompletionError(
+                    422,
+                    "JOB_ORDER_RETURN_DESTINATION_REQUIRED",
+                    "One or more leftover return lines need an active destination lot before the yield can be closed."
+                );
+            }
+            leftoverReturnExecution = await executeJobOrderMaterialReturns(leftoverOrder, leftoverComputed, {
+                reason: `Return leftover raw materials during yield closing for ${leftoverOrder.jobOrderNo}`,
+                actorUserId: 24,
+                writeStatus: false
+            });
+        }
+
         return {
             success: true,
             data: completionReceipt(
@@ -1394,6 +1472,13 @@ async function completeYieldClosingInternal(
             }
         };
     } catch (error) {
+        if (leftoverReturnExecution) {
+            try {
+                await leftoverReturnExecution.compensate();
+            } catch (compensateError) {
+                console.error("Unable to compensate the leftover material return:", compensateError);
+            }
+        }
         if (journal) {
             try {
                 await journal.rollback();
@@ -1450,7 +1535,8 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
         String(input.productId ?? "").trim(),
         String(input.branchId ?? "").trim(),
         String(input.lotNumber ?? "").trim(),
-        String(input.mmLotId ?? "").trim()
+        String(input.mmLotId ?? "").trim(),
+        input.materialReturnConfirmation ? "ret" : "noret"
     ].join(":");
     const inFlight = inFlightYieldClosures.get(requestKey);
     if (inFlight) return inFlight;

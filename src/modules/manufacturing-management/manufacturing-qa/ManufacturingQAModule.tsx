@@ -31,6 +31,7 @@ import { QAInspectionLogsTable } from "./components/QAInspectionLogsTable";
 import { TwoPointQAInspectionModal } from "./components/TwoPointQAInspectionModal";
 import { JobOrderStatusHistoryModal } from "./components/JobOrderStatusHistoryModal";
 import { QuarantineHolds } from "./components/QuarantineHolds";
+import { MaterialReturnsPanel } from "./components/MaterialReturnsPanel";
 import { YieldClosingQueue } from "./components/YieldClosingQueue";
 import { CheckpointLogsTable } from "./components/CheckpointLogsTable";
 import { YieldClosingDialog } from "./components/YieldClosingDialog";
@@ -485,6 +486,7 @@ export default function ManufacturingQAModule() {
                             handleOpenOverrideDialog={handleOpenOverrideDialog}
                             onFiltersChange={handleHoldsFiltersChange}
                         />
+                        <MaterialReturnsPanel />
                         <PaginationControls meta={holdsMeta} onPageChange={setHoldsPage} onPageSizeChange={(size) => { setHoldsPageSize(size); setHoldsPage(1); }} />
                     </>}
                 </TabsContent>
