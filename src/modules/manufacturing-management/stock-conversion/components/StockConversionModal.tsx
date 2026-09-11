@@ -54,7 +54,6 @@ import {
   fetchLotsByBranch,
   fetchBatchOnhand,
   fetchInventoryLots,
-  fetchProductOnhand,
   resolveProductClassification,
   buildLotStoredProductSummaryMap,
   checkLotProductTypeCompatibility,
@@ -193,9 +192,8 @@ export function StockConversionModal({
           fetchLotsByBranch(branchId),
           fetchBatchOnhand({ branchId }),
           fetchInventoryLots({ branchId }),
-          fetchProductOnhand({ branchId, productId: product.productId }),
         ])
-          .then(([lotsData, allBranchOnhand, invLotsData, productOnhandData]) => {
+          .then(([lotsData, allBranchOnhand, invLotsData]) => {
             setRawBranchOnhand(allBranchOnhand || []);
             setRawBranchInvLots(invLotsData || []);
 
