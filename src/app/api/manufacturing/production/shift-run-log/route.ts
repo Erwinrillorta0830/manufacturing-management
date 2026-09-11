@@ -5,8 +5,24 @@ import { cookies } from "next/headers";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { DIRECTUS_URL, headers, formatPhtDateTime, getTodayDateString, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { mmLotId, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
-import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import {
+    loadEligibleFinishedGoodsLot,
+    mmLotId,
+    resolveOrCreateMmLot,
+    resolveOrCreateMmInventoryLot,
+    resolveProductUnitId,
+    MmInventoryLotRecord,
+    MmInventoryLotWritePayload,
+    MmLotError
+} from "../../services/mm-lots.service";
+import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
+import {
+    isCancelledJobOrderStatus,
+    isJobOrderStatus,
+    JOB_ORDER_STATUS,
+    normalizeJobOrderStatus
+} from "@/modules/manufacturing-management/job-order-status";
+import { isProductionSchedulingStatus } from "../../sales-order/_status";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -98,6 +114,95 @@ function normalizeGenealogyRecord(row: any): any {
 
 async function requireDirectusWriteData(response: Response, label: string): Promise<any> {
     return requireDirectusData(response, label);
+}
+
+async function reconcileSalesOrderFulfillment(
+    jobOrderId: number,
+    quantityProduced: number,
+    targetQuantity: number,
+    isRetryRun: boolean
+): Promise<void> {
+    if (isRetryRun || quantityProduced <= 0 || targetQuantity <= 0) return;
+
+    let allocations: any[];
+    try {
+        allocations = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=sales_order_detail_id,allocated_quantity,status&limit=-1`,
+            `Sales-order allocation lookup for Job Order ${jobOrderId}`
+        );
+    } catch (error) {
+        if (!(error instanceof DirectusPersistenceError) || !/HTTP (400|403)/.test(error.message)) throw error;
+        allocations = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
+            `Sales-order allocation lookup for Job Order ${jobOrderId}`
+        );
+    }
+
+    const parentOrderIds = new Set<number>();
+    const proportionalFactor = quantityProduced / targetQuantity;
+    for (const allocation of allocations) {
+        if (isCancelledJobOrderStatus(allocation.status)) continue;
+
+        const detailId = Number(
+            typeof allocation.sales_order_detail_id === "object"
+                ? allocation.sales_order_detail_id?.detail_id ?? allocation.sales_order_detail_id?.id
+                : allocation.sales_order_detail_id
+        );
+        const allocatedQuantity = Number(allocation.allocated_quantity || 0);
+        if (!Number.isSafeInteger(detailId) || detailId <= 0 || !Number.isFinite(allocatedQuantity) || allocatedQuantity <= 0) continue;
+
+        const detail = await directusRequest<any>(
+            `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(detailId))}`,
+            `Sales-order detail lookup for allocation ${detailId}`
+        );
+        const orderedQuantity = Number(detail.ordered_quantity ?? detail.quantity ?? 0);
+        const currentAllocated = Number(detail.allocated_quantity || 0);
+        if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0 || !Number.isFinite(currentAllocated)) continue;
+
+        const fulfillmentIncrement = allocatedQuantity * proportionalFactor;
+        const nextAllocated = Math.min(orderedQuantity, currentAllocated + fulfillmentIncrement);
+        const unitPrice = Number(detail.unit_price || 0);
+        await directusRequest(
+            `${DIRECTUS_URL}/items/sales_order_details/${encodeURIComponent(String(detailId))}`,
+            `Update sales-order fulfillment for detail ${detailId}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+                    allocated_quantity: nextAllocated,
+                    allocated_amount: nextAllocated * (Number.isFinite(unitPrice) ? unitPrice : 0)
+                })
+            }
+        );
+
+        const parentOrderId = Number(
+            typeof detail.order_id === "object"
+                ? detail.order_id?.order_id ?? detail.order_id?.id
+                : detail.order_id
+        );
+        if (Number.isSafeInteger(parentOrderId) && parentOrderId > 0) parentOrderIds.add(parentOrderId);
+    }
+
+    for (const parentOrderId of parentOrderIds) {
+        const parentOrder = await directusRequest<any>(
+            `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}?fields=order_id,order_status`,
+            `Sales-order status lookup for ${parentOrderId}`
+        );
+        const currentStatus = String(parentOrder.order_status || "").trim();
+        const details = await directusRows<any>(
+            `${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${encodeURIComponent(String(parentOrderId))}&fields=detail_id,ordered_quantity,allocated_quantity,served_quantity&limit=-1`,
+            `Sales-order fulfillment verification for ${parentOrderId}`
+        );
+        const nextStatus = salesOrderStatusAfterFulfillment(details);
+        if (!isProductionSchedulingStatus(currentStatus) || nextStatus === currentStatus) continue;
+        await directusRequest(
+            `${DIRECTUS_URL}/items/sales_order/${encodeURIComponent(String(parentOrderId))}`,
+            `Update Sales Order ${parentOrderId} fulfillment status`,
+            {
+                method: "PATCH",
+                body: JSON.stringify({ order_status: nextStatus })
+            }
+        );
+    }
 }
 
 // GET handler: Fetches yield ledger logs, rejection reasons, or status history
@@ -197,6 +302,9 @@ export async function POST(request: Request) {
         if (!canonicalJoStatus) {
             return NextResponse.json({ error: `Job Order ${joId} has an unknown status and cannot accept a shift run.` }, { status: 409 });
         }
+        if (isCancelledJobOrderStatus(canonicalJoStatus)) {
+            return NextResponse.json({ error: `Job Order ${joId} is cancelled and cannot accept a shift run.` }, { status: 409 });
+        }
         const producedProductId = Number(joData.product_id);
         if (!joData.branch_id) {
             return NextResponse.json({ error: `Job Order with ID ${joId} has no branch_id` }, { status: 400 });
@@ -206,7 +314,45 @@ export async function POST(request: Request) {
         const targetQuantity = Number(joData.target_quantity ?? joData.quantity ?? 0);
         const currentRejectedQty = Number(joData.rejected_quantity || 0);
         const requestedBatchNo = typeof batchNo === "string" ? batchNo.trim() : "";
+        if (goodYield > 0 && !requestedBatchNo) {
+            return NextResponse.json({
+                success: false,
+                error: "Enter a batch number for the finished-goods output.",
+                code: "SHIFT_RUN_BATCH_REQUIRED"
+            }, { status: 422 });
+        }
         const finalBatchNo = requestedBatchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
+
+        // Positive output must reuse an existing storage lot owned by the Job
+        // Order branch with the finished good's UOM. No master lot is created.
+        const requestedTargetLotId = Number(targetLotId ?? 0);
+        if (goodYield > 0 && (!Number.isSafeInteger(requestedTargetLotId) || requestedTargetLotId <= 0)) {
+            return NextResponse.json({
+                success: false,
+                error: "Select an existing storage lot for the finished-goods output.",
+                code: "SHIFT_RUN_LOT_REQUIRED"
+            }, { status: 422 });
+        }
+        let resolvedOutputLotId: number | null = null;
+        if (goodYield > 0) {
+            try {
+                const eligibleLot = await loadEligibleFinishedGoodsLot({
+                    mmLotId: requestedTargetLotId,
+                    branchId,
+                    productId: producedProductId
+                });
+                resolvedOutputLotId = Number(eligibleLot.lot_id);
+            } catch (error) {
+                if (error instanceof MmLotError) {
+                    return NextResponse.json({
+                        success: false,
+                        error: error.message,
+                        code: error.code
+                    }, { status: error.status });
+                }
+                throw error;
+            }
+        }
 
         // Fetch all existing yield logs for this Job Order to compute accumulated yield
         const existingYieldRows = await directusRows<any>(
@@ -740,61 +886,79 @@ export async function POST(request: Request) {
         }
 
         // 6. RECORD FINISHED GOODS / WIP OUTPUT MOVEMENT IN INVENTORY_MOVEMENTS LEDGER
-        const finishedLotId = targetLotId
-            ? Number(targetLotId)
-            : await (async () => {
-                const unitOfMeasureId = await resolveProductUnitId(producedProductId);
-                return (await resolveOrCreateMmLot({
-                    lotName: finalBatchNo,
-                    branchId,
-                    unitId: unitOfMeasureId,
-                    maxBatchCapacity: 100000,
-                    createdBy: effectiveEncoderId
-                })).lot_id;
-            })();
-
-        const yieldLotUpdate = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify({ mm_lot_id: finishedLotId })
-        });
-        if (!yieldLotUpdate.ok) {
-            throw new DirectusPersistenceError(`Yield ledger canonical lot update failed with HTTP ${yieldLotUpdate.status}.`);
-        }
-
-        const finishedMovementPayload = {
-            product_id: producedProductId,
-            mm_lot_id: finishedLotId,
-            lot_id: null,
-            branch_id: branchId,
-            transaction_type_id: 2, // Job Order Finished Goods
-            source_document_id: Number(joId),
-            source_document_no: jobOrderNo, // 'JO-xxxx'
-            batch_no: finalBatchNo,
-            expiry_date: expiryDate || null,
-            manufacturing_date: manufacturingDate || null,
-            quantity: goodYield,
-            created_by: effectiveEncoderId,
-            remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName} | Lot: ${finalBatchNo}`
-        };
-
-        const existingFinishedMovements = await fetchMmInventoryMovements({
-            referenceId: Number(joId),
-            branch: branchId,
-            product: producedProductId,
-            batchNo: finalBatchNo,
-            transactionTypeId: 2
-        });
-        const existingFinishedMovement = existingFinishedMovements.find((row: any) => sameQuantity(row.quantity, goodYield));
-        if (!existingFinishedMovement) {
-            await directusRequest<any>(
-                `${DIRECTUS_URL}/items/inventory_movements`,
-                "Finished-goods inventory movement insert",
-                {
-                    method: "POST",
-                    body: JSON.stringify(finishedMovementPayload)
+        let finishedInventoryLotId: number | null = null;
+        if (goodYield > 0 && resolvedOutputLotId) {
+            const finishedLotId = resolvedOutputLotId;
+            const inventoryLot = await resolveOrCreateMmInventoryLot({
+                mmLotId: finishedLotId,
+                branchId,
+                productId: producedProductId,
+                batchNo: finalBatchNo,
+                manufacturingDate: manufacturingDate || todayStr,
+                expiryDate: expiryDate || null,
+                unitCost: 0,
+                qaStatus: "GOOD",
+                sourceType: "JOB_ORDER_YIELD",
+                sourceReference: jobOrderNo,
+                remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName}`,
+                createdBy: effectiveEncoderId,
+                onCreate: async (writePayload: MmInventoryLotWritePayload): Promise<MmInventoryLotRecord> => {
+                    const createdBatch = await directusRequest<any>(
+                        `${DIRECTUS_URL}/items/mm_inventory_lots`,
+                        "Finished-goods batch insert",
+                        {
+                            method: "POST",
+                            body: JSON.stringify(writePayload)
+                        }
+                    );
+                    return createdBatch as MmInventoryLotRecord;
                 }
-            );
+            });
+            finishedInventoryLotId = Number(inventoryLot.inventory_lot_id) || null;
+
+            const yieldLotUpdate = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${ledgerId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ mm_lot_id: finishedLotId })
+            });
+            if (!yieldLotUpdate.ok) {
+                throw new DirectusPersistenceError(`Yield ledger canonical lot update failed with HTTP ${yieldLotUpdate.status}.`);
+            }
+
+            const finishedMovementPayload = {
+                product_id: producedProductId,
+                mm_lot_id: finishedLotId,
+                lot_id: null,
+                branch_id: branchId,
+                transaction_type_id: 2, // Job Order Finished Goods
+                source_document_id: Number(joId),
+                source_document_no: jobOrderNo, // 'JO-xxxx'
+                batch_no: finalBatchNo,
+                expiry_date: expiryDate || null,
+                manufacturing_date: manufacturingDate || null,
+                quantity: goodYield,
+                created_by: effectiveEncoderId,
+                remarks: `Yield output from Job Order ${jobOrderNo} | Shift: ${shiftName} | Lot: ${finalBatchNo}`
+            };
+
+            const existingFinishedMovements = await fetchMmInventoryMovements({
+                referenceId: Number(joId),
+                branch: branchId,
+                product: producedProductId,
+                batchNo: finalBatchNo,
+                transactionTypeId: 2
+            });
+            const existingFinishedMovement = existingFinishedMovements.find((row: any) => sameQuantity(row.quantity, goodYield));
+            if (!existingFinishedMovement) {
+                await directusRequest<any>(
+                    `${DIRECTUS_URL}/items/inventory_movements`,
+                    "Finished-goods inventory movement insert",
+                    {
+                        method: "POST",
+                        body: JSON.stringify(finishedMovementPayload)
+                    }
+                );
+            }
         }
 
         // 7. UPDATE JOB ORDER ACCUMULATED COMPLETED QUANTITY, REJECTED QUANTITY, AND STATUS
@@ -874,6 +1038,13 @@ export async function POST(request: Request) {
             }
         }
 
+        await reconcileSalesOrderFulfillment(
+            Number(joId),
+            goodYield,
+            targetQuantity,
+            isRetryRun
+        );
+
         return NextResponse.json({ 
             success: true, 
             message: `Shift run progress logged successfully! Backflushed point-of-use materials into inventory movements (${jobOrderNo}) and updated output batch ${finalBatchNo}.`,
@@ -882,6 +1053,8 @@ export async function POST(request: Request) {
             scrapQty: scrapUnits,
             completedQuantity: newCompletedQty,
             isFullyFinished: isJobFullyFinished,
+            mmLotId: resolvedOutputLotId,
+            inventoryLotId: finishedInventoryLotId,
             genealogyRecords
         });
     } catch (e) {

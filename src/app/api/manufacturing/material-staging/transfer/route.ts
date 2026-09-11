@@ -4,11 +4,13 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     branchProductBatchKey,
     branchProductLotBatchKey,
-    normalizeBatchNo
+    normalizeBatchNo,
+    normalizeDirectusStagingMovement,
+    type MaterialStagingStockMovement
 } from "../_stock";
 import { z } from "zod";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -343,6 +345,9 @@ export async function POST(request: Request) {
         if (!canonicalJobOrderNo || canonicalJobOrderNo !== data.job_order_no.trim()) {
             throw new TransferError("The supplied Job Order number does not match the selected Job Order.", 400);
         }
+        if (isCancelledJobOrderStatus(jobOrder.status)) {
+            throw new TransferError("Cancelled Job Orders cannot accept staged material.", 409);
+        }
 
         const workCenterFilter = encodeURIComponent(JSON.stringify({
             work_center_id: { _eq: data.work_center_id }
@@ -385,10 +390,32 @@ export async function POST(request: Request) {
             throw new TransferError("The material product does not match the selected product.", 400);
         }
 
-        const movements = await fetchMmInventoryMovements({
+        const springMovements = await fetchMmInventoryMovements({
             branch: branchId,
             product: data.product_id
         });
+        const stagingMovementFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { branch_id: { _eq: branchId } },
+                { product_id: { _eq: data.product_id } },
+                { remarks: { _contains: "[MM-MATERIAL-STAGING]" } }
+            ]
+        }));
+        const directusStagingMovements = await directusRequest<DirectusRecord[]>(
+            `/items/inventory_movements?filter=${stagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
+            { headers, cache: "no-store" },
+            "Load material staging movements",
+            true
+        );
+        const springMovementIds = new Set(springMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0));
+        const movements: MaterialStagingStockMovement[] = [
+            ...springMovements,
+            ...directusStagingMovements
+                .map((movement) => normalizeDirectusStagingMovement(movement))
+                .filter((movement) => !movement.movement_id || !springMovementIds.has(movement.movement_id))
+        ];
 
         const requestedBatch = normalizeBatchNo(data.batch_no);
         const stockByBatch = new Map<string, number>();
@@ -528,11 +555,12 @@ export async function POST(request: Request) {
         }
 
         const stagedQuantityForBatch = movements.reduce((total, movement) => {
+            const remarks = String(movement.remarks || "");
             const isStagingMovement = Number(movement.source_document_id) === data.job_order_id &&
                 Number(movement.transaction_type_id) === 4 &&
                 normalizeBatchNo(movement.batch_no) === requestedBatch &&
-                String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]");
-            return isStagingMovement ? total + Math.max(0, Number(movement.quantity || 0)) : total;
+                (remarks.includes("[MM-MATERIAL-STAGING]") || remarks.includes("[MM-MATERIAL-STAGING-RETURN]"));
+            return isStagingMovement ? total + Number(movement.quantity || 0) : total;
         }, 0);
         let stagedQuantityRemaining = stagedQuantityForBatch;
         const stagedQuantityByAllocation = new Map<number, number>();
@@ -676,9 +704,17 @@ export async function POST(request: Request) {
         }
 
         for (const [index, movementId] of transactionState.movementIds.entries()) {
-            const verifiedMovement = (await fetchMmInventoryMovements({ movementId }))
-                .find((movement) => Number(movement.movement_id) === movementId);
-            if (!verifiedMovement) {
+            // Verify the row through Directus, where the movement ID is the
+            // persisted primary key. The Spring movement view currently does
+            // not expose movementId reliably, so it cannot verify a just-created
+            // Directus row by ID.
+            const verifiedMovement = await directusRequest<DirectusRecord>(
+                `/items/inventory_movements/${movementId}?fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,batch_no,quantity`,
+                { headers, cache: "no-store" },
+                `Verify inventory movement ${movementId}`,
+                true
+            );
+            if (!verifiedMovement || typeof verifiedMovement !== "object") {
                 throw new TransferError("The inventory movement could not be verified after saving.", 503);
             }
             const expectedMovement = movementPayloads[index];
@@ -722,18 +758,49 @@ export async function POST(request: Request) {
             "Validate Job Order staging reservations",
             true
         );
-        const allJobOrderMovements = await fetchMmInventoryMovements({
+        const springJobOrderMovements = await fetchMmInventoryMovements({
             referenceId: data.job_order_id,
             branch: branchId,
             transactionTypeId: 4
         });
+        const jobOrderStagingMovementFilter = encodeURIComponent(JSON.stringify({
+            _and: [
+                { branch_id: { _eq: branchId } },
+                { source_document_id: { _eq: data.job_order_id } },
+                { transaction_type_id: { _eq: 4 } },
+                {
+                    _or: [
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING]" } },
+                        { remarks: { _contains: "[MM-MATERIAL-STAGING-RETURN]" } }
+                    ]
+                }
+            ]
+        }));
+        const directusJobOrderMovements = await directusRequest<DirectusRecord[]>(
+            `/items/inventory_movements?filter=${jobOrderStagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`,
+            { headers, cache: "no-store" },
+            "Load Job Order staging movements",
+            true
+        );
+        const springJobOrderMovementIds = new Set(springJobOrderMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0));
+        const allJobOrderMovements: MaterialStagingStockMovement[] = [
+            ...springJobOrderMovements,
+            ...directusJobOrderMovements
+                .map((movement) => normalizeDirectusStagingMovement(movement))
+                .filter((movement) => !movement.movement_id || !springJobOrderMovementIds.has(movement.movement_id))
+        ];
         const stagedQuantityByProductBatch = new Map<string, number>();
         allJobOrderMovements.forEach((movement) => {
-            if (!String(movement.remarks || "").includes("[MM-MATERIAL-STAGING]")) return;
+            const remarks = String(movement.remarks || "");
+            const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
+            const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
+            if (!isStagingMovement && !isReturnMovement) return;
             const productId = relationId(movement.product_id, ["product_id"]);
             const batchNo = String(movement.batch_no || "").trim().toLowerCase();
             const quantity = Number(movement.quantity || 0);
-            if (productId && batchNo && quantity > 0) {
+            if (productId && batchNo && quantity !== 0) {
                 const key = `${productId}:${batchNo}`;
                 stagedQuantityByProductBatch.set(key, (stagedQuantityByProductBatch.get(key) || 0) + quantity);
             }
@@ -747,7 +814,7 @@ export async function POST(request: Request) {
                 .reduce((total, reservation) => {
                     const batchNo = normalizeBatchNo(reservation.batch_no);
                     const key = `${productId}:${batchNo}`;
-                    return stagedQuantityByProductBatch.has(key)
+                    return (stagedQuantityByProductBatch.get(key) || 0) > 0
                         ? total + Number(reservation.reserved_quantity || 0)
                         : total;
                 }, 0);

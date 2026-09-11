@@ -52,6 +52,7 @@ export default function ManufacturingQAModule() {
         inspectionLogs,
         qaLogs,
         dispositions,
+        branches,
         loadingJobOrders,
         loadingInspectionLogs,
         loadingDispositions,
@@ -96,6 +97,20 @@ export default function ManufacturingQAModule() {
         setYieldQty,
         lotNumber,
         setLotNumber,
+        eligibleLots,
+        selectedMmLotId,
+        setSelectedMmLotId,
+        loadingEligibleLots,
+        postingBranchMode,
+        postingBranchId,
+        newPostingBranchName,
+        setNewPostingBranchName,
+        newPostingBranchCode,
+        setNewPostingBranchCode,
+        branchActionLoading,
+        handlePostingBranchModeChange,
+        handlePostingBranchChange,
+        handleCreatePostingBranch,
         manufacturingDate,
         setManufacturingDate,
         expiryDate,
@@ -538,10 +553,25 @@ export default function ManufacturingQAModule() {
                 setIsYieldDialogOpen={setIsYieldDialogOpen}
                 selectedJO={selectedJO}
                 getBranchName={getBranchName}
+                branches={branches}
+                postingBranchMode={postingBranchMode}
+                postingBranchId={postingBranchId}
+                handlePostingBranchModeChange={handlePostingBranchModeChange}
+                handlePostingBranchChange={handlePostingBranchChange}
+                newPostingBranchName={newPostingBranchName}
+                setNewPostingBranchName={setNewPostingBranchName}
+                newPostingBranchCode={newPostingBranchCode}
+                setNewPostingBranchCode={setNewPostingBranchCode}
+                handleCreatePostingBranch={handleCreatePostingBranch}
+                branchActionLoading={branchActionLoading}
                 yieldQty={yieldQty}
                 setYieldQty={setYieldQty}
                 lotNumber={lotNumber}
                 setLotNumber={setLotNumber}
+                eligibleLots={eligibleLots}
+                selectedMmLotId={selectedMmLotId}
+                setSelectedMmLotId={setSelectedMmLotId}
+                loadingEligibleLots={loadingEligibleLots}
                 manufacturingDate={manufacturingDate}
                 setManufacturingDate={setManufacturingDate}
                 expiryDate={expiryDate}

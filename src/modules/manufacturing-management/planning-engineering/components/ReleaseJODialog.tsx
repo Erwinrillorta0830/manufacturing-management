@@ -95,6 +95,14 @@ export function ReleaseJODialog({
     };
 
     const selectedBranch = branches.find((b) => b.id === selectedBranchId);
+    const maxAvailableQuantity = useMemo(() => selectedLines.reduce((sum, line) => {
+        const resolved = Number(line.remaining_quantity);
+        if (Number.isFinite(resolved)) return sum + Math.max(0, resolved);
+        const ordered = Number(line.ordered_quantity || 0);
+        const fulfilled = Math.max(Number(line.allocated_quantity || 0), Number(line.served_quantity || 0));
+        const planned = Number(line.planned_quantity || 0);
+        return sum + Math.max(0, ordered - fulfilled - planned);
+    }, 0), [selectedLines]);
 
     // Reset step on open/close
     useEffect(() => {
@@ -524,11 +532,19 @@ export function ReleaseJODialog({
                                         <Input
                                             type="number"
                                             value={targetQuantity}
-                                            onChange={(e) => setTargetQuantity(Math.max(1, Number(e.target.value)))}
+                                            min={1}
+                                            max={maxAvailableQuantity}
+                                            step="any"
+                                            onChange={(e) => {
+                                                const next = Number(e.target.value);
+                                                setTargetQuantity(Number.isFinite(next)
+                                                    ? Math.min(maxAvailableQuantity, Math.max(0, next))
+                                                    : 0);
+                                            }}
                                             className="h-9 font-semibold bg-card border-input text-foreground"
                                         />
                                         <p className="text-[10px] text-muted-foreground">
-                                            Scale quantity up or down according to branch net requirements or batch sizing.
+                                            Enter a quantity from 1 through {maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.
                                         </p>
                                     </div>
 

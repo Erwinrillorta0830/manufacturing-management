@@ -155,7 +155,10 @@ export async function fetchBranchesList(): Promise<Branch[]> {
             branch_id?: number | string;
             branchName?: string | null;
             branch_name?: string | null;
+            branchCode?: string | null;
+            branch_code?: string | null;
             name?: string | null;
+            isActive?: boolean | number | string | null;
         }): Branch => {
             const id = Number(row.id ?? row.branch_id);
             const name = String(row.branchName ?? row.branch_name ?? row.name ?? "").trim();
@@ -164,9 +167,67 @@ export async function fetchBranchesList(): Promise<Branch[]> {
                 branch_id: id,
                 name,
                 branch_name: name,
+                branchCode: String(row.branchCode ?? row.branch_code ?? "").trim() || undefined,
+                branch_code: String(row.branchCode ?? row.branch_code ?? "").trim() || undefined,
+                isActive: row.isActive === true || row.isActive === 1 || row.isActive === "1",
             };
         })
         .filter((branch) => Number.isFinite(branch.id) && Number(branch.id) > 0 && Boolean(branch.branch_name));
+}
+
+export async function createManufacturingBranch(input: {
+    branchName: string;
+    branchCode: string;
+}): Promise<Branch> {
+    const res = await fetch("/api/manufacturing/branches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+    });
+    const payload = await res.json().catch(() => ({})) as { data?: unknown; error?: string };
+    if (!res.ok) throw new Error(payload.error || "Failed to create branch.");
+
+    const row = payload.data as {
+        id?: number | string;
+        branchName?: string | null;
+        branchCode?: string | null;
+    } | undefined;
+    const id = Number(row?.id || 0);
+    const name = String(row?.branchName || input.branchName).trim();
+    if (!Number.isSafeInteger(id) || id <= 0 || !name) {
+        throw new Error("The branch creation response was invalid.");
+    }
+    return {
+        id,
+        branch_id: id,
+        name,
+        branch_name: name,
+        branchCode: String(row?.branchCode || input.branchCode).trim(),
+        branch_code: String(row?.branchCode || input.branchCode).trim(),
+        isActive: true
+    };
+}
+
+export async function assignManufacturingJobOrderBranch(input: {
+    jobOrderId: number | string;
+    branchId: number;
+}): Promise<{ jobOrderId: number; branchId: number; branchName?: string | null }> {
+    const res = await fetch("/api/manufacturing/production/job-order-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+    });
+    const payload = await res.json().catch(() => ({})) as {
+        data?: { jobOrderId?: number; branchId?: number; branchName?: string | null };
+        error?: string;
+    };
+    if (!res.ok) throw new Error(payload.error || "Failed to assign the Job Order branch.");
+    const jobOrderId = Number(payload.data?.jobOrderId || input.jobOrderId || 0);
+    const branchId = Number(payload.data?.branchId || input.branchId || 0);
+    if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(branchId) || branchId <= 0) {
+        throw new Error("The Job Order branch assignment response was invalid.");
+    }
+    return { jobOrderId, branchId, branchName: payload.data?.branchName };
 }
 
 export async function fetchJobOrderMaterials(joId: string): Promise<YieldJobOrderMaterial[]> {
@@ -220,6 +281,7 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
             rejected_quantity: payload.rejected_quantity,
             rejection_reason_id: payload.rejection_reason_id ?? null,
             lot_number: payload.lot_number,
+            mm_lot_id: payload.mm_lot_id ?? null,
             manufacturing_date: payload.manufacturing_date,
             expiry_date: payload.expiry_date,
             unit_cost: payload.unit_cost ?? 0,
@@ -237,6 +299,7 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
 export interface FinishedGoodsReceiptPayload {
     joId: string;
     yieldLedgerId?: number | null;
+    mmLotId: number;
     productId: number;
     productName: string;
     quantityProduced: number;
@@ -266,6 +329,8 @@ export interface FinishedGoodsReceipt {
     quantityProduced: number;
     branchId: number;
     lotNumber: string;
+    mmLotId: number | null;
+    inventoryLotId: number | null;
     manufacturingDate: string | null;
     expirationDate: string | null;
     qaStatus: string;
@@ -293,6 +358,8 @@ interface FinishedGoodsReceiptApiRow {
     quantity_produced?: number;
     branch_id?: number;
     lot_number?: string;
+    mm_lot_id?: number | null;
+    inventory_lot_id?: number | null;
     manufacturing_date?: string | null;
     expiration_date?: string | null;
     qa_status?: string;
@@ -314,6 +381,8 @@ function mapFinishedGoodsReceipt(row: FinishedGoodsReceiptApiRow): FinishedGoods
         quantityProduced: Number(row.quantity_produced || 0),
         branchId: Number(row.branch_id || 0),
         lotNumber: String(row.lot_number || ""),
+        mmLotId: row.mm_lot_id == null ? null : Number(row.mm_lot_id),
+        inventoryLotId: row.inventory_lot_id == null ? null : Number(row.inventory_lot_id),
         manufacturingDate: row.manufacturing_date || null,
         expirationDate: row.expiration_date || null,
         qaStatus: String(row.qa_status || "Pending"),

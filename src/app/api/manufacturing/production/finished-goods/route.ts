@@ -4,9 +4,10 @@ import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { completeYieldClosing, YieldCompletionError } from "../_yield-closing-service";
 import { YieldMaterialsError } from "../_yield-materials";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
-import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
-import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
+import { loadEligibleFinishedGoodsLot, resolveOrCreateMmLot, resolveProductUnitId } from "../../services/mm-lots.service";
+import { JOB_ORDER_STATUS, isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
+import { isProductionSchedulingStatus } from "../../sales-order/_status";
 
 
 interface LedgerEntry {
@@ -266,6 +267,7 @@ export async function POST(request: Request) {
             quantityProduced,
             branchId,
             lotNumber,
+            mmLotId,
             expirationDate,
             manufacturingDate,
             unitCost,
@@ -278,6 +280,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Missing required fields (joId, productId, quantityProduced, branchId)" }, { status: 400 });
         }
 
+        if (completeJobOrder !== true) {
+            return NextResponse.json({
+                success: false,
+                error: "Legacy finished-goods posting is retired. Use the canonical yield-closing flow with an existing mmLotId and batch number.",
+                code: "LEGACY_FINISHED_GOODS_POSTING_RETIRED"
+            }, { status: 410 });
+        }
+
         if (completeJobOrder) {
             try {
                 const result = await completeYieldClosing({
@@ -287,6 +297,7 @@ export async function POST(request: Request) {
                     quantityProduced,
                     branchId,
                     lotNumber,
+                    mmLotId,
                     expirationDate,
                     manufacturingDate,
                     unitCost,
@@ -332,6 +343,9 @@ export async function POST(request: Request) {
             if (joRes.ok) {
                 const joData = (await joRes.json()).data || [];
                 if (joData.length > 0) {
+                    if (isCancelledJobOrderStatus(joData[0].status)) {
+                        return NextResponse.json({ error: `Job Order ${joId} is cancelled and cannot be completed.` }, { status: 409 });
+                    }
                     const resolvedJobOrderId = Number(joData[0].job_order_id);
                     if (sourceDocumentId <= 0 && Number.isSafeInteger(resolvedJobOrderId) && resolvedJobOrderId > 0) {
                         sourceDocumentId = resolvedJobOrderId;
@@ -463,16 +477,19 @@ export async function POST(request: Request) {
 
         if (!skipStockOperations) {
             try {
-                const finishedLotId = await (async () => {
-                    const unitOfMeasureId = await resolveProductUnitId(pId);
-                    return (await resolveOrCreateMmLot({
-                        lotName: finalLotNo,
-                        branchId: bId,
-                        unitId: unitOfMeasureId,
-                        maxBatchCapacity: 100000,
-                        createdBy: 24
-                    })).lot_id;
-                })();
+                const finishedLotId = Number(mmLotId);
+                if (!Number.isSafeInteger(finishedLotId) || finishedLotId <= 0) {
+                    return NextResponse.json({
+                        success: false,
+                        error: "An existing mmLotId is required for finished-goods posting.",
+                        code: "FINISHED_GOODS_LOT_REQUIRED"
+                    }, { status: 422 });
+                }
+                await loadEligibleFinishedGoodsLot({
+                    mmLotId: finishedLotId,
+                    branchId: bId,
+                    productId: pId
+                });
 
                 // 1b. Log finished yield movement in inventory_movements ledger
                 const finishedMovementPayload = {
@@ -718,16 +735,23 @@ export async function POST(request: Request) {
                                             const allDetailsRes = await fetch(`${DIRECTUS_URL}/items/sales_order_details?filter[order_id][_eq]=${parentOrderId}&limit=-1`, { headers });
                                             if (allDetailsRes.ok) {
                                                 const allDetails = (await allDetailsRes.json()).data || [];
-                                                const nextStatus = areSalesOrderDetailsFullyFulfilled(allDetails)
-                                                    ? "For Invoicing"
-                                                    : "In Production";
-
-                                                console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${nextStatus}`);
-                                                await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                                                    method: "PATCH",
-                                                    headers,
-                                                    body: JSON.stringify({ order_status: nextStatus })
-                                                });
+                                                const currentOrderRes = await fetch(
+                                                    `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
+                                                    { headers, cache: "no-store" }
+                                                );
+                                                if (currentOrderRes.ok) {
+                                                    const currentOrder = (await currentOrderRes.json()).data;
+                                                    const currentStatus = String(currentOrder?.order_status || "").trim();
+                                                    const nextStatus = salesOrderStatusAfterFulfillment(allDetails);
+                                                    if (isProductionSchedulingStatus(currentStatus) && nextStatus !== currentStatus) {
+                                                        console.log(`[BFF Finished Goods] Auto-transitioning Sales Order ${parentOrderId} to ${nextStatus}`);
+                                                        await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                                                            method: "PATCH",
+                                                            headers,
+                                                            body: JSON.stringify({ order_status: nextStatus })
+                                                        });
+                                                    }
+                                                }
                                             }
                                         }
                                     }

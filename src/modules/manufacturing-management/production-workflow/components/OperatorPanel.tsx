@@ -299,7 +299,7 @@ export default function OperatorPanel({
         }, []);
     }, [routeOperators, users]);
 
-    const isJobOnHold = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+    const isJobOnHold = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.CANCELLED);
 
     return (
         <Card className="border border-border bg-card shadow-sm rounded-xl overflow-hidden">

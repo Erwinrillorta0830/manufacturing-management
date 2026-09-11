@@ -7,7 +7,33 @@ import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../typ
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
 function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return isProductionSchedulingStatus(line.parent_order_status) && line.is_scheduled !== true;
+    return isProductionSchedulingStatus(line.parent_order_status) && remainingQuantity(line) > 0;
+}
+
+function remainingQuantity(line: SalesOrderDetail): number {
+    const ordered = Number(line.ordered_quantity || 0);
+    const allocated = Number(line.allocated_quantity || 0);
+    const served = Number(line.served_quantity || 0);
+    const planned = Number(line.planned_quantity || 0);
+    const resolved = Number(line.remaining_quantity);
+    if (Number.isFinite(resolved)) return Math.max(0, resolved);
+    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
+    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
+}
+
+function salesOrderDateValue(value: string | undefined): number {
+    const timestamp = Date.parse(value || "");
+    return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareNewestSalesOrders(left: SalesOrder, right: SalesOrder): number {
+    const createdDateDifference = salesOrderDateValue(right.created_date) - salesOrderDateValue(left.created_date);
+    if (createdDateDifference !== 0) return createdDateDifference;
+
+    const orderDateDifference = salesOrderDateValue(right.order_date) - salesOrderDateValue(left.order_date);
+    if (orderDateDifference !== 0) return orderDateDifference;
+
+    return Number(right.order_id) - Number(left.order_id);
 }
 
 export function usePlanningEngineering() {
@@ -242,7 +268,7 @@ export function usePlanningEngineering() {
     const salesOrderLines = useMemo(() => {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
-        salesOrders.forEach((so) => {
+        [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }
@@ -473,22 +499,19 @@ export function usePlanningEngineering() {
         const targetProductId = firstLine.product_id?.product_id;
         
         // Sum total demand
-        const totalDemand = selectedLines.reduce((sum, l) => {
-            return sum + Number(l.ordered_quantity || 0);
-        }, 0);
-
-        // Find matching shortfall if any to prefill target quantity
-        const matchingShortfall = netRequirements.find(
-            (r) => r.product_id === targetProductId
-        );
-        const suggestedQty = matchingShortfall && matchingShortfall.net_shortfall > 0 
-            ? matchingShortfall.net_shortfall 
-            : totalDemand;
+        // Sales-Order-linked JO quantity is authoritative: it is the sum of
+        // each selected line's remaining unfulfilled quantity. Net
+        // requirements may inform planning, but must not change this link.
+        const totalRemaining = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (totalRemaining <= 0) {
+            toast.error("The selected Sales Order lines have no remaining quantity to schedule.");
+            return;
+        }
 
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(suggestedQty);
+        setTargetQuantity(totalRemaining);
         setJoNumber(code);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption("8");
@@ -499,6 +522,12 @@ export function usePlanningEngineering() {
     // Release JO Submit
     const handleConfirmRelease = async (selectedSubAssemblyVersions?: Record<number, number>) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
+
+        const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
+        if (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity) {
+            toast.error(`Enter a Job Order quantity from 1 to ${maxAvailableQuantity.toLocaleString()}.`);
+            return;
+        }
 
         setReleasingJO(true);
         try {
@@ -577,7 +606,7 @@ export function usePlanningEngineering() {
                 recipeVersionId: targetVersionId,
                 lines: selectedLines.map(l => ({
                     detail_id: l.detail_id,
-                    ordered_quantity: l.ordered_quantity
+                    ordered_quantity: remainingQuantity(l)
                 }))
             };
  

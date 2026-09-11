@@ -91,6 +91,26 @@ export function isCancelledJobOrderStatus(value: unknown): boolean {
     return isJobOrderStatus(value, JOB_ORDER_STATUS.CANCELLED);
 }
 
+/**
+ * Execution statuses from which a Job Order may be cancelled from the shop
+ * floor. Draft/Planned/Planning are not exposed in the production queue, and
+ * terminal or already-cancelled Job Orders cannot be cancelled again.
+ */
+export const CANCELLABLE_JOB_ORDER_STATUSES: CanonicalJobOrderStatus[] = [
+    JOB_ORDER_STATUS.RELEASED,
+    JOB_ORDER_STATUS.PROCEED,
+    JOB_ORDER_STATUS.RESERVED,
+    JOB_ORDER_STATUS.ONGOING,
+    JOB_ORDER_STATUS.IN_PROGRESS,
+    JOB_ORDER_STATUS.ON_HOLD,
+    JOB_ORDER_STATUS.QA_HOLD,
+    JOB_ORDER_STATUS.SHORTAGE
+];
+
+export function isCancellableJobOrderStatus(value: unknown): boolean {
+    return isJobOrderStatus(value, ...CANCELLABLE_JOB_ORDER_STATUSES);
+}
+
 export function isActiveJobOrderStatus(value: unknown): boolean {
     return isJobOrderStatus(
         value,
