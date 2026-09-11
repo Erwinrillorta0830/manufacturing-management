@@ -9,6 +9,8 @@ export type JobOrderStatus = CanonicalJobOrderStatus;
 
 export type ReservationStatus = "SOFT" | "HARD" | "PARTIAL";
 
+export type AllocationMode = "auto" | "manual";
+
 export interface Branch {
     id: number;
     branchName: string;
@@ -25,6 +27,8 @@ export interface WorkCenter {
 
 export interface AllocatedLot {
     allocation_id?: number;
+    mm_lot_id?: number;
+    inventory_lot_id?: number;
     lot_id: number;
     batch_no: string;
     allocated_quantity: number;
@@ -38,6 +42,105 @@ export interface AllocatedLot {
     on_hand_lot_quantity: number;
     override_negative?: boolean;
     created_at?: string | null;
+}
+
+export interface AllocationCandidate {
+    allocation_line_id: string;
+    product_id: number;
+    product_name: string;
+    product_code: string;
+    mm_lot_id: number;
+    inventory_lot_id: number;
+    lot_name: string;
+    batch_no: string;
+    manufacturing_date: string | null;
+    expiry_date: string | null;
+    qa_status: string;
+    on_hand_quantity: number;
+    available_quantity: number;
+}
+
+export interface AllocationLine {
+    allocation_line_id: string;
+    jo_material_id: number;
+    product_id: number;
+    mm_lot_id: number;
+    inventory_lot_id: number;
+    lot_name: string;
+    batch_no: string;
+    quantity: number;
+    available_quantity?: number;
+    override_negative?: boolean;
+}
+
+export interface MaterialAllocationPreview {
+    jo_material_id: number;
+    product_id: number;
+    product_name: string;
+    product_code: string;
+    uom: string;
+    required_quantity: number;
+    staged_quantity: number;
+    remaining_quantity: number;
+    candidates: AllocationCandidate[];
+    proposed_allocations: AllocationLine[];
+    shortage_quantity: number;
+    message?: string;
+}
+
+export interface AllocationPreview {
+    success: boolean;
+    job_order_id: number;
+    job_order_no: string;
+    work_center_id: number;
+    target_bin: string;
+    mode: AllocationMode;
+    preview_token: string;
+    materials: MaterialAllocationPreview[];
+    proposed_allocations: AllocationLine[];
+    shortages: Array<{
+        jo_material_id: number;
+        product_id: number;
+        product_name: string;
+        required_quantity: number;
+        remaining_quantity: number;
+        available_quantity: number;
+        shortage_quantity: number;
+    }>;
+}
+
+export interface AllocationPreviewPayload {
+    job_order_id: number;
+    job_order_no?: string;
+    work_center_id: number;
+    mode: AllocationMode;
+    material_ids?: number[];
+    lines?: AllocationLine[];
+    source_bin?: string;
+    override_negative?: boolean;
+    override_remarks?: string;
+}
+
+export interface StagingCommitPayload extends AllocationPreviewPayload {
+    operation_id: string;
+    preview_token: string;
+    remarks?: string;
+}
+
+export interface StagingCommitResponse {
+    success: boolean;
+    idempotent?: boolean;
+    message: string;
+    data: {
+        job_order_id: number;
+        job_order_no: string;
+        target_bin: string;
+        operation_id: string;
+        lines: AllocationLine[];
+        movement_ids: number[];
+        reservation_ids: number[];
+        material_results: BatchStageMaterialResult[];
+    };
 }
 
 export type BatchStageMaterialStatus = "STAGED" | "PARTIAL" | "SKIPPED" | "FAILED";
