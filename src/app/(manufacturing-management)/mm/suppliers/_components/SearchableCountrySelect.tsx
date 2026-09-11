@@ -27,6 +27,7 @@ interface SearchableCountrySelectProps {
     searchPlaceholder?: string;
     disabled?: boolean;
     className?: string;
+    popoverClassName?: string;
     id?: string;
     required?: boolean;
 }
@@ -39,6 +40,7 @@ export function SearchableCountrySelect({
     searchPlaceholder = "Search countries...",
     disabled = false,
     className,
+    popoverClassName,
     id,
     required = false,
 }: SearchableCountrySelectProps) {
@@ -69,7 +71,7 @@ export function SearchableCountrySelect({
                 </Button>
             </PopoverTrigger>
             <PopoverContent
-                className="w-[--radix-popover-trigger-width] p-0"
+                className={cn("w-[--radix-popover-trigger-width] p-0 z-[10000]", popoverClassName)}
                 align="start"
             >
                 <Command>
