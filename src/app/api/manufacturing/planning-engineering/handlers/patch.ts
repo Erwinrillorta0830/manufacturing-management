@@ -433,6 +433,13 @@ export async function handlePATCH(request: Request) {
         const cancelledResponse = await cancelledJobOrderResponse(joId);
         if (cancelledResponse) return cancelledResponse;
 
+        if (patch.branch_id !== undefined || patch.branchId !== undefined) {
+            return NextResponse.json({
+                error: "Job Order branch changes must use the guarded job-order-branch workflow.",
+                code: "JOB_ORDER_BRANCH_ASSIGNMENT_REQUIRED"
+            }, { status: 409 });
+        }
+
         // Map camelCase patch fields to snake_case fields
         const dbPatch: Record<string, unknown> = {};
         if (patch.status !== undefined) dbPatch.status = assertJobOrderStatus(patch.status);
@@ -443,8 +450,6 @@ export async function handlePATCH(request: Request) {
         if (patch.procurementStatus !== undefined) dbPatch.procurement_status = patch.procurementStatus;
         if (patch.quantity !== undefined) dbPatch.quantity = patch.quantity;
         if (patch.dueDate !== undefined) dbPatch.due_date = patch.dueDate;
-        if (patch.branch_id !== undefined) dbPatch.branch_id = patch.branch_id;
-        if (patch.branchId !== undefined) dbPatch.branch_id = patch.branchId;
         if (patch.assignedPersonnel !== undefined) dbPatch.assigned_personnel = patch.assignedPersonnel;
         if (patch.products !== undefined) dbPatch.products = patch.products;
         if (patch.shiftOption !== undefined) dbPatch.shift_option = patch.shiftOption;

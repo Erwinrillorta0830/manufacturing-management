@@ -314,6 +314,13 @@ export async function POST(request: Request) {
         const targetQuantity = Number(joData.target_quantity ?? joData.quantity ?? 0);
         const currentRejectedQty = Number(joData.rejected_quantity || 0);
         const requestedBatchNo = typeof batchNo === "string" ? batchNo.trim() : "";
+        if (goodYield > 0 && !requestedBatchNo) {
+            return NextResponse.json({
+                success: false,
+                error: "Enter a batch number for the finished-goods output.",
+                code: "SHIFT_RUN_BATCH_REQUIRED"
+            }, { status: 422 });
+        }
         const finalBatchNo = requestedBatchNo || `${jobOrderNo}-YLD-${todayStr.replace(/-/g, "")}`;
 
         // Positive output must reuse an existing storage lot owned by the Job

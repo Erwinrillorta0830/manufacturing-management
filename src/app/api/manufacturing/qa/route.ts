@@ -539,7 +539,20 @@ export async function POST(request: Request) {
             const parentJoIdInt = Number(parentJO.job_order_id);
             const parentJoNo = String(parentJO.job_order_no);
             const productId = Number(parentJO.product_id);
-            const branchId = Number(parentJO.branch_id || requestedBranchId || 1);
+            const persistedBranchId = Number(parentJO.branch_id || 0);
+            if (!Number.isSafeInteger(persistedBranchId) || persistedBranchId <= 0) {
+                return NextResponse.json({
+                    error: "The Job Order must have a persisted branch before QA finished-goods output can be posted.",
+                    code: "JOB_ORDER_BRANCH_MISSING"
+                }, { status: 422 });
+            }
+            if (requestedBranchId !== undefined && Number(requestedBranchId) !== persistedBranchId) {
+                return NextResponse.json({
+                    error: "The requested branch does not match the Job Order's persisted branch.",
+                    code: "JOB_ORDER_BRANCH_MISMATCH"
+                }, { status: 422 });
+            }
+            const branchId = persistedBranchId;
             const userId = user_id ?? await getUserIdFromSession();
 
             if (job_order_no && parentJoNo !== job_order_no) {

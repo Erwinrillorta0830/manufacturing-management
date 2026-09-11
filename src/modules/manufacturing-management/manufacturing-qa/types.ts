@@ -197,6 +197,9 @@ export interface Branch {
     branch_id?: number;
     name?: string;
     branch_name?: string;
+    branchCode?: string;
+    branch_code?: string;
+    isActive?: boolean;
 }
 
 export interface PageMeta {
