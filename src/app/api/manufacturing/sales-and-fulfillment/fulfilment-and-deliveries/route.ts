@@ -812,7 +812,29 @@ export async function GET(req: NextRequest) {
         if (allSodDetailIds.length > 0) {
             try {
                 const chunkSize = 100;
-                const rawReservations: any[] = [];
+                interface RawReservationRecord {
+                    reservation_id?: number | string;
+                    id?: number | string;
+                    sales_order_detail_id?: number | string;
+                    product_id?: number | string;
+                    inventory_lot_id?: number | string;
+                    reserved_quantity?: number | string;
+                    picked_quantity?: number | string;
+                    status?: string;
+                }
+                interface RawInventoryLotRecord {
+                    inventory_lot_id?: number | string;
+                    lot_id?: number | string;
+                    batch_no?: string;
+                    expiry_date?: string;
+                }
+                interface RawLotRecord {
+                    lot_id?: number | string;
+                    lot_name?: string;
+                    lot_number?: string;
+                }
+
+                const rawReservations: RawReservationRecord[] = [];
                 for (let i = 0; i < allSodDetailIds.length; i += chunkSize) {
                     const chunk = allSodDetailIds.slice(i, i + chunkSize);
                     const resvRes = await fetch(
@@ -820,14 +842,14 @@ export async function GET(req: NextRequest) {
                         { headers: directusHeaders, cache: "no-store" }
                     );
                     if (resvRes.ok) {
-                        const chunkData = (await resvRes.json()).data || [];
+                        const chunkData = ((await resvRes.json()).data || []) as RawReservationRecord[];
                         rawReservations.push(...chunkData);
                     }
                 }
 
                 // Collect distinct inventory_lot_ids from reservations
                 const invLotIds = [...new Set(rawReservations.map((r) => Number(r.inventory_lot_id)).filter(Boolean))];
-                const invLotMap = new Map<number, any>();
+                const invLotMap = new Map<number, RawInventoryLotRecord>();
                 if (invLotIds.length > 0) {
                     for (let i = 0; i < invLotIds.length; i += chunkSize) {
                         const chunk = invLotIds.slice(i, i + chunkSize);
@@ -836,7 +858,7 @@ export async function GET(req: NextRequest) {
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (invRes.ok) {
-                            const chunkData = (await invRes.json()).data || [];
+                            const chunkData = ((await invRes.json()).data || []) as RawInventoryLotRecord[];
                             for (const inv of chunkData) {
                                 invLotMap.set(Number(inv.inventory_lot_id), inv);
                             }
@@ -846,7 +868,7 @@ export async function GET(req: NextRequest) {
 
                 // Collect distinct lot_ids from invLotMap
                 const lotIds = [...new Set(Array.from(invLotMap.values()).map((inv) => Number(inv.lot_id)).filter(Boolean))];
-                const lotMap = new Map<number, any>();
+                const lotMap = new Map<number, RawLotRecord>();
                 if (lotIds.length > 0) {
                     for (let i = 0; i < lotIds.length; i += chunkSize) {
                         const chunk = lotIds.slice(i, i + chunkSize);
@@ -855,7 +877,7 @@ export async function GET(req: NextRequest) {
                             { headers: directusHeaders, cache: "no-store" }
                         );
                         if (lotRes.ok) {
-                            const chunkData = (await lotRes.json()).data || [];
+                            const chunkData = ((await lotRes.json()).data || []) as RawLotRecord[];
                             for (const lot of chunkData) {
                                 lotMap.set(Number(lot.lot_id), lot);
                             }

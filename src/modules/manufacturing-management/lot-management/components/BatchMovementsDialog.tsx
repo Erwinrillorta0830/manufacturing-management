@@ -29,6 +29,12 @@ interface BatchMovementsDialogProps {
     loading?: boolean;
 }
 
+function isExpired(expirationDate?: string | null): boolean {
+    if (!expirationDate) return false;
+    const expTime = new Date(expirationDate).getTime();
+    return !isNaN(expTime) && expTime <= new Date().setHours(23, 59, 59, 999);
+}
+
 export default function BatchMovementsDialog({
     isOpen,
     onClose,
@@ -214,7 +220,7 @@ export default function BatchMovementsDialog({
                             <Layers className="h-4 w-4 text-amber-500 shrink-0" />
                             <div className="truncate">
                                 <p className="text-[10px] text-muted-foreground uppercase font-semibold">Expiry Date</p>
-                                <p className={`text-xs font-bold truncate ${batch.expirationDate && new Date(batch.expirationDate).getTime() < Date.now() ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}>
+                                <p className={`text-xs font-bold truncate ${isExpired(batch.expirationDate) ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}>
                                     {batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}
                                 </p>
                             </div>

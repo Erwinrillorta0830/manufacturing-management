@@ -126,9 +126,6 @@ export function StockConversionModal({
   // Toolbar Dates (stored locally until user clicks 'Apply to all')
   const [toolbarDates, setToolbarDates] = useState<Record<number, { mfg: string; exp: string }>>({});
 
-  // Live stock from Spring Boot /api/mm-product-onhand
-  const [liveProductQty, setLiveProductQty] = useState<number | null>(null);
-
   // Allocation Mode: AUTO (FEFO) vs MANUAL for source stock
   const [allocationMode, setAllocationMode] = useState<"AUTO" | "MANUAL">("AUTO");
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
@@ -683,6 +680,7 @@ export function StockConversionModal({
     todayStr,
     defaultExpDate,
     lots,
+    sourceBatches,
   ]);
 
   // Total allocated across all target lot groups and batches

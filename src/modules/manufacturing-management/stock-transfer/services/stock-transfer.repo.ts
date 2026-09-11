@@ -100,15 +100,6 @@ export async function fetchBranches(): Promise<BranchRow[]> {
       }),
     ]);
 
-    // console.log("[StockTransferRepo:fetchBranches] Raw branches count:", branchesRes.data?.length);
-    // console.log("[StockTransferRepo:fetchBranches] Raw salesmen count:", salesmenRes.data?.length);
-    // console.log("[StockTransferRepo:fetchBranches] All salesmen from DB:", JSON.stringify(salesmenRes.data, null, 2));
-
-    const activeSalesmen = (salesmenRes.data || []).filter(
-      (s) => s.isActive === undefined || s.isActive === true || s.isActive === 1 || s.isActive === "1"
-    );
-    // console.log("[StockTransferRepo:fetchBranches] Active salesmen count:", activeSalesmen.length);
-
     const extractId = (val: unknown): number | null => {
       if (typeof val === "number") return val;
       if (typeof val === "string" && !isNaN(Number(val)) && Number(val) > 0) return Number(val);

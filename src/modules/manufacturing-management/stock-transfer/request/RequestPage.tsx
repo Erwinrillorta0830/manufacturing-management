@@ -101,10 +101,6 @@ export default function StockTransferRequestView(props: { salesmanName?: string 
   };
 
   const handlePrint = () => {
-    const resolvedSalesman = resolveBranchSalesman(targetBranch, branches);
-    // console.log('[RequestPage:handlePrint] targetBranch ID:', targetBranch);
-    // console.log('[RequestPage:handlePrint] Available branches:', branches);
-    // console.log('[RequestPage:handlePrint] Resolved Salesman Name:', resolvedSalesman);
     setShowPreview(true);
   };
 

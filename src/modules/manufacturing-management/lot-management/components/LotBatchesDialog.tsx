@@ -80,7 +80,6 @@ export default function LotBatchesDialog({
         return q < 0 ? sum + Math.abs(q) : sum;
     }, 0);
 
-    const totalQuantity = positiveQuantity;
     const maxCapacity = Number(lot.maxBatchCapacity || 0);
     const isNegative = negativeQuantity > 0;
     const occupancyPct = maxCapacity > 0

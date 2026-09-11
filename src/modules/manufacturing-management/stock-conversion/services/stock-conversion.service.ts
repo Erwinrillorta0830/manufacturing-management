@@ -39,11 +39,9 @@ interface DirectusLookup {
 export const stockConversionService = {
   async getStockList(limit: number, offset: number, branchId?: number, hasStock?: boolean, extraFilters?: Record<string, string>, token?: string) {
     let preFetchedInventory: Record<number, number> | null = null;
-    const t0 = Date.now();
 
     // 1. Resolve filter IDs first to avoid relational Forbidden joins
     const allOptions = await stockConversionRepo.fetchFilterOptions();
-    // console.log(`[Perf] Step 1 - fetchFilterOptions: ${Date.now() - t0}ms`);
 
     const inventoryTypeVal = extraFilters?.inventoryType;
 
@@ -174,19 +172,16 @@ export const stockConversionService = {
       filterString = `filter=${encodeURIComponent(JSON.stringify({ _and: andClauses }))}`;
     }
 
-    const t2 = Date.now();
     const fetchLimit = hasStock ? -1 : limit;
     const fetchOffset = hasStock ? 0 : offset;
     const prodJson = await stockConversionRepo.fetchProducts(fetchLimit, fetchOffset, filterString);
     const products = prodJson.data || [];
     const totalCount = prodJson.meta?.filter_count || 0;
-    // console.log(`[Perf] Step 2 - fetchProducts: ${Date.now() - t2}ms (${products.length} products)`);
 
     if (products.length === 0) return { data: [], totalCount: 0, options: allOptions };
 
     // 4. Parallel Enrichment Fetching (only fetch what we DON'T already have)
     // allOptions already has brands, categories, units, suppliers — reuse those!
-    const t4 = Date.now();
     const [invRes] = await Promise.all([
       (async () => {
         if (preFetchedInventory) return preFetchedInventory;
@@ -200,7 +195,6 @@ export const stockConversionService = {
         }
       })()
     ]);
-    // console.log(`[Perf] Step 4 - inventory: ${Date.now() - t4}ms`);
 
     // 4.5 Group Enrichment: Fetch all siblings in the same family to ensure unit conversion is possible
     const currentProductIds = products.map((p: DirectusProduct) => Number(p.product_id));
@@ -210,14 +204,11 @@ export const stockConversionService = {
     const allPotentialParentIds = [...new Set([...currentParentIds, ...currentProductIds])].filter(id => id !== 0) as (number | string)[];
     const productNamesToFetch = [...new Set(products.map((p: DirectusProduct) => String(p.product_name)))].filter(name => name && name !== "undefined") as (string)[];
 
-    const t5 = Date.now();
     const [familyByParent, familyBySelf, familyByName] = await Promise.all([
       stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "parent_id", allPotentialParentIds, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
       stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
       stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
     ]);
-    // console.log(`[Perf] Step 4.5 - familyEnrichment: ${Date.now() - t5}ms`);
-    // console.log(`[Perf] TOTAL so far: ${Date.now() - t0}ms`);
 
     const familyProducts = [...products, ...familyByParent, ...familyBySelf, ...familyByName];
     const uniqueFamilyProducts = Array.from(new Map(familyProducts.map(p => [Number(p.product_id), p])).values());

@@ -137,7 +137,6 @@ export default function CreateConsolidationModal({
     // Filters for Step 1
     const [search, setSearch] = useState("");
     const [selectedCustomer, setSelectedCustomer] = useState<string>("ALL");
-    const [selectedDocType, setSelectedDocType] = useState<string>("ALL");
     const [dateFrom, setDateFrom] = useState<string>("");
     const [dateTo, setDateTo] = useState<string>("");
 
@@ -290,7 +289,7 @@ export default function CreateConsolidationModal({
                 if (dateB !== dateA) return dateB - dateA;
                 return b.invoiceId - a.invoiceId;
             });
-    }, [candidates, search, selectedCustomer, selectedDocType, dateFrom, dateTo]);
+    }, [candidates, search, selectedCustomer, dateFrom, dateTo]);
 
     const toggleAll = () => {
         if (selectedIds.size === filtered.length) {

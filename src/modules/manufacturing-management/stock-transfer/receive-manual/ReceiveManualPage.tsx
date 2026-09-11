@@ -10,14 +10,12 @@ import { cn } from '@/lib/utils';
 import { getAssetUrl } from '@/lib/assets';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { resolveBranchSalesman } from '../services/stock-transfer.helpers';
-import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
-import { checkLotProductTypeCompatibility, isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import { isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import { LotBatchSelectionModal, LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
 import { QAStatus, LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
-import { QuantityStepper } from '../shared/components/QuantityStepper';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -104,10 +102,6 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
     itemLotAllocations,
     updateItemLotAllocations,
     markAllocationReviewed,
-    targetLots,
-    loadingLots,
-    lotStoredSummaryMap,
-    getItemClassification,
     getLotCompatibility,
     selectedFiles,
     isUploading,
@@ -476,8 +470,6 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                             {/* 5. Lot & Batches */}
                             <TableCell className="print:hidden py-2">
                               {(() => {
-                                const itemClass = getItemClassification(item);
-
                                 if (hasMultiLotAlloc) {
                                   const hasConflict = allocs!.some((g) => {
                                     const compat = getLotCompatibility(item, g.lot_id);
