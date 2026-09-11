@@ -68,6 +68,10 @@ export function unitId(value: unknown): number | null {
     return relationId(value, ["unit_id", "id"]);
 }
 
+export function mmBranchId(value: unknown): number | null {
+    return relationId(value, ["id", "branch_id"]);
+}
+
 export function movementMmLotId(row: Record<string, unknown>): number | null {
     return mmLotId(row.mm_lot_id);
 }
@@ -286,6 +290,61 @@ export async function loadMovementRowsForMmLots(
     );
 }
 
+export async function loadEligibleFinishedGoodsLot(options: {
+    mmLotId: number;
+    branchId: number;
+    productId: number;
+}): Promise<MmLotRecord> {
+    if (!Number.isSafeInteger(options.mmLotId) || options.mmLotId <= 0) {
+        throw new MmLotError("A valid existing storage lot is required for finished-goods posting.", 422, "MM_LOT_REQUIRED");
+    }
+    const lots = await loadMmLots({ ids: [options.mmLotId], onlyActive: true });
+    const lot = lots[0];
+    if (!lot) {
+        throw new MmLotError(`Storage lot ${options.mmLotId} was not found or is not active.`, 422, "MM_LOT_NOT_ELIGIBLE");
+    }
+    if (options.branchId > 0 && mmBranchId(lot.branch_id) !== options.branchId) {
+        throw new MmLotError("The selected storage lot belongs to another branch.", 422, "MM_LOT_BRANCH_MISMATCH");
+    }
+    const expectedUnitId = await resolveProductUnitId(options.productId);
+    if (unitId(lot.unit_id) !== expectedUnitId) {
+        throw new MmLotError("The selected storage lot UOM does not match the finished good.", 422, "MM_LOT_UOM_MISMATCH");
+    }
+    return lot;
+}
+
+export interface MmInventoryLotWritePayload {
+    lot_id: number;
+    branch_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date: string | null;
+    expiry_date: string | null;
+    unit_cost: number;
+    qa_status: string;
+    status: string;
+    source_type: string;
+    source_reference: string | null;
+    remarks: string | null;
+    created_by: number;
+}
+
+async function recoverExistingInventoryLot(payload: {
+    mmLotId: number;
+    productId: number;
+    batchNo: string;
+}): Promise<MmInventoryLotRecord | null> {
+    // The database unique key is (lot_id, product_id, batch_no) without a
+    // branch, so a batch row created under another branch still conflicts.
+    const rows = await loadMmInventoryLots({
+        mmLotIds: [payload.mmLotId],
+        productId: payload.productId,
+        batchNo: payload.batchNo.trim(),
+        onlyActive: false
+    });
+    return rows.length > 0 ? { ...rows[0], created: false } : null;
+}
+
 export async function resolveOrCreateMmInventoryLot(payload: {
     mmLotId: number;
     branchId: number;
@@ -299,6 +358,7 @@ export async function resolveOrCreateMmInventoryLot(payload: {
     sourceReference?: string | null;
     remarks?: string | null;
     createdBy: number;
+    onCreate?: (body: MmInventoryLotWritePayload) => Promise<MmInventoryLotRecord>;
 }): Promise<MmInventoryLotRecord> {
     const existing = await loadMmInventoryLots({
         mmLotIds: [payload.mmLotId],
@@ -325,27 +385,46 @@ export async function resolveOrCreateMmInventoryLot(payload: {
         throw new MmLotError("A valid creator is required for inventory-lot creation.", 400, "MM_LOT_INVALID");
     }
 
+    const writePayload: MmInventoryLotWritePayload = {
+        lot_id: payload.mmLotId,
+        branch_id: payload.branchId,
+        product_id: payload.productId,
+        batch_no: payload.batchNo.trim(),
+        manufacturing_date: payload.manufacturingDate || null,
+        expiry_date: payload.expiryDate || null,
+        unit_cost: payload.unitCost ?? 0,
+        qa_status: payload.qaStatus || "GOOD",
+        status: "ACTIVE",
+        source_type: payload.sourceType || "PURCHASE_RECEIVING_QA",
+        source_reference: payload.sourceReference || null,
+        remarks: payload.remarks || null,
+        created_by: payload.createdBy
+    };
+
+    if (payload.onCreate) {
+        try {
+            const hooked = await payload.onCreate(writePayload);
+            const hookedId = mmInventoryLotId(hooked?.inventory_lot_id);
+            if (!hooked || !hookedId) {
+                throw new MmLotError("Manufacturing Management inventory-lot creation returned no valid inventory-lot ID.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
+            }
+            return { ...hooked, inventory_lot_id: hookedId, lot_id: payload.mmLotId, created: true } as MmInventoryLotRecord;
+        } catch (error) {
+            const recovered = await recoverExistingInventoryLot(payload);
+            if (recovered) return recovered;
+            throw error;
+        }
+    }
+
     const response = await fetch(`${DIRECTUS_URL}/items/${MM_INVENTORY_LOT_COLLECTION}`, {
         method: "POST",
         headers,
         cache: "no-store",
-        body: JSON.stringify({
-            lot_id: payload.mmLotId,
-            branch_id: payload.branchId,
-            product_id: payload.productId,
-            batch_no: payload.batchNo.trim(),
-            manufacturing_date: payload.manufacturingDate || null,
-            expiry_date: payload.expiryDate || null,
-            unit_cost: payload.unitCost ?? 0,
-            qa_status: payload.qaStatus || "GOOD",
-            status: "ACTIVE",
-            source_type: payload.sourceType || "PURCHASE_RECEIVING_QA",
-            source_reference: payload.sourceReference || null,
-            remarks: payload.remarks || null,
-            created_by: payload.createdBy
-        })
+        body: JSON.stringify(writePayload)
     });
     if (!response.ok) {
+        const recovered = await recoverExistingInventoryLot(payload);
+        if (recovered) return recovered;
         throw new MmLotError(
             `Manufacturing Management inventory-lot creation failed with HTTP ${response.status}.`,
             response.status >= 400 && response.status < 500 ? response.status : 503,
@@ -364,6 +443,8 @@ export async function resolveOrCreateMmInventoryLot(payload: {
         : null;
     const inventoryLotId = mmInventoryLotId(row?.inventory_lot_id);
     if (!row || !inventoryLotId) {
+        const recovered = await recoverExistingInventoryLot(payload);
+        if (recovered) return recovered;
         throw new MmLotError("Manufacturing Management inventory-lot creation returned no valid inventory-lot ID.", 503, "MM_INVENTORY_LOT_WRITE_FAILED");
     }
     return { ...row, inventory_lot_id: inventoryLotId, lot_id: payload.mmLotId, created: true } as MmInventoryLotRecord;

@@ -220,6 +220,7 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
             rejected_quantity: payload.rejected_quantity,
             rejection_reason_id: payload.rejection_reason_id ?? null,
             lot_number: payload.lot_number,
+            mm_lot_id: payload.mm_lot_id ?? null,
             manufacturing_date: payload.manufacturing_date,
             expiry_date: payload.expiry_date,
             unit_cost: payload.unit_cost ?? 0,
@@ -237,6 +238,7 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
 export interface FinishedGoodsReceiptPayload {
     joId: string;
     yieldLedgerId?: number | null;
+    mmLotId: number;
     productId: number;
     productName: string;
     quantityProduced: number;
@@ -266,6 +268,8 @@ export interface FinishedGoodsReceipt {
     quantityProduced: number;
     branchId: number;
     lotNumber: string;
+    mmLotId: number | null;
+    inventoryLotId: number | null;
     manufacturingDate: string | null;
     expirationDate: string | null;
     qaStatus: string;
@@ -293,6 +297,8 @@ interface FinishedGoodsReceiptApiRow {
     quantity_produced?: number;
     branch_id?: number;
     lot_number?: string;
+    mm_lot_id?: number | null;
+    inventory_lot_id?: number | null;
     manufacturing_date?: string | null;
     expiration_date?: string | null;
     qa_status?: string;
@@ -314,6 +320,8 @@ function mapFinishedGoodsReceipt(row: FinishedGoodsReceiptApiRow): FinishedGoods
         quantityProduced: Number(row.quantity_produced || 0),
         branchId: Number(row.branch_id || 0),
         lotNumber: String(row.lot_number || ""),
+        mmLotId: row.mm_lot_id == null ? null : Number(row.mm_lot_id),
+        inventoryLotId: row.inventory_lot_id == null ? null : Number(row.inventory_lot_id),
         manufacturingDate: row.manufacturing_date || null,
         expirationDate: row.expiration_date || null,
         qaStatus: String(row.qa_status || "Pending"),

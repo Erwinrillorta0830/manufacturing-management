@@ -14,7 +14,13 @@ import {
     resolveDispositionMetadata
 } from "./_dispositions";
 import { hasPagination, paginate } from "../_pagination";
-import { resolveOrCreateMmLot, resolveProductUnitId } from "../services/mm-lots.service";
+import {
+    loadEligibleFinishedGoodsLot,
+    resolveOrCreateMmInventoryLot,
+    MmInventoryLotRecord,
+    MmInventoryLotWritePayload,
+    MmLotError
+} from "../services/mm-lots.service";
 import { assertJobOrderStatus, isCancelledJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import {
     cancelJobOrderAndReturnMaterials,
@@ -134,6 +140,7 @@ async function rollbackTwoPointWrites(state: {
     statusHistoryId: number | null;
     inventoryMovementId: number | null;
     productLedgerId: number | null;
+    inventoryLotId: number | null;
 }): Promise<string[]> {
     const failures: string[] = [];
 
@@ -156,6 +163,7 @@ async function rollbackTwoPointWrites(state: {
     const cleanupTargets: Array<[number | null, string, string]> = [
         [state.productLedgerId, "product_ledger", "Rollback product ledger entry"],
         [state.inventoryMovementId, "inventory_movements", "Rollback inventory movement"],
+        [state.inventoryLotId, "mm_inventory_lots", "Rollback finished goods batch"],
         [state.statusHistoryId, "manufacturing_job_order_status_history", "Rollback status history entry"],
         [state.inspectionLogId, "qa_jo_inspection_logs", "Rollback QA inspection log"],
         [state.reworkJobOrderId, "manufacturing_job_orders", "Rollback rework Job Order"]
@@ -209,19 +217,6 @@ async function getJobOrderById(jobOrderId: number): Promise<{ id: number; produc
         console.error("Failed to load job order for QA disposition", jobOrderId, e);
         return null;
     }
-}
-
-// Helper to resolve or create a canonical MM master lot for QA output.
-async function resolveMasterLotId(name: string, _typeId: number, branchId: number, productId: number): Promise<number> {
-    const unitId = await resolveProductUnitId(productId);
-    const lot = await resolveOrCreateMmLot({
-        lotName: name,
-        branchId,
-        unitId,
-        maxBatchCapacity: 100000,
-        createdBy: 24
-    });
-    return lot.lot_id;
 }
 
 export async function GET(request: Request) {
@@ -511,6 +506,7 @@ export async function POST(request: Request) {
                 rejected_quantity,
                 rejection_reason_id,
                 lot_number,
+                mm_lot_id,
                 manufacturing_date,
                 expiry_date,
                 unit_cost,
@@ -553,9 +549,26 @@ export async function POST(request: Request) {
                 return NextResponse.json({ error: "product_id does not match the selected Job Order." }, { status: 409 });
             }
             const versionId = parentJO.version_id ? Number(parentJO.version_id) : null;
-            const finalLotNo = lot_number || `MFG-${parentJoNo}`;
+            const finalLotNo = (lot_number || "").trim();
             const finalExpDate = expiry_date || await getTodayDateString(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
             const finalMfgDate = manufacturing_date || todayStr;
+
+            let selectedMmLotId: number | null = null;
+            if (passQty > 0) {
+                try {
+                    const eligibleLot = await loadEligibleFinishedGoodsLot({
+                        mmLotId: Number(mm_lot_id ?? 0),
+                        branchId,
+                        productId
+                    });
+                    selectedMmLotId = Number(eligibleLot.lot_id);
+                } catch (error) {
+                    if (error instanceof MmLotError) {
+                        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+                    }
+                    throw error;
+                }
+            }
 
             // Fetch rejection reason details if present
             let reasonObj: any = null;
@@ -589,7 +602,8 @@ export async function POST(request: Request) {
                 reworkJobOrderId: null as number | null,
                 statusHistoryId: null as number | null,
                 inventoryMovementId: null as number | null,
-                productLedgerId: null as number | null
+                productLedgerId: null as number | null,
+                inventoryLotId: null as number | null
             };
 
             try {
@@ -795,11 +809,40 @@ export async function POST(request: Request) {
                 }
 
                 // 7. Positive Finished Goods Inventory Movement (if passed_quantity > 0).
-                if (passQty > 0) {
-                    const finishedLotId = await resolveMasterLotId(finalLotNo, 2, branchId, productId); // 2 = Finished Goods
+                if (passQty > 0 && selectedMmLotId) {
+                    await resolveOrCreateMmInventoryLot({
+                        mmLotId: selectedMmLotId,
+                        branchId,
+                        productId,
+                        batchNo: finalLotNo,
+                        manufacturingDate: finalMfgDate,
+                        expiryDate: finalExpDate,
+                        unitCost: unit_cost || 0,
+                        qaStatus: "GOOD",
+                        sourceType: "JOB_ORDER_YIELD",
+                        sourceReference: parentJoNo,
+                        remarks: `QA passed finished goods from Job Order ${parentJoNo}`,
+                        createdBy: userId || 24,
+                        onCreate: async (writePayload: MmInventoryLotWritePayload): Promise<MmInventoryLotRecord> => {
+                            const createdBatch = await directusMutation(
+                                "/items/mm_inventory_lots",
+                                {
+                                    method: "POST",
+                                    headers,
+                                    body: JSON.stringify(writePayload)
+                                },
+                                "Create finished goods batch"
+                            );
+                            transactionState.inventoryLotId = numericRecordId(createdBatch, ["inventory_lot_id", "id"]);
+                            if (!transactionState.inventoryLotId) {
+                                throw new QAPersistenceError("The finished goods batch did not return a valid ID.");
+                            }
+                            return createdBatch as MmInventoryLotRecord;
+                        }
+                    });
                     const movementPayload = {
                         product_id: productId,
-                        mm_lot_id: finishedLotId,
+                        mm_lot_id: selectedMmLotId,
                         lot_id: null,
                         branch_id: branchId,
                         transaction_type_id: 2, // Job Order Finished Goods Receipt
@@ -860,7 +903,9 @@ export async function POST(request: Request) {
                     inspectionLog: createdLog,
                     jobOrderStatus: newStatus,
                     reworkJobOrder: spawnedReworkJo,
-                    inventoryMovement: createdMovement
+                    inventoryMovement: createdMovement,
+                    mmLotId: selectedMmLotId,
+                    inventoryLotId: transactionState.inventoryLotId
                 });
             } catch (error) {
                 const rollbackFailures = await rollbackTwoPointWrites(transactionState);

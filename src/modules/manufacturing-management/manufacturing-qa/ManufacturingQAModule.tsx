@@ -96,6 +96,10 @@ export default function ManufacturingQAModule() {
         setYieldQty,
         lotNumber,
         setLotNumber,
+        eligibleLots,
+        selectedMmLotId,
+        setSelectedMmLotId,
+        loadingEligibleLots,
         manufacturingDate,
         setManufacturingDate,
         expiryDate,
@@ -542,6 +546,10 @@ export default function ManufacturingQAModule() {
                 setYieldQty={setYieldQty}
                 lotNumber={lotNumber}
                 setLotNumber={setLotNumber}
+                eligibleLots={eligibleLots}
+                selectedMmLotId={selectedMmLotId}
+                setSelectedMmLotId={setSelectedMmLotId}
+                loadingEligibleLots={loadingEligibleLots}
                 manufacturingDate={manufacturingDate}
                 setManufacturingDate={setManufacturingDate}
                 expiryDate={expiryDate}

@@ -14,7 +14,11 @@ import {
     MmInventoryMovementError
 } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 import {
+    loadEligibleFinishedGoodsLot,
+    loadMmInventoryLots,
     loadMmLots,
+    mmInventoryLotId,
+    resolveOrCreateMmInventoryLot,
     resolveProductUnitId,
     MmLotError
 } from "@/app/api/manufacturing/services/mm-lots.service";
@@ -33,6 +37,7 @@ const inFlightYieldClosures = new Map<string, Promise<Record<string, unknown>>>(
 export interface CompleteYieldClosingInput {
     joId: string | number;
     yieldLedgerId?: string | number | null;
+    mmLotId?: string | number | null;
     productId: string | number;
     productName?: string;
     quantityProduced: string | number;
@@ -129,6 +134,7 @@ function recordId(value: unknown): number {
             ?? record.ledger_id
             ?? record.genealogy_id
             ?? record.lot_id
+            ?? record.inventory_lot_id
             ?? record.history_id
             ?? record.jo_material_id
             ?? record.detail_id
@@ -136,6 +142,15 @@ function recordId(value: unknown): number {
             ?? record.job_order_id
             ?? 0
         );
+    }
+    return Number(value ?? 0);
+}
+
+function movementLotId(row: Record<string, unknown>): number {
+    const value = row?.mm_lot_id;
+    if (value && typeof value === "object") {
+        const relation = value as Record<string, unknown>;
+        return Number(relation.lot_id ?? relation.id ?? 0);
     }
     return Number(value ?? 0);
 }
@@ -325,6 +340,16 @@ async function resolveMasterLotId(name: string, branchId: number, productId: num
     return createdId;
 }
 
+async function findInventoryLotId(mmLotId: number, branchId: number, productId: number, batchNo: string): Promise<number | null> {
+    try {
+        const rows = await loadMmInventoryLots({ mmLotIds: [mmLotId], branchId, productId, batchNo, onlyActive: false });
+        const resolved = Number(rows[0]?.inventory_lot_id ?? 0);
+        return Number.isSafeInteger(resolved) && resolved > 0 ? resolved : null;
+    } catch {
+        return null;
+    }
+}
+
 function stockLotKey(lotId: number, lotNumber: string): string {
     return `${lotId}:${lotNumber}`;
 }
@@ -508,7 +533,7 @@ async function findExistingFinishedMovements(
                 { batch_no: { _eq: lotNumber } },
                 { source_document_id: { _eq: jobOrderId } }
             ]
-        }))}&fields=movement_id,product_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
+        }))}&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
         `Directus finished-goods movement lookup for ${joNo}`
     );
     if (directusBySourceId.length > 0) return directusBySourceId;
@@ -540,7 +565,7 @@ async function findExistingFinishedMovements(
                     ]
                 }
             ]
-        }))}&fields=movement_id,product_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
+        }))}&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,quantity,batch_no,source_document_id,source_document_no,manufacturing_date,expiry_date&limit=-1`,
         `Directus legacy finished-goods movement lookup for ${joNo}`
     );
 }
@@ -554,7 +579,8 @@ function matchingFinishedMovement(
     lotNumber: string,
     quantity: number,
     manufacturingDate: string,
-    expirationDate: string
+    expirationDate: string,
+    mmLotId: number
 ): any | null {
     return rows.find(row =>
         Number(row.product_id) === productId
@@ -562,6 +588,7 @@ function matchingFinishedMovement(
         && Number(row.transaction_type_id) === 2
         && Number(row.quantity) === quantity
         && String(row.batch_no || "").trim() === lotNumber
+        && movementLotId(row) === mmLotId
         && (
             numericRelationId(row.source_document_id) === jobOrderId
             || (numericRelationId(row.source_document_id) <= 0 && String(row.source_document_no || "").trim() === joNo)
@@ -584,7 +611,19 @@ async function resolveYieldLedger(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(normalizedLedgerId))}`,
             `Yield ledger lookup for ${jobOrder.jobOrderNo}`
         );
-        rows = [row];
+        // The operator may post a different batch than the run that was
+        // auto-selected. Prefer the run that matches the submitted batch.
+        rows = String(row?.lot_number || "").trim() === lotNumber
+            ? [row]
+            : await directusRows<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
+                    _and: [
+                        { job_order_id: { _eq: jobOrder.jobOrderId } },
+                        { lot_number: { _eq: lotNumber } }
+                    ]
+                }))}&limit=-1`,
+                `Yield ledger resolution for ${jobOrder.jobOrderNo}`
+            );
     } else {
         rows = await directusRows<any>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
@@ -824,6 +863,7 @@ async function verifyPersistedCompletion(options: {
     quantityProduced: number;
     branchId: number;
     lotNumber: string;
+    mmLotId: number;
     manufacturingDate: string;
     expirationDate: string;
     materials: YieldMaterial[];
@@ -838,6 +878,7 @@ async function verifyPersistedCompletion(options: {
         quantityProduced,
         branchId,
         lotNumber,
+        mmLotId,
         manufacturingDate,
         expirationDate,
         materials,
@@ -861,7 +902,8 @@ async function verifyPersistedCompletion(options: {
         lotNumber,
         quantityProduced,
         manufacturingDate,
-        expirationDate
+        expirationDate,
+        mmLotId
     )) {
         throw new YieldCompletionError(
             502,
@@ -1020,7 +1062,9 @@ function completionReceipt(
     manufacturingDate: string,
     expirationDate: string,
     movement: any,
-    yieldLedgerId: number
+    yieldLedgerId: number,
+    mmLotId: number,
+    inventoryLotId: number | null
 ) {
     const movementId = recordId(movement);
     return {
@@ -1035,6 +1079,9 @@ function completionReceipt(
         quantity_produced: quantityProduced,
         branch_id: branchId,
         lot_number: lotNumber,
+        batch_no: lotNumber,
+        mm_lot_id: mmLotId,
+        inventory_lot_id: inventoryLotId,
         manufacturing_date: manufacturingDate,
         expiration_date: expirationDate,
         unit_cost: finiteNumber(input.unitCost ?? 0, "Unit cost", { nonNegative: true }),
@@ -1077,6 +1124,27 @@ async function completeYieldClosingInternal(
             throw new YieldCompletionError(422, "JOB_ORDER_BRANCH_MISMATCH", "The selected branch does not belong to this Job Order.");
         }
 
+        const requestedMmLotId = Number(input.mmLotId ?? 0);
+        if (!Number.isSafeInteger(requestedMmLotId) || requestedMmLotId <= 0) {
+            throw new YieldCompletionError(
+                422,
+                "YIELD_LOT_REQUIRED",
+                "Select an existing storage lot for the finished-goods output."
+            );
+        }
+        try {
+            await loadEligibleFinishedGoodsLot({
+                mmLotId: requestedMmLotId,
+                branchId,
+                productId: jobOrder.productId
+            });
+        } catch (error) {
+            if (error instanceof MmLotError) {
+                throw new YieldCompletionError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+
         if (materials.length === 0) {
             await verifyZeroComponentBOM(jobOrder);
         } else if (!Array.isArray(input.componentsConsumed) || input.componentsConsumed.length === 0) {
@@ -1088,7 +1156,7 @@ async function completeYieldClosingInternal(
         }
 
         const yieldLedger = await resolveYieldLedger(jobOrder, lotNumber, input.yieldLedgerId);
-        operationKey = `yield-close:${jobOrder.jobOrderId}:${yieldLedger.id}:${jobOrder.productId}:${branchId}:${lotNumber}:2`;
+        operationKey = `yield-close:${jobOrder.jobOrderId}:${yieldLedger.id}:${jobOrder.productId}:${branchId}:${lotNumber}:${requestedMmLotId}:2`;
 
         const existingMovements = await findExistingFinishedMovements(
             jobOrder.productId,
@@ -1116,7 +1184,8 @@ async function completeYieldClosingInternal(
                 lotNumber,
                 quantityProduced,
                 manufacturingDate,
-                expirationDate
+                expirationDate,
+                requestedMmLotId
             )
             : null;
 
@@ -1140,6 +1209,7 @@ async function completeYieldClosingInternal(
                 && history
                 && yieldMetadataMatches
             ) {
+                const existingInventoryLotId = await findInventoryLotId(requestedMmLotId, branchId, jobOrder.productId, lotNumber);
                 return {
                     success: true,
                     idempotent: true,
@@ -1152,9 +1222,16 @@ async function completeYieldClosingInternal(
                         manufacturingDate,
                         expirationDate,
                         existingMovement,
-                        yieldLedger.id
+                        yieldLedger.id,
+                        requestedMmLotId,
+                        existingInventoryLotId
                     ),
-                    accounting: { finishedMovementId: recordId(existingMovement), yieldLedgerId: yieldLedger.id }
+                    accounting: {
+                        finishedMovementId: recordId(existingMovement),
+                        yieldLedgerId: yieldLedger.id,
+                        mmLotId: requestedMmLotId,
+                        inventoryLotId: existingInventoryLotId
+                    }
                 };
             }
 
@@ -1184,7 +1261,23 @@ async function completeYieldClosingInternal(
         const componentPlans = await buildComponentPlans(materials, jobOrder, quantityProduced, branchId);
         const phtMovementTimestamp = formatPhtDateTime();
         journal = new MutationJournal();
-        const finishedLotId = await resolveMasterLotId(lotNumber, branchId, jobOrder.productId, journal);
+        const finishedLotId = requestedMmLotId;
+        const inventoryLot = await resolveOrCreateMmInventoryLot({
+            mmLotId: requestedMmLotId,
+            branchId,
+            productId: jobOrder.productId,
+            batchNo: lotNumber,
+            manufacturingDate,
+            expiryDate: expirationDate,
+            unitCost: Number(input.unitCost ?? 0),
+            qaStatus: "GOOD",
+            sourceType: "JOB_ORDER_YIELD",
+            sourceReference: jobOrder.jobOrderNo,
+            remarks: `Finished yield output from Job Order ${jobOrder.jobOrderNo}`,
+            createdBy: 24,
+            onCreate: (body) => journal!.create("mm_inventory_lots", { ...body }, `Create finished-goods batch ${lotNumber}`)
+        });
+        const inventoryLotId = mmInventoryLotId(inventoryLot.inventory_lot_id) ?? 0;
         const finishedMovement = await journal.create<any>(
             "inventory_movements",
             {
@@ -1302,7 +1395,8 @@ async function completeYieldClosingInternal(
             "manufacturing_job_order_yield_ledger",
             yieldLedger.id,
             {
-                lot_number: lotNumber
+                lot_number: lotNumber,
+                mm_lot_id: requestedMmLotId
             },
             `Update yield ledger ${yieldLedger.id}`
         );
@@ -1356,6 +1450,7 @@ async function completeYieldClosingInternal(
             quantityProduced,
             branchId,
             lotNumber,
+            mmLotId: requestedMmLotId,
             manufacturingDate,
             expirationDate,
             materials,
@@ -1376,12 +1471,16 @@ async function completeYieldClosingInternal(
                 manufacturingDate,
                 expirationDate,
                 verifiedCore.movement,
-                yieldLedger.id
+                yieldLedger.id,
+                requestedMmLotId,
+                inventoryLotId || null
             ),
             accounting: {
                 finishedMovementId,
                 finishedLedgerId,
                 yieldLedgerId: yieldLedger.id,
+                mmLotId: requestedMmLotId,
+                inventoryLotId: inventoryLotId || null,
                 componentLedgerIds: persistedComponentLedgers,
                 componentMovementIds: persistedComponentMovements,
                 genealogyIds: persistedGenealogy,
@@ -1445,7 +1544,8 @@ export async function completeYieldClosing(input: CompleteYieldClosingInput): Pr
         String(input.joId ?? "").trim(),
         String(input.productId ?? "").trim(),
         String(input.branchId ?? "").trim(),
-        String(input.lotNumber ?? "").trim()
+        String(input.lotNumber ?? "").trim(),
+        String(input.mmLotId ?? "").trim()
     ].join(":");
     const inFlight = inFlightYieldClosures.get(requestKey);
     if (inFlight) return inFlight;

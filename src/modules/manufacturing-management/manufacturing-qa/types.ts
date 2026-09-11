@@ -91,6 +91,7 @@ export interface TwoPointQAInspectionPayload {
     rejected_quantity: number;
     rejection_reason_id?: number | null;
     lot_number?: string;
+    mm_lot_id?: number | null;
     manufacturing_date?: string;
     expiry_date?: string;
     unit_cost?: number;

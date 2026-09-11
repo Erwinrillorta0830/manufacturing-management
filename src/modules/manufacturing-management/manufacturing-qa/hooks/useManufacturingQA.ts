@@ -40,6 +40,7 @@ import {
     fetchFinalQAQueuePage
 } from "../services/qa-api";
 import type { FinalQACoa } from "../services/qa-api";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 function relationNumber(value: any, keys: string[] = ["id"]): number {
     if (value && typeof value === "object") {
@@ -427,6 +428,9 @@ export function useManufacturingQA() {
     const [isYieldDialogOpen, setIsYieldDialogOpen] = useState(false);
     const [yieldQty, setYieldQty] = useState("");
     const [lotNumber, setLotNumber] = useState("");
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [selectedMmLotId, setSelectedMmLotId] = useState<string>("");
+    const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [manufacturingDate, setManufacturingDate] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
@@ -994,16 +998,32 @@ export function useManufacturingQA() {
         const joNo = jo.job_order_no || jo.jo_id;
         
         if (firstLog) {
-            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || `MFG-${joNo}`);
+            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || "");
             setManufacturingDate(firstLog.manufacturing_date || firstLog.mfg_date || "");
             setExpiryDate(firstLog.expiry_date || "");
         } else {
-            setLotNumber(`MFG-${joNo}`);
+            setLotNumber("");
             setManufacturingDate("");
             setExpiryDate("");
         }
         
         setUnitCost("0");
+        setEligibleLots([]);
+        setSelectedMmLotId("");
+        const eligibleBranchId = Number(jo.branch_id || 0);
+        const eligibleProductId = Number(jo.product_id || 0);
+        if (eligibleBranchId > 0 && eligibleProductId > 0) {
+            setLoadingEligibleLots(true);
+            fetchEligibleFinishedGoodsLots(eligibleBranchId, eligibleProductId)
+                .then((response) => {
+                    setEligibleLots(response.lots);
+                    setSelectedMmLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+                })
+                .catch((error) => {
+                    console.error("Error loading eligible finished-goods lots:", error);
+                })
+                .finally(() => setLoadingEligibleLots(false));
+        }
         setIsYieldDialogOpen(true);
     };
 
@@ -1104,7 +1124,11 @@ export function useManufacturingQA() {
             return;
         }
         if (!lotNumber.trim()) {
-            toast.error("Please enter a lot number.");
+            toast.error("Please enter a batch number.");
+            return;
+        }
+        if (!selectedMmLotId) {
+            toast.error("Please select an existing storage lot for the finished-goods output.");
             return;
         }
 
@@ -1153,6 +1177,7 @@ export function useManufacturingQA() {
             const closeResult = await postFinishedGoodsReceipt({
                 joId: joNo,
                 yieldLedgerId: selectedYieldLog ? selectedYieldLedgerId : null,
+                mmLotId: Number(selectedMmLotId),
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
@@ -1686,6 +1711,10 @@ export function useManufacturingQA() {
         setYieldQty,
         lotNumber,
         setLotNumber,
+        eligibleLots,
+        selectedMmLotId,
+        setSelectedMmLotId,
+        loadingEligibleLots,
         manufacturingDate,
         setManufacturingDate,
         expiryDate,
