@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { fetchActiveSupplierCurrencies, fetchPHProvinces, fetchPHCities, fetchPHBarangays } from "@/modules/manufacturing-management/procurement/services/supplier.service";
 import { SUPPLIER_COUNTRY_OPTIONS, isPhilippinesCountry, PHILIPPINES_COUNTRY } from "@/modules/manufacturing-management/procurement/supplier-country";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
-import { SearchableCountrySelect } from "@/app/(manufacturing-management)/mm/suppliers/_components/SearchableCountrySelect";
+import { SearchableCountrySelect } from "../SearchableCountrySelect";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "@/modules/manufacturing-management/purchase-order/commercial-terms";
 import { createSupplier } from "@/modules/manufacturing-management/procurement/services/procurement-api";
 import { disbursementProvider } from "../../providers/fetchProvider";

@@ -27,6 +27,7 @@ interface SearchableCountrySelectProps {
     searchPlaceholder?: string;
     disabled?: boolean;
     className?: string;
+    popoverClassName?: string;
     id?: string;
     required?: boolean;
 }
@@ -39,6 +40,7 @@ export function SearchableCountrySelect({
     searchPlaceholder = "Search countries...",
     disabled = false,
     className,
+    popoverClassName,
     id,
     required = false,
 }: SearchableCountrySelectProps) {
@@ -69,12 +71,13 @@ export function SearchableCountrySelect({
                 </Button>
             </PopoverTrigger>
             <PopoverContent
-                className="w-[--radix-popover-trigger-width] p-0"
+                onWheel={(e) => e.stopPropagation()}
+                className={cn("w-[--radix-popover-trigger-width] p-0 z-[10000]", popoverClassName)}
                 align="start"
             >
                 <Command>
                     <CommandInput placeholder={searchPlaceholder} />
-                    <CommandList>
+                    <CommandList className="max-h-[220px] overflow-y-auto overscroll-contain p-1">
                         <CommandEmpty>No country found.</CommandEmpty>
                         <CommandGroup>
                             {options.map((option) => (
