@@ -230,3 +230,138 @@ export function calculateMarginSummary(
         marginBasis: "sales"
     };
 }
+
+export interface BottleneckStepCapacity {
+    stepIndex: number;
+    stepNum: number;
+    operationName?: string;
+    workCenterName?: string;
+    stepBatchSize: number;
+    totalHours: number;
+    calculatedRate: number;
+    workCenterCapacity?: number | null;
+    hourlyRate: number;
+    isCapped: boolean;
+}
+
+export interface BottleneckCalculationResult {
+    bottleneckRate: number;
+    bottleneckStepIndex: number;
+    averageRate: number;
+    stepCapacities: BottleneckStepCapacity[];
+    netProductionHours: number;
+    grossOutput: number;
+    computedBaseQuantity: number;
+    cappedSteps: BottleneckStepCapacity[];
+}
+
+export function calculateNetRunTime(
+    shiftHours: number = 18,
+    shiftMinutes: number = 0,
+    downtimeMinutes: number = 16,
+    downtimeSeconds: number = 7
+): {
+    shiftDecimalHours: number;
+    downtimeDecimalHours: number;
+    netProductionHours: number;
+} {
+    const shiftDecimalHours = Math.max(0, Number(shiftHours) || 0) + (Math.max(0, Number(shiftMinutes) || 0) / 60);
+    const downtimeDecimalHours = (Math.max(0, Number(downtimeMinutes) || 0) / 60) + (Math.max(0, Number(downtimeSeconds) || 0) / 3600);
+    const netProductionHours = Math.max(0, shiftDecimalHours - downtimeDecimalHours);
+    return {
+        shiftDecimalHours,
+        downtimeDecimalHours,
+        netProductionHours
+    };
+}
+
+export function calculateBottleneckBaseQuantity(input: {
+    routes: Array<{
+        work_center_id?: number | null;
+        operation_id?: number | null;
+        step_batch_size?: number | null;
+        setup_time_hours?: number | null;
+        run_time_hours?: number | null;
+        operation?: { operation_name?: string } | null;
+        work_center?: { work_center_name?: string; capacity_per_hour?: number | null } | null;
+    }>;
+    workCenters?: Array<{ work_center_id: number; work_center_name?: string; capacity_per_hour?: number | null }>;
+    operationTypes?: Array<{ id: number; operation_name: string }>;
+    shiftHours?: number;
+    shiftMinutes?: number;
+    downtimeMinutes?: number;
+    downtimeSeconds?: number;
+    expectedYieldPercentage?: number | null;
+}): BottleneckCalculationResult {
+    const routes = input.routes || [];
+    const stepCapacities: BottleneckStepCapacity[] = routes.map((r, index) => {
+        const stepBatchSize = Math.max(0.0001, Number(r.step_batch_size) || 1);
+        const totalHours = Math.max(0.0001, (Number(r.setup_time_hours) || 0) + (Number(r.run_time_hours) || 0));
+        const calculatedRate = stepBatchSize / totalHours;
+
+        // Option 3: Check Work Center rated capacity ceiling
+        const matchedWc = input.workCenters?.find(wc => Number(wc.work_center_id) === Number(r.work_center_id)) || r.work_center;
+        const matchedOp = input.operationTypes?.find(op => Number(op.id) === Number(r.operation_id));
+        const wcCap = Number(matchedWc?.capacity_per_hour);
+        const hasWcCap = Number.isFinite(wcCap) && wcCap > 0;
+
+        let hourlyRate = calculatedRate;
+        let isCapped = false;
+        if (hasWcCap && calculatedRate > wcCap) {
+            hourlyRate = wcCap;
+            isCapped = true;
+        }
+
+        return {
+            stepIndex: index,
+            stepNum: index + 1,
+            operationName: matchedOp?.operation_name || r.operation?.operation_name || `Step #${index + 1}`,
+            workCenterName: matchedWc?.work_center_name || r.work_center?.work_center_name || "Work Center",
+            stepBatchSize,
+            totalHours,
+            calculatedRate,
+            workCenterCapacity: hasWcCap ? wcCap : null,
+            hourlyRate,
+            isCapped
+        };
+    });
+
+    let bottleneckRate = 0;
+    let bottleneckStepIndex = -1;
+    if (stepCapacities.length > 0) {
+        bottleneckRate = stepCapacities[0].hourlyRate;
+        bottleneckStepIndex = 0;
+        for (let i = 1; i < stepCapacities.length; i++) {
+            if (stepCapacities[i].hourlyRate < bottleneckRate) {
+                bottleneckRate = stepCapacities[i].hourlyRate;
+                bottleneckStepIndex = i;
+            }
+        }
+    }
+
+    const totalRates = stepCapacities.reduce((sum, s) => sum + s.hourlyRate, 0);
+    const averageRate = stepCapacities.length > 0 ? totalRates / stepCapacities.length : 0;
+
+    const { netProductionHours } = calculateNetRunTime(
+        input.shiftHours ?? 18,
+        input.shiftMinutes ?? 0,
+        input.downtimeMinutes ?? 16,
+        input.downtimeSeconds ?? 7
+    );
+
+    const grossOutput = bottleneckRate * netProductionHours;
+    const yieldPct = Number(input.expectedYieldPercentage) > 0 ? Number(input.expectedYieldPercentage) : 100;
+    const computedBaseQuantity = grossOutput * (yieldPct / 100);
+    const cappedSteps = stepCapacities.filter(s => s.isCapped);
+
+    return {
+        bottleneckRate,
+        bottleneckStepIndex,
+        averageRate,
+        stepCapacities,
+        netProductionHours,
+        grossOutput,
+        computedBaseQuantity,
+        cappedSteps
+    };
+}

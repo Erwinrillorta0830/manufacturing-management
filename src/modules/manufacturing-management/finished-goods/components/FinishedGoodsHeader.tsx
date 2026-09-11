@@ -7,9 +7,11 @@ import {
     Plus,
     Save,
     Loader2,
-    Package
+    Package,
+    GitFork,
+    Send
 } from "lucide-react";
-import { Product } from "../types";
+import { Product, ProductVersion } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
 
 
@@ -27,6 +29,10 @@ export interface FinishedGoodsHeaderProps {
     setSelectedProductId: (id: string) => void;
     selectedProduct: Product | null;
     onRequestSwitchProduct?: (id: string) => void;
+    isVersionLocked?: boolean;
+    selectedVersion?: ProductVersion | null;
+    onCreateRevision?: (version: ProductVersion) => void;
+    onSubmitForApproval?: (versionId?: number) => void;
 }
 
 export function FinishedGoodsHeader({
@@ -42,7 +48,11 @@ export function FinishedGoodsHeader({
     selectedProductId,
     setSelectedProductId,
     selectedProduct,
-    onRequestSwitchProduct
+    onRequestSwitchProduct,
+    isVersionLocked = false,
+    selectedVersion,
+    onCreateRevision,
+    onSubmitForApproval
 }: FinishedGoodsHeaderProps) {
 
     // Build hierarchical product options (Parent & Child variants)
@@ -186,11 +196,39 @@ export function FinishedGoodsHeader({
 
 
 
+                    {/* Revise Specification Button (when version is locked) */}
+                    {isVersionLocked && selectedVersion && onCreateRevision && (
+                        <button
+                            type="button"
+                            onClick={() => onCreateRevision(selectedVersion)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300 px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                            title="Create an editable revision to adjust recipe, routings, wastage, or UOMs"
+                        >
+                            <GitFork className="h-3.5 w-3.5" />
+                            Create Revision
+                        </button>
+                    )}
+
+                    {/* Submit for Approval Button (when version is editable draft/revision) */}
+                    {!isVersionLocked && selectedVersion && (selectedVersion.status === "Draft" || selectedVersion.status === "Revision" || selectedVersion.status === "Revision Required" || selectedVersion.version_id < 0) && onSubmitForApproval && (
+                        <button
+                            type="button"
+                            onClick={() => onSubmitForApproval(selectedVersion.version_id)}
+                            disabled={savingBOM}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Submit this draft/revision recipe for QA and engineering approval"
+                        >
+                            <Send className="h-3.5 w-3.5" />
+                            Submit for Approval
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={handleSave}
-                        disabled={savingBOM || !selectedProduct}
+                        disabled={savingBOM || !selectedProduct || isVersionLocked}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        title={isVersionLocked ? "Version is locked. Create a revision to make changes." : "Save Changes"}
                     >
                         {savingBOM ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -46,7 +46,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
     }, [editedVersionDetails]);
 
     const baseQuantity = React.useMemo(() => {
-        return Math.max(1, Number(editedVersionDetails?.base_quantity) || 1);
+        return Math.max(0.0001, Number(editedVersionDetails?.base_quantity) || 1);
     }, [editedVersionDetails?.base_quantity]);
 
     // Derived Summary Metrics matching Sheet MPB454G
@@ -196,7 +196,7 @@ export const DirectLaborStandardsTab: React.FC<DirectLaborStandardsTabProps> = (
                     <span className="text-sm font-extrabold font-mono text-blue-600 dark:text-blue-400">₱{totalStatutoryMandatesCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="space-y-1 border-l pl-3 border-border/40">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Labor Cost / Unit</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Labor Cost / Unit ({baseQuantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} base)</span>
                     <span className="text-sm font-extrabold font-mono text-emerald-600 dark:text-emerald-400">₱{laborCostPerUnit.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span>
                 </div>
             </div>

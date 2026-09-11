@@ -32,6 +32,7 @@ export interface VersionManagementTabProps {
     isVersionLocked?: boolean;
     onSetPrimary?: (versionId: number, versionName?: string) => void;
     onSubmitForApproval?: (versionId?: number) => void;
+    onCreateRevision?: (version: ProductVersion) => void;
 }
 
 export function VersionManagementTab({
@@ -53,7 +54,8 @@ export function VersionManagementTab({
     setHasUnsavedChanges,
     isVersionLocked = false,
     onSetPrimary,
-    onSubmitForApproval
+    onSubmitForApproval,
+    onCreateRevision
 }: VersionManagementTabProps) {
     const [userSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
     const versionSubTab = activeTab === "routes_bom" ? "routes_bom" : userSubTab;
@@ -66,19 +68,31 @@ export function VersionManagementTab({
         <div className="space-y-6">
             {/* 1. Rejected Version Banner (Immutable Record) */}
             {selectedVersion?.status === "Rejected" && (
-                <div className="flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
-                    <XCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <p className="text-xs font-bold text-rose-700 dark:text-rose-300">
-                            Version Rejected (Immutable History) — <span className="font-extrabold">{selectedVersion.version_name}</span>
-                        </p>
-                        <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1 font-medium">
-                            <strong>Reason:</strong> {selectedVersion.rejection_reason || selectedVersion.approval_remarks || "No rejection reason provided."}
-                        </p>
-                        <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 mt-1">
-                            This version is an immutable historical record and cannot be edited. To revise this recipe, create a new version on the sidebar and select this version as the base template.
-                        </p>
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex-wrap">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <XCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-rose-700 dark:text-rose-300">
+                                Version Rejected (Immutable History) — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                            </p>
+                            <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1 font-medium">
+                                <strong>Reason:</strong> {selectedVersion.rejection_reason || selectedVersion.approval_remarks || "No rejection reason provided."}
+                            </p>
+                            <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 mt-1">
+                                This version is an immutable historical record and cannot be edited. Branch a new editable revision to address reviewer feedback.
+                            </p>
+                        </div>
                     </div>
+                    {onCreateRevision && (
+                        <button
+                            type="button"
+                            onClick={() => onCreateRevision(selectedVersion)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0 self-center"
+                            title="Branch a new editable revision from this rejected version"
+                        >
+                            <GitFork className="h-3.5 w-3.5" /> Branch Revision
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -109,25 +123,37 @@ export function VersionManagementTab({
                                 </p>
                                 {isPrimary ? (
                                     <span className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase flex items-center gap-1">
-                                        <Star className="h-2.5 w-2.5 fill-emerald-500 text-emerald-500" /> Primary Recipe
+                                        <Star className="h-2.5 w-2.5 fill-emerald-500 text-emerald-500" /> Primary Recipe (Active for Current Job Orders)
                                     </span>
                                 ) : null}
                             </div>
                             <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 mt-0.5">
-                                This version is active and approved for manufacturing job orders. Inputs are locked to protect production integrity.
+                                This version is active and approved for manufacturing. Inputs are locked to protect production integrity. Primary is active for current job orders.
                             </p>
                         </div>
                     </div>
-                    {!isPrimary && selectedVersion.version_id > 0 && onSetPrimary && (
-                        <button
-                            type="button"
-                            onClick={() => onSetPrimary(selectedVersion.version_id, selectedVersion.version_name)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
-                            title="Set as the Primary active recipe for production job orders"
-                        >
-                            <Star className="h-3.5 w-3.5 fill-white" /> Make Primary
-                        </button>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                        {onCreateRevision && (
+                            <button
+                                type="button"
+                                onClick={() => onCreateRevision(selectedVersion)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Create an editable revision cloned from this approved specification"
+                            >
+                                <GitFork className="h-3.5 w-3.5" /> Create Revision
+                            </button>
+                        )}
+                        {!isPrimary && selectedVersion.version_id > 0 && onSetPrimary && (
+                            <button
+                                type="button"
+                                onClick={() => onSetPrimary(selectedVersion.version_id, selectedVersion.version_name)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Set as the Primary active recipe for current job orders"
+                            >
+                                <Star className="h-3.5 w-3.5 fill-white" /> Make Primary
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
 

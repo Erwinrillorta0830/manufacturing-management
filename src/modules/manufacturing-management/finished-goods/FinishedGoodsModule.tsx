@@ -16,6 +16,7 @@ import {
     Clock,
     Send,
     GitCompare,
+    GitFork,
     Activity,
     CheckCircle2,
     FileText,
@@ -34,8 +35,9 @@ import { VersionManagementTab } from "./components/VersionManagementTab";
 import { RegisterProductModal } from "./components/RegisterProductModal";
 import { fetchHistoricalYield, applyHistoricalYield } from "./services/historical-yield.service";
 import { useFinishedGoods } from "./hooks/useFinishedGoods";
-import { Product, BOMItem, RoutingStep } from "./types";
+import { Product, ProductVersion, BOMItem, RoutingStep } from "./types";
 import { calculateCostBreakdown, calculateMarginSummary, calculateOverheadSummary, calculateRouteBreakdown } from "./costing";
+import { getSuggestedNextVersionName } from "./utils/version-lifecycle";
 import {
     SidebarVersionListSkeleton,
     DetailsTabSkeleton,
@@ -287,7 +289,40 @@ export default function FinishedGoodsModule() {
         router.replace(`/mm/inventory-warehousing/finished-goods-master?tab=${tab}`);
     };
 
+    const [revisionSourceVersion, setRevisionSourceVersion] = useState<ProductVersion | null>(null);
+
+    const handleOpenRevisionModal = (baseVer?: ProductVersion | null) => {
+        const sourceVer = baseVer || selectedVersion;
+        if (!sourceVer) {
+            toast.error("Please select a base specification version to revise.");
+            return;
+        }
+
+        let matchedUomId = 0;
+        if (selectedProduct && units.length > 0) {
+            const matchedUnit = units.find(u => u.unit_shortcut === selectedProduct.baseUom);
+            matchedUomId = matchedUnit ? matchedUnit.unit_id : units[0].unit_id;
+        }
+
+        const suggestedName = getSuggestedNextVersionName(
+            sourceVer.version_name,
+            versions,
+            selectedProduct?.sku
+        );
+
+        setRevisionSourceVersion(sourceVer);
+        setVersionForm({
+            versionName: suggestedName,
+            baseQuantity: Number(sourceVer.base_quantity) || 1,
+            uomId: sourceVer.uom_id ? Number(sourceVer.uom_id) : matchedUomId,
+            expectedYield: Number(sourceVer.expected_yield_percentage) || 100,
+            baseVersionId: String(sourceVer.version_id)
+        });
+        setIsVersionModalOpen(true);
+    };
+
     const handleOpenVersionModal = () => {
+        setRevisionSourceVersion(null);
         let matchedUomId = 0;
         if (selectedProduct && units.length > 0) {
             const matchedUnit = units.find(u => u.unit_shortcut === selectedProduct.baseUom);
@@ -856,6 +891,10 @@ export default function FinishedGoodsModule() {
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
+                isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
+                selectedVersion={selectedVersion}
+                onCreateRevision={handleOpenRevisionModal}
+                onSubmitForApproval={handlePromptSubmitForApproval}
             />
 
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
@@ -982,11 +1021,26 @@ export default function FinishedGoodsModule() {
                                                         {v.version_name}
                                                     </span>
                                                 </div>
-                                                {isPrimary && (
-                                                    <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0 shadow-2xs">
-                                                        <Star className="h-2 w-2 fill-emerald-500 text-emerald-500" /> Primary
-                                                    </span>
-                                                )}
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    {(isActive || isRejected) && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleOpenRevisionModal(v);
+                                                            }}
+                                                            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
+                                                            title={`Create new revision branched from ${v.version_name}`}
+                                                        >
+                                                            <GitFork className="h-3 w-3" />
+                                                        </button>
+                                                    )}
+                                                    {isPrimary && (
+                                                        <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0 shadow-2xs">
+                                                            <Star className="h-2 w-2 fill-emerald-500 text-emerald-500" /> Primary
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             {/* Row 2: Status Badges & Yield/Base Info */}
@@ -1193,6 +1247,7 @@ export default function FinishedGoodsModule() {
                                                     isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
                                                     onSetPrimary={handlePromptSetPrimary}
                                                     onSubmitForApproval={handlePromptSubmitForApproval}
+                                                    onCreateRevision={handleOpenRevisionModal}
                                                 />
                                             )}
 
@@ -1327,19 +1382,22 @@ export default function FinishedGoodsModule() {
                             {/* Header */}
                             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
                                 <div className="flex items-center gap-2">
-                                    <Plus className="h-5 w-5 text-primary" />
+                                    {revisionSourceVersion ? (
+                                        <GitFork className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                                    ) : (
+                                        <Plus className="h-5 w-5 text-primary" />
+                                    )}
                                     <div>
-                                        <h3 className="text-base font-bold text-foreground">Register New BOM Version</h3>
-                                        <p className="text-xs text-muted-foreground">Add a new version for manufacturing specifications.</p>
+                                        <h3 className="text-base font-bold text-foreground">
+                                            {revisionSourceVersion ? "Create New Recipe Revision" : "Register New BOM Version"}
+                                        </h3>
+                                        <p className="text-xs text-muted-foreground">
+                                            {revisionSourceVersion
+                                                ? `Branching specification from ${revisionSourceVersion.version_name}`
+                                                : "Add a new version for manufacturing specifications."}
+                                        </p>
                                     </div>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsVersionModalOpen(false)}
-                                    className="text-muted-foreground hover:text-foreground text-sm font-semibold transition-colors px-3 py-1.5 hover:bg-muted rounded-lg cursor-pointer"
-                                >
-                                    Close
-                                </button>
                             </div>
 
                             {/* Form */}
@@ -1350,6 +1408,21 @@ export default function FinishedGoodsModule() {
                                 }}
                                 className="p-6 space-y-4 text-xs"
                             >
+                                {/* Revision Context Banner */}
+                                {revisionSourceVersion && (
+                                    <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            <GitFork className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                                            <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                                                Cloning Specification: <span className="font-extrabold">{revisionSourceVersion.version_name}</span>
+                                            </p>
+                                        </div>
+                                        <p className="text-[11px] text-blue-600/90 dark:text-blue-400/90 leading-relaxed">
+                                            All workstation routes, BOM materials, wastage factors, direct labor standards, and overheads will be cloned into this new draft revision. The approved primary version remains active and locked for current job orders.
+                                        </p>
+                                    </div>
+                                )}
+
                                 {/* Version Name */}
                                 <div className="space-y-1">
                                     <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Version Name <span className="text-red-500">*</span></label>
@@ -1358,6 +1431,8 @@ export default function FinishedGoodsModule() {
                                         required
                                         placeholder="e.g. FG-OIL-500ML - v2.0"
                                         value={versionForm.versionName}
+                                        onFocus={(e) => e.target.select()}
+                                        onClick={(e) => (e.target as HTMLInputElement).select()}
                                         onChange={e => setVersionForm(prev => ({ ...prev, versionName: e.target.value }))}
                                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
                                     />
@@ -1365,14 +1440,24 @@ export default function FinishedGoodsModule() {
 
                                 {/* Base Qty & Base UOM */}
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base Quantity</label>
+                                    <div className="space-y-1">                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base Quantity</label>
                                         <input
                                             type="number"
-                                            min="1"
+                                            step="any"
+                                            min="0.0001"
                                             required
                                             value={versionForm.baseQuantity}
-                                            onChange={e => setVersionForm(prev => ({ ...prev, baseQuantity: parseInt(e.target.value) || 1 }))}
+                                            onFocus={(e) => e.target.select()}
+                                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                                            onChange={e => setVersionForm(prev => ({ ...prev, baseQuantity: e.target.value }))}
+                                            onBlur={() => {
+                                                const num = parseFloat(String(versionForm.baseQuantity));
+                                                if (isNaN(num) || num <= 0) {
+                                                    setVersionForm(prev => ({ ...prev, baseQuantity: 1 }));
+                                                } else {
+                                                    setVersionForm(prev => ({ ...prev, baseQuantity: num }));
+                                                }
+                                            }}
                                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
                                         />
                                     </div>
@@ -1394,26 +1479,51 @@ export default function FinishedGoodsModule() {
                                         <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Expected Yield (%)</label>
                                         <input
                                             type="number"
-                                            min="1"
+                                            step="any"
+                                            min="0.01"
                                             max="100"
                                             required
                                             value={versionForm.expectedYield}
-                                            onChange={e => setVersionForm(prev => ({ ...prev, expectedYield: parseInt(e.target.value) || 100 }))}
+                                            onFocus={(e) => e.target.select()}
+                                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                                            onChange={e => setVersionForm(prev => ({ ...prev, expectedYield: e.target.value }))}
+                                            onBlur={() => {
+                                                const num = parseFloat(String(versionForm.expectedYield));
+                                                if (isNaN(num) || num <= 0) {
+                                                    setVersionForm(prev => ({ ...prev, expectedYield: 100 }));
+                                                } else if (num > 100) {
+                                                    setVersionForm(prev => ({ ...prev, expectedYield: 100 }));
+                                                } else {
+                                                    setVersionForm(prev => ({ ...prev, expectedYield: num }));
+                                                }
+                                            }}
                                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Clone Source</label>
-                                        <select
-                                            value={versionForm.baseVersionId}
-                                            onChange={e => setVersionForm(prev => ({ ...prev, baseVersionId: e.target.value }))}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        >
-                                            <option value="">Start Blank (No Clone)</option>
-                                            {versions.map(v => (
-                                                <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
-                                            ))}
-                                        </select>
+                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
+                                            <span>Clone Source</span>
+                                            {revisionSourceVersion && (
+                                                <span className="text-[9px] text-blue-600 dark:text-blue-400 font-semibold">(locked to parent)</span>
+                                            )}
+                                        </label>
+                                        {revisionSourceVersion ? (
+                                            <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground flex items-center justify-between cursor-not-allowed">
+                                                <span className="truncate">{revisionSourceVersion.version_name}</span>
+                                                <Lock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                            </div>
+                                        ) : (
+                                            <select
+                                                value={versionForm.baseVersionId}
+                                                onChange={e => setVersionForm(prev => ({ ...prev, baseVersionId: e.target.value }))}
+                                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
+                                            >
+                                                <option value="">Start Blank (No Clone)</option>
+                                                {versions.map(v => (
+                                                    <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
+                                                ))}
+                                            </select>
+                                        )}
                                     </div>
                                 </div>
 
@@ -1431,10 +1541,16 @@ export default function FinishedGoodsModule() {
                                         disabled={savingBOM}
                                         className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
                                     >
-                                        {savingBOM && (
+                                        {savingBOM ? (
                                             <div className="h-3 w-3 animate-spin border border-current border-t-transparent rounded-full" />
+                                        ) : revisionSourceVersion ? (
+                                            <GitFork className="h-3.5 w-3.5" />
+                                        ) : (
+                                            <Plus className="h-3.5 w-3.5" />
                                         )}
-                                        {savingBOM ? "Registering..." : "Register Version"}
+                                        {savingBOM
+                                            ? (revisionSourceVersion ? "Cloning Revision..." : "Registering...")
+                                            : (revisionSourceVersion ? "Create Draft Revision" : "Register Version")}
                                     </button>
                                 </div>
                             </form>
