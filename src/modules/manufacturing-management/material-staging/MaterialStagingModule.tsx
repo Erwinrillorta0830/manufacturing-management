@@ -27,8 +27,7 @@ import {
 } from "@/components/ui/select";
 import { useMaterialStaging } from "./hooks/useMaterialStaging";
 import { StagingPickList } from "./components/StagingPickList";
-import { BinTransferModal } from "./components/BinTransferModal";
-import { ShortageWarningDialog } from "./components/ShortageWarningDialog";
+import { AllocationModal } from "./components/AllocationModal";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 
 export default function MaterialStagingModule() {
@@ -50,20 +49,15 @@ export default function MaterialStagingModule() {
         setSelectedStatusFilter,
         onlyShortages,
         setOnlyShortages,
-        // Modal states
-        isTransferModalOpen,
-        activeTransferItem,
+        // Allocation modal state
+        isAllocationModalOpen,
+        activeAllocationItem,
         transferring,
         batchStageResult,
-        handleOpenTransferModal,
-        handleCloseTransferModal,
-        handlePerformTransfer,
+        handleOpenAllocationModal,
+        handleCloseAllocationModal,
+        handleCommitAllocation,
         handleStageAllAvailable,
-        // Shortage dialog states
-        isShortageDialogOpen,
-        setIsShortageDialogOpen,
-        shortageWarningInfo,
-        handleProceedWithNegativeStock,
         refreshData
     } = useMaterialStaging();
 
@@ -406,7 +400,7 @@ export default function MaterialStagingModule() {
                 <div className="lg:col-span-7">
                     <StagingPickList
                         jobOrder={selectedJobOrder}
-                        onOpenTransferModal={handleOpenTransferModal}
+                        onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
                         batchStageResult={batchStageResult}
                         isProcessing={transferring}
@@ -416,24 +410,13 @@ export default function MaterialStagingModule() {
                 </>
             )}
 
-            {/* Bin Transfer Modal */}
-            <BinTransferModal
-                isOpen={isTransferModalOpen}
-                onClose={handleCloseTransferModal}
-                activeItem={activeTransferItem}
+            {/* Canonical lot/batch allocation modal */}
+            <AllocationModal
+                isOpen={isAllocationModalOpen}
+                onClose={handleCloseAllocationModal}
+                activeItem={activeAllocationItem}
                 workCenters={workCenters}
-                onConfirmTransfer={handlePerformTransfer}
-                isLoading={transferring}
-            />
-
-            {/* Shortage Warning Dialog (Option A / Option B) */}
-            <ShortageWarningDialog
-                isOpen={isShortageDialogOpen}
-                onClose={() => {
-                    setIsShortageDialogOpen(false);
-                }}
-                warningInfo={shortageWarningInfo}
-                onProceedWithNegative={handleProceedWithNegativeStock}
+                onCommit={handleCommitAllocation}
                 isLoading={transferring}
             />
         </div>
