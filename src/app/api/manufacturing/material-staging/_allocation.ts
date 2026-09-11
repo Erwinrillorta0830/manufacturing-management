@@ -1034,13 +1034,15 @@ export async function commitAllocation(
                         batch_no: candidate.batch_no,
                         quantity: -line.quantity,
                         created_by: actorUserId,
+                        staging_operation_id: operationId,
+                        staging_allocation_line_id: line.allocation_line_id,
                         remarks
                     })
                 },
                 "Create material staging movement",
                 true
             );
-            const movementId = recordId(movement);
+            const movementId = numericId(movement.movement_id ?? movement.id);
             if (!movementId) throw new MaterialStagingAllocationError("The material staging movement did not return an ID.", 503, "MOVEMENT_WRITE_FAILED");
             state.createdMovementIds.push(movementId);
             movementIds.push(movementId);
