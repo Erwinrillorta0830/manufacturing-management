@@ -9,7 +9,6 @@ import {
     ChevronsRight,
     ChevronsUpDown,
     FilterX,
-    Layers,
     Loader2,
     Search,
 } from "lucide-react";
@@ -95,7 +94,6 @@ export default function TreasuryPostingDashboard({}: TreasuryPostingDashboardPro
 
     const firstResult = totalElements === 0 ? 0 : (currentPage - 1) * query.size + 1;
     const lastResult = Math.min(currentPage * query.size, totalElements);
-    const hasOperationTabs = options.operations.length > 0 || totalElements > 0;
 
     if (isLoading && queue.length === 0) {
         return (
@@ -156,12 +154,12 @@ export default function TreasuryPostingDashboard({}: TreasuryPostingDashboardPro
                             <CommandList className="max-h-[200px] overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-border hover:scrollbar-thumb-foreground/20">
                                 <CommandEmpty>No route found.</CommandEmpty>
                                 <CommandGroup>
-                                    <CommandItem onSelect={() => {updateFilter({salesman: "all"}); setSalesmanOpen(false);}} className="text-xs font-bold">
+                                    <CommandItem value="all" onSelect={() => {updateFilter({salesman: "all"}); setSalesmanOpen(false);}} className="text-xs font-bold">
                                         <Check className={cn("mr-2 h-4 w-4", query.salesman === "all" ? "opacity-100 text-primary" : "opacity-0")}/>
                                         All Route Codes
                                     </CommandItem>
                                     {options.salesmen.map(salesman => (
-                                        <CommandItem key={salesman} onSelect={() => {updateFilter({salesman}); setSalesmanOpen(false);}} className="text-xs font-bold">
+                                        <CommandItem key={salesman} value={salesman} onSelect={() => {updateFilter({salesman}); setSalesmanOpen(false);}} className="text-xs font-bold">
                                             <Check className={cn("mr-2 h-4 w-4", query.salesman === salesman ? "opacity-100 text-primary" : "opacity-0")}/>
                                             {salesman}
                                         </CommandItem>
@@ -185,12 +183,12 @@ export default function TreasuryPostingDashboard({}: TreasuryPostingDashboardPro
                             <CommandList className="max-h-[200px] overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-border hover:scrollbar-thumb-foreground/20">
                                 <CommandEmpty>No cashier found.</CommandEmpty>
                                 <CommandGroup>
-                                    <CommandItem onSelect={() => {updateFilter({cashier: "all"}); setCashierOpen(false);}} className="text-xs font-bold">
+                                    <CommandItem value="all" onSelect={() => {updateFilter({cashier: "all"}); setCashierOpen(false);}} className="text-xs font-bold">
                                         <Check className={cn("mr-2 h-4 w-4", query.cashier === "all" ? "opacity-100 text-primary" : "opacity-0")}/>
                                         All Cashiers
                                     </CommandItem>
                                     {options.cashiers.map(cashier => (
-                                        <CommandItem key={cashier} onSelect={() => {updateFilter({cashier}); setCashierOpen(false);}} className="text-xs font-bold">
+                                        <CommandItem key={cashier} value={cashier} onSelect={() => {updateFilter({cashier}); setCashierOpen(false);}} className="text-xs font-bold">
                                             <Check className={cn("mr-2 h-4 w-4", query.cashier === cashier ? "opacity-100 text-primary" : "opacity-0")}/>
                                             {cashier}
                                         </CommandItem>
@@ -216,35 +214,7 @@ export default function TreasuryPostingDashboard({}: TreasuryPostingDashboardPro
                 </div>
             )}
 
-            {hasOperationTabs && (
-                <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
-                    <div className="flex items-center gap-2 text-muted-foreground pr-2 border-r border-border shrink-0">
-                        <Layers size={16}/>
-                        <span className="text-[10px] font-black uppercase tracking-widest">Filter by Operation:</span>
-                    </div>
 
-                    <Button
-                        variant={query.operation === "all" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => updateFilter({operation: "all"})}
-                        className="rounded-full h-8 text-xs font-bold tracking-wide shrink-0 transition-all"
-                    >
-                        All Operations ({totalElements})
-                    </Button>
-
-                    {options.operations.map(operation => (
-                        <Button
-                            key={operation}
-                            variant={query.operation === operation ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => updateFilter({operation})}
-                            className={`rounded-full h-8 text-xs font-bold tracking-wide shrink-0 transition-all ${query.operation !== operation ? "bg-background hover:bg-muted text-muted-foreground" : ""}`}
-                        >
-                            {operation}
-                        </Button>
-                    ))}
-                </div>
-            )}
 
             <div className="relative">
                 <QueueTable

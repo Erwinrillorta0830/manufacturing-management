@@ -52,7 +52,7 @@ export const generateAdjustmentPDF = (
     // --- 1. HEADER (Letterhead) ---
     doc.setFontSize(16);
     doc.setFont("helvetica", "bold");
-    doc.text("MEN2 MARKETING CORPORATION", pageWidth / 2, currentY, { align: "center" });
+    doc.text("Mama Pina's Products", pageWidth / 2, currentY, { align: "center" });
 
     currentY += 20;
     doc.setFontSize(12);

@@ -35,6 +35,8 @@ export interface SettledInvoiceDto {
     grossAmount: number;
     memoAmount: number;
     returnAmount: number;
+    ewtAmount?: number;
+    ewtRef?: string;
     netAmount: number;
 }
 

@@ -38,7 +38,7 @@ export async function GET(request: Request) {
         
         const page = searchParams.get("page") || "1";
         const size = searchParams.get("size") || "25";
-        const sortField = searchParams.get("sortField") || "id";
+        const sortField = searchParams.get("sortField") || "collectionDate";
         const sortDir = searchParams.get("sortDir") || "desc";
         const search = searchParams.get("search") || "";
         const salesman = searchParams.get("salesman") || "all";
@@ -58,7 +58,10 @@ export async function GET(request: Request) {
             salesmanName: "salesman_id.salesman_name",
         };
         const mappedSort = fieldMap[sortField] || sortField;
-        directusParams.append("sort", `${sortDir === "desc" ? "-" : ""}${mappedSort}`);
+        const sortQuery = sortField === "collectionDate" 
+            ? `${sortDir === "desc" ? "-" : ""}collection_date,${sortDir === "desc" ? "-" : ""}id`
+            : `${sortDir === "desc" ? "-" : ""}${mappedSort}`;
+        directusParams.append("sort", sortQuery);
 
         // Build complex Directus filters
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,23 +76,27 @@ export async function GET(request: Request) {
             directusFilters.salesman_id = { salesman_name: { _eq: salesman } };
         }
         
-        let matchingEncoderIds: number[] = [];
+        let matchingEncoderIds: (number | string)[] = [];
         if (cashier !== "all") {
-            const parts = cashier.split(" ");
-            const firstPart = parts[0];
+            const parts = cashier.split(" ").filter(Boolean);
+            const firstPart = parts[0] || cashier;
             
-            // Fetch users manually because encoder_id is not a relation in Directus
-            const userUrl = `${DIRECTUS_URL}/items/user?filter[_or][0][user_fname][_icontains]=${firstPart}&filter[_or][1][first_name][_icontains]=${firstPart}`;
+            const userUrl = `${DIRECTUS_URL}/items/user?filter[_or][0][user_fname][_icontains]=${encodeURIComponent(firstPart)}&filter[_or][1][first_name][_icontains]=${encodeURIComponent(firstPart)}&filter[_or][2][user_lname][_icontains]=${encodeURIComponent(firstPart)}&limit=-1`;
             const userRes = await fetch(userUrl, { headers, cache: "no-store" });
             if (userRes.ok) {
                 const userData = await userRes.json();
-                matchingEncoderIds = (userData.data || []).map((u: Record<string, unknown>) => u.user_id || u.id);
+                matchingEncoderIds = (userData.data || [])
+                    .map((u: Record<string, unknown>) => u.user_id ?? u.id)
+                    .filter((v: unknown): v is number | string => v != null);
             }
             
             if (matchingEncoderIds.length > 0) {
-                directusFilters.encoder_id = { _in: matchingEncoderIds };
+                directusFilters._or = [
+                    ...(directusFilters._or || []),
+                    { encoder_id: { _in: matchingEncoderIds } },
+                    { collected_by: { _in: matchingEncoderIds } },
+                ];
             } else {
-                // Force empty result if no users match
                 directusFilters.encoder_id = { _in: [-1] };
             }
         }
@@ -113,6 +120,35 @@ export async function GET(request: Request) {
             const invRes = await fetch(invUrl, { headers, cache: "no-store" });
             if (invRes.ok) {
                 allInvoices = (await invRes.json()).data || [];
+            }
+        }
+        
+        // Fetch user records to map raw integer encoder_id or collected_by IDs if not expanded
+        const rawUserIds = new Set<number>();
+        items.forEach((item: DirectusItem) => {
+            if (typeof item.encoder_id === "number") rawUserIds.add(item.encoder_id);
+            if (typeof item.collected_by === "number") rawUserIds.add(item.collected_by);
+        });
+
+        const userMap = new Map<number, string>();
+        if (rawUserIds.size > 0) {
+            try {
+                const userUrl = `${DIRECTUS_URL}/items/user?filter[user_id][_in]=${Array.from(rawUserIds).join(",")}&limit=-1&fields=user_id,id,user_fname,user_lname,first_name,last_name`;
+                const userRes = await fetch(userUrl, { headers, cache: "no-store" });
+                if (userRes.ok) {
+                    const userData = await userRes.json();
+                    (userData.data || []).forEach((u: Record<string, unknown>) => {
+                        const fname = (u.user_fname || u.first_name || "") as string;
+                        const lname = (u.user_lname || u.last_name || "") as string;
+                        const name = `${fname} ${lname}`.trim();
+                        if (name) {
+                            if (u.user_id != null) userMap.set(Number(u.user_id), name);
+                            if (u.id != null) userMap.set(Number(u.id), name);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to resolve user names for posting queue:", err);
             }
         }
         
@@ -147,6 +183,19 @@ export async function GET(request: Request) {
                 adjustmentCredit = Math.abs(variance);
             }
 
+            const resolveUserName = (uVal: unknown) => {
+                if (!uVal) return null;
+                if (typeof uVal === "object") {
+                    const obj = uVal as Record<string, unknown>;
+                    const name = `${obj.user_fname || obj.first_name || ""} ${obj.user_lname || obj.last_name || ""}`.trim();
+                    return name || null;
+                }
+                return userMap.get(Number(uVal)) || null;
+            };
+
+            const encoderName = resolveUserName(item.encoder_id) || resolveUserName(item.collected_by) || "ENCODER FALLBACK";
+            const collectedByName = resolveUserName(item.collected_by) || resolveUserName(item.encoder_id) || "ENCODER FALLBACK";
+
             return {
                 ...item,
                 id: item.id,
@@ -156,8 +205,8 @@ export async function GET(request: Request) {
                 pouchAmount: item.totalAmount || 0,
                 status: item.isPosted ? "POSTED" : (item.isCancelled ? "CANCELLED" : "OPEN"),
                 salesmanName: item.salesman_id?.salesman_name || "UNASSIGNED",
-                collectedByName: item.collected_by ? `${item.collected_by.user_fname || item.collected_by.first_name || ""} ${item.collected_by.user_lname || item.collected_by.last_name || ""}`.trim() : "ENCODER FALLBACK",
-                encoderName: item.encoder_id ? `${item.encoder_id.user_fname || item.encoder_id.first_name || ""} ${item.encoder_id.user_lname || item.encoder_id.last_name || ""}`.trim() : "ENCODER FALLBACK",
+                collectedByName,
+                encoderName,
                 totalAppliedAmount,
                 creditAppliedAmount,
                 adjustmentDebit,

@@ -94,18 +94,39 @@ export async function GET(request: Request) {
         const data = await res.json();
         const items = data.data || [];
 
-        // Fetch collection_invoices to compute allocated amounts and discrepancy (Rem. Float)
+        // Fetch collection_invoices and linked sales_invoices to compute allocated amounts, total invoice amount, and variance
         const collectionIds = items.map((item: { id?: number }) => item.id).filter(Boolean);
         const allocatedInvoicesMap = new Map<number, number>();
+        const invoiceAmountMap = new Map<number, number>();
 
         if (collectionIds.length > 0) {
             try {
-                const invRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,amount`, { headers, cache: "no-store" });
+                const invRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,invoice_id,amount`, { headers, cache: "no-store" });
                 if (invRes.ok) {
                     const invData = (await invRes.json()).data || [];
-                    invData.forEach((inv: { collection_id: number; amount?: number }) => {
+                    const invoiceIds = [...new Set(invData.map((inv: { invoice_id?: number }) => inv.invoice_id).filter(Boolean))];
+
+                    const salesInvoiceMap = new Map<number, number>();
+                    if (invoiceIds.length > 0) {
+                        const siRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&limit=-1&fields=invoice_id,net_amount,total_amount,gross_amount,remaining_balance`, { headers, cache: "no-store" });
+                        if (siRes.ok) {
+                            const siData = (await siRes.json()).data || [];
+                            siData.forEach((si: { invoice_id: number; net_amount?: number; total_amount?: number; gross_amount?: number; remaining_balance?: number }) => {
+                                const val = Number(si.net_amount ?? si.total_amount ?? si.gross_amount ?? 0) || 0;
+                                salesInvoiceMap.set(si.invoice_id, val);
+                            });
+                        }
+                    }
+
+                    invData.forEach((inv: { collection_id: number; invoice_id?: number; amount?: number }) => {
                         const amt = Math.abs(Number(inv.amount) || 0);
                         allocatedInvoicesMap.set(inv.collection_id, (allocatedInvoicesMap.get(inv.collection_id) || 0) + amt);
+
+                        if (inv.invoice_id && salesInvoiceMap.has(inv.invoice_id)) {
+                            const invVal = salesInvoiceMap.get(inv.invoice_id) || 0;
+                            // Add unique invoice value to pouch total invoice amount
+                            invoiceAmountMap.set(inv.collection_id, (invoiceAmountMap.get(inv.collection_id) || 0) + invVal);
+                        }
                     });
                 }
             } catch (err) {
@@ -113,11 +134,37 @@ export async function GET(request: Request) {
             }
         }
         
+        // Fetch collection_details (cash pool, checks, adjustments, shortage credits) to compute total liquid pool and unallocated pouch pool
+        const pouchDetailsMap = new Map<number, number>();
+        if (collectionIds.length > 0) {
+            try {
+                const detRes = await fetch(`${DIRECTUS_URL}/items/collection_details?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,amount`, { headers, cache: "no-store" });
+                if (detRes.ok) {
+                    const detData = (await detRes.json()).data || [];
+                    detData.forEach((det: { collection_id: number; amount?: number }) => {
+                        const amt = Math.abs(Number(det.amount) || 0);
+                        pouchDetailsMap.set(det.collection_id, (pouchDetailsMap.get(det.collection_id) || 0) + amt);
+                    });
+                }
+            } catch (err) {
+                console.warn("Failed to fetch collection_details for queue:", err);
+            }
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mappedItems = items.map((item: any) => {
-            const pouchAmount = Number(item.totalAmount) || 0;
-            const allocatedAmount = allocatedInvoicesMap.get(item.id) || 0;
-            const discrepancy = Math.max(0, Math.round((pouchAmount - allocatedAmount) * 100) / 100);
+            const rawPouchAmount = Number(item.totalAmount) || 0;
+            // Total liquid pool is either sum of collection_details (cash + checks + adjustments) or totalAmount header
+            const detailsTotal = pouchDetailsMap.get(item.id) || 0;
+            const totalLiquidPool = Math.max(rawPouchAmount, detailsTotal);
+
+            const appliedAmount = allocatedInvoicesMap.get(item.id) || 0;
+            const invoiceAmount = invoiceAmountMap.get(item.id) || appliedAmount;
+            
+            // Unallocated funds remaining in the liquid pouch pool
+            const unallocatedPouch = Math.round((totalLiquidPool - appliedAmount) * 100) / 100;
+            // Variance = Invoice Amount - Applied Amount
+            const variance = Math.round((invoiceAmount - appliedAmount) * 100) / 100;
 
             const isPosted = item.isPosted === true || item.isPosted === 1 || item.isPosted === "1";
             const isCancelled = item.isCancelled === true || item.isCancelled === 1 || item.isCancelled === "1";
@@ -127,9 +174,9 @@ export async function GET(request: Request) {
                 status = "POSTED";
             } else if (isCancelled) {
                 status = "CANCELLED";
-            } else if (discrepancy <= 0.01 && allocatedAmount > 0) {
+            } else if (Math.abs(unallocatedPouch) <= 0.01 && Math.abs(variance) <= 0.01 && (appliedAmount > 0 || totalLiquidPool === 0)) {
                 status = "Balanced";
-            } else if (allocatedAmount === 0 && pouchAmount === 0) {
+            } else if (appliedAmount === 0 && totalLiquidPool === 0) {
                 status = "Pending";
             }
 
@@ -139,8 +186,11 @@ export async function GET(request: Request) {
                 docNo: item.docNo || item.doc_no,
                 collectionDate: item.collection_date,
                 encodedDate: item.date_encoded,
-                pouchAmount: pouchAmount,
-                discrepancy: discrepancy,
+                pouchAmount: totalLiquidPool,
+                invoiceAmount: invoiceAmount,
+                appliedAmount: appliedAmount,
+                variance: variance,
+                discrepancy: Math.max(0, unallocatedPouch),
                 status: status,
                 salesmanName: item.salesman_id?.salesman_name || "UNASSIGNED",
                 collectedByName: item.collected_by ? `${item.collected_by.user_fname || item.collected_by.first_name || ""} ${item.collected_by.user_lname || item.collected_by.last_name || ""}`.trim() : "ENCODER FALLBACK",

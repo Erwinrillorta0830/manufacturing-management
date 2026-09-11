@@ -44,6 +44,7 @@ export const exportCollectionReportToExcel = (
             "Remaining Balance": invoice.remainingBalance,
             "Memo Amount": invoice.memoAmount,
             "Return Amount": invoice.returnAmount,
+            "EWT Amount": invoice.ewtAmount ?? 0,
             "Net Amount": invoice.netAmount,
         }))
     );
