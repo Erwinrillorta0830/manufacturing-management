@@ -11,7 +11,11 @@ import {
     TwoPointQAInspectionResult,
     YieldJobOrderMaterial,
     PaginatedResponse,
-    QASummary
+    QASummary,
+    MaterialReturnPreview,
+    MaterialReturnCandidate,
+    MaterialReturnConfirmation,
+    MaterialReturnConfirmResult
 } from "../types";
 
 export const QA_PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
@@ -286,7 +290,8 @@ export async function postTwoPointQAInspection(payload: TwoPointQAInspectionPayl
             expiry_date: payload.expiry_date,
             unit_cost: payload.unit_cost ?? 0,
             remarks: payload.remarks ?? "",
-            ...(payload.user_id ? { user_id: payload.user_id } : {})
+            ...(payload.user_id ? { user_id: payload.user_id } : {}),
+            ...(payload.materialReturnConfirmation ? { materialReturnConfirmation: payload.materialReturnConfirmation } : {})
         })
     });
     const data = await res.json();
@@ -315,6 +320,7 @@ export interface FinishedGoodsReceiptPayload {
         component_name: string;
     }>;
     completeJobOrder: boolean;
+    materialReturnConfirmation?: MaterialReturnConfirmation;
 }
 
 export interface FinishedGoodsReceipt {
@@ -555,4 +561,36 @@ export async function postFinalQARelease(payload: FinalQAReleasePayload): Promis
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to submit final lot release");
     return data;
+}
+
+// Raw-material returns for halted, cancelled, and completed Job Orders
+export async function fetchMaterialReturnPreview(joId: string | number): Promise<MaterialReturnPreview> {
+    const res = await fetch(`/api/manufacturing/qa/material-returns?joId=${encodeURIComponent(String(joId))}`, { cache: "no-store" });
+    const data = await readApiResponse<{ success: boolean; data: MaterialReturnPreview }>(res, "Failed to load the material return preview");
+    if (!data?.data) throw new Error("The material return preview returned no data.");
+    return data.data;
+}
+
+export async function fetchMaterialReturnCandidates(scope: "pending" | "completed"): Promise<MaterialReturnCandidate[]> {
+    const res = await fetch(`/api/manufacturing/qa/material-returns?scope=${scope}`, { cache: "no-store" });
+    const data = await readApiResponse<{ success: boolean; data: MaterialReturnCandidate[] }>(res, "Failed to load material return candidates");
+    return Array.isArray(data?.data) ? data.data : [];
+}
+
+export async function confirmMaterialReturn(payload: {
+    joId: string | number;
+    previewToken: string;
+    reason?: string;
+    destinations?: MaterialReturnConfirmation["destinations"];
+}): Promise<MaterialReturnConfirmResult> {
+    const res = await fetch("/api/manufacturing/qa/material-returns/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || "Failed to confirm the raw-material return.");
+    }
+    return data.data as MaterialReturnConfirmResult;
 }

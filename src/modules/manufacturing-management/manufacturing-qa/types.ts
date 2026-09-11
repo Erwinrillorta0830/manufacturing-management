@@ -97,6 +97,7 @@ export interface TwoPointQAInspectionPayload {
     unit_cost?: number;
     remarks?: string;
     user_id?: number;
+    materialReturnConfirmation?: MaterialReturnConfirmation;
 }
 
 export interface TwoPointQAInspectionResult {
@@ -220,4 +221,83 @@ export interface QASummary {
     closedJobOrderCount: number;
     inspectionLogCount: number;
     pendingHoldCount: number;
+}
+
+export interface MaterialReturnDestination {
+    mmLotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    action: "REUSE" | "CREATE";
+}
+
+export interface MaterialReturnLine {
+    joMaterialId: number;
+    productId: number;
+    productName: string;
+    uomId: number;
+    uomShortcut: string;
+    branchId: number;
+    mmLotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    sourceBin: string;
+    targetBin: string;
+    stagedQuantity: number;
+    consumedQuantity: number;
+    returnableQuantity: number;
+    reservationIds: number[];
+    releaseOnly: boolean;
+    destination?: MaterialReturnDestination | null;
+    requiresLotSelection?: boolean;
+}
+
+export interface MaterialReturnPreview {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number;
+    productName: string;
+    branchId: number;
+    status: string;
+    reconciliationError: string | null;
+    totals: {
+        stagedQuantity: number;
+        consumedQuantity: number;
+        returnableQuantity: number;
+    };
+    lines: MaterialReturnLine[];
+    canReturn: boolean;
+    requiresDestination: boolean;
+    previewToken: string;
+}
+
+export interface MaterialReturnCandidate {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    productId: number;
+    productName: string;
+    returnableQuantity: number | null;
+    reconciliationError: string | null;
+    requiresDestination: boolean;
+}
+
+export interface MaterialReturnConfirmation {
+    previewToken?: string;
+    acknowledge?: boolean;
+    destinations?: Array<{
+        joMaterialId: number;
+        mmLotId: number;
+        inventoryLotId?: number;
+        batchNo?: string;
+    }>;
+}
+
+export interface MaterialReturnConfirmResult {
+    jobOrderId: number;
+    jobOrderNo: string;
+    status: string;
+    returnedQuantity: number;
+    releasedReservationCount: number;
+    movementCount: number;
+    noop?: boolean;
 }

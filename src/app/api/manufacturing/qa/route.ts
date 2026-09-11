@@ -27,6 +27,13 @@ import {
     JobOrderCancellationError,
     returnCancelledJobOrderMaterials
 } from "@/app/api/manufacturing/production/job-order-cancellation/_cancellation-service";
+import {
+    computeJobOrderMaterialReturns,
+    fetchJobOrder,
+    returnJobOrderMaterialLeftovers,
+    JobOrderCancellationExecution
+} from "@/app/api/manufacturing/production/_material-return";
+import { materialReturnFingerprint, verifyMaterialReturnToken } from "./material-returns/_token";
 
 async function getUserIdFromSession(): Promise<number | null> {
     try {
@@ -511,7 +518,8 @@ export async function POST(request: Request) {
                 expiry_date,
                 unit_cost,
                 remarks,
-                user_id
+                user_id,
+                materialReturnConfirmation
             } = parsed.data;
 
             const inspQty = inspected_quantity;
@@ -601,6 +609,7 @@ export async function POST(request: Request) {
             let reworkJoIdInt: number | null = null;
             let createdLog: any = null;
             let createdMovement: any = null;
+            let leftoverReturnExecution: JobOrderCancellationExecution | null = null;
             const transactionState = {
                 parentJobOrderId: parentJoIdInt,
                 previousJobOrder: {
@@ -771,7 +780,44 @@ export async function POST(request: Request) {
                     createdLog = persistedLog;
                 }
 
-                // 5. Update Parent Job Order status and completed/rejected quantities.
+                // 5. Return leftover staged material before the Job Order is
+                // completed. QA must confirm the return when leftovers exist.
+                const leftoverOrder = await fetchJobOrder(parentJoIdInt);
+                const leftoverComputed = await computeJobOrderMaterialReturns(leftoverOrder);
+                if (leftoverComputed.reconciliationError) {
+                    return NextResponse.json(
+                        { error: leftoverComputed.reconciliationError, code: "JOB_ORDER_RECONCILIATION_FAILED" },
+                        { status: 409 }
+                    );
+                }
+                if (leftoverComputed.totals.returnableQuantity > 0) {
+                    if (!materialReturnConfirmation?.previewToken) {
+                        return NextResponse.json(
+                            {
+                                error: `Job Order ${leftoverOrder.jobOrderNo} has ${leftoverComputed.totals.returnableQuantity} unit(s) of staged material to return. Open the material return preview and confirm it before signing off.`,
+                                code: "MATERIAL_RETURN_CONFIRMATION_REQUIRED"
+                            },
+                            { status: 409 }
+                        );
+                    }
+                    const leftoverFingerprint = materialReturnFingerprint(leftoverOrder.jobOrderId, leftoverComputed.lines);
+                    const leftoverTokenError = verifyMaterialReturnToken(
+                        materialReturnConfirmation.previewToken,
+                        leftoverOrder.jobOrderId,
+                        leftoverFingerprint
+                    );
+                    if (leftoverTokenError) {
+                        return NextResponse.json({ error: leftoverTokenError, code: "MATERIAL_RETURN_PREVIEW_STALE" }, { status: 409 });
+                    }
+                    leftoverReturnExecution = await returnJobOrderMaterialLeftovers({
+                        joId: leftoverOrder.jobOrderId,
+                        reason: `Two-point QA signoff for ${leftoverOrder.jobOrderNo}`,
+                        actorUserId: userId,
+                        destinations: materialReturnConfirmation.destinations
+                    });
+                }
+
+                // 5b. Update Parent Job Order status and completed/rejected quantities.
                 const oldStatus = assertJobOrderStatus(parentJO.status || JOB_ORDER_STATUS.IN_PROGRESS);
                 const newStatus = JOB_ORDER_STATUS.COMPLETED; // Transitions to Completed on QA inspection signoff.
 
@@ -921,6 +967,13 @@ export async function POST(request: Request) {
                     inventoryLotId: transactionState.inventoryLotId
                 });
             } catch (error) {
+                if (leftoverReturnExecution) {
+                    try {
+                        await leftoverReturnExecution.compensate();
+                    } catch (compensateError) {
+                        console.error("Unable to compensate the leftover material return:", compensateError);
+                    }
+                }
                 const rollbackFailures = await rollbackTwoPointWrites(transactionState);
                 const message = error instanceof Error ? error.message : "Two-point QA persistence failed.";
                 return NextResponse.json({
@@ -1098,6 +1151,26 @@ export async function POST(request: Request) {
                     success: true,
                     message: `Disposition resolved successfully as ${decision}.`
                 });
+            }
+
+            // Pending raw-material returns must be resolved before a hold can
+            // resume; the QA Material Returns panel performs the return.
+            const pendingReturnOrder = await fetchJobOrder(joIdInt);
+            const pendingReturn = await computeJobOrderMaterialReturns(pendingReturnOrder);
+            if (pendingReturn.reconciliationError) {
+                return NextResponse.json(
+                    { error: pendingReturn.reconciliationError, code: "JOB_ORDER_RECONCILIATION_FAILED" },
+                    { status: 409 }
+                );
+            }
+            if (pendingReturn.totals.returnableQuantity > 0) {
+                return NextResponse.json(
+                    {
+                        error: `Job Order ${pendingReturnOrder.jobOrderNo} has ${pendingReturn.totals.returnableQuantity} unit(s) of staged material waiting to be returned. Confirm the material return before resuming this Job Order.`,
+                        code: "MATERIAL_RETURN_CONFIRMATION_REQUIRED"
+                    },
+                    { status: 409 }
+                );
             }
 
             const targetStatus = JOB_ORDER_STATUS.IN_PROGRESS;

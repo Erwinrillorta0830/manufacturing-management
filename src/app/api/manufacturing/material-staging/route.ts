@@ -342,10 +342,12 @@ export async function GET(request: Request) {
             const quantity = Number(movement.quantity || 0);
             const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
             const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
-            const isCanonicalIssue = canonicalTypeName(String((movement as unknown as Record<string, unknown>).transaction_type || "")) === "MATERIAL_STAGING_ISSUE";
+            const canonicalType = canonicalTypeName(String((movement as unknown as Record<string, unknown>).transaction_type || ""));
+            const isCanonicalIssue = canonicalType === "MATERIAL_STAGING_ISSUE";
+            const isCanonicalReversal = canonicalType === "MATERIAL_STAGING_REVERSAL";
             if (
                 (!isStagingMovement && !isReturnMovement) ||
-                (!isCanonicalIssue && Number(movement.transaction_type_id) !== 4) ||
+                (!isCanonicalIssue && !isCanonicalReversal && Number(movement.transaction_type_id) !== 4) ||
                 quantity === 0 ||
                 !productId ||
                 !lotId ||

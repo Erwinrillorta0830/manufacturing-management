@@ -34,7 +34,8 @@ import {
     SelectValue
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { JobOrder, QARejectionReason, TwoPointQAInspectionPayload } from "../types";
+import { JobOrder, QARejectionReason, TwoPointQAInspectionPayload, MaterialReturnPreview } from "../types";
+import { fetchMaterialReturnPreview } from "../services/qa-api";
 import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
@@ -98,6 +99,28 @@ function TwoPointQAFormContent({
     const remainingToInspect = Math.max(0, targetQty - (completed + rejected)) || targetQty;
 
     const joNo = jobOrder.job_order_no || jobOrder.jo_id || "";
+
+    const [returnPreview, setReturnPreview] = useState<MaterialReturnPreview | null>(null);
+    const [returnAcknowledged, setReturnAcknowledged] = useState(false);
+
+    useEffect(() => {
+        const joRef = jobOrder.job_order_id || jobOrder.id || jobOrder.order_id;
+        if (!joRef) return;
+        let cancelled = false;
+        fetchMaterialReturnPreview(joRef as string | number)
+            .then((preview) => {
+                if (!cancelled) setReturnPreview(preview);
+            })
+            .catch(() => {
+                if (!cancelled) setReturnPreview(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [jobOrder.job_order_id, jobOrder.id, jobOrder.order_id]);
+
+    const leftoverReturnable = returnPreview?.totals.returnableQuantity || 0;
+    const hasLeftovers = leftoverReturnable > 0;
 
     const [inspectedQty, setInspectedQty] = useState<string>(String(remainingToInspect));
     const [passedQty, setPassedQty] = useState<string>(String(remainingToInspect));
@@ -246,7 +269,8 @@ function TwoPointQAFormContent({
             manufacturing_date: manufacturingDate || undefined,
             expiry_date: expiryDate || undefined,
             unit_cost: parseFloat(unitCost) || 0,
-            remarks: remarks.trim()
+            remarks: remarks.trim(),
+            ...(hasLeftovers ? { materialReturnConfirmation: { previewToken: returnPreview!.previewToken, acknowledge: true } } : {})
         };
 
         await onSubmitInspection(payload);
@@ -556,7 +580,35 @@ function TwoPointQAFormContent({
                         </div>
                     )}
 
-                    {/* SECTION 5: Inspector Comments */}
+                    {/* SECTION 5: Leftover raw-material return */}
+                    {hasLeftovers && (
+                        <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                            <h4 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                Leftover Raw Material Return
+                            </h4>
+                            <p className="text-[11px] text-muted-foreground">
+                                {leftoverReturnable.toLocaleString(undefined, { maximumFractionDigits: 4 })} unit(s) of staged material will be returned to their lot/batch when this inspection is signed off.
+                            </p>
+                            {returnPreview?.requiresDestination && (
+                                <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                                    The source batch is retired. Use the Raw Material Returns panel to select a destination lot first.
+                                </p>
+                            )}
+                            <label className="flex items-start gap-2 text-[11px] font-semibold text-foreground">
+                                <input
+                                    type="checkbox"
+                                    checked={returnAcknowledged}
+                                    onChange={(event) => setReturnAcknowledged(event.target.checked)}
+                                    disabled={Boolean(returnPreview?.requiresDestination)}
+                                    className="mt-0.5 h-4 w-4 rounded border-border"
+                                />
+                                Confirm the leftover raw-material return as part of this sign-off.
+                            </label>
+                        </div>
+                    )}
+
+                    {/* SECTION 6: Inspector Comments */}
                     <div className="space-y-1.5">
                         <Label htmlFor="qa-remarks" className="text-xs font-semibold flex items-center gap-1">
                             <FileText className="h-3 w-3 text-muted-foreground" />
@@ -584,7 +636,7 @@ function TwoPointQAFormContent({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={actionLoading || numInsp <= 0 || (hasRejections && !rejectionReasonId) || (numPass > 0 && (!selectedMmLotId || !lotNumber.trim()))}
+                            disabled={actionLoading || numInsp <= 0 || (hasRejections && !rejectionReasonId) || (numPass > 0 && (!selectedMmLotId || !lotNumber.trim())) || (hasLeftovers && (!returnAcknowledged || Boolean(returnPreview?.requiresDestination)))}
                             className="min-h-11 text-sm font-bold gap-1.5 shadow-sm"
                         >
                             {actionLoading ? (
