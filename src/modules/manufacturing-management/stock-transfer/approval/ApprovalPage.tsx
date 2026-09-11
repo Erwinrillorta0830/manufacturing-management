@@ -299,12 +299,12 @@ export default function StockTransferApprovalView() {
                                   />
                                 </div>
                               ) : (
-                                <div className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
+                                <div title={productName} className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
                                   {productName.substring(0, 2).toUpperCase()}
                                 </div>
                               )}
                               <div className="flex flex-col min-w-0">
-                                <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                <span title={productName} className="font-semibold text-sm line-clamp-1">{productName}</span>
                                 <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">SKU: {skuCode}</span>
                               </div>
                             </div>

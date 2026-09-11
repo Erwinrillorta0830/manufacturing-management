@@ -41,6 +41,7 @@ export interface StockConversionPayload {
   pricePerUnit: number;
   sourceFactor?: number;
   targetFactor?: number;
+  remarks?: string;
   // Multi-Lot & Multi-Batch Allocations
   sourceInventoryLotId?: number;
   sourceLotId?: number;

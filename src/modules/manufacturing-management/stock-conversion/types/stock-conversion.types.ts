@@ -50,6 +50,7 @@ export interface StockConversionPayload {
   sourceRfidTags?: string[];
   sourceFactor?: number;
   targetFactor?: number;
+  remarks: string;
   // Lot & Batch Tracking
   sourceInventoryLotId?: number;
   sourceLotId?: number;

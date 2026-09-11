@@ -49,6 +49,7 @@ export const stockConversionPayloadSchema = z.object({
   sourceRfidTags: z.array(z.string()).optional(),
   sourceFactor: z.number().optional(),
   targetFactor: z.number().optional(),
+  remarks: z.string().trim().min(1, "Remarks are required"),
   // Lot & Batch Tracking
   sourceInventoryLotId: z.number().optional(),
   sourceLotId: z.number().optional(),

@@ -112,6 +112,7 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
             <th style={{ textAlign: 'center', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Unit</th>
             <th style={{ textAlign: 'center', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Ordered</th>
             <th style={{ textAlign: 'center', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Allocated</th>
+            <th style={{ textAlign: 'center', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Picked</th>
             <th style={{ textAlign: 'center', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Received</th>
             <th style={{ textAlign: 'right', padding: '8px', fontSize: '10px', textTransform: 'uppercase' }}>Total</th>
           </tr>
@@ -163,6 +164,7 @@ export const PrintTemplate = React.forwardRef<HTMLDivElement, PrintTemplateProps
                   <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', verticalAlign: 'top' }}>{unit}</td>
                   <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', verticalAlign: 'top' }}>{formatQuantity(item.ordered_quantity)}</td>
                   <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#d97706', fontWeight: 'bold', verticalAlign: 'top' }}>{formatQuantity(item.allocated_quantity)}</td>
+                  <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold', verticalAlign: 'top' }}>{formatQuantity(item.picked_quantity)}</td>
                   <td style={{ padding: '8px', fontSize: '11px', textAlign: 'center', color: '#059669', fontWeight: 'bold', verticalAlign: 'top' }}>{formatQuantity(item.received_quantity)}</td>
                   <td style={{ padding: '8px', fontSize: '11px', textAlign: 'right', fontWeight: 'bold', verticalAlign: 'top' }}>
                     PHP {rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}

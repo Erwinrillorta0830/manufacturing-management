@@ -208,6 +208,7 @@ export function SummaryPrintPreview({
            unit,
            formatQuantity(item.ordered_quantity),
            formatQuantity(item.allocated_quantity),
+           formatQuantity(item.picked_quantity),
            formatQuantity(item.received_quantity),
            `PHP ${rowTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
          ];
@@ -216,8 +217,8 @@ export function SummaryPrintPreview({
       autoTable(doc, {
         startY: y,
         margin: { left: margin, right: margin },
-        head: [['BRAND', 'PRODUCT NAME', 'UNIT', 'ORDERED', 'ALLOCATED', 'RECEIVED', 'TOTAL']],
-        body: rows.length > 0 ? rows : [['No items found.', '', '', '', '', '', '']],
+        head: [['BRAND', 'PRODUCT NAME', 'UNIT', 'ORDERED', 'ALLOCATED', 'PICKED', 'RECEIVED', 'TOTAL']],
+        body: rows.length > 0 ? rows : [['No items found.', '', '', '', '', '', '', '']],
         foot: [],
         styles: {
           fontSize: 7.5,
@@ -240,7 +241,8 @@ export function SummaryPrintPreview({
           3: { cellWidth: 20, halign: 'center' },
           4: { cellWidth: 20, halign: 'center' },
           5: { cellWidth: 20, halign: 'center' },
-          6: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+          6: { cellWidth: 20, halign: 'center' },
+          7: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
         },
         didParseCell: (data) => {
           if (data.section === 'body') {
@@ -249,6 +251,10 @@ export function SummaryPrintPreview({
               data.cell.styles.fontStyle = 'bold';
             }
             if (data.column.index === 5) {
+              data.cell.styles.textColor = [37, 99, 235];
+              data.cell.styles.fontStyle = 'bold';
+            }
+            if (data.column.index === 6) {
               data.cell.styles.textColor = [5, 150, 105];
               data.cell.styles.fontStyle = 'bold';
             }

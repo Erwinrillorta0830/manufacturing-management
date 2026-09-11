@@ -203,6 +203,7 @@ export default function StockTransferTable({
                             : [];
                           if (batches.length === 0) return null;
                           const label = batches.length > 1 ? `(${batches.length} Batches)` : batches.length === 1 ? `(${batches[0]})` : '';
+                          const allocStrategy = (item.productType || '').toUpperCase() === 'PKG' ? 'FIFO' : 'FEFO';
                           return (
                             <button
                               type="button"
@@ -218,7 +219,7 @@ export default function StockTransferTable({
                                 className="text-[9px] py-0 h-4 px-1.5 font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1 cursor-pointer hover:bg-emerald-500/20 hover:border-emerald-500/50 hover:shadow-sm transition-all"
                               >
                                 <Layers className="w-2.5 h-2.5 text-emerald-600 group-hover/badge:scale-110 transition-transform" />
-                                <span>AUTO — FEFO {label}</span>
+                                <span>AUTO — {allocStrategy} {label}</span>
                               </Badge>
                             </button>
                           );
@@ -353,6 +354,14 @@ export default function StockTransferTable({
           branchId={branchId || 0}
           productId={activeAllocationItem.productId}
           productName={activeAllocationItem.productName}
+          productClassification={
+            (() => {
+              const pt = (activeAllocationItem.productType || '').toUpperCase();
+              if (pt === 'RM') return 'RM';
+              if (pt === 'PKG') return 'PKG';
+              return 'FG';
+            })()
+          }
           requestedQuantity={activeAllocationItem.unitQty || 1}
           uomName={activeAllocationItem.unit || 'units'}
           initialAllocations={

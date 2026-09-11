@@ -183,28 +183,28 @@ export function resolveBranchSalesman(
   branches: BranchRow[],
 ): string | undefined {
   if (!branchId) {
-    console.log('[resolveBranchSalesman:Debug] No branchId provided.');
+    // console.log('[resolveBranchSalesman:Debug] No branchId provided.');
     return undefined;
   }
   const branch = branches.find((b) => b.id.toString() === branchId.toString());
   if (!branch) {
-    console.log(`[resolveBranchSalesman:Debug] Branch with id ${branchId} not found in available branches:`, branches.map(b => ({ id: b.id, name: b.branch_name })));
+    // console.log(`[resolveBranchSalesman:Debug] Branch with id ${branchId} not found in available branches:`, branches.map(b => ({ id: b.id, name: b.branch_name })));
     return undefined;
   }
 
-  console.log(`[resolveBranchSalesman:Debug] Branch found:`, {
-    id: branch.id,
-    branch_name: branch.branch_name,
-    branch_code: branch.branch_code,
-    salesman_name: branch.salesman_name,
-  });
+  // console.log(`[resolveBranchSalesman:Debug] Branch found:`, {
+  //   id: branch.id,
+  //   branch_name: branch.branch_name,
+  //   branch_code: branch.branch_code,
+  //   salesman_name: branch.salesman_name,
+  // });
 
   if (branch.salesman_name && branch.salesman_name.trim()) {
-    console.log(`[resolveBranchSalesman:Debug] Resolved salesman: "${branch.salesman_name.trim()}"`);
+    // console.log(`[resolveBranchSalesman:Debug] Resolved salesman: "${branch.salesman_name.trim()}"`);
     return branch.salesman_name.trim();
   }
 
-  console.log(`[resolveBranchSalesman:Debug] No salesman configured for branch ${branchId}. Returning undefined.`);
+  // console.log(`[resolveBranchSalesman:Debug] No salesman configured for branch ${branchId}. Returning undefined.`);
   return undefined;
 }
 

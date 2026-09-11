@@ -144,6 +144,12 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
   }, []);
 
   const confirmTransfer = useCallback(async () => {
+    if (sourceBranch && targetBranch && sourceBranch === targetBranch) {
+      toast.error('Invalid Branch Selection', {
+        description: 'Source and target branch cannot be the same.',
+      });
+      return;
+    }
     setConfirming(true);
     try {
       const res = await stockTransferLifecycleService.submitTransferRequest({ 
@@ -162,8 +168,18 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
       }
       toast.success('Transfer request submitted successfully!');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Something went wrong';
+      let message = err instanceof Error ? err.message : 'Something went wrong';
       console.error('confirmTransfer error:', err);
+
+      try {
+        const parsed = JSON.parse(message);
+        if (Array.isArray(parsed) && parsed[0]?.message) {
+          message = parsed.map((p: { message?: string }) => p.message).filter(Boolean).join(', ');
+        }
+      } catch {
+        // message is not JSON
+      }
+
       toast.error('Submission failed', { description: message });
     } finally {
       setConfirming(false);

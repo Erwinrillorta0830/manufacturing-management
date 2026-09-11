@@ -114,7 +114,7 @@ export function AttachmentViewerModal({
       const zoomDelta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
       setZoom((prev) => {
         const nextZoom = Math.min(Math.max(prev + zoomDelta, MIN_ZOOM), MAX_ZOOM);
-        console.log(`[AttachmentViewer] 🔍 Wheel Zoom: deltaY=${e.deltaY} -> zoom ${prev}% => ${nextZoom}%`);
+        // console.log(`[AttachmentViewer] 🔍 Wheel Zoom: deltaY=${e.deltaY} -> zoom ${prev}% => ${nextZoom}%`);
         return nextZoom;
       });
     };
@@ -131,7 +131,7 @@ export function AttachmentViewerModal({
     const zoomDelta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
     setZoom((prev) => {
       const nextZoom = Math.min(Math.max(prev + zoomDelta, MIN_ZOOM), MAX_ZOOM);
-      console.log(`[AttachmentViewer] 🔍 React Wheel Zoom: zoom ${prev}% => ${nextZoom}%`);
+      // console.log(`[AttachmentViewer] 🔍 React Wheel Zoom: zoom ${prev}% => ${nextZoom}%`);
       return nextZoom;
     });
   };
@@ -153,7 +153,7 @@ export function AttachmentViewerModal({
       posX: position.x,
       posY: position.y,
     };
-    console.log(`[AttachmentViewer] 🪟 Window Drag Start at [${e.clientX}, ${e.clientY}]`);
+    // console.log(`[AttachmentViewer] 🪟 Window Drag Start at [${e.clientX}, ${e.clientY}]`);
   };
 
   const handleHeaderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -175,7 +175,7 @@ export function AttachmentViewerModal({
       // ignore
     }
     setIsDraggingWindow(false);
-    console.log(`[AttachmentViewer] 🪟 Window Drag End at [${position.x}, ${position.y}]`);
+    // console.log(`[AttachmentViewer] 🪟 Window Drag End at [${position.x}, ${position.y}]`);
   };
 
   // Image Pan Drag Handler (using pointer capture to pan image on spot)
@@ -194,7 +194,7 @@ export function AttachmentViewerModal({
       panX: pan.x,
       panY: pan.y,
     };
-    console.log(`[AttachmentViewer] 🖱️ Image Pan Start at [${e.clientX}, ${e.clientY}], current pan:`, pan);
+    // console.log(`[AttachmentViewer] 🖱️ Image Pan Start at [${e.clientX}, ${e.clientY}], current pan:`, pan);
   };
 
   const handleImagePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -216,7 +216,7 @@ export function AttachmentViewerModal({
       // ignore
     }
     setIsPanning(false);
-    console.log(`[AttachmentViewer] 🛑 Image Pan End at [${pan.x}, ${pan.y}]`);
+    // console.log(`[AttachmentViewer] 🛑 Image Pan End at [${pan.x}, ${pan.y}]`);
   };
 
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -226,7 +226,7 @@ export function AttachmentViewerModal({
   const zoomIn = () => {
     setZoom((z) => {
       const next = Math.min(z + ZOOM_STEP, MAX_ZOOM);
-      console.log(`[AttachmentViewer] 🔍 Zoom In button: ${next}%`);
+      // console.log(`[AttachmentViewer] 🔍 Zoom In button: ${next}%`);
       return next;
     });
   };
@@ -234,7 +234,7 @@ export function AttachmentViewerModal({
   const zoomOut = () => {
     setZoom((z) => {
       const next = Math.max(z - ZOOM_STEP, MIN_ZOOM);
-      console.log(`[AttachmentViewer] 🔍 Zoom Out button: ${next}%`);
+      // console.log(`[AttachmentViewer] 🔍 Zoom Out button: ${next}%`);
       return next;
     });
   };
@@ -593,7 +593,7 @@ export function AttachmentViewerModal({
                 setRotation(0);
                 setPosition({ x: 0, y: 0 });
                 setPan({ x: 0, y: 0 });
-                console.log(`[AttachmentViewer] 🔄 Reset zoom & pan to default`);
+                // console.log(`[AttachmentViewer] 🔄 Reset zoom & pan to default`);
               }}
               title="Reset Zoom & Pan"
               className="h-8 px-2.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors ml-1 cursor-pointer"

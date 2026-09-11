@@ -2,7 +2,6 @@ import { stockConversionRepo, DIRECTUS_API, DIRECTUS_TOKEN } from "./stock-conve
 import { normalizeProductName, generateConversionDocNo } from "./stock-conversion.helpers";
 import type { StockConversionProduct, StockConversionPayload } from "../types/stock-conversion.types";
 import { AppError } from "../utils/error-handler";
-import { allocateStock } from "@/modules/manufacturing-management/shared/services/stock-allocation.engine";
 import { getPhDbTimestamp } from "../utils/date-utils";
 
 interface DirectusProduct {
@@ -44,7 +43,7 @@ export const stockConversionService = {
 
     // 1. Resolve filter IDs first to avoid relational Forbidden joins
     const allOptions = await stockConversionRepo.fetchFilterOptions();
-    console.log(`[Perf] Step 1 - fetchFilterOptions: ${Date.now() - t0}ms`);
+    // console.log(`[Perf] Step 1 - fetchFilterOptions: ${Date.now() - t0}ms`);
 
     const inventoryTypeVal = extraFilters?.inventoryType;
 
@@ -130,7 +129,7 @@ export const stockConversionService = {
           .filter(([, qty]) => (qty as unknown as number) > 0)
           .map(([id]) => Number(id));
 
-        console.log(`[StockConversionService] Convertible only: found ${stockProductIds.length} items with stock in branch ${branchId}`);
+        // console.log(`[StockConversionService] Convertible only: found ${stockProductIds.length} items with stock in branch ${branchId}`);
 
         if (stockProductIds.length > 0) {
           const stockSet = new Set(stockProductIds);
@@ -142,11 +141,11 @@ export const stockConversionService = {
           }
 
           if (filterProductIds.length === 0) {
-            console.log(`[StockConversionService] No matching products after intersecting supplier and stock filters`);
+            // console.log(`[StockConversionService] No matching products after intersecting supplier and stock filters`);
             return { data: [], totalCount: 0, options: allOptions };
           }
         } else {
-          console.log(`[StockConversionService] No products with stock found for branch ${branchId}`);
+          // console.log(`[StockConversionService] No products with stock found for branch ${branchId}`);
           return { data: [], totalCount: 0, options: allOptions };
         }
       } catch (err: unknown) {
@@ -181,7 +180,7 @@ export const stockConversionService = {
     const prodJson = await stockConversionRepo.fetchProducts(fetchLimit, fetchOffset, filterString);
     const products = prodJson.data || [];
     const totalCount = prodJson.meta?.filter_count || 0;
-    console.log(`[Perf] Step 2 - fetchProducts: ${Date.now() - t2}ms (${products.length} products)`);
+    // console.log(`[Perf] Step 2 - fetchProducts: ${Date.now() - t2}ms (${products.length} products)`);
 
     if (products.length === 0) return { data: [], totalCount: 0, options: allOptions };
 
@@ -201,7 +200,7 @@ export const stockConversionService = {
         }
       })()
     ]);
-    console.log(`[Perf] Step 4 - inventory: ${Date.now() - t4}ms`);
+    // console.log(`[Perf] Step 4 - inventory: ${Date.now() - t4}ms`);
 
     // 4.5 Group Enrichment: Fetch all siblings in the same family to ensure unit conversion is possible
     const currentProductIds = products.map((p: DirectusProduct) => Number(p.product_id));
@@ -217,8 +216,8 @@ export const stockConversionService = {
       stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_id", currentParentIds as (number | string)[], "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut"),
       stockConversionRepo.fetchItemsInChunks<DirectusProduct>("products", "product_name", productNamesToFetch, "product_id,product_name,description,parent_id,unit_of_measurement,unit_of_measurement_count,product_code,cost_per_unit,price_per_unit,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut")
     ]);
-    console.log(`[Perf] Step 4.5 - familyEnrichment: ${Date.now() - t5}ms`);
-    console.log(`[Perf] TOTAL so far: ${Date.now() - t0}ms`);
+    // console.log(`[Perf] Step 4.5 - familyEnrichment: ${Date.now() - t5}ms`);
+    // console.log(`[Perf] TOTAL so far: ${Date.now() - t0}ms`);
 
     const familyProducts = [...products, ...familyByParent, ...familyBySelf, ...familyByName];
     const uniqueFamilyProducts = Array.from(new Map(familyProducts.map(p => [Number(p.product_id), p])).values());
@@ -402,7 +401,7 @@ export const stockConversionService = {
     // 9. Manual pagination when hasStock is ON (since we fetched all products above)
     if (hasStock) {
       const finalResultSlice = finalResult.slice(offset, offset + limit);
-      console.log(`[Perf] Step 9 - final mapping+sort+slice: ${Date.now() - t0}ms (TOTAL)`);
+      // console.log(`[Perf] Step 9 - final mapping+sort+slice: ${Date.now() - t0}ms (TOTAL)`);
       return {
         data: finalResultSlice,
         totalCount: finalResult.length,
@@ -410,7 +409,7 @@ export const stockConversionService = {
       };
     }
 
-    console.log(`[Perf] Step 9 - final mapping+sort: ${Date.now() - t0}ms (TOTAL)`);
+    // console.log(`[Perf] Step 9 - final mapping+sort: ${Date.now() - t0}ms (TOTAL)`);
 
     return { 
       data: finalResult, 
@@ -513,44 +512,6 @@ export const stockConversionService = {
       }
     }
 
-    // Resolve FEFO source batch allocation for batch genealogy
-    let sourceBatchDesc = payload.sourceBatchNo || "";
-    if (!sourceBatchDesc) {
-      try {
-        const fefoPlan = await allocateStock({
-          productId: payload.productId,
-          branchId: payload.branchId,
-          requestedQuantity: payload.quantityToConvert,
-        });
-        if (fefoPlan.allocations.length > 0) {
-          sourceBatchDesc = fefoPlan.allocations.map(a => `${a.batch_no} (qty: ${a.allocated_quantity})`).join(", ");
-        }
-      } catch (err) {
-        console.warn("[StockConversion] FEFO allocation lookup warning:", err);
-      }
-    }
-
-    // Resolve product descriptions for source and target
-    let sourceProdDesc = `Product #${payload.productId}`;
-    let targetProdDesc = `Product #${targetProductId}`;
-    try {
-      const prodRes = await fetch(
-        `${DIRECTUS_API}/items/products?filter={"product_id":{"_in":[${payload.productId},${targetProductId}]}}&fields=product_id,product_name,description&limit=2`,
-        { headers: { ...(DIRECTUS_TOKEN ? { Authorization: `Bearer ${DIRECTUS_TOKEN}` } : {}) }, cache: "no-store" }
-      ).catch(() => null);
-      if (prodRes && prodRes.ok) {
-        const pJson = await prodRes.json();
-        const pList: DirectusProduct[] = pJson.data || [];
-        const sP = pList.find(p => Number(p.product_id || p.id) === payload.productId);
-        const tP = pList.find(p => Number(p.product_id || p.id) === targetProductId);
-        if (sP) sourceProdDesc = sP.description || sP.product_name || sourceProdDesc;
-        if (tP) targetProdDesc = tP.description || tP.product_name || targetProdDesc;
-      }
-    } catch (err) {
-      console.warn("[StockConversion] Product description lookup error:", err);
-    }
-
-    const remarkStr = `Conversion: ${payload.quantityToConvert} source units (${sourceProdDesc}) to ${payload.convertedQuantity} target units (${targetProdDesc})${sourceBatchDesc ? ` [Source FEFO: ${sourceBatchDesc}]` : ''}`;
     const totalAmount = Number((payload.quantityToConvert * payload.pricePerUnit).toFixed(2));
 
     try {
@@ -564,7 +525,7 @@ export const stockConversionService = {
         updated_by: payload.userId,
         posted_by: payload.userId, 
         amount: totalAmount, 
-        remarks: remarkStr,
+        remarks: payload.remarks.trim(),
         isPosted: true,
         postedAt: nowPHT,
         posted_at: nowPHT,
@@ -644,7 +605,7 @@ export const stockConversionService = {
             updated_at: nowPHT,
             date_created: nowPHT,
             date_updated: nowPHT,
-            remarks: remarkStr
+            remarks: `Stock Conversion OUT: ${payload.remarks.trim()}`
           });
           if (!outId) outId = outRes.data?.id;
         }
@@ -700,7 +661,7 @@ export const stockConversionService = {
           updated_at: nowPHT,
           date_created: nowPHT,
           date_updated: nowPHT,
-          remarks: remarkStr
+          remarks: `Stock Conversion OUT: ${payload.remarks.trim()}`
         });
         outId = outRes.data?.id;
       }
@@ -782,7 +743,7 @@ export const stockConversionService = {
               status: "ACTIVE",
               source_type: "STOCK_CONVERSION",
               source_reference: docNo,
-              remarks: `Converted from ${sourceProdDesc} (${sourceBatchDesc || payload.sourceBatchNo || "Batch N/A"})`,
+              remarks: payload.remarks.trim(),
               created_by: payload.userId || 1,
               updated_by: payload.userId || 1,
               created_at: nowPHT,
@@ -799,7 +760,7 @@ export const stockConversionService = {
               const createJson = await createRes.json();
               const createdId = createJson.data?.inventory_lot_id || createJson.data?.id;
               targetInventoryLotId = Number(createdId);
-              console.log(`[StockConversion] Created new target inventory lot: ${tBatch.batchNo} (ID: ${createdId})`);
+              // console.log(`[StockConversion] Created new target inventory lot: ${tBatch.batchNo} (ID: ${createdId})`);
             } else {
               const errTxt = await createRes?.text().catch(() => "");
               console.warn(`[StockConversion] Failed to create target inventory lot:`, errTxt);
@@ -847,7 +808,7 @@ export const stockConversionService = {
           updated_at: nowPHT,
           date_created: nowPHT,
           date_updated: nowPHT,
-          remarks: remarkStr
+          remarks: `Stock Conversion IN: ${payload.remarks.trim()}`
         });
         if (!inId) inId = inRes?.data?.id;
       }

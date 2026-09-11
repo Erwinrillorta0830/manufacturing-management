@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ZodError } from "zod";
 import { 
   getEnrichedTransfers, 
   getEnrichedProducts, 
@@ -128,7 +129,12 @@ export async function POST(request: NextRequest) {
     const result = await createTransfer(body, userId);
     return NextResponse.json(result, { status: 201 });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    let message = "Unknown error";
+    if (error instanceof ZodError) {
+      message = error.issues.map((i) => i.message).filter(Boolean).join(", ") || error.message;
+    } else if (error instanceof Error) {
+      message = error.message;
+    }
     console.error("[Stock Transfer API POST Error]:", error);
     return NextResponse.json({ error: message }, { status: 400 });
   }

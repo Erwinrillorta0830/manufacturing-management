@@ -47,6 +47,7 @@ export interface StockAllocationModalProps {
   onOpenChange: (open: boolean) => void;
   productId: number;
   productName?: string;
+  productClassification?: 'RM' | 'PKG' | 'FG';
   branchId: number;
   targetBranchId?: number | null;
   targetBranchName?: string;
@@ -62,6 +63,7 @@ export function StockAllocationModal({
   onOpenChange,
   productId,
   productName,
+  productClassification,
   branchId,
   targetBranchName,
   isTargetBadStock,
@@ -70,9 +72,11 @@ export function StockAllocationModal({
   initialAllocations,
   onConfirm,
 }: StockAllocationModalProps) {
+  // PKG uses FIFO (receipt/inward date); RM & FG use FEFO (nearest expiry first)
+  const defaultStrategy: AllocationStrategy = productClassification === 'PKG' ? 'FIFO' : 'FEFO';
   const [loading, setLoading] = useState(false);
   const [batches, setBatches] = useState<MMInventoryLot[]>([]);
-  const [strategy, setStrategy] = useState<AllocationStrategy>('FEFO');
+  const [strategy, setStrategy] = useState<AllocationStrategy>(defaultStrategy);
   const [allowExpiredOverride, setAllowExpiredOverride] = useState(false);
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
   const [isManualMode, setIsManualMode] = useState(false);
@@ -243,14 +247,16 @@ export function StockAllocationModal({
               setIsManualMode(true);
               setStrategy('MANUAL');
             } else {
-              setIsManualMode(false);
+              // Do not auto-fill on initial load
+              setIsManualMode(true);
               setManualAllocations({});
-              setStrategy('FEFO');
+              setStrategy(defaultStrategy);
             }
           } else {
-            setIsManualMode(false);
+            // Do not auto-fill on initial load
+            setIsManualMode(true);
             setManualAllocations({});
-            setStrategy('FEFO');
+            setStrategy(defaultStrategy);
           }
         }
       } catch (err) {
@@ -265,7 +271,7 @@ export function StockAllocationModal({
     return () => {
       isMounted = false;
     };
-  }, [open, productId, branchId, productName, initialAllocations]);
+  }, [open, productId, branchId, productName, initialAllocations, defaultStrategy]);
 
   // Calculate automatic plan based on strategy
   const autoPlan = useMemo(() => {
@@ -357,30 +363,51 @@ export function StockAllocationModal({
   }, [autoPlan, isManualMode, manualAllocations, batches, productId, productName, branchId, requestedQuantity, strategy]);
 
   const handleManualQtyChange = (inventoryLotId: number, maxAvailable: number, val: string) => {
-    const num = val === '' ? 0 : Number(val);
+    if (val === '') {
+      setIsManualMode(true);
+      setManualAllocations((prev) => ({
+        ...prev,
+        [inventoryLotId]: 0,
+      }));
+      return;
+    }
+    const num = Number(val);
     if (isNaN(num)) return;
     const clamped = Math.max(0, Math.min(maxAvailable, num));
 
     setIsManualMode(true);
-    setManualAllocations((prev) => {
-      const base = !isManualMode && autoPlan
-        ? autoPlan.allocations.reduce<Record<number, number>>((acc, a) => {
-            acc[a.inventory_lot_id] = a.allocated_quantity;
-            return acc;
-          }, {})
-        : { ...prev };
-
-      return {
-        ...base,
-        [inventoryLotId]: clamped,
-      };
-    });
+    setManualAllocations((prev) => ({
+      ...prev,
+      [inventoryLotId]: clamped,
+    }));
   };
 
-  const handleResetToAutoFEFO = () => {
-    setIsManualMode(false);
-    setStrategy('FEFO');
+  const handleRunAutoAllocation = () => {
+    if (!batches.length) return;
+    const plan = allocateStockSync(batches, requestedQuantity, {
+      strategy: defaultStrategy,
+      includeExpired: allowExpiredOverride,
+      includeNonGoodQA: true,
+    });
+    if (plan && plan.allocations.length > 0) {
+      const allocMap: Record<number, number> = {};
+      plan.allocations.forEach((a) => {
+        allocMap[a.inventory_lot_id] = a.allocated_quantity;
+      });
+      setManualAllocations(allocMap);
+      setIsManualMode(true);
+      setStrategy(defaultStrategy);
+    }
+  };
+
+  const handleClearAllocations = () => {
     setManualAllocations({});
+    setIsManualMode(true);
+    setStrategy(defaultStrategy);
+  };
+
+  const handleResetToAuto = () => {
+    handleRunAutoAllocation();
   };
 
   const handleConfirm = () => {
@@ -424,15 +451,22 @@ export function StockAllocationModal({
                 Stock Allocation Engine
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                {productName ? `${productName} — ` : ''}Allocates inventory according to expiration priority.
+                {productName ? `${productName} — ` : ''}
+                {defaultStrategy === 'FIFO'
+                  ? 'Allocates packaging inventory according to inward/receipt date priority (FIFO).'
+                  : 'Allocates inventory according to expiration priority (FEFO).'}
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2">
               <Badge
-                variant={isManualMode ? 'secondary' : 'default'}
+                variant={currentPlan.totalAllocated > 0 ? (isManualMode && strategy === 'MANUAL' ? 'secondary' : 'default') : 'outline'}
                 className="text-xs font-mono px-2.5 py-0.5"
               >
-                {isManualMode ? 'MANUAL OVERRIDE' : `AUTO — ${strategy}`}
+                {currentPlan.totalAllocated === 0
+                  ? `PENDING ALLOCATION (${defaultStrategy})`
+                  : strategy === 'MANUAL'
+                  ? 'MANUAL OVERRIDE'
+                  : `AUTO — ${strategy}`}
               </Badge>
             </div>
           </div>
@@ -441,7 +475,7 @@ export function StockAllocationModal({
         {loading ? (
           <div className="flex flex-col items-center justify-center p-12 gap-3">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            <p className="text-sm text-muted-foreground">Analyzing batch inventory & FEFO order...</p>
+            <p className="text-sm text-muted-foreground">Analyzing batch inventory &amp; {defaultStrategy} order...</p>
           </div>
         ) : (
           <div className="p-6 space-y-5">
@@ -539,7 +573,7 @@ export function StockAllocationModal({
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={handleResetToAutoFEFO}
+                  onClick={handleResetToAuto}
                   className="h-7 text-xs text-primary hover:text-primary gap-1 shrink-0"
                 >
                   <RotateCcw className="w-3 h-3" /> Reset to Exact
@@ -547,8 +581,33 @@ export function StockAllocationModal({
               </div>
             )}
 
+            {/* Empty Allocation Initial Banner */}
+            {currentPlan.totalAllocated === 0 && (
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-3.5 flex items-center justify-between gap-3 animate-in fade-in">
+                <div className="flex items-center gap-2.5">
+                  <Info className="w-4 h-4 text-primary shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">
+                      No Batches Allocated Yet
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Click <strong className="text-primary">&quot;Allocate Source Batch and Lot ({defaultStrategy})&quot;</strong> to run {defaultStrategy} allocation, or enter quantities per batch below.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleRunAutoAllocation}
+                  className="h-8 text-xs font-bold gap-1.5 shrink-0 shadow-xs"
+                >
+                  <Layers className="w-3.5 h-3.5" /> Allocate Source Batch and Lot ({defaultStrategy})
+                </Button>
+              </div>
+            )}
+
             {/* Manual Mode Banner */}
-            {isManualMode && currentPlan.totalAllocated <= requestedQuantity && (
+            {isManualMode && currentPlan.totalAllocated > 0 && currentPlan.totalAllocated <= requestedQuantity && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-start justify-between gap-3 animate-in fade-in">
                 <div className="flex items-start gap-2">
                   <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -557,28 +616,41 @@ export function StockAllocationModal({
                       Manual Allocation Active
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      You are manually specifying quantities per batch instead of the FEFO recommendation.
+                      You are manually specifying quantities per batch instead of the {defaultStrategy} recommendation.
                     </p>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={handleResetToAutoFEFO}
-                  className="h-7 text-xs text-primary hover:text-primary gap-1"
-                >
-                  <RotateCcw className="w-3 h-3" /> Reset to FEFO
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleClearAllocations}
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                  >
+                    Clear
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleResetToAuto}
+                    className="h-7 text-xs text-primary hover:text-primary gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Reset to {defaultStrategy}
+                  </Button>
+                </div>
               </div>
             )}
 
             {/* Batch Allocation List */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-primary" /> Eligible Batches ({displayBatches.length})
-                </Label>
+                <div className="flex items-center gap-2.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-primary" /> Eligible Batches ({displayBatches.length})
+                  </Label>
+                </div>
                 <label className="text-[11px] text-muted-foreground flex items-center gap-1.5 cursor-pointer hover:text-foreground">
                   <input
                     type="checkbox"
@@ -696,6 +768,15 @@ export function StockAllocationModal({
                                       e.target.value
                                     )
                                   }
+                                  onBlur={(e) => {
+                                    if (e.target.value === '' || isNaN(Number(e.target.value))) {
+                                      handleManualQtyChange(
+                                        batch.inventory_lot_id,
+                                        batch.available_quantity,
+                                        '0'
+                                      );
+                                    }
+                                  }}
                                   className={`w-24 h-8 text-xs font-bold text-right ${
                                     isAllocated
                                       ? 'border-primary text-primary focus-visible:ring-primary'
@@ -774,7 +855,7 @@ export function StockAllocationModal({
             <Button
               size="sm"
               onClick={handleConfirm}
-              disabled={loading}
+              disabled={loading || currentPlan.totalAllocated <= 0}
               className="text-xs gap-1.5"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
