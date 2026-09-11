@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { GitCompareArrows } from "lucide-react";
 import type { IncomingShipment, ShipmentLineItem } from "../../procurement/types";
-import type { PurchaseOrderApprovalDetail, PurchaseOrderApprovalHistory, PurchaseOrderApprovalReferenceLabel } from "../../purchase-order/types";
+import type { PurchaseOrderApprovalDetail, PurchaseOrderApprovalReferenceLabel } from "../../purchase-order/types";
 import { parsePurchaseOrderRevisionSnapshot, type RevisionSnapshotRecord } from "../../purchase-order/revision-snapshot";
+import { ProcurementStatusBadge } from "../../shared/components/ProcurementStatusBadge";
 
 interface RevisionSnapshotComparisonProps {
     detail: PurchaseOrderApprovalDetail;
@@ -229,12 +230,6 @@ function lineSummary(line: ComparisonLine | null, currency: string): string {
     return `${line.quantity || "0"} qty | ${money(line.unitPriceForeign || line.unitPricePhp, currency)} | ${line.discountMode}`;
 }
 
-function SnapshotStatus({ entry }: { entry: PurchaseOrderApprovalHistory }) {
-    return entry.revision_snapshot
-        ? <span className="rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">Snapshot available</span>
-        : <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">Legacy revision</span>;
-}
-
 export default function RevisionSnapshotComparison({ detail, selectedShipment, currentLines }: RevisionSnapshotComparisonProps) {
     const resubmissions = useMemo(
         () => detail.history.filter(entry => entry.action === "Resubmitted"),
@@ -284,14 +279,14 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
             {snapshot && selectedEntry ? (
                 <>
                     <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-                        <SnapshotStatus entry={selectedEntry} />
+                        <ProcurementStatusBadge status={selectedEntry.revision_snapshot ? "Snapshot available" : "Legacy revision"} tone={selectedEntry.revision_snapshot ? "success" : "warning"} />
                         <span>Captured {new Date(snapshot.capturedAt).toLocaleString("en-PH")}</span>
                         <span>Workflow version {snapshot.revisionBefore} to current version {detail.order.workflow_revision || 0}</span>
                     </div>
 
-                    <div className="overflow-x-auto rounded-md border bg-background">
-                        <table className="w-full min-w-[680px] text-xs">
-                            <thead className="border-b bg-muted/50 text-left text-[10px] uppercase text-muted-foreground">
+                    <div className="overflow-x-auto">
+                        <table className="data-grid w-full min-w-[680px] text-xs">
+                            <thead>
                                 <tr><th className="p-2">Header field</th><th className="p-2">Prior version</th><th className="p-2">Current version</th></tr>
                             </thead>
                             <tbody className="divide-y">
@@ -305,10 +300,10 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                                         ? comparableReferenceValue(priorRawValue) !== comparableReferenceValue(currentRawValue)
                                         : priorValue !== currentValue;
                                     return (
-                                        <tr key={field.key} className={changed ? "bg-amber-50/60" : ""}>
+                                        <tr key={field.key} className={changed ? "bg-warning/5" : ""}>
                                             <th className="p-2 text-left font-semibold text-muted-foreground">{field.label}</th>
                                             <td className="max-w-[280px] whitespace-pre-wrap p-2 align-top">{priorValue}</td>
-                                            <td className="max-w-[280px] whitespace-pre-wrap p-2 align-top">{currentValue}{changed && <span className="ml-1 text-[9px] font-bold uppercase text-amber-700">Changed</span>}</td>
+                                            <td className="max-w-[280px] whitespace-pre-wrap p-2 align-top">{currentValue}{changed && <span className="ml-1 text-[9px] font-bold uppercase text-warning">Changed</span>}</td>
                                         </tr>
                                     );
                                 })}
@@ -325,21 +320,16 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                                 {lineDiffs.map((difference, index) => {
                                     const line = difference.current || difference.prior;
                                     if (!line) return null;
-                                    const badgeClass = difference.status === "Added"
-                                        ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                                        : difference.status === "Removed"
-                                            ? "border-red-300 bg-red-50 text-red-700"
-                                            : "border-amber-300 bg-amber-50 text-amber-700";
                                     return (
                                         <div key={`${difference.status}-${line.identity}-${index}`} className="rounded-md border bg-background p-2 text-xs">
                                             <div className="flex flex-wrap items-center justify-between gap-2">
                                                 <span className="font-semibold">{line.productLabel} <span className="font-normal text-muted-foreground">(Product #{line.productId || "?"})</span></span>
-                                                <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${badgeClass}`}>{difference.status}</span>
+                                                <ProcurementStatusBadge status={difference.status} />
                                             </div>
                                             <div className="mt-1 text-[11px] text-muted-foreground">
                                                 Prior: {lineSummary(difference.prior, currency)} | Current: {lineSummary(difference.current, currency)}
                                             </div>
-                                            {difference.changes.length > 0 && <div className="mt-1 text-[10px] text-amber-700">{difference.changes.join("; ")}</div>}
+                                            {difference.changes.length > 0 && <div className="mt-1 text-[10px] text-warning">{difference.changes.join("; ")}</div>}
                                         </div>
                                     );
                                 })}
@@ -348,7 +338,7 @@ export default function RevisionSnapshotComparison({ detail, selectedShipment, c
                     </div>
                 </>
             ) : (
-                <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Snapshot unavailable for legacy revision.</p>
+                <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-warning">Snapshot unavailable for legacy revision.</p>
             )}
         </section>
     );

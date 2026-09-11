@@ -5,10 +5,11 @@ import { ShipmentListSidebar } from "./incoming-shipments/ShipmentListSidebar";
 import { ShipmentDetailView } from "./incoming-shipments/ShipmentDetailView";
 import { ShipmentFormModal } from "./incoming-shipments/ShipmentFormModal";
 import { useIncomingShipmentsForm } from "../hooks/useIncomingShipmentsForm";
-import { Globe, MapPin, Building2 } from "lucide-react";
+import { Anchor, Building2, Globe, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { downloadPurchaseOrderPrintable } from "../../purchase-order/services/purchase-order-print-api";
 import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
+import { ModulePageHeader } from "../../shared/components/ModulePageHeader";
 
 export type { ManifestLineFormItem, ShipmentFormState, IncomingShipmentsProps } from "./incoming-shipments/types";
 
@@ -275,6 +276,15 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
 
     return (
         <div className={`flex w-full min-h-0 min-w-0 gap-6 ${isQueueMode || isDetailMode || isCreateMode ? "flex-col h-full" : "flex-col lg:flex-row h-full"}`}>
+            {isQueueMode && (
+                <ModulePageHeader
+                    icon={Anchor}
+                    eyebrow="Procurement & Inbound"
+                    title="Incoming Purchase Shipments"
+                    description="Create purchase orders, monitor Finance approval, and track receipts through warehouse and QA receiving."
+                    className="mx-auto w-full max-w-[1600px]"
+                />
+            )}
             {(displayMode === "split" || isQueueMode) && (
                 <ShipmentListSidebar
                     totalItems={totalItems}

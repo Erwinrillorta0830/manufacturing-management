@@ -1,39 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Boxes, History, RefreshCw, RotateCcw, ShieldAlert } from "lucide-react";
+import { Boxes, History, RotateCcw, ShieldAlert } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { useQAReceiving } from "./hooks/useQAReceiving";
 import InboundShipmentsList from "./components/InboundShipmentsList";
 import ShipmentInspectionForm from "./components/ShipmentInspectionForm";
 import FIFOInventoryList from "./components/FIFOInventoryList";
 import MovementPayloadModal from "./components/MovementPayloadModal";
 import QuarantineDispositions from "./components/QuarantineDispositions";
+import { ModulePageHeader } from "../shared/components/ModulePageHeader";
+import { ModuleStatePanel } from "../shared/components/ModuleStatePanel";
 import type { QuarantineDisposition, Shipment } from "./types";
-
-function DetailLoadingSkeleton() {
-    return (
-        <div className="space-y-5 rounded-xl border bg-card p-4" role="status" aria-label="Loading purchase order details">
-            <span className="sr-only">Loading purchase order details...</span>
-            <div className="grid gap-3 sm:grid-cols-2" aria-hidden="true">
-                <div className="h-10 animate-pulse rounded-lg bg-muted" />
-                <div className="h-10 animate-pulse rounded-lg bg-muted" />
-            </div>
-            <div className="space-y-3" aria-hidden="true">
-                <div className="h-4 w-48 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-72 max-w-full animate-pulse rounded bg-muted" />
-            </div>
-            <div className="grid gap-3 md:grid-cols-3" aria-hidden="true">
-                {Array.from({ length: 6 }, (_, index) => <div key={`detail-skeleton-${index}`} className="h-16 animate-pulse rounded-lg border bg-muted/60" />)}
-            </div>
-            <div className="space-y-3 rounded-lg border p-4" aria-hidden="true">
-                <div className="h-4 w-40 animate-pulse rounded bg-muted" />
-                <div className="h-10 w-full animate-pulse rounded bg-muted" />
-                <div className="h-24 w-full animate-pulse rounded bg-muted" />
-            </div>
-        </div>
-    );
-}
 
 type QAReceivingModuleProps = {
     mode?: "queue" | "detail";
@@ -214,52 +193,30 @@ export default function QAReceivingModule({
 
     if (isDetailMode) {
         return (
-            <div className="space-y-4">
-                <div className="flex flex-col gap-3 rounded-xl border bg-muted/10 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                        <button
-                            type="button"
-                            onClick={backToQueue}
-                            className="mb-2 inline-flex min-h-10 items-center gap-2 rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-                        >
-                            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                            Back to Inbound QA Queue
-                        </button>
-                        <h2 className="truncate text-sm font-extrabold text-foreground">
-                            {selectedShipment ? `Cargo Manifest Inspection: ${selectedShipment.reference_number}` : `Purchase Order ${shipmentId ?? ""}`}
-                        </h2>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                            Review one purchase order at a time without keeping the inspection queue open beside the worksheet.
-                        </p>
-                    </div>
-                </div>
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+                <ModulePageHeader
+                    icon={ShieldAlert}
+                    eyebrow="Quality Assurance"
+                    title={selectedShipment ? `Cargo Manifest Inspection: ${selectedShipment.reference_number}` : `Purchase Order ${shipmentId ?? ""}`}
+                    description="Review one purchase order at a time without keeping the inspection queue open beside the worksheet."
+                    onBack={backToQueue}
+                    backLabel="Back to Inbound QA Queue"
+                    titleClassName="truncate text-xl"
+                />
 
                 {detailLoading && (
-                    <DetailLoadingSkeleton />
+                    <ModuleStatePanel state="loading" title="Loading purchase order details..." skeletonRows={3} className="rounded-xl border bg-card" />
                 )}
 
                 {!detailLoading && detailError && (
-                    <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-center">
-                        <p className="text-sm font-bold text-red-700">Unable to open this QA receiving record</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{detailError}</p>
-                        <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
-                            <button
-                                type="button"
-                                onClick={retryDetail}
-                                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-4 text-xs font-bold text-primary-foreground hover:bg-primary/90"
-                            >
-                                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                                Retry
-                            </button>
-                            <button
-                                type="button"
-                                onClick={backToQueue}
-                                className="inline-flex min-h-10 items-center justify-center rounded-lg border px-4 text-xs font-bold text-foreground hover:bg-muted"
-                            >
-                                Return to Queue
-                            </button>
-                        </div>
-                    </div>
+                    <ModuleStatePanel
+                        state="error"
+                        title="Unable to open this QA receiving record"
+                        description={detailError}
+                        onRetry={() => void retryDetail()}
+                        action={<Button variant="outline" onClick={backToQueue}>Return to Queue</Button>}
+                        className="rounded-xl border border-destructive/20 bg-destructive/5"
+                    />
                 )}
 
                 {!detailLoading && !detailError && renderInspectionForm()}
@@ -281,49 +238,56 @@ export default function QAReceivingModule({
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col items-start justify-between gap-4 rounded-xl border bg-muted/10 p-5 sm:flex-row sm:items-center">
-                <div className="space-y-1">
-                    <h2 className="flex items-center gap-1.5 text-sm font-extrabold text-foreground">
-                        <ShieldAlert className="h-4.5 w-4.5 animate-pulse text-primary" />
-                        Quality Assurance & Receiving Command Center
-                    </h2>
-                    <p className="text-[11px] text-muted-foreground">
-                        Inspect incoming cargo, record batches, verify raw material expiration lists, and enforce FIFO tracking per branch.
-                    </p>
-                </div>
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+            <ModulePageHeader
+                icon={ShieldAlert}
+                eyebrow="Quality Assurance"
+                title="Quality Assurance (QA) Receiving"
+                description="Inspect incoming cargo, record batches, verify raw material expiration lists, and enforce FIFO tracking per branch."
+            />
 
-                <div className="flex max-w-full flex-wrap gap-2 rounded-lg border bg-background p-1">
-                    <button
-                        onClick={() => setActiveTab("inbound")}
-                        className={`min-h-10 rounded-md px-3.5 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === "inbound" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-muted"}`}
-                    >
-                        <Boxes className="h-3.5 w-3.5" />
-                        Inbound QA Queue
-                        <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[9px] font-extrabold text-foreground">{filteredShipments.length}</span>
-                    </button>
-                    <button
-                        onClick={() => {
-                            setActiveTab("fifo");
-                            if (fifoBranchId) handleLoadFifoInventory(fifoBranchId);
-                        }}
-                        className={`min-h-10 rounded-md px-3.5 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === "fifo" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-muted"}`}
-                    >
-                        <History className="h-3.5 w-3.5" />
-                        FIFO Inventory Reading
-                    </button>
-                    <button
-                        onClick={() => {
-                            setActiveTab("quarantine");
-                            void loadQuarantine();
-                        }}
-                        className={`min-h-10 rounded-md px-3.5 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === "quarantine" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-muted"}`}
-                    >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Quarantine
-                        <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[9px] font-extrabold text-foreground">{quarantineStock.length}</span>
-                    </button>
-                </div>
+            <div className="flex max-w-full flex-wrap gap-1 rounded-xl border bg-muted/60 p-1" role="tablist" aria-label="QA receiving views">
+                <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTab === "inbound" ? "default" : "ghost"}
+                    onClick={() => setActiveTab("inbound")}
+                    aria-pressed={activeTab === "inbound"}
+                    className={activeTab === "inbound" ? "" : "text-muted-foreground"}
+                >
+                    <Boxes className="h-3.5 w-3.5" />
+                    Inbound QA Queue
+                    <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[9px] font-extrabold text-foreground">{filteredShipments.length}</span>
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTab === "fifo" ? "default" : "ghost"}
+                    onClick={() => {
+                        setActiveTab("fifo");
+                        if (fifoBranchId) handleLoadFifoInventory(fifoBranchId);
+                    }}
+                    aria-pressed={activeTab === "fifo"}
+                    className={activeTab === "fifo" ? "" : "text-muted-foreground"}
+                >
+                    <History className="h-3.5 w-3.5" />
+                    FIFO Inventory Reading
+                </Button>
+                <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTab === "quarantine" ? "default" : "ghost"}
+                    onClick={() => {
+                        setActiveTab("quarantine");
+                        void loadQuarantine();
+                    }}
+                    aria-pressed={activeTab === "quarantine"}
+                    className={activeTab === "quarantine" ? "" : "text-muted-foreground"}
+                >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Quarantine
+                    <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[9px] font-extrabold text-foreground">{quarantineStock.length}</span>
+                </Button>
             </div>
 
             {activeTab === "inbound" && (

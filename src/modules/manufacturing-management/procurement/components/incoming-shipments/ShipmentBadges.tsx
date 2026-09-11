@@ -9,6 +9,7 @@ import {
     inventoryStatusToShipmentStatus,
     isInventoryStatusId
 } from "@/app/api/manufacturing/procurement/_domain";
+import { ProcurementStatusBadge } from "../../../shared/components/ProcurementStatusBadge";
 
 export function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = CURRENCY_DECIMAL_SCALE) {
     const symbol = currency === "USD" ? "$" : currency === "PHP" ? "₱" : `${currency} `;
@@ -30,9 +31,9 @@ export function formatAmount(value: number | string | null | undefined) {
 export function MaterialTypeBadge({ typeId, short = false }: { typeId?: number | string | null; short?: boolean }) {
     const normalizedTypeId = Number(typeId);
     const type = normalizedTypeId === 389
-        ? { label: "Raw Material", shortLabel: "RM", className: "bg-blue-500/10 text-blue-600 border-blue-500/20" }
+        ? { label: "Raw Material", shortLabel: "RM", className: "bg-info/10 text-info border-info/20" }
         : normalizedTypeId === 390
-            ? { label: "Packaging Item", shortLabel: "PKG", className: "bg-amber-500/10 text-amber-600 border-amber-500/20" }
+            ? { label: "Packaging Item", shortLabel: "PKG", className: "bg-warning/10 text-warning border-warning/20" }
             : { label: "Unclassified", shortLabel: "N/A", className: "bg-muted text-muted-foreground border-border" };
 
     return (
@@ -62,70 +63,26 @@ export function displayShipmentStatus(
 export function getStatusBadge(status: string) {
     switch (status) {
         case "Received":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 uppercase tracking-wider">
-                    <CheckCircle2 className="h-3 w-3" /> Received
-                </span>
-            );
+            return <ProcurementStatusBadge status="Received" icon={CheckCircle2} />;
         case "Partially Received":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase tracking-wider">
-                    <RefreshCw className="h-3 w-3 animate-spin" /> Partially Received
-                </span>
-            );
+            return <ProcurementStatusBadge status="Partially Received" icon={RefreshCw} />;
         case "Receiving (QA)":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 uppercase tracking-wider">
-                    <ShieldCheck className="h-3 w-3" /> QA Receiving
-                </span>
-            );
+            return <ProcurementStatusBadge status="Receiving (QA)" icon={ShieldCheck} />;
         case "Approved":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-500/10 text-teal-600 border border-teal-500/20 uppercase tracking-wider">
-                    <CheckCircle2 className="h-3 w-3" /> Approved
-                </span>
-            );
+            return <ProcurementStatusBadge status="Approved" icon={CheckCircle2} />;
         case "Warehouse Receiving":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-cyan-500/10 text-cyan-700 border border-cyan-500/20 uppercase tracking-wider">
-                    <PackageCheck className="h-3 w-3" /> Warehouse Receiving
-                </span>
-            );
+            return <ProcurementStatusBadge status="Warehouse Receiving" icon={PackageCheck} />;
         case "Awaiting Payment":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/10 text-purple-600 border border-purple-500/20 uppercase tracking-wider">
-                    <Landmark className="h-3 w-3" /> Awaiting Payment
-                </span>
-            );
+            return <ProcurementStatusBadge status="Awaiting Payment" icon={Landmark} />;
         case "For Pickup":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
-                    <Anchor className="h-3 w-3" /> QA Receiving
-                </span>
-            );
+            return <ProcurementStatusBadge status="Receiving (QA)" icon={Anchor} />;
         case "Rejected":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-500/10 text-red-600 border border-red-500/20 uppercase tracking-wider">
-                    <AlertCircle className="h-3 w-3" /> Rejected
-                </span>
-            );
+            return <ProcurementStatusBadge status="Rejected" icon={AlertCircle} />;
         case "Cancelled":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-muted text-muted-foreground border border-border uppercase tracking-wider">
-                    <X className="h-3 w-3" /> Cancelled
-                </span>
-            );
+            return <ProcurementStatusBadge status="Cancelled" icon={X} />;
         case "For Approval":
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
-                    <RefreshCw className="h-3 w-3" /> For Approval
-                </span>
-            );
+            return <ProcurementStatusBadge status="For Approval" icon={RefreshCw} />;
         default:
-            return (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase tracking-wider">
-                    <RefreshCw className="h-3 w-3" /> Ordered
-                </span>
-            );
+            return <ProcurementStatusBadge status="Ordered" icon={RefreshCw} />;
     }
 }

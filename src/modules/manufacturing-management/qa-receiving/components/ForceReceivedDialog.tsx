@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { Shipment, ShipmentLineItem } from "../types";
 import { FORCE_RECEIVED_REASON_MAX_LENGTH } from "@/app/api/manufacturing/qa-receiving/_force-received";
 
@@ -28,19 +31,22 @@ export default function ForceReceivedDialog({
         remainingAccepted: Math.max(0, Number(line.remaining_accepted_quantity ?? 0))
     })), [lineItems]);
 
-    if (!open) return null;
+    const close = () => {
+        setReason("");
+        if (!submitting) onCancel();
+    };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-xl border bg-card shadow-lg">
-                <div className="border-b px-4 py-3">
-                    <h4 className="text-sm font-bold">Force Received</h4>
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+        <Dialog open={open} onOpenChange={nextOpen => { if (!nextOpen) close(); }}>
+            <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>Force Received</DialogTitle>
+                    <DialogDescription>
                         Close remaining quantities on {shipment.reference_number}. QA intake will stop and the order will move to Received.
-                    </p>
-                </div>
-                <div className="space-y-3 px-4 py-3">
-                    <div className="rounded-lg border bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800">
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3">
+                    <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] text-warning">
                         Remaining accepted quantity will be administratively closed without creating receiving rows or inventory movements.
                     </div>
                     <div className="max-h-40 overflow-auto rounded-lg border">
@@ -55,16 +61,16 @@ export default function ForceReceivedDialog({
                     </div>
                     <label className="block space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                            Force Close Reason <span className="text-red-500">*</span>
+                            Force Close Reason <span className="text-destructive">*</span>
                         </span>
-                        <textarea
+                        <Textarea
                             aria-label="Force Close Reason"
                             value={reason}
                             onChange={event => setReason(event.target.value)}
                             maxLength={FORCE_RECEIVED_REASON_MAX_LENGTH}
                             rows={4}
                             disabled={submitting}
-                            className="w-full rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary"
+                            className="min-h-20 text-xs"
                             placeholder="Enter the reason this short shipment is being closed."
                         />
                         <span className="block text-right text-[10px] text-muted-foreground">
@@ -72,26 +78,24 @@ export default function ForceReceivedDialog({
                         </span>
                     </label>
                 </div>
-                <div className="flex justify-end gap-2 border-t px-4 py-3">
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        disabled={submitting}
-                        className="h-10 rounded-xl border px-4 text-xs font-bold text-muted-foreground hover:bg-muted"
-                    >
+                <DialogFooter>
+                    <Button type="button" variant="outline" onClick={close} disabled={submitting}>
                         Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
                         disabled={submitting || trimmedReason.length === 0}
-                        onClick={() => void onConfirm(trimmedReason)}
-                        className="flex h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => {
+                            const nextReason = trimmedReason;
+                            setReason("");
+                            void onConfirm(nextReason);
+                        }}
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                         Confirm Force Received
-                    </button>
-                </div>
-            </div>
-        </div>
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }

@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Shipment } from "../types";
+import { Button } from "@/components/ui/button";
+import { ProcurementStatusBadge } from "../../shared/components/ProcurementStatusBadge";
 
 function formatShipmentCreatedAt(value: string | null | undefined): string {
     const rawValue = value?.trim();
@@ -108,7 +110,7 @@ export default function InboundShipmentsList({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {/* PO# / Ref search */}
                     <div className="space-y-1">
-                        <label className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider block">PO# / Ref</label>
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">PO# / Ref</label>
                         <input
                             type="text"
                             placeholder="Search PO..."
@@ -122,7 +124,7 @@ export default function InboundShipmentsList({
                     </div>
                     {/* Status filter */}
                     <div className="space-y-1">
-                        <label className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider block">Status</label>
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Status</label>
                         <select
                             value={searchStatus}
                             onChange={e => {
@@ -141,7 +143,7 @@ export default function InboundShipmentsList({
 
                 {/* Date range inputs */}
                 <div className="space-y-1 sm:col-span-2 lg:col-span-2">
-                    <label className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider block">Date Range</label>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Date Range</label>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <input
                             type="date"
@@ -183,15 +185,7 @@ export default function InboundShipmentsList({
                                 <span className="font-extrabold text-xs text-foreground block">
                                     {s.reference_number}
                                 </span>
-                                <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-extrabold border ${
-                                    s.isForceReceived
-                                        ? "bg-violet-500/10 text-violet-600 border-violet-500/20"
-                                        : s.status === "Receiving (QA)" || s.status === "For Pickup"
-                                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                                        : "bg-blue-500/10 text-blue-500 border-blue-500/20"
-                                }`}>
-                                    {s.isForceReceived ? "Force Received" : s.status === "For Pickup" ? "QA (Receiving)" : s.status}
-                                </span>
+                                <ProcurementStatusBadge status={s.isForceReceived ? "Force Received" : s.status === "For Pickup" ? "Receiving (QA)" : s.status} />
                             </div>
                             <div className="flex justify-between text-[10px] text-muted-foreground">
                                 <span>Value: ₱{Number(s.total_php_value || 0).toLocaleString()}</span>
@@ -208,23 +202,25 @@ export default function InboundShipmentsList({
                         : `Showing ${(currentPage - 1) * pageSize + 1}-${Math.min(currentPage * pageSize, filteredShipments.length)} of ${filteredShipments.length}`}
                 </span>
                 <div className="flex items-center gap-2">
-                    <button
+                    <Button
                         type="button"
+                        size="sm"
+                        variant="outline"
                         onClick={() => setPage(previous => Math.max(1, previous - 1))}
                         disabled={currentPage <= 1}
-                        className="min-h-10 rounded-lg border px-3 font-bold text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         Previous
-                    </button>
+                    </Button>
                     <span className="min-w-16 text-center font-semibold">Page {currentPage} of {pageCount}</span>
-                    <button
+                    <Button
                         type="button"
+                        size="sm"
+                        variant="outline"
                         onClick={() => setPage(previous => Math.min(pageCount, previous + 1))}
                         disabled={currentPage >= pageCount}
-                        className="min-h-10 rounded-lg border px-3 font-bold text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         Next
-                    </button>
+                    </Button>
                 </div>
             </div>
         </aside>

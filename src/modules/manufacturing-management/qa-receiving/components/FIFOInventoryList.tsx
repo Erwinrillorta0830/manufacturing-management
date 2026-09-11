@@ -1,6 +1,9 @@
 import React from "react";
 import { Search, MapPin, ChevronDown, ChevronUp, Bookmark } from "lucide-react";
 import { Branch, FIFOInventoryItem, FIFOBatch } from "../types";
+import { ProcurementStatusBadge } from "../../shared/components/ProcurementStatusBadge";
+import { ModuleStatePanel } from "../../shared/components/ModuleStatePanel";
+import type { StatusTone } from "@/components/ui/status-badge";
 
 interface FIFOInventoryListProps {
     branches: Branch[];
@@ -27,18 +30,18 @@ export default function FIFOInventoryList({
 }: FIFOInventoryListProps) {
     
     // Date checker helper for raw material badge status
-    const getExpirationStatus = (expDate?: string) => {
-        if (!expDate) return { text: "No Date", color: "text-muted-foreground bg-muted" };
+    const getExpirationStatus = (expDate?: string): { text: string; tone: StatusTone } => {
+        if (!expDate) return { text: "No Date", tone: "neutral" };
         const today = new Date();
         const exp = new Date(expDate);
         const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diffDays < 0) {
-            return { text: "Expired", color: "text-red-500 bg-red-500/10 border border-red-500/20" };
+            return { text: "Expired", tone: "destructive" };
         } else if (diffDays <= 30) {
-            return { text: `Expiring: ${diffDays}d`, color: "text-amber-500 bg-amber-500/10 border border-amber-500/20" };
+            return { text: `Expiring: ${diffDays}d`, tone: "warning" };
         } else {
-            return { text: "Fresh", color: "text-emerald-500 bg-emerald-500/10 border border-emerald-500/20" };
+            return { text: "Fresh", tone: "success" };
         }
     };
 
@@ -74,15 +77,22 @@ export default function FIFOInventoryList({
 
             {/* Stock reading area */}
             {loadingFifo ? (
-                <div className="p-16 text-center text-xs text-muted-foreground">Loading FIFO queues...</div>
+                <ModuleStatePanel state="loading" title="Loading FIFO queues..." className="min-h-40" />
             ) : !fifoBranchId ? (
-                <div className="p-16 text-center text-xs text-muted-foreground italic">
-                    Select a branch location to read current raw materials and packaging ledger.
-                </div>
+                <ModuleStatePanel
+                    state="empty"
+                    icon={MapPin}
+                    title="Select a branch location"
+                    description="Select a branch location to read current raw materials and packaging ledger."
+                    className="min-h-40"
+                />
             ) : filteredFifoList.length === 0 ? (
-                <div className="p-16 text-center text-xs text-muted-foreground italic">
-                    No inventory items found matching filters.
-                </div>
+                <ModuleStatePanel
+                    state="empty"
+                    icon={Search}
+                    title="No inventory items found matching filters."
+                    className="min-h-40"
+                />
             ) : (
                 <div className="space-y-3">
                     {filteredFifoList.map(item => {
@@ -101,7 +111,7 @@ export default function FIFOInventoryList({
                                         <div className="flex gap-2 text-[10px]">
                                             <span className="text-muted-foreground font-mono">Code: {item.product.product_code}</span>
                                             <span className="text-muted-foreground">•</span>
-                                            <span className={`font-bold ${item.isPackaging ? "text-purple-500" : "text-amber-500"}`}>
+                                            <span className={`font-bold ${item.isPackaging ? "text-info" : "text-warning"}`}>
                                                 {item.isPackaging ? "Packaging" : "Raw Material"}
                                             </span>
                                         </div>
@@ -136,17 +146,9 @@ export default function FIFOInventoryList({
                                                             </div>
                                                             <div className="shrink-0">
                                                                 {item.isPackaging ? (
-                                                                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
-                                                                        index === 0 
-                                                                            ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" 
-                                                                            : "bg-muted text-muted-foreground"
-                                                                    }`}>
-                                                                        {index === 0 ? "Next Out" : "Buffered"}
-                                                                    </span>
+                                                                    <ProcurementStatusBadge status={index === 0 ? "Next Out" : "Buffered"} tone={index === 0 ? "warning" : "neutral"} className="text-[8px] font-black" />
                                                                 ) : (
-                                                                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${expStatus.color}`}>
-                                                                        {expStatus.text}
-                                                                    </span>
+                                                                    <ProcurementStatusBadge status={expStatus.text} tone={expStatus.tone} className="text-[8px] font-black" />
                                                                 )}
                                                             </div>
                                                         </div>
@@ -209,17 +211,9 @@ export default function FIFOInventoryList({
                                                                 </td>
                                                                 <td className="py-2.5 text-right">
                                                                     {item.isPackaging ? (
-                                                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                                                                            index === 0 
-                                                                                ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" 
-                                                                                : "bg-muted text-muted-foreground"
-                                                                        }`}>
-                                                                            {index === 0 ? "Next Out (Oldest)" : "Buffered"}
-                                                                        </span>
+                                                                        <ProcurementStatusBadge status={index === 0 ? "Next Out (Oldest)" : "Buffered"} tone={index === 0 ? "warning" : "neutral"} className="text-[9px] font-black" />
                                                                     ) : (
-                                                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${expStatus.color}`}>
-                                                                            {expStatus.text}
-                                                                        </span>
+                                                                        <ProcurementStatusBadge status={expStatus.text} tone={expStatus.tone} className="text-[9px] font-black" />
                                                                     )}
                                                                 </td>
                                                             </tr>

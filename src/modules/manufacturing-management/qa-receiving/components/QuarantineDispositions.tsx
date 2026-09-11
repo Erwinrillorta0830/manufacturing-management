@@ -3,6 +3,10 @@
 import { useMemo, useState } from "react";
 import { ArrowRightLeft, Ban, RefreshCw, RotateCcw, Search, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import type { StatusTone } from "@/components/ui/status-badge";
+import { ProcurementStatusBadge } from "../../shared/components/ProcurementStatusBadge";
+import { ModuleStatePanel } from "../../shared/components/ModuleStatePanel";
 import type { QuarantineDisposition, QuarantineStock } from "../types";
 
 interface QuarantineDispositionsProps {
@@ -29,6 +33,21 @@ const terminalStatuses = new Set(["COMPLETED", "CANCELLED"]);
 
 function formatQuantity(value: number): string {
     return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function dispositionTone(status: string): StatusTone {
+    switch (status) {
+        case "COMPLETED":
+        case "REPLACEMENT_RECEIVED":
+            return "success";
+        case "REPLACEMENT_PENDING":
+        case "PARTIALLY_PROCESSED":
+            return "warning";
+        case "CANCELLED":
+            return "neutral";
+        default:
+            return "info";
+    }
 }
 
 function sourceLabel(stock: QuarantineStock | undefined, disposition: QuarantineDisposition): string {
@@ -158,17 +177,17 @@ export default function QuarantineDispositions({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <h3 className="flex items-center gap-2 text-sm font-extrabold">
-                            <ShieldAlert className="h-4 w-4 text-amber-500" />
+                            <ShieldAlert className="h-4 w-4 text-warning" />
                             Quarantine Dispositions
                         </h3>
                         <p className="mt-1 text-[11px] text-muted-foreground">
                             Process rejected QA stock as a controlled vendor return or replacement request.
                         </p>
                     </div>
-                    <button type="button" onClick={onRefresh} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[11px] font-bold hover:bg-muted" disabled={loading}>
+                    <Button type="button" size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
                         <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
                         Refresh
-                    </button>
+                    </Button>
                 </div>
                 <div className="grid gap-2 md:grid-cols-[1fr_180px]">
                     <label className="relative block">
@@ -193,7 +212,7 @@ export default function QuarantineDispositions({
                     <h4 className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">Eligible rejected stock</h4>
                     <span className="text-[10px] font-bold text-muted-foreground">{filteredStock.length} source record(s)</span>
                 </div>
-                {loading && stock.length === 0 ? <div className="rounded-xl border bg-card p-8 text-center text-xs text-muted-foreground">Loading quarantined stock...</div> : filteredStock.length === 0 ? <div className="rounded-xl border border-dashed bg-card p-8 text-center text-xs text-muted-foreground">No eligible rejected QA stock is available.</div> : filteredStock.map(source => {
+                {loading && stock.length === 0 ? <ModuleStatePanel state="loading" title="Loading quarantined stock..." className="rounded-xl border bg-card" /> : filteredStock.length === 0 ? <ModuleStatePanel state="empty" title="No eligible rejected QA stock is available." className="rounded-xl border border-dashed bg-card" /> : filteredStock.map(source => {
                     const sourceKey = stockKey(source);
                     const selectedType = typeBySource[sourceKey] || "VENDOR_RETURN";
                     const busy = busyKey === `create-${sourceKey}`;
@@ -204,9 +223,9 @@ export default function QuarantineDispositions({
                                     <div className="text-xs font-extrabold">{source.purchaseOrderReference} · {source.productName}</div>
                                     <div className="mt-1 text-[10px] text-muted-foreground">Supplier: {source.supplierName} · Receipt: {source.receiptNo || "N/A"} · Product code: {source.productCode}</div>
                                 </div>
-                                <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-right">
-                                    <div className="text-[9px] font-bold uppercase text-amber-700 dark:text-amber-300">Available quarantine</div>
-                                    <div className="text-sm font-extrabold text-amber-700 dark:text-amber-300">{formatQuantity(source.availableQuantity)}</div>
+                                <div className="rounded-lg bg-warning/10 px-3 py-2 text-right">
+                                    <div className="text-[9px] font-bold uppercase text-warning">Available quarantine</div>
+                                    <div className="text-sm font-extrabold text-warning">{formatQuantity(source.availableQuantity)}</div>
                                 </div>
                             </div>
                             <div className="grid gap-2 text-[10px] text-muted-foreground md:grid-cols-4">
@@ -223,10 +242,10 @@ export default function QuarantineDispositions({
                                 <input type="number" min="0.000001" max={source.availableQuantity} step="any" value={quantityBySource[sourceKey] ?? source.availableQuantity} onChange={event => setQuantityBySource(previous => ({ ...previous, [sourceKey]: event.target.value }))} className="h-8 rounded-lg border bg-background px-2 text-[11px]" aria-label="Disposition quantity" />
                                 <input value={reasonBySource[sourceKey] || ""} onChange={event => setReasonBySource(previous => ({ ...previous, [sourceKey]: event.target.value }))} placeholder="Reason / supplier action" className="h-8 rounded-lg border bg-background px-2 text-[11px]" />
                                 <input value={supplierReferenceBySource[sourceKey] || ""} onChange={event => setSupplierReferenceBySource(previous => ({ ...previous, [sourceKey]: event.target.value }))} placeholder="Supplier reference (optional)" className="h-8 rounded-lg border bg-background px-2 text-[11px]" />
-                                <button type="button" onClick={() => void create(source)} disabled={busy} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-[11px] font-bold text-primary-foreground disabled:opacity-50">
+                                <Button type="button" size="sm" onClick={() => void create(source)} disabled={busy}>
                                     <ArrowRightLeft className="h-3.5 w-3.5" />
                                     {busy ? "Saving..." : selectedType === "VENDOR_RETURN" ? "Request Return" : "Request Replacement"}
-                                </button>
+                                </Button>
                             </div>
                         </div>
                     );
@@ -238,7 +257,7 @@ export default function QuarantineDispositions({
                     <h4 className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">Disposition history</h4>
                     <span className="text-[10px] font-bold text-muted-foreground">{filteredDispositions.length} record(s)</span>
                 </div>
-                {filteredDispositions.length === 0 ? <div className="rounded-xl border border-dashed bg-card p-8 text-center text-xs text-muted-foreground">No quarantine dispositions match the current filters.</div> : filteredDispositions.map(disposition => {
+                {filteredDispositions.length === 0 ? <ModuleStatePanel state="empty" title="No quarantine dispositions match the current filters." className="rounded-xl border border-dashed bg-card" /> : filteredDispositions.map(disposition => {
                     const source = stock.find(item => item.sourceReceivingId === disposition.sourceReceivingId && item.lotId === disposition.lotId && item.batchNo === disposition.batchNo);
                     const isTerminal = terminalStatuses.has(disposition.status);
                     const canReturn = disposition.dispositionType === "VENDOR_RETURN" && !isTerminal;
@@ -250,7 +269,7 @@ export default function QuarantineDispositions({
                                     <div className="text-xs font-extrabold">{sourceLabel(source, disposition)}</div>
                                     <div className="mt-1 text-[10px] text-muted-foreground">{disposition.dispositionType === "VENDOR_RETURN" ? "Vendor Return" : "Replacement"} · Reason: {disposition.reason}</div>
                                 </div>
-                                <span className="rounded-full border px-2 py-1 text-[9px] font-extrabold uppercase">{disposition.status.replaceAll("_", " ")}</span>
+                                <ProcurementStatusBadge status={disposition.status.replaceAll("_", " ")} tone={dispositionTone(disposition.status)} />
                             </div>
                             <div className="grid gap-2 text-[10px] md:grid-cols-5">
                                 <div><span className="text-muted-foreground">Requested</span><div className="font-extrabold">{formatQuantity(disposition.requestedQuantity)}</div></div>
@@ -262,19 +281,19 @@ export default function QuarantineDispositions({
                             <div className="flex flex-wrap items-center gap-2">
                                 {canReturn && <>
                                     <input type="number" min="0.000001" max={disposition.remainingQuantity} step="any" value={returnQuantityByDisposition[disposition.id] ?? disposition.remainingQuantity} onChange={event => setReturnQuantityByDisposition(previous => ({ ...previous, [disposition.id]: event.target.value }))} className="h-8 w-32 rounded-lg border bg-background px-2 text-[11px]" aria-label="Vendor return quantity" />
-                                    <button type="button" onClick={() => void processReturn(disposition)} disabled={busyKey === `return-${disposition.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 text-[11px] font-bold text-amber-700 hover:bg-amber-500/10 disabled:opacity-50">
+                                    <Button type="button" size="sm" variant="outline" className="border-warning/40 text-warning hover:bg-warning/10" onClick={() => void processReturn(disposition)} disabled={busyKey === `return-${disposition.id}`}>
                                         <RotateCcw className="h-3.5 w-3.5" />
                                         Process Return
-                                    </button>
+                                    </Button>
                                 </>}
-                                {canReplace && <button type="button" onClick={() => void onStartReplacement(disposition)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/40 px-3 text-[11px] font-bold text-primary hover:bg-primary/10">
+                                {canReplace && <Button type="button" size="sm" variant="outline" className="border-primary/40 text-primary hover:bg-primary/10" onClick={() => void onStartReplacement(disposition)}>
                                     <ArrowRightLeft className="h-3.5 w-3.5" />
                                     Open Replacement QA
-                                </button>}
-                                {disposition.status === "REQUESTED" && disposition.processedQuantity <= 0 && <button type="button" onClick={() => void cancel(disposition)} disabled={busyKey === `cancel-${disposition.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold text-muted-foreground hover:bg-muted disabled:opacity-50">
+                                </Button>}
+                                {disposition.status === "REQUESTED" && disposition.processedQuantity <= 0 && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => void cancel(disposition)} disabled={busyKey === `cancel-${disposition.id}`}>
                                     <Ban className="h-3.5 w-3.5" />
                                     Cancel
-                                </button>}
+                                </Button>}
                             </div>
                         </div>
                     );

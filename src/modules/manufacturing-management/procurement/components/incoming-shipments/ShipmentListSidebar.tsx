@@ -1,8 +1,10 @@
 import React from "react";
 import Link from "next/link";
 import { Anchor, Plus, Search, X, Globe, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { IncomingShipment, Supplier } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
+import { ModuleStatePanel } from "../../../shared/components/ModuleStatePanel";
 
 export interface ShipmentListSidebarProps {
     fullWidth?: boolean;
@@ -67,19 +69,15 @@ export function ShipmentListSidebar({
                         <span className="text-[10px] text-muted-foreground shrink-0">({totalItems})</span>
                     </h3>
                     {createHref ? (
-                        <Link
-                            href={createHref}
-                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90"
-                        >
-                            <Plus className="h-3.5 w-3.5" /> Create PO
-                        </Link>
+                        <Button asChild size="sm">
+                            <Link href={createHref}>
+                                <Plus className="h-3.5 w-3.5" /> Create PO
+                            </Link>
+                        </Button>
                     ) : (
-                        <button
-                            onClick={onOpenCreateModal}
-                            className="inline-flex items-center gap-1 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-2.5 py-1.5 rounded-lg text-xs transition-all shadow-sm shrink-0 cursor-pointer"
-                        >
+                        <Button size="sm" onClick={onOpenCreateModal}>
                             <Plus className="h-3.5 w-3.5" /> {canonicalDrafting ? "Create PO" : "Log Cargo"}
-                        </button>
+                        </Button>
                     )}
                 </div>
                 <div className="flex gap-2">
@@ -129,53 +127,40 @@ export function ShipmentListSidebar({
 
             <div className="relative flex-1 overflow-y-auto divide-y">
                 {listLoading ? (
-                    <div className="space-y-3 p-4" aria-label="Loading purchase orders" role="status">
-                        {Array.from({ length: 4 }).map((_, index) => (
-                            <div key={index} className="animate-pulse space-y-2 rounded-lg border p-3">
-                                <div className="h-3 w-3/5 rounded bg-muted" />
-                                <div className="h-3 w-4/5 rounded bg-muted" />
-                                <div className="h-2 w-2/5 rounded bg-muted" />
-                            </div>
-                        ))}
-                    </div>
+                    <ModuleStatePanel state="loading" title="Loading purchase orders..." skeletonRows={4} />
                 ) : listError ? (
-                    <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-8 text-center text-xs text-muted-foreground" role="alert">
-                        <p className="font-semibold text-destructive">Unable to load purchase orders.</p>
-                        <p className="max-w-md">{listError}</p>
-                        {onRetry && (
-                            <button
-                                type="button"
-                                onClick={onRetry}
-                                className="min-h-9 rounded-lg bg-primary px-3 py-2 font-semibold text-primary-foreground hover:bg-primary/90"
-                            >
-                                Retry
-                            </button>
-                        )}
-                    </div>
+                    <ModuleStatePanel
+                        state="error"
+                        title="Unable to load purchase orders."
+                        description={listError}
+                        onRetry={onRetry}
+                        className="min-h-48"
+                    />
                 ) : paginatedShipments.length === 0 ? (
-                    <div className="flex min-h-48 flex-col items-center justify-center gap-2 p-8 text-center text-xs text-muted-foreground">
-                        <Search className="h-8 w-8 text-muted-foreground/30" />
-                        <p className="font-semibold">
-                            {hasListFilters
-                                ? "No purchase orders match the current filters."
-                                : canonicalDrafting ? "No purchase orders found yet." : "No shipments logged yet."}
-                        </p>
-                        {hasListFilters ? (
-                            <button
-                                type="button"
+                    <ModuleStatePanel
+                        state="empty"
+                        icon={Search}
+                        title={hasListFilters
+                            ? "No purchase orders match the current filters."
+                            : canonicalDrafting ? "No purchase orders found yet." : "No shipments logged yet."}
+                        description={hasListFilters
+                            ? undefined
+                            : canonicalDrafting ? "Click Create PO to add one." : "Click Log Cargo to add one."}
+                        action={hasListFilters ? (
+                            <Button
+                                variant="link"
+                                className="h-auto p-0"
                                 onClick={() => {
                                     setSearch("");
                                     setStatusFilter("All");
                                     setCurrentPage(1);
                                 }}
-                                className="text-primary font-semibold hover:underline"
                             >
                                 Clear filters
-                            </button>
-                        ) : (
-                            <p className="text-[11px]">{canonicalDrafting ? "Click Create PO to add one." : "Click Log Cargo to add one."}</p>
-                        )}
-                    </div>
+                            </Button>
+                        ) : undefined}
+                        className="min-h-48"
+                    />
                 ) : (
                     paginatedShipments.map(s => {
                         const supId = typeof s.supplier_id === "object" && s.supplier_id !== null
@@ -197,11 +182,11 @@ export function ShipmentListSidebar({
                                     <div className="flex min-w-0 items-center gap-1.5 truncate">
                                         {matchedSupplier && (
                                             isSupplierForeign(matchedSupplier) ? (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase shrink-0" title="Foreign Supplier">
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-info/10 text-info border border-info/20 uppercase shrink-0" title="Foreign Supplier">
                                                     <Globe className="h-2.5 w-2.5" /> Foreign
                                                 </span>
                                             ) : (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 uppercase shrink-0" title="Local Supplier">
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-success/10 text-success border border-success/20 uppercase shrink-0" title="Local Supplier">
                                                     <MapPin className="h-2.5 w-2.5" /> Local
                                                 </span>
                                             )
@@ -265,25 +250,27 @@ export function ShipmentListSidebar({
                     </div>
                     {totalPages > 1 && (
                         <div className="flex items-center gap-2">
-                            <button
+                            <Button
                                 type="button"
+                                size="sm"
+                                variant="outline"
                                 disabled={currentPage === 1}
                                 onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                className="min-h-9 min-w-16 border rounded px-2 py-1 text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                             >
                                 Prev
-                            </button>
+                            </Button>
                             <span className="text-[11px] text-muted-foreground font-semibold">
                                 Page {currentPage} / {totalPages}
                             </span>
-                            <button
+                            <Button
                                 type="button"
+                                size="sm"
+                                variant="outline"
                                 disabled={currentPage === totalPages}
                                 onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                className="min-h-9 min-w-16 border rounded px-2 py-1 text-xs font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                             >
                                 Next
-                            </button>
+                            </Button>
                         </div>
                     )}
                 </div>

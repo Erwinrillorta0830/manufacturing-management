@@ -1,12 +1,15 @@
 import React from "react";
 import Link from "next/link";
 import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer, ArrowLeft, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
 import { isLandedCostPostingEligible } from "../../landed-cost-eligibility";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { calculatePercentageDiscount } from "../../discount-calculation";
+import { ModuleStatePanel } from "../../../shared/components/ModuleStatePanel";
+import { ModuleSummaryCard } from "../../../shared/components/ModuleSummaryCard";
 
 export interface ShipmentDetailViewProps {
     loading: boolean;
@@ -90,31 +93,25 @@ export function ShipmentDetailView({
                     </div>
                     <div className="flex flex-wrap justify-center gap-2">
                         {onRetryDetail && (
-                            <button
-                                type="button"
-                                onClick={onRetryDetail}
-                                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-                            >
+                            <Button type="button" size="sm" onClick={onRetryDetail}>
                                 <RotateCcw className="h-3.5 w-3.5" /> Retry
-                            </button>
+                            </Button>
                         )}
-                        <Link
-                            href={backHref || "/mm/incoming-shipments"}
-                            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
-                        >
-                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
-                        </Link>
+                        <Button variant="outline" size="sm" asChild>
+                            <Link href={backHref || "/mm/incoming-shipments"}>
+                                <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                            </Link>
+                        </Button>
                     </div>
                 </div>
             ) : activeShipment ? (
                 <>
                     {backHref !== undefined && (
-                        <Link
-                            href={backHref || "/mm/incoming-shipments"}
-                            className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        >
-                            <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
-                        </Link>
+                        <Button variant="outline" size="sm" asChild className="w-fit">
+                            <Link href={backHref || "/mm/incoming-shipments"}>
+                                <ArrowLeft className="h-3.5 w-3.5" /> Back to Incoming Shipments
+                            </Link>
+                        </Button>
                     )}
                     {/* Header Details */}
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b pb-5">
@@ -137,11 +134,11 @@ export function ShipmentDetailView({
                                         return (
                                             <>
                                                 {foreign ? (
-                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20 uppercase tracking-wider">
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-info/10 text-info border border-info/20 uppercase tracking-wider">
                                                         <Globe className="h-2.5 w-2.5" /> Foreign
                                                     </span>
                                                 ) : (
-                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 uppercase tracking-wider">
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-success/10 text-success border border-success/20 uppercase tracking-wider">
                                                         <Building2 className="h-2.5 w-2.5" /> Local
                                                     </span>
                                                 )}
@@ -152,14 +149,14 @@ export function ShipmentDetailView({
                                 </strong>
                             </p>
                             {poRemark && (
-                                <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                                    <strong className="block text-[10px] uppercase tracking-wide">PO Remarks</strong>
+                                <div className="rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs text-foreground">
+                                    <strong className="block text-[10px] uppercase tracking-wide text-info">PO Remarks</strong>
                                     <span className="mt-1 block whitespace-pre-wrap">{poRemark}</span>
                                 </div>
                             )}
                             {legacyFinanceFeedback && (
-                                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                    <strong className="block text-[10px] uppercase tracking-wide">Legacy Finance Feedback</strong>
+                                <div className="rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-foreground">
+                                    <strong className="block text-[10px] uppercase tracking-wide text-warning">Legacy Finance Feedback</strong>
                                     <span className="mt-1 block whitespace-pre-wrap">{legacyFinanceFeedback}</span>
                                 </div>
                             )}
@@ -197,7 +194,7 @@ export function ShipmentDetailView({
                                 {(activeShipment.isForceReceived || activeShipment.forceReceivedAt) && (
                                     <>
                                         <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
-                                        <span className="text-violet-700">
+                                        <span className="text-warning">
                                             Closure:{" "}
                                             <strong className="font-bold">Force Received</strong>
                                             {activeShipment.forceReceivedReason ? ` — ${activeShipment.forceReceivedReason}` : ""}
@@ -207,7 +204,7 @@ export function ShipmentDetailView({
                                 {queuedForPurchaseAmountPosting && (
                                     <>
                                         <span className="hidden sm:inline text-muted-foreground/30 font-light">|</span>
-                                        <span className="text-blue-700">
+                                        <span className="text-info">
                                             Finance Queue:{" "}
                                             <strong className="font-bold">Purchase Amount Posting</strong>
                                         </span>
@@ -261,7 +258,7 @@ export function ShipmentDetailView({
                                 )}
                             </div>
                             {referenceError && (
-                                <p className="mt-2 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800" role="status">
+                                <p className="mt-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] font-semibold text-warning" role="status">
                                     Some reference labels are unavailable. Refresh the page or retry before editing this purchase order.
                                 </p>
                             )}
@@ -299,7 +296,7 @@ export function ShipmentDetailView({
                                                 <div className="flex flex-col items-center flex-1 relative z-10">
                                                     <div className={`h-6 w-6 rounded-full flex items-center justify-center border-2 text-[10px] font-bold transition-all ${
                                                         isCompleted 
-                                                            ? "bg-emerald-500 border-emerald-500 text-emerald-foreground" 
+                                                            ? "bg-success border-success text-success-foreground" 
                                                             : isActive 
                                                                 ? "bg-primary border-primary text-primary-foreground shadow-md scale-110" 
                                                                 : "bg-background border-muted text-muted-foreground"
@@ -312,7 +309,7 @@ export function ShipmentDetailView({
                                                 </div>
                                                 {idx < arr.length - 1 && (
                                                     <div className={`flex-1 h-[2px] -mt-4 transition-all ${
-                                                        stepIdx < currentIdx ? "bg-emerald-500" : "bg-muted"
+                                                        stepIdx < currentIdx ? "bg-success" : "bg-muted"
                                                     }`} />
                                                 )}
                                             </React.Fragment>
@@ -323,27 +320,28 @@ export function ShipmentDetailView({
 
                                 {(effectiveStatus === "For Approval" || effectiveStatus === "Requested" || effectiveStatus === "Ordered") && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
-                                        <button
+                                        <Button
                                             type="button"
+                                            className="w-full"
                                             disabled={canonicalDrafting || loading}
                                             onClick={handleStartEdit}
-                                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
                                         >
                                             Edit Purchase Order
-                                        </button>
+                                        </Button>
                                         {canonicalDrafting && (
-                                            <button
+                                            <Button
                                                 type="button"
+                                                variant="outline"
+                                                className="w-full"
                                                 disabled
                                                 onClick={() => {
                                                     if (window.confirm(`Cancel this ${canonicalDrafting ? "For Approval" : "Requested"} purchase order? This action cannot be undone.`)) {
                                                         onUpdateShipmentStatus(activeShipment.shipment_id, "Cancelled");
                                                     }
                                                 }}
-                                                className="w-full border border-border bg-muted text-muted-foreground disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all"
                                             >
                                                 Cancel PO
-                                            </button>
+                                            </Button>
                                         )}
                                         {canonicalDrafting && (
                                             <p className="col-span-2 text-[10px] font-semibold text-muted-foreground">
@@ -355,16 +353,18 @@ export function ShipmentDetailView({
 
                                 {effectiveStatus === "Rejected" && onCancelRejectedPurchaseOrder && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
-                                        <button
+                                        <Button
                                             type="button"
+                                            className="w-full"
                                             disabled={loading || !isFinanceRejected}
                                             onClick={handleStartEdit}
-                                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Edit className="h-3.5 w-3.5" /> Revise &amp; Resubmit
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
                                             type="button"
+                                            variant="outline"
+                                            className="w-full"
                                             disabled={loading || !isFinanceRejected}
                                             onClick={() => {
                                                 if (window.confirm("Cancel this rejected purchase order? This action cannot be undone.")) {
@@ -375,10 +375,9 @@ export function ShipmentDetailView({
                                                     );
                                                 }
                                             }}
-                                            className="w-full border border-border bg-muted text-muted-foreground hover:bg-muted disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Trash2 className="h-3.5 w-3.5" /> Cancel PO
-                                        </button>
+                                        </Button>
                                         {!isFinanceRejected && (
                                             <p className="col-span-2 text-[10px] font-semibold text-muted-foreground">
                                                 {lockedWorkflowMessage}
@@ -390,65 +389,53 @@ export function ShipmentDetailView({
                             </div>
                         </div>
                         {canonicalDrafting && onPrintPurchaseOrder && (
-                            <button
+                            <Button
                                 type="button"
+                                size="sm"
+                                variant="outline"
+                                className="border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
                                 onClick={onPrintPurchaseOrder}
                                 disabled={printLoading}
-                                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 {printLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                                 {printLoading ? "Preparing..." : "Print PO"}
-                            </button>
+                            </Button>
                         )}
                     </div>
 
                     {/* Totals Summary */}
                     <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 lg:grid-cols-5">
-                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{canonicalDrafting ? "PHP Total" : "Raw FOB Cost"}</span>
-                            <span className="text-xs font-extrabold text-foreground">
-                                {formatMoney(activeShipment.total_php_value, "PHP")}
-                            </span>
-                        </div>
-                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">{activeShipment.currency_code === "PHP" ? "Foreign Total" : `${activeShipment.currency_code || "Foreign"} Total`}</span>
-                            <span className="text-xs font-extrabold text-foreground">
-                                {activeShipment.currency_code && activeShipment.currency_code !== "PHP"
-                                    ? formatMoney(activeShipment.total_foreign_currency, activeShipment.currency_code)
-                                    : "N/A"}
-                            </span>
-                        </div>
-                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate (PHP/USD)</span>
-                            <span className="text-xs font-extrabold text-foreground">
-                                {activeShipment.currency_code === "PHP"
-                                    ? "1.0000"
-                                    : Number(activeShipment.exchange_rate) > 0
-                                        ? Number(activeShipment.exchange_rate).toFixed(4)
-                                        : "Unavailable"}
-                            </span>
-                        </div>
-                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Revision Count</span>
-                            <span className="text-xs font-extrabold text-foreground">
-                                {Math.max(0, Math.trunc(Number(activeShipment.revision_count) || 0))}
-                            </span>
-                        </div>
-                        <div className="border p-4 rounded-xl bg-muted/5 space-y-1">
-                            <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">
-                                {effectiveStatus === "Received" ? "Arrival Date" : "ETA / Expected"}
-                            </span>
-                            <span className="text-xs font-semibold text-foreground flex items-center gap-1">
-                                <Calendar className="h-3.5 w-3.5 text-primary" />
-                                {effectiveStatus === "Received"
-                                    ? (activeShipment.date_received && activeShipment.date_received !== "1970-01-01" 
-                                        ? new Date(activeShipment.date_received).toLocaleDateString() 
-                                        : "N/A")
-                                    : (activeShipment.lead_time_receiving 
-                                        ? new Date(activeShipment.lead_time_receiving).toLocaleDateString() 
-                                        : "Pending")}
-                            </span>
-                        </div>
+                        <ModuleSummaryCard label={canonicalDrafting ? "PHP Total" : "Raw FOB Cost"} value={formatMoney(activeShipment.total_php_value, "PHP")} />
+                        <ModuleSummaryCard
+                            label={activeShipment.currency_code === "PHP" ? "Foreign Total" : `${activeShipment.currency_code || "Foreign"} Total`}
+                            value={activeShipment.currency_code && activeShipment.currency_code !== "PHP"
+                                ? formatMoney(activeShipment.total_foreign_currency, activeShipment.currency_code)
+                                : "N/A"}
+                        />
+                        <ModuleSummaryCard
+                            label="Exchange Rate (PHP/USD)"
+                            value={activeShipment.currency_code === "PHP"
+                                ? "1.0000"
+                                : Number(activeShipment.exchange_rate) > 0
+                                    ? Number(activeShipment.exchange_rate).toFixed(4)
+                                    : "Unavailable"}
+                        />
+                        <ModuleSummaryCard label="Revision Count" value={Math.max(0, Math.trunc(Number(activeShipment.revision_count) || 0))} />
+                        <ModuleSummaryCard
+                            label={effectiveStatus === "Received" ? "Arrival Date" : "ETA / Expected"}
+                            value={(
+                                <span className="flex items-center gap-1">
+                                    <Calendar className="h-3.5 w-3.5 text-primary" />
+                                    {effectiveStatus === "Received"
+                                        ? (activeShipment.date_received && activeShipment.date_received !== "1970-01-01"
+                                            ? new Date(activeShipment.date_received).toLocaleDateString()
+                                            : "N/A")
+                                        : (activeShipment.lead_time_receiving
+                                            ? new Date(activeShipment.lead_time_receiving).toLocaleDateString()
+                                            : "Pending")}
+                                </span>
+                            )}
+                        />
                     </div>
 
                     {/* Shipment Cargo Lines List */}
@@ -457,10 +444,10 @@ export function ShipmentDetailView({
                             <Layers className="h-4 w-4 text-primary" />
                             {canonicalDrafting ? "Purchase Order Lines" : "Shipment Manifest & Contents"}
                         </h3>
-                        <div className="hidden overflow-x-auto rounded-lg border min-[720px]:block">
-                            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+                        <div className="hidden overflow-x-auto min-[720px]:block">
+                            <table className="data-grid w-full min-w-[760px] text-xs">
                                 <thead>
-                                    <tr className="bg-muted/50 border-b">
+                                    <tr>
                                         <th className="p-3 font-semibold text-muted-foreground">Product Name</th>
                                         <th className="p-3 font-semibold text-muted-foreground">UOM</th>
                                         <th className="p-3 font-semibold text-muted-foreground text-right">Qty</th>
@@ -589,10 +576,10 @@ export function ShipmentDetailView({
 
                     {/* Informative Note */}
                     {effectiveStatus !== "Received" && (
-                        <div className="flex items-start gap-2.5 bg-blue-500/5 border border-blue-500/10 p-4 rounded-xl">
-                            <Info className="h-4.5 w-4.5 text-blue-500 shrink-0 mt-0.5" />
+                        <div className="flex items-start gap-2.5 bg-info/5 border border-info/10 p-4 rounded-xl">
+                            <Info className="h-4.5 w-4.5 text-info shrink-0 mt-0.5" />
                             <div className="space-y-1">
-                                <h5 className="text-xs font-bold text-blue-800 dark:text-blue-300">Pending Landed Cost Recalculation</h5>
+                                <h5 className="text-xs font-bold text-info">Pending Landed Cost Recalculation</h5>
                                 <p className="text-[11px] text-muted-foreground leading-relaxed">
                                     This cargo is currently marked as <strong className="text-foreground">{effectiveStatus}</strong>. Custom duties, ARR, brokerages, and shipping lines must be added/allocated. Marking this shipment as <strong>Received</strong> will commit the computed landed costs to the raw inventory database to update standard BOM prices.
                                 </p>
@@ -601,10 +588,12 @@ export function ShipmentDetailView({
                     )}
                 </>
             ) : (
-                <div className="flex flex-col items-center justify-center p-20 text-center text-muted-foreground h-full">
-                    <Anchor className="h-16 w-16 mb-4 text-muted-foreground/30" />
-                    {hasShipments ? "Select a shipment from the list to view details." : "No incoming shipments logged."}
-                </div>
+                <ModuleStatePanel
+                    state="empty"
+                    icon={Anchor}
+                    title={hasShipments ? "Select a shipment from the list to view details." : "No incoming shipments logged."}
+                    className="h-full"
+                />
             )}
         </div>
     );

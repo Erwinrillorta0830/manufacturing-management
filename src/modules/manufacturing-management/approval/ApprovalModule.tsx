@@ -3,32 +3,43 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+    ArrowRightLeft,
     Ban,
     Check,
     CheckCircle2,
     Clock3,
     FileCheck2,
+    GitBranch,
+    Globe2,
     History,
+    Landmark,
     Loader2,
     Printer,
     Search,
     ShieldCheck,
+    Wallet,
     X
 } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { usePurchaseOrderApproval, type PurchaseOrderApprovalMode } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
 import type { PurchaseOrderApprovalDetail, PurchaseOrderDecisionStage } from "../purchase-order/types";
 import type { IncomingShipment, Supplier } from "../procurement/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../procurement/discount-calculation";
+import { ModulePageHeader } from "../shared/components/ModulePageHeader";
+import { ModuleStatePanel } from "../shared/components/ModuleStatePanel";
+import { ModuleSummaryCard } from "../shared/components/ModuleSummaryCard";
+import { ProcurementStatusBadge } from "../shared/components/ProcurementStatusBadge";
 
 type QueueTab = "For Approval" | "Approved" | "Rejected";
 
-const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3; activeClass: string }> = [
-    { value: "For Approval", label: "For Approval", icon: Clock3, activeClass: "border-amber-300 bg-amber-50 text-amber-700 shadow-sm" },
-    { value: "Approved", label: "Approved", icon: CheckCircle2, activeClass: "border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm" },
-    { value: "Rejected", label: "Rejected", icon: X, activeClass: "border-red-300 bg-red-50 text-red-700 shadow-sm" }
+const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3 }> = [
+    { value: "For Approval", label: "For Approval", icon: Clock3 },
+    { value: "Approved", label: "Approved", icon: CheckCircle2 },
+    { value: "Rejected", label: "Rejected", icon: X }
 ];
 
 function money(value: unknown, currency = "PHP") {
@@ -37,20 +48,6 @@ function money(value: unknown, currency = "PHP") {
 
 function dateTime(value?: string | null) {
     return value ? new Date(value).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "-";
-}
-
-function statusBadge(status: string) {
-    const styles: Record<string, string> = {
-        "For Approval": "border-amber-300 bg-amber-50 text-amber-700",
-        Requested: "border-amber-300 bg-amber-50 text-amber-700",
-        "Pending Payment": "border-amber-300 bg-amber-50 text-amber-700",
-        Approved: "border-emerald-300 bg-emerald-50 text-emerald-700",
-        "Awaiting Payment": "border-orange-300 bg-orange-50 text-orange-700",
-        "Receiving (QA)": "border-blue-300 bg-blue-50 text-blue-700",
-        Cancelled: "border-zinc-300 bg-zinc-50 text-zinc-700",
-        Rejected: "border-red-300 bg-red-50 text-red-700"
-    };
-    return <span className={`inline-flex max-w-full rounded border px-2 py-1 text-[10px] font-bold uppercase ${styles[status] || "border-border bg-muted text-muted-foreground"}`}>{status}</span>;
 }
 
 function statusForApprovalStage(status: string) {
@@ -167,15 +164,15 @@ function FinanceDecisionControls({
                 />
             </label>
             <div className="flex flex-col justify-end gap-2 sm:flex-row sm:flex-wrap">
-                <button type="button" onClick={handleCancel} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-zinc-700 px-3 text-xs font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <Button type="button" variant="outline" onClick={handleCancel} disabled={submitting !== null}>
                     {submitting === "cancel" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} Cancel PO
-                </button>
-                <button type="button" onClick={handleReject} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+                </Button>
+                <Button type="button" variant="destructive" onClick={handleReject} disabled={submitting !== null}>
                     {submitting === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Reject PO
-                </button>
-                <button type="button" onClick={handleApprove} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+                </Button>
+                <Button type="button" onClick={handleApprove} disabled={submitting !== null}>
                     {submitting === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve PO
-                </button>
+                </Button>
             </div>
         </div>
     );
@@ -266,61 +263,45 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
 
     if (isDetailMode) {
         return (
-            <div className="space-y-4">
-                <div className="flex flex-col gap-3 rounded-xl border bg-muted/10 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                        <button
-                            type="button"
-                            onClick={() => router.push("/mm/finance-approval")}
-                            className="mb-2 inline-flex min-h-10 items-center gap-2 rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-                        >
-                            <span aria-hidden="true">←</span>
-                            Back to Finance Approval Queue
-                        </button>
-                        <h1 className="truncate text-sm font-extrabold text-foreground">
-                            {selectedShipment ? `Purchase Order Finance Approval: ${selectedShipment.purchase_order_no || selectedShipment.reference_number}` : `Purchase Order ${purchaseOrderId ?? ""}`}
-                        </h1>
-                        <p className="mt-1 text-[11px] text-muted-foreground">
-                            Review one purchase order at a time without keeping the approval queue open beside the detail.
-                        </p>
-                    </div>
-                    {selectedShipment && (
+            <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+                <ModulePageHeader
+                    icon={Landmark}
+                    eyebrow="Sourcing & Supply Chain"
+                    title={selectedShipment ? `Purchase Order Finance Approval: ${selectedShipment.purchase_order_no || selectedShipment.reference_number}` : `Purchase Order ${purchaseOrderId ?? ""}`}
+                    description="Review one purchase order at a time without keeping the approval queue open beside the detail."
+                    backHref="/mm/finance-approval"
+                    backLabel="Back to Finance Approval Queue"
+                    titleClassName="truncate text-xl"
+                    actions={selectedShipment ? (
                         <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
                             <span className="rounded-full border bg-background px-3 py-1.5 text-[10px] font-extrabold text-muted-foreground">PO ID: {selectedShipment.shipment_id}</span>
-                            {approvalDetail && statusBadge(statusForApprovalStage(selectedShipment.status))}
+                            {approvalDetail && <ProcurementStatusBadge status={statusForApprovalStage(selectedShipment.status)} />}
                         </div>
-                    )}
-                </div>
+                    ) : undefined}
+                />
 
                 {detailLoading && (
-                    <div className="rounded-xl border bg-card p-10 text-center text-xs text-muted-foreground">
-                        <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-primary" />
-                        Loading Finance approval details...
-                    </div>
+                    <ModuleStatePanel state="loading" title="Loading Finance approval details..." className="rounded-xl border bg-card" />
                 )}
 
                 {!detailLoading && detailError && (
-                    <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-center">
-                        <p className="text-sm font-bold text-red-700">Unable to open this Finance approval record</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{detailError}</p>
-                        <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
-                            <button type="button" onClick={() => void retryDetail()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-4 text-xs font-bold text-primary-foreground hover:bg-primary/90">
-                                Retry
-                            </button>
-                            <button type="button" onClick={() => router.push("/mm/finance-approval")} className="inline-flex min-h-10 items-center justify-center rounded-lg border px-4 text-xs font-bold text-foreground hover:bg-muted">
-                                Return to Queue
-                            </button>
-                        </div>
-                    </div>
+                    <ModuleStatePanel
+                        state="error"
+                        title="Unable to open this Finance approval record"
+                        description={detailError}
+                        onRetry={() => void retryDetail()}
+                        action={<Button variant="outline" onClick={() => router.push("/mm/finance-approval")}>Return to Queue</Button>}
+                        className="rounded-xl border border-destructive/20 bg-destructive/5"
+                    />
                 )}
 
                 {!detailLoading && !detailError && (!selectedShipment || !approvalDetail) && (
-                    <div className="rounded-xl border bg-card p-8 text-center text-xs text-muted-foreground">
-                        <p className="font-semibold">Finance approval details are unavailable.</p>
-                        <button type="button" onClick={() => void retryDetail()} className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-primary bg-primary px-4 text-xs font-bold text-primary-foreground hover:bg-primary/90">
-                            Retry
-                        </button>
-                    </div>
+                    <ModuleStatePanel
+                        state="empty"
+                        title="Finance approval details are unavailable."
+                        onRetry={() => void retryDetail()}
+                        className="rounded-xl border bg-card"
+                    />
                 )}
 
                 {!detailLoading && !detailError && selectedShipment && approvalDetail && (
@@ -329,7 +310,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                             <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <h2 className="text-sm font-bold">{approvalDetail.order.purchase_order_no || selectedShipment.purchase_order_no || selectedShipment.reference_number}</h2>
-                                    {statusBadge(statusForApprovalStage(selectedShipment.status))}
+                                    <ProcurementStatusBadge status={statusForApprovalStage(selectedShipment.status)} />
                                 </div>
                                 <p className="mt-1 break-words text-xs text-muted-foreground">{supplierName}</p>
                                 <p className="mt-1 break-words text-[11px] text-muted-foreground">Reference: {approvalDetail.order.reference || selectedShipment.reference_number || "-"}</p>
@@ -350,26 +331,26 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                         </div>
 
                         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                            <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
-                            <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
-                            <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.currency_code === "PHP" ? "1.0000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(4) : "Unavailable"}</div></div>
-                            <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
+                            <ModuleSummaryCard icon={Wallet} label="PHP total" value={money(approvalDetail.order.total_amount)} />
+                            <ModuleSummaryCard icon={Globe2} label="Foreign total" value={money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")} />
+                            <ModuleSummaryCard icon={ArrowRightLeft} label="Exchange rate" value={approvalDetail.order.currency_code === "PHP" ? "1.0000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(4) : "Unavailable"} />
+                            <ModuleSummaryCard icon={GitBranch} label="Revision Count" value={approvalDetail.revisionCount} />
                         </div>
 
                         <div className="grid gap-3 lg:grid-cols-2">
-                            <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3">
-                                <div className="text-[10px] font-semibold uppercase text-blue-700">PO Remarks</div>
+                            <div className="rounded-md border border-info/20 bg-info/5 p-3">
+                                <div className="text-[10px] font-semibold uppercase text-info">PO Remarks</div>
                                 <p className="mt-1 whitespace-pre-wrap break-words text-xs text-foreground">
                                     {approvalDetail.order.remark || "No purchase notes or special terms entered."}
                                 </p>
                             </div>
                             {financeFeedback.length > 0 && (
-                                <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3">
-                                    <div className="text-[10px] font-semibold uppercase text-amber-700">Finance Feedback</div>
+                                <div className="rounded-md border border-warning/20 bg-warning/5 p-3">
+                                    <div className="text-[10px] font-semibold uppercase text-warning">Finance Feedback</div>
                                     <div className="mt-2 space-y-2">
                                         {financeFeedback.map(entry => (
-                                            <div key={entry.history_id} className="border-t border-amber-200/70 pt-2 first:border-t-0 first:pt-0">
-                                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-amber-800">
+                                            <div key={entry.history_id} className="border-t border-warning/20 pt-2 first:border-t-0 first:pt-0">
+                                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-warning">
                                                     <span className="break-words">{entry.action} · {entry.actor_name}</span>
                                                     <span className="shrink-0">{dateTime(entry.created_at)}</span>
                                                 </div>
@@ -388,7 +369,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                         <div className="text-[10px] font-semibold uppercase text-muted-foreground">Matched rule</div>
                                         <div className="mt-1 break-words text-xs font-bold">{approvalDetail.matchedRule.ruleName}</div>
                                     </div>
-                                    <span className="w-fit rounded border border-blue-300 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">Finance approval</span>
+                                    <span className="w-fit rounded border border-info/30 bg-info/10 px-2 py-1 text-[10px] font-bold text-info">Finance approval</span>
                                 </div>
                                 <div className="mt-2 break-words text-[11px] text-muted-foreground">
                                     Categories: {approvalDetail.categoryIds.length ? approvalDetail.categoryIds.join(", ") : "Uncategorized"} | Self-approval: Permitted
@@ -409,9 +390,9 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
 
                         <div>
                             <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold"><FileCheck2 className="h-4 w-4 text-primary" /> Purchase-order lines</h3>
-                            <div className="overflow-x-auto rounded-md border">
-                                <table className="w-full min-w-[680px] text-xs">
-                                    <thead className="border-b bg-muted/50 text-left text-[10px] uppercase text-muted-foreground">
+                            <div className="overflow-x-auto">
+                                <table className="data-grid w-full min-w-[680px] text-xs">
+                                    <thead>
                                         <tr><th className="p-2.5">Product Name</th><th className="p-2.5 text-right">Qty</th><th className="p-2.5 text-right">{approvalDetail.order.currency_code === "PHP" ? "Unit Price (PHP)" : `Invoice Unit Price (${approvalDetail.order.currency_code || "foreign currency"})`}</th><th className="p-2.5">Discount Type</th><th className="p-2.5 text-right">Net ({approvalDetail.order.currency_code || "PHP"})</th></tr>
                                     </thead>
                                     <tbody className="divide-y">
@@ -492,56 +473,61 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex flex-col gap-1 rounded-xl border bg-muted/10 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <h1 className="text-base font-bold">Purchase Order Finance Approval</h1>
-                    <p className="text-xs text-muted-foreground">Select a purchase order to open its dedicated Finance approval workspace.</p>
-                </div>
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{pagination.total} record{pagination.total === 1 ? "" : "s"}</span>
-            </div>
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+            <ModulePageHeader
+                icon={Landmark}
+                eyebrow="Sourcing & Supply Chain"
+                title="Purchase Order Finance Approval"
+                description="Select a purchase order to open its dedicated Finance approval workspace."
+                actions={<span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{pagination.total} record{pagination.total === 1 ? "" : "s"}</span>}
+            />
 
-            <section className="w-full overflow-hidden rounded-xl border bg-card">
+            <section className="w-full overflow-hidden rounded-xl border bg-card shadow-sm">
                 <div className="space-y-3 border-b p-3 sm:p-4">
-                    <div className="flex gap-1 overflow-x-auto rounded-md border bg-muted/30 p-1" aria-label="Filter purchase orders by status">
+                    <div className="flex gap-1 overflow-x-auto rounded-xl border bg-muted/60 p-1" aria-label="Filter purchase orders by status">
                         {queueTabs.map(item => {
                             const Icon = item.icon;
+                            const active = tab === item.value;
                             return (
-                                <button
+                                <Button
                                     key={item.value}
                                     type="button"
+                                    size="sm"
+                                    variant={active ? "default" : "ghost"}
                                     onClick={() => setTab(item.value)}
-                                    aria-pressed={tab === item.value}
-                                    className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border px-3 text-xs font-semibold ${tab === item.value ? item.activeClass : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                                    aria-pressed={active}
+                                    className={active ? "shrink-0" : "shrink-0 text-muted-foreground"}
                                 >
                                     <Icon className="h-3.5 w-3.5" />
                                     {item.label}
-                                </button>
+                                </Button>
                             );
                         })}
                     </div>
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <input
+                        <Input
                             value={search}
                             onChange={event => setSearch(event.target.value)}
                             placeholder="Search PO, reference, or supplier"
                             aria-label="Search purchase orders"
-                            className="min-h-10 w-full rounded-md border bg-background pl-9 pr-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                            className="pl-9"
                         />
                     </div>
                 </div>
 
                 {loading ? (
-                    <div className="flex min-h-48 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+                    <ModuleStatePanel state="loading" title="Loading Finance approval queue..." skeletonRows={3} />
                 ) : queueError ? (
-                    <div className="p-10 text-center">
-                        <p className="text-sm font-bold text-red-700">Unable to load the Finance approval queue</p>
-                        <p className="mt-1 break-words text-xs text-muted-foreground">{queueError}</p>
-                        <button type="button" onClick={retryQueue} className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-primary bg-primary px-4 text-xs font-bold text-primary-foreground hover:bg-primary/90">Retry</button>
-                    </div>
+                    <ModuleStatePanel
+                        state="error"
+                        title="Unable to load the Finance approval queue"
+                        description={queueError}
+                        onRetry={retryQueue}
+                        className="rounded-xl border border-destructive/20 bg-destructive/5"
+                    />
                 ) : shipments.length === 0 ? (
-                    <div className="p-12 text-center text-xs text-muted-foreground">No purchase orders found for this Finance approval filter.</div>
+                    <ModuleStatePanel state="empty" title="No purchase orders found for this Finance approval filter." />
                 ) : (
                     <>
                         <div className="hidden grid-cols-[1.1fr_1.4fr_1fr_1fr_1fr_auto] gap-3 border-b bg-muted/30 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground md:grid">
@@ -569,7 +555,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                             <span className="mt-1 block truncate text-[11px] text-muted-foreground" title={order.reference_number || "No reference"}>{order.reference_number || "No reference"}</span>
                                         </span>
                                         <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={supplier || "Unknown supplier"}>{supplier || "Unknown supplier"}</span>
-                                        <span>{statusBadge(tab)}</span>
+                                        <span><ProcurementStatusBadge status={tab} /></span>
                                         <span className="text-[11px] font-semibold text-muted-foreground">{workflowStage}</span>
                                         <span className="font-mono text-xs font-bold text-foreground">{money(order.total_php_value)}</span>
                                         <span className="text-xs font-bold text-primary md:text-right">Review PO <span aria-hidden="true">→</span></span>
@@ -595,22 +581,24 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                         <option value={50}>50</option>
                                     </select>
                                 </label>
-                                <button
+                                <Button
                                     type="button"
+                                    size="sm"
+                                    variant="outline"
                                     onClick={() => goToQueuePage(pagination.page - 1)}
                                     disabled={loading || pagination.page <= 1}
-                                    className="inline-flex min-h-9 items-center justify-center rounded-md border px-3 text-xs font-semibold hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     Previous
-                                </button>
-                                <button
+                                </Button>
+                                <Button
                                     type="button"
+                                    size="sm"
+                                    variant="outline"
                                     onClick={() => goToQueuePage(pagination.page + 1)}
                                     disabled={loading || pagination.page >= pagination.totalPages}
-                                    className="inline-flex min-h-9 items-center justify-center rounded-md border px-3 text-xs font-semibold hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     Next
-                                </button>
+                                </Button>
                             </div>
                         </div>
                     </>

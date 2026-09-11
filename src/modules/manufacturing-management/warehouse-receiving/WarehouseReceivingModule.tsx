@@ -1,23 +1,18 @@
 "use client";
 
-import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardCheck, Loader2, PackageCheck, RefreshCw, Search, Warehouse } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, ClipboardCheck, Loader2, PackageCheck, Search, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { ModulePageHeader } from "../shared/components/ModulePageHeader";
+import { ModuleStatePanel } from "../shared/components/ModuleStatePanel";
+import { ProcurementStatusBadge } from "../shared/components/ProcurementStatusBadge";
 import { useWarehouseReceiving } from "./hooks/useWarehouseReceiving";
 
 function formatAmount(value: number, currency: string) {
     return new Intl.NumberFormat("en-PH", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
-}
-
-function statusClass(status: string) {
-    return status === "Approved"
-        ? "border-blue-200 bg-blue-50 text-blue-700"
-        : "border-amber-200 bg-amber-50 text-amber-700";
 }
 
 export default function WarehouseReceivingModule() {
@@ -57,24 +52,16 @@ export default function WarehouseReceivingModule() {
     const totalEntered = selectedLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0)), 0);
 
     return (
-        <div className="mx-auto flex w-full max-w-[1700px] flex-col gap-5">
-            <div className="flex flex-col gap-3 rounded-2xl border bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-start gap-3">
-                    <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Warehouse className="h-6 w-6" /></div>
-                    <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Procurement &amp; Inbound</p>
-                        <h1 className="text-2xl font-bold tracking-tight">Warehouse Receiving</h1>
-                        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                            Confirm physical quantities before the receipt is handed to QA Receiving for lot, batch, and quality inspection.
-                        </p>
-                    </div>
-                </div>
-                {selectedOrder && (
-                    <Button variant="outline" onClick={clearSelection} disabled={actionBusy}>
-                        <ArrowLeft className="mr-2 h-4 w-4" /> Back to queue
-                    </Button>
-                )}
-            </div>
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+            <ModulePageHeader
+                icon={Warehouse}
+                eyebrow="Procurement & Inbound"
+                title="Warehouse Receiving"
+                description="Confirm physical quantities before the receipt is handed to QA Receiving for lot, batch, and quality inspection."
+                onBack={selectedOrder ? clearSelection : undefined}
+                backLabel="Back to queue"
+                backDisabled={actionBusy}
+            />
 
             {!selectedOrder ? (
                 <Card>
@@ -90,23 +77,23 @@ export default function WarehouseReceivingModule() {
                     </CardHeader>
                     <CardContent className="p-0">
                         {error && (
-                            <Alert variant="destructive" className="m-5">
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertTitle>Unable to load Warehouse Receiving</AlertTitle>
-                                <AlertDescription className="flex flex-wrap items-center gap-3">
-                                    {error}
-                                    <Button size="sm" variant="outline" onClick={retryQueue}><RefreshCw className="mr-2 h-4 w-4" /> Retry</Button>
-                                </AlertDescription>
-                            </Alert>
+                            <ModuleStatePanel
+                                state="error"
+                                title="Unable to load Warehouse Receiving"
+                                description={error}
+                                onRetry={retryQueue}
+                                className="m-5 rounded-xl border border-destructive/20 bg-destructive/5"
+                            />
                         )}
                         {loading ? (
-                            <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading purchase orders...</div>
+                            <ModuleStatePanel state="loading" title="Loading purchase orders..." />
                         ) : orders.length === 0 ? (
-                            <div className="flex min-h-56 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
-                                <PackageCheck className="h-8 w-8" />
-                                <p className="font-medium">No purchase orders are ready for warehouse receiving.</p>
-                                <p className="text-sm">Finance-approved purchase orders will appear here.</p>
-                            </div>
+                            <ModuleStatePanel
+                                state="empty"
+                                icon={PackageCheck}
+                                title="No purchase orders are ready for warehouse receiving."
+                                description="Finance-approved purchase orders will appear here."
+                            />
                         ) : (
                             <div className="divide-y">
                                 {orders.map(order => (
@@ -119,7 +106,7 @@ export default function WarehouseReceivingModule() {
                                         <div className="min-w-0">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <span className="font-semibold">{order.poNumber}</span>
-                                                <Badge variant="outline" className={statusClass(order.status)}>{order.status}</Badge>
+                                                <ProcurementStatusBadge status={order.status} />
                                             </div>
                                             <p className="mt-1 truncate text-sm text-muted-foreground">{order.supplierName} · {order.branch.name} {order.branch.code ? `(${order.branch.code})` : ""}</p>
                                         </div>
@@ -143,24 +130,29 @@ export default function WarehouseReceivingModule() {
                     </CardContent>
                 </Card>
             ) : detailLoading ? (
-                <Card><CardContent className="flex min-h-72 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" /> Loading purchase order...</CardContent></Card>
+                <Card><CardContent className="p-0"><ModuleStatePanel state="loading" title="Loading purchase order..." className="min-h-72" /></CardContent></Card>
             ) : detailError ? (
-                <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Unable to open purchase order</AlertTitle><AlertDescription>{detailError}</AlertDescription></Alert>
+                <ModuleStatePanel
+                    state="error"
+                    title="Unable to open purchase order"
+                    description={detailError}
+                    className="rounded-xl border border-destructive/20 bg-destructive/5"
+                />
             ) : (
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
                     <Card className="min-w-0">
                         <CardHeader className="border-b">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
-                                    <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><Badge variant="outline" className={statusClass(selectedOrder.status)}>{selectedOrder.status}</Badge></div>
+                                    <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><ProcurementStatusBadge status={selectedOrder.status} /></div>
                                     <p className="mt-1 text-sm text-muted-foreground">{selectedOrder.supplierName} · Receiving branch: {selectedOrder.branch.name} {selectedOrder.branch.code ? `(${selectedOrder.branch.code})` : ""}</p>
                                 </div>
                                 <div className="text-left sm:text-right"><p className="text-xs text-muted-foreground">Purchase order total</p><p className="font-semibold">{formatAmount(selectedOrder.totalAmount, selectedOrder.currencyCode)}</p></div>
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-6 p-5">
-                            <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-900">
-                                <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">Warehouse quantity confirmation</p><p className="mt-1">Enter the physical quantities received. Lot, batch, expiration, and QA disposition are completed in the next QA Receiving step.</p></div></div>
+                            <div className="rounded-lg border border-info/20 bg-info/5 p-4 text-sm text-foreground">
+                                <div className="flex items-start gap-3"><ClipboardCheck className="mt-0.5 h-5 w-5 shrink-0 text-info" /><div><p className="font-semibold">Warehouse quantity confirmation</p><p className="mt-1">Enter the physical quantities received. Lot, batch, expiration, and QA disposition are completed in the next QA Receiving step.</p></div></div>
                             </div>
 
                             <div className="grid gap-4 md:grid-cols-3">
@@ -171,13 +163,13 @@ export default function WarehouseReceivingModule() {
 
                             <Separator />
                             <div className="flex items-end justify-between gap-3"><div><h2 className="font-semibold">Purchase-order lines</h2><p className="text-sm text-muted-foreground">Quantities are checked against the unreceived balance.</p></div><div className="text-right text-sm"><p className="text-muted-foreground">Entered quantity</p><p className="font-semibold">{totalEntered.toLocaleString()} units</p></div></div>
-                            <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Product</th><th className="px-4 py-3 text-right">Ordered</th><th className="px-4 py-3 text-right">Previously received</th><th className="px-4 py-3 text-right">Remaining</th><th className="w-44 px-4 py-3">Receiving quantity</th></tr></thead><tbody className="divide-y">{selectedLines.map(line => <tr key={line.lineId}><td className="px-4 py-3"><p className="font-medium">{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</p></td><td className="px-4 py-3 text-right">{line.orderedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right">{line.previouslyReceivedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right font-medium">{line.allowableQuantity.toLocaleString()}</td><td className="px-4 py-3"><Input type="number" min="0" step="any" value={quantities[line.lineId] ?? ""} onChange={event => updateQuantity(line.lineId, event.target.value)} disabled={!isStarted || actionBusy} aria-label={`Receiving quantity for ${line.productName}`} /></td></tr>)}</tbody></table></div>
+                            <div className="overflow-x-auto"><table className="data-grid w-full min-w-[760px] text-sm"><thead><tr><th>Product</th><th className="text-right">Ordered</th><th className="text-right">Previously received</th><th className="text-right">Remaining</th><th className="w-44">Receiving quantity</th></tr></thead><tbody className="divide-y">{selectedLines.map(line => <tr key={line.lineId}><td className="px-4 py-3"><p className="font-medium">{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode || `Line ${line.lineId}`}</p></td><td className="px-4 py-3 text-right">{line.orderedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right">{line.previouslyReceivedQuantity.toLocaleString()}</td><td className="px-4 py-3 text-right font-medium">{line.allowableQuantity.toLocaleString()}</td><td className="px-4 py-3"><Input type="number" min="0" step="any" value={quantities[line.lineId] ?? ""} onChange={event => updateQuantity(line.lineId, event.target.value)} disabled={!isStarted || actionBusy} aria-label={`Receiving quantity for ${line.productName}`} /></td></tr>)}</tbody></table></div>
                         </CardContent>
                     </Card>
                     <Card className="h-fit xl:sticky xl:top-4">
                         <CardHeader><CardTitle>Workflow action</CardTitle></CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className="flex items-center gap-3 text-muted-foreground"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted">3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
+                            <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-success-bg text-success"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className="flex items-center gap-3 text-muted-foreground"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted">3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
                             <Separator />
                             {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> Start Warehouse Receiving</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button><Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
                             <p className="text-center text-xs leading-5 text-muted-foreground">Sending to QA locks this warehouse receipt and makes it available in QA Receiving.</p>
