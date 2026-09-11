@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
         let createdReservationIds: number[] = [];
         try {
             if (customAllocations && Array.isArray(customAllocations) && customAllocations.length > 0) {
-                const allocation = await allocateInvoicesWithCustomAllocations(uniqueIds, customAllocations, userId!);
+                const allocation = await allocateInvoicesWithCustomAllocations(allocationOrder, customAllocations, userId!);
                 createdReservationIds = allocation.createdReservationIds;
             } else {
                 const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);

@@ -238,12 +238,6 @@ export default function CreateConsolidationModal({
         onClose();
     };
 
-    const step1DocTypeSelectOptions = [
-        { value: "ALL", label: "All Orders (SO & JO)" },
-        { value: "SALES_ORDER", label: "Sales Orders (SO)" },
-        { value: "JOB_ORDER", label: "Job Orders (JO)" },
-    ];
-
     const customerOptions = useMemo(() => {
         const map = new Map<string, string>();
         for (const c of candidates) {
@@ -268,8 +262,7 @@ export default function CreateConsolidationModal({
     const filtered = useMemo(() => {
         return candidates
             .filter((c) => {
-                if (selectedDocType === "SALES_ORDER" && c.documentType !== "SALES_ORDER") return false;
-                if (selectedDocType === "JOB_ORDER" && c.documentType !== "JOB_ORDER") return false;
+                if (c.documentType === "JOB_ORDER") return false;
                 if (selectedCustomer !== "ALL" && c.customerCode !== selectedCustomer) return false;
                 if (dateFrom && c.invoiceDate && c.invoiceDate < dateFrom) return false;
                 if (dateTo && c.invoiceDate && c.invoiceDate > dateTo) return false;
@@ -552,17 +545,17 @@ export default function CreateConsolidationModal({
     ) => {
         const parsed = Math.max(0, Number(val) || 0);
         const key = getManualKey(invoiceId, productId, inventoryLotId, lotId, batchNo);
-        console.log("[ManualAlloc] QTY SET", {
-            invoiceId,
-            productId,
-            inventoryLotId,
-            lotId,
-            batchNo,
-            maxAvail,
-            rawVal: val,
-            parsed,
-            key,
-        });
+        // console.log("[ManualAlloc] QTY SET", {
+        //     invoiceId,
+        //     productId,
+        //     inventoryLotId,
+        //     lotId,
+        //     batchNo,
+        //     maxAvail,
+        //     rawVal: val,
+        //     parsed,
+        //     key,
+        // });
         setManualAllocations((prev) => ({
             ...prev,
             [key]: parsed,
@@ -935,52 +928,6 @@ export default function CreateConsolidationModal({
                 }
             }
             customAllocations = Array.from(aggMap.values());
-        } else if (allocationPreview?.invoiceBreakdown && allocationPreview.invoiceBreakdown.length > 0) {
-            const aggMap = new Map<string, CustomAllocationItem>();
-            for (const inv of allocationPreview.invoiceBreakdown) {
-                for (const line of inv.lines || []) {
-                    for (const a of line.allocations || []) {
-                        if (a.quantity > 0) {
-                            const batchKey = `${line.detailId}:${line.productId}:${a.inventoryLotId}:${a.batchNo}:${a.lotId}`;
-                            const existing = aggMap.get(batchKey);
-                            if (existing) {
-                                existing.quantity += a.quantity;
-                            } else {
-                                aggMap.set(batchKey, {
-                                    invoiceDetailId: line.detailId,
-                                    invoiceId: inv.invoiceId,
-                                    productId: line.productId,
-                                    inventoryLotId: a.inventoryLotId,
-                                    lotId: a.lotId,
-                                    batchNo: a.batchNo,
-                                    quantity: a.quantity,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            customAllocations = Array.from(aggMap.values());
-        } else if (allocationPreview?.allocations && allocationPreview.allocations.length > 0) {
-            const aggMap = new Map<string, CustomAllocationItem>();
-            for (const a of allocationPreview.allocations) {
-                if (a.quantity > 0) {
-                    const batchKey = `${a.productId}:${a.inventoryLotId}:${a.batchNo}:${a.lotId}`;
-                    const existing = aggMap.get(batchKey);
-                    if (existing) {
-                        existing.quantity += a.quantity;
-                    } else {
-                        aggMap.set(batchKey, {
-                            productId: a.productId,
-                            inventoryLotId: a.inventoryLotId,
-                            lotId: a.lotId,
-                            batchNo: a.batchNo,
-                            quantity: a.quantity,
-                        });
-                    }
-                }
-            }
-            customAllocations = Array.from(aggMap.values());
         }
 
         setSubmitting(true);
@@ -991,11 +938,11 @@ export default function CreateConsolidationModal({
             customAllocations,
         };
 
-        console.log("[CreateConsolidation] SUBMIT CLICKED");
-        console.log("[CreateConsolidation] allocationMode:", allocationMode);
-        console.log("[CreateConsolidation] manualAllocations state:", JSON.parse(JSON.stringify(manualAllocations)));
-        console.log("[CreateConsolidation] customAllocations built:", JSON.stringify(customAllocations, null, 2));
-        console.log("[CreateConsolidation] FULL PAYLOAD to POST:", JSON.stringify(submitPayload, null, 2));
+        // console.log("[CreateConsolidation] SUBMIT CLICKED");
+        // console.log("[CreateConsolidation] allocationMode:", allocationMode);
+        // console.log("[CreateConsolidation] manualAllocations state:", JSON.parse(JSON.stringify(manualAllocations)));
+        // console.log("[CreateConsolidation] customAllocations built:", JSON.stringify(customAllocations, null, 2));
+        // console.log("[CreateConsolidation] FULL PAYLOAD to POST:", JSON.stringify(submitPayload, null, 2));
 
         await onSubmit(submitPayload);
         setSubmitting(false);
@@ -1218,18 +1165,6 @@ export default function CreateConsolidationModal({
                                         />
                                     </div>
 
-                                    {/* Doc Type Filter */}
-                                    <div className="w-[180px]">
-                                        <SearchableSelect
-                                            options={step1DocTypeSelectOptions}
-                                            value={selectedDocType}
-                                            onValueChange={setSelectedDocType}
-                                            placeholder="Filter Order Type..."
-                                            searchPlaceholder="Search type..."
-                                            triggerClassName="h-8.5 rounded-xl border border-border/60 bg-card px-2.5 text-xs font-semibold text-foreground"
-                                        />
-                                    </div>
-
                                     {/* Customer Filter */}
                                     <div className="w-[200px]">
                                         <SearchableSelect
@@ -1261,7 +1196,7 @@ export default function CreateConsolidationModal({
                                         />
                                     </div>
 
-                                    {(search || selectedCustomer !== "ALL" || selectedDocType !== "ALL" || dateFrom || dateTo) && (
+                                    {(search || selectedCustomer !== "ALL" || dateFrom || dateTo) && (
                                         <Button
                                             variant="ghost"
                                             size="sm"
@@ -1311,8 +1246,8 @@ export default function CreateConsolidationModal({
                             ) : filtered.length === 0 ? (
                                 <div className="py-16 text-center text-xs text-muted-foreground space-y-2">
                                     <FileText className="h-8 w-8 text-muted-foreground/40 mx-auto" />
-                                    <p className="font-bold">No eligible sales orders or job orders found</p>
-                                    <p className="text-[11px]">Try adjusting your search query, order type, customer, or date filters.</p>
+                                    <p className="font-bold">No eligible sales orders found</p>
+                                    <p className="text-[11px]">Try adjusting your search query, customer, or date filters.</p>
                                 </div>
                             ) : (
                                 <div className="overflow-hidden rounded-3xl border border-border/60 bg-card shadow-sm">
@@ -2069,7 +2004,7 @@ export default function CreateConsolidationModal({
                                                                                         exit={{ opacity: 0, y: 6 }}
                                                                                         transition={{ duration: 0.18 }}
                                                                                     >
-                                                                                        {lineInfo.allocations.length > 0 ? (
+                                                                                        {lineInfo.allocations.filter((a) => a.quantity > 0).length > 0 ? (
                                                                                             <div className="max-h-[195px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
                                                                                                 <table className="w-full text-left text-xs border-collapse">
                                                                                                     <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
@@ -2081,7 +2016,7 @@ export default function CreateConsolidationModal({
                                                                                                         </tr>
                                                                                                     </thead>
                                                                                                     <tbody className="divide-y divide-border/40">
-                                                                                                        {lineInfo.allocations.map((a, idx) => {
+                                                                                                        {lineInfo.allocations.filter((a) => a.quantity > 0).map((a, idx) => {
                                                                                                             const isAllocated = a.quantity > 0;
                                                                                                             return (
                                                                                                                 <tr
@@ -2155,7 +2090,11 @@ export default function CreateConsolidationModal({
                                                                                         exit={{ opacity: 0, y: 6 }}
                                                                                         transition={{ duration: 0.18 }}
                                                                                     >
-                                                                                        {availableBatches.length > 0 ? (
+                                                                                        {availableBatches.filter((b) => {
+                                                                                            const key = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                            const currentQty = Number(manualAllocations[key] || 0);
+                                                                                            return b.availableQuantity > 0 || currentQty > 0;
+                                                                                        }).length > 0 ? (
                                                                                             <div className="max-h-[220px] overflow-y-auto rounded-2xl border border-border/50 bg-card shadow-sm">
                                                                                                 <table className="w-full text-left text-xs border-collapse">
                                                                                                     <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm border-b border-border/60">
@@ -2169,7 +2108,11 @@ export default function CreateConsolidationModal({
                                                                                                         </tr>
                                                                                                     </thead>
                                                                                                     <tbody className="divide-y divide-border/40">
-                                                                                                        {availableBatches.map((b, bIdx) => {
+                                                                                                        {availableBatches.filter((b) => {
+                                                                                                            const key = getManualKey(inv.invoiceId, prod.productId, b.inventoryLotId, b.lotId, b.batchNo);
+                                                                                                            const currentQty = Number(manualAllocations[key] || 0);
+                                                                                                            return b.availableQuantity > 0 || currentQty > 0;
+                                                                                                        }).map((b, bIdx) => {
                                                                                                             const key = getManualKey(
                                                                                                                 inv.invoiceId,
                                                                                                                 prod.productId,
@@ -2400,7 +2343,7 @@ export default function CreateConsolidationModal({
                                 <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
                                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Selected Orders</p>
                                     <p className="mt-1 text-lg font-black text-foreground">{selectedIds.size}</p>
-                                    <p className="text-[10px] text-muted-foreground">SO & JO Documents</p>
+                                    <p className="text-[10px] text-muted-foreground">Sales Orders</p>
                                 </div>
                                 <div className="rounded-2xl border border-border/60 bg-card p-3 shadow-sm">
                                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Unique Products</p>
@@ -2594,7 +2537,7 @@ export default function CreateConsolidationModal({
                                                         }
                                                     }
                                                 } else {
-                                                    const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === p.productId);
+                                                    const allocs = (allocationPreview?.allocations || []).filter((a) => a.productId === p.productId && a.quantity > 0);
                                                     productAllocatedQty = allocs.reduce((sum, a) => sum + a.quantity, 0);
                                                     const entry = getOrCreateOrderEntry(0);
                                                     for (const a of allocs) {
