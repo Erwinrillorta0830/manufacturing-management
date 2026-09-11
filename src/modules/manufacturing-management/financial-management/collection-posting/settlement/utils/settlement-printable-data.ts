@@ -89,7 +89,7 @@ export function mapRawPouchToSettlementPrintableData(
 
         if (isCash) type = "CASH";
         else if (tempId.startsWith("chk") || bucket.paymentMethodId === 2) type = "CHECK";
-        else if (tempId.startsWith("ewt") || bucket.paymentMethodId === 10 || bucket.coaId === 11) type = "EWT";
+        else if (tempId.startsWith("ewt") || bucket.paymentMethodId === 10 || Number(bucket.coaId) === 438 || Number(bucket.coaId) === 11 || referenceNo.includes("2307")) type = "EWT";
         else if (bucket.findingId != null || (bucket.paymentMethodId == null && bucket.coaId != null)) type = "ADJUSTMENT";
         else type = "CHECK";
 

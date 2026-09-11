@@ -88,13 +88,16 @@ export async function POST(
         const tempIdToDbIdMap: Record<string, string> = {};
 
         // Fetch EWT COA ID
-        let ewtCoaId: number | null = null;
+        let ewtCoaId: number = 438;
+        let ewtBalanceTypeId: number = 1;
         if (newEwts.length > 0) {
-            const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[_or][0][gl_name][_icontains]=ewt&filter[_or][1][gl_name][_icontains]=withholding`, { headers });
+            const coaRes = await fetch(`${DIRECTUS_URL}/items/chart_of_accounts?filter[_or][0][coa_id][_eq]=438&filter[_or][1][gl_name][_icontains]=ewt&filter[_or][2][gl_name][_icontains]=withholding`, { headers });
             if (coaRes.ok) {
                 const coaData = await coaRes.json();
                 if (coaData.data && coaData.data.length > 0) {
-                    ewtCoaId = coaData.data[0].coa_id;
+                    const coaObj = coaData.data[0];
+                    ewtCoaId = Number(coaObj.coa_id) || 438;
+                    ewtBalanceTypeId = Number(coaObj.balance_type) || 1;
                 }
             }
         }
@@ -128,6 +131,7 @@ export async function POST(
             const detailData: Record<string, unknown> = {
                 collection_id: id,
                 type: ewtCoaId,
+                balance_type_id: ewtBalanceTypeId,
                 amount: ewt.amount,
                 check_no: ewt.referenceNo,
                 remarks: ewt.referenceNo,
@@ -145,6 +149,8 @@ export async function POST(
         // Collect and aggregate RETURN allocations by (return_no, invoice_no) to satisfy UNIQUE constraint
         const returnAmountMap = new Map<string, { returnNo: number; invoiceNo: number; amount: number }>();
         const memoAmountMap = new Map<number, number>();
+
+        const activeDetailAllocatedDbIds = new Set<string>();
 
         for (const alloc of allocations) {
             if (alloc.amountApplied <= 0) continue; // Skip zero allocations
@@ -165,6 +171,7 @@ export async function POST(
                     const detailDbIdMatch = mappedSourceId.match(/detail-(\d+)/);
                     if (detailDbIdMatch) {
                         const detailId = detailDbIdMatch[1];
+                        activeDetailAllocatedDbIds.add(detailId);
                         const targetCustCode = invoiceCustomerMap.get(Number(alloc.invoiceId));
                         void fetch(`${DIRECTUS_URL}/items/collection_details/${detailId}`, {
                             method: "PATCH",
@@ -195,6 +202,28 @@ export async function POST(
                     }
                 }
             }
+        }
+
+        // Unlink collection_details that are no longer allocated to an invoice in this pouch
+        try {
+            const existingDetailsRes = await fetch(`${DIRECTUS_URL}/items/collection_details?filter[collection_id][_eq]=${id}&fields=id,invoice_id`, { headers, cache: "no-store" });
+            if (existingDetailsRes.ok) {
+                const existingDetails = (await existingDetailsRes.json()).data || [];
+                for (const d of existingDetails) {
+                    if (d.id && !activeDetailAllocatedDbIds.has(String(d.id))) {
+                        await fetch(`${DIRECTUS_URL}/items/collection_details/${d.id}`, {
+                            method: "PATCH",
+                            headers,
+                            body: JSON.stringify({
+                                invoice_id: null,
+                                customer_code: null
+                            })
+                        }).catch((err: unknown) => console.warn(`Failed to clear invoice linkage for detail #${d.id}:`, err));
+                    }
+                }
+            }
+        } catch (unlinkedErr) {
+            console.warn("Failed to check unlinked collection_details:", unlinkedErr);
         }
 
         for (const item of returnAmountMap.values()) {

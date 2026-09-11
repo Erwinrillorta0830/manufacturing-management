@@ -19,6 +19,7 @@ import {
     getInvoiceAppliedForSettlement,
     getInvoiceRequiredBalance,
     getSourceAllocationCapacity,
+    getUnallocatedPoolItems,
     SETTLEMENT_BALANCE_TOLERANCE,
 } from "../utils/settlement-balance";
 
@@ -727,6 +728,29 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
 
     const submitSettlement = async (): Promise<boolean> => {
         try {
+            // Guard 1: Liquidation Pool items must be 100% allocated
+            const unallocatedItems = getUnallocatedPoolItems(wallet, allocations);
+            if (unallocatedItems.length > 0) {
+                const itemDescriptions = unallocatedItems.map(i => `${i.label} (₱${i.unallocatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} unallocated)`).join(", ");
+                toast.error(`Cannot commit settlement: The following items in the Liquidation Pool are not fully allocated: ${itemDescriptions}.`);
+                return false;
+            }
+
+            // Guard 2: If pool contains remittances/funds, active invoice cart cannot be empty or zero-allocated
+            const totalRemittance = wallet.reduce((sum, w) => sum + Number(w.originalAmount || 0), 0);
+            const totalInvoiceApplied = allocations.reduce((sum, a) => sum + Number(a.amountApplied || 0), 0);
+            if (totalRemittance > 0.009 && (cartInvoices.length === 0 || totalInvoiceApplied <= 0.009)) {
+                toast.error("Cannot commit settlement: You must select sales invoices and allocate your remittances before committing.");
+                return false;
+            }
+
+            // Guard 3: Every adjustment/overage/EWT in wallet must be allocated/linked to a target invoice
+            const unlinkedVariances = wallet.filter(w => (w.type === "ADJUSTMENT" || w.type === "EWT") && (!w.invoiceId && !allocations.some(a => (a.sourceTempId === w.id || a.sourceTempId?.toLowerCase() === w.id.toLowerCase()) && a.invoiceId && a.amountApplied > 0)));
+            if (unlinkedVariances.length > 0) {
+                toast.error("Cannot commit settlement: Every adjustment, overage, or EWT must be linked to a target sales invoice.");
+                return false;
+            }
+
             const underAllocatedInvoice = findUnderAllocatedInvoice(cartInvoices, allocations);
             if (underAllocatedInvoice) {
                 const remaining = getInvoiceRequiredBalance(underAllocatedInvoice) - getInvoiceApplied(underAllocatedInvoice.id);

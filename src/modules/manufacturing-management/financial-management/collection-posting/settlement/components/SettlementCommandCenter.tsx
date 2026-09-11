@@ -602,7 +602,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
                             ) : (
                                 <span className="flex items-center gap-1.5">
                                     <Save className="w-3.5 h-3.5" />
-                                    {!isPouchBalanced ? "Balance Pouch" : (!isCartBalanced ? "Balance Cart" : "Commit")}
+                                    Commit
                                 </span>
                             )}
                         </Button>

@@ -150,6 +150,14 @@ export function LedgerTable({ pouches }: { pouches: PouchReportDto[] }) {
                                                 </span>
                                             )}
 
+                                            {/* EWT Render */}
+                                            {!!inv.ewtAmount && inv.ewtAmount > 0 && (
+                                                <span className="flex items-center gap-1.5 text-[10px] font-medium font-mono text-amber-600 dark:text-amber-400">
+                                                    <CornerDownRight size={12} className="opacity-50"/>
+                                                    EWT / Form 2307: - ₱{inv.ewtAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                                </span>
+                                            )}
+
                                             {/* Final Net Render */}
                                             <span className="text-emerald-700 dark:text-emerald-400 font-black text-[13px] tracking-tight font-mono mt-1 border-t border-border/60 pt-1.5">
                                                 Net: ₱{inv.netAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}

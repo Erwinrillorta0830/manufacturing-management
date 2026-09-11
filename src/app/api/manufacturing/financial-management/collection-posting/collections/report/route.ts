@@ -151,15 +151,27 @@ export async function GET(request: Request) {
             const variances: any[] = [];
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ewtDetailsMap: Record<number, { amount: number; ref?: string }> = {};
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             pouchDetails.forEach((d: any) => {
                 const amount = Math.abs(d.amount || 0);
                 
                 const hasDenomination = typeof d.check_no === 'string' && d.check_no.includes(" x ");
+                const isEwt = Number(d.type) === 438 || (typeof d.remarks === "string" && d.remarks.toLowerCase().includes("2307")) || (typeof d.check_no === "string" && d.check_no.toLowerCase().includes("2307"));
 
                 let isCheck = false;
                 let isFindingOrAdjustment = false;
 
-                if (hasDenomination || Number(d.type) === 1 || Number(d.payment_method) === 1) {
+                if (isEwt) {
+                    if (d.invoice_id) {
+                        const invId = Number(d.invoice_id);
+                        if (!ewtDetailsMap[invId]) {
+                            ewtDetailsMap[invId] = { amount: 0, ref: d.check_no || d.remarks };
+                        }
+                        ewtDetailsMap[invId].amount += amount;
+                    }
+                } else if (hasDenomination || Number(d.type) === 1 || Number(d.payment_method) === 1) {
                     // It's cash, handled below
                 } else if (d.finding != null) {
                     isFindingOrAdjustment = true;
@@ -169,7 +181,7 @@ export async function GET(request: Request) {
                     isFindingOrAdjustment = true;
                 }
                 
-                if (isFindingOrAdjustment) {
+                if (isFindingOrAdjustment && !isEwt) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const findingObj = findings.find((f: any) => f.id === d.finding);
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -219,7 +231,7 @@ export async function GET(request: Request) {
                         remarks: d.remarks || "",
                         amount: amount
                     });
-                } else if (isCheck) {
+                } else if (isCheck && !isEwt) {
                     totalCheck += amount;
                     globalChecks += amount;
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -233,7 +245,7 @@ export async function GET(request: Request) {
                         customerName: resolveCustomerName(d.customer_code),
                         amount: amount
                     });
-                } else {
+                } else if (!isEwt) {
                     totalCash += amount;
                     globalCash += amount;
                 }
@@ -259,6 +271,8 @@ export async function GET(request: Request) {
                         grossAmount: 0,
                         memoAmount: 0,
                         returnAmount: 0,
+                        ewtAmount: ewtDetailsMap[invId]?.amount || 0,
+                        ewtRef: ewtDetailsMap[invId]?.ref || undefined,
                         netAmount: 0
                     };
                     totalInvoices++;
@@ -270,6 +284,10 @@ export async function GET(request: Request) {
                 } else if (ci.type === "RETURN") {
                     invoiceMap[invId].returnAmount += amount;
                     totalReturns++;
+                } else if (ci.type === "EWT") {
+                    if (!invoiceMap[invId].ewtAmount) {
+                        invoiceMap[invId].ewtAmount = amount;
+                    }
                 } else {
                     invoiceMap[invId].grossAmount += amount;
                     invoiceMap[invId].netAmount += amount;

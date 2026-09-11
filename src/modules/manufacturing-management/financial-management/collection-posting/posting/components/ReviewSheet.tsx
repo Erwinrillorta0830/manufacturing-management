@@ -134,8 +134,8 @@ export function ReviewSheet({
             else if (tempId.startsWith("chk") || String(b.paymentMethodId) === "2" || (String(b.paymentMethodId) === "4" && (b.referenceNo || b.chequeDate))) {
                 typeLabel = "CHECK";
             }
-            // 3. EWT (Method ID 10)
-            else if (tempId.startsWith("ewt") || String(b.paymentMethodId) === "10") {
+            // 3. EWT (Method ID 10, COA 438/11, or ewt/2307 reference)
+            else if (tempId.startsWith("ewt") || String(b.paymentMethodId) === "10" || Number(b.coaId) === 438 || Number(b.coaId) === 11 || refNo.includes("2307")) {
                 typeLabel = "EWT";
             }
             // 4. OTHER METHODS
@@ -251,7 +251,7 @@ export function ReviewSheet({
     }, [pouch]);
 
     const hasAllocations = (pouch?.allocations?.length ?? 0) > 0;
-    const canPost = !isPosting && hasAllocations && reviewMath.unallocatedInvoices.length === 0;
+    const canPost = !isPosting && hasAllocations && reviewMath.unallocatedInvoices.length === 0 && !reviewMath.isOverage;
 
     return (
         <Sheet open={isOpen} onOpenChange={onOpenChange}>
@@ -409,17 +409,18 @@ export function ReviewSheet({
                                         )}
 
                                         {reviewMath.nonCashBuckets.map((b, i) => {
-                                            const isCredit = b.balanceTypeId === 1;
                                             const typeLabel = b.resolvedType || "ADJUSTMENT";
+                                            const isEwtType = typeLabel === "EWT";
+                                            const isCredit = !isEwtType && b.balanceTypeId === 1;
 
                                             return (
                                                 <div key={i} className={`flex justify-between items-center p-3.5 rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${isCredit ? 'border-red-200' : 'border-border'}`}>
                                                     <div className="flex flex-col">
                                                         <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                                                            {b.referenceNo || typeLabel}
+                                                            {b.referenceNo ? `FORM 2307: ${b.referenceNo}` : (b.referenceNo || typeLabel)}
                                                         </span>
                                                         <span className="text-[9px] font-bold text-muted-foreground uppercase mt-0.5 flex flex-wrap gap-2">
-                                                            <span className={isCredit ? "text-red-600 font-black" : ""}>Type: {typeLabel}</span>
+                                                            <span className={isCredit ? "text-red-600 font-black" : isEwtType ? "text-emerald-600 font-black" : ""}>Type: {typeLabel}</span>
                                                         </span>
                                                     </div>
                                                     <span className={`font-mono font-black text-base ${isCredit ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -561,6 +562,20 @@ export function ReviewSheet({
                         </div>
 
                         <div className="bg-card border-t p-6 shrink-0 shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-10 flex flex-col gap-3">
+                            {reviewMath.isOverage && (
+                                <div
+                                    role="alert"
+                                    className="flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-orange-900 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-200"
+                                >
+                                    <Info size={18} className="mt-0.5 shrink-0 text-orange-600" />
+                                    <div className="min-w-0 flex-1 text-xs font-semibold">
+                                        <p className="font-black uppercase tracking-widest text-orange-800">Commit &amp; Post is blocked</p>
+                                        <p className="mt-1 text-[11px] font-bold">
+                                            Collection contains {formatMoney(reviewMath.variance)} of unallocated overage funds. All physical cash, checks, and remittances must be allocated to invoices or recorded as specific settlement adjustments before posting to General Ledger.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
                             {reviewMath.unallocatedInvoices.length > 0 && (
                                 <div
                                     role="alert"

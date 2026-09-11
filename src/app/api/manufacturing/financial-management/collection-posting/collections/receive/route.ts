@@ -50,12 +50,12 @@ export async function POST(request: Request) {
                     collection_id: collectionId,
                     type: bucket.coaId,
                     payment_method: bucket.paymentMethodId,
-                    encoder_id: payload.encoderId,
+                    encoder_id: payload.encoderId || payload.collectedBy || 1,
                     bank: bucket.bankId,
                     customer_code: bucket.customerCode,
                     check_no: bucket.referenceNo,
                     chequeDate: bucket.chequeDate,
-                    amount: bucket.amount,
+                    remarks: bucket.remarks || (bucket.denominationId || bucket.coaId === 1 || bucket.paymentMethodId === 1 ? "These records are physical cash" : null),
                     invoice_id: bucket.invoiceId,
                     is_cleared: false
                 };
