@@ -322,7 +322,7 @@ export function StagingPickList({
                                                         {mat.product_name}
                                                         {hasShortage && (
                                                             <span className="text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded font-mono font-medium">
-                                                                Shortage: -{mat.shortage_quantity} {mat.uom}
+                                                                Shortage: {mat.shortage_quantity} {mat.uom}
                                                             </span>
                                                         )}
                                                     </div>

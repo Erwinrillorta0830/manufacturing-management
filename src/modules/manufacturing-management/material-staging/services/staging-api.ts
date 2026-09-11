@@ -3,7 +3,16 @@
  * Client service for Material Staging & Floor Holds Module
  */
 
-import { BinTransferPayload, StagingJobOrder, StagingStats, WorkCenter, Branch } from "../types";
+import {
+    AllocationPreview,
+    AllocationPreviewPayload,
+    StagingCommitPayload,
+    StagingCommitResponse,
+    StagingJobOrder,
+    StagingStats,
+    WorkCenter,
+    Branch
+} from "../types";
 
 export interface StagingApiResponse {
     success: boolean;
@@ -14,23 +23,11 @@ export interface StagingApiResponse {
     error?: string;
 }
 
-export interface TransferApiResponse {
-    success: boolean;
-    status?: number;
-    failure_code?: string;
-    message?: string;
-    shortage?: boolean;
-    available_quantity?: number;
-    required_quantity?: number;
-    shortage_quantity?: number;
-    product_id?: number;
-    lot_id?: number;
-    allocation_id?: number;
-    batch_no?: string;
-    source_bin?: string;
-    target_bin?: string;
+export interface AllocationApiError {
     error?: string;
-    data?: unknown;
+    failure_code?: string;
+    details?: unknown;
+    shortages?: unknown;
 }
 
 /**
@@ -57,27 +54,39 @@ export async function fetchStagingJobOrders(params?: {
     return res.json();
 }
 
-/**
- * Execute bin transfer from MAIN-STORE to FLOOR-STAGING-[WorkCenterID]
- */
-export async function executeBinTransfer(payload: BinTransferPayload): Promise<TransferApiResponse> {
-    const res = await fetch("/api/manufacturing/material-staging/transfer", {
+/** Generate a read-only lot/batch allocation proposal. */
+export async function fetchAllocationPreview(payload: AllocationPreviewPayload): Promise<AllocationPreview> {
+    const res = await fetch("/api/manufacturing/material-staging/allocation-preview", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
     });
-
-    const json = await res.json();
-
-    if (res.status === 409 && json.shortage) {
-        return { ...json, status: res.status };
-    }
-
+    const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(json.error || json.message || `Transfer failed with status ${res.status}`);
+        throw new Error(json.error || json.message || `Allocation preview failed with status ${res.status}`);
     }
+    return json as AllocationPreview;
+}
 
-    return { ...json, status: res.status };
+/** Commit the reviewed allocation through the one canonical staging writer. */
+export async function commitMaterialStaging(payload: StagingCommitPayload): Promise<StagingCommitResponse> {
+    const res = await fetch("/api/manufacturing/material-staging/commit", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const details = json as AllocationApiError;
+        throw Object.assign(new Error(details.error || `Material staging failed with status ${res.status}`), {
+            status: res.status,
+            failure_code: details.failure_code,
+            shortages: details.shortages
+        });
+    }
+    return json as StagingCommitResponse;
 }

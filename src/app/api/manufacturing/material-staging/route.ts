@@ -37,6 +37,7 @@ interface DirectusAllocation {
     jo_material_id?: number;
     product_id?: number;
     mm_lot_id?: number;
+    inventory_lot_id?: number;
     lot_id?: number;
     batch_no?: string;
     allocated_quantity?: number;
@@ -50,6 +51,27 @@ interface DirectusAllocation {
 
 class MaterialStagingReadError extends Error {
     readonly status = 503;
+}
+
+function canonicalTypeName(value: unknown): string {
+    return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+function numericRelationId(value: unknown, keys: string[] = ["id"]): number {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of keys) {
+            const resolved = numericRelationId(record[key], keys);
+            if (resolved > 0) return resolved;
+        }
+        return 0;
+    }
+    const parsed = Number(value ?? 0);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function isActiveWorkCenter(value: unknown): boolean {
@@ -112,7 +134,7 @@ export async function GET(request: Request) {
             fetchMmInventoryMovements({
                 branch: branchFilter && branchFilter !== "all" ? Number(branchFilter) : null
             }),
-            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${stagingMovementFilter}&limit=-1&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks`, { headers, cache: "no-store" }).catch(() => null),
+            fetch(`${DIRECTUS_URL}/items/inventory_movements?filter=${stagingMovementFilter}&limit=-1&fields=*`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?limit=-1&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,expiry_date,received_quantity`, { headers, cache: "no-store" }).catch(() => null),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&fields=*,job_order_id.product_id,job_order_id.job_order_no`, { headers, cache: "no-store" }).catch(() => null)
         ]);
@@ -185,6 +207,7 @@ export async function GET(request: Request) {
             batchNo: string;
             quantity: number;
         }>();
+        const stockByBranchProductInventoryLotBatch = new Map<string, number>();
         const lotIdsByBranchProductBatch = new Map<string, Set<number>>();
 
         rawMovements.forEach((m) => {
@@ -194,6 +217,7 @@ export async function GET(request: Request) {
             const qty = Number(m.quantity || 0);
             const branchId = Number(m.branch_id || 0);
             const lotId = Number(m.mm_lot_id || 0);
+            const inventoryLotId = Number(m.inventory_lot_id || 0);
             if (pId && branchId) {
                 const productKey = branchProductKey(branchId, pId);
                 stockByBranchProduct.set(productKey, (stockByBranchProduct.get(productKey) || 0) + qty);
@@ -209,6 +233,13 @@ export async function GET(request: Request) {
                         batchNo,
                         quantity: (currentLot?.quantity || 0) + qty
                     });
+                    if (inventoryLotId) {
+                        const inventoryKey = `${branchId}:${pId}:${inventoryLotId}:${normalizedBatchNo}`;
+                        stockByBranchProductInventoryLotBatch.set(
+                            inventoryKey,
+                            (stockByBranchProductInventoryLotBatch.get(inventoryKey) || 0) + qty
+                        );
+                    }
                     const lotIds = lotIdsByBranchProductBatch.get(batchKey) || new Set<number>();
                     lotIds.add(lotId);
                     lotIdsByBranchProductBatch.set(batchKey, lotIds);
@@ -221,12 +252,13 @@ export async function GET(request: Request) {
         // audit format is trusted as an override of the resolved Job Order destination.
         const stagedDestinationByMaterialBatch = new Map<string, string>();
         rawMovements.forEach((m) => {
-            if (Number(m.quantity || 0) <= 0) return;
+            if (Number(m.quantity || 0) === 0) return;
             const remarks = String(m.remarks || "");
             const workCenterMatch = remarks.match(/work_center_id=(\d+)/i);
             const targetBinMatch = remarks.match(/target_bin=([^;]+)/i);
             const materialMatch = remarks.match(/jo_material_id=(\d+)/i);
-            if (!workCenterMatch || !targetBinMatch || !materialMatch) return;
+            const stagingMarker = remarks.includes("[MM-MATERIAL-STAGING]") || remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
+            if (!stagingMarker || !workCenterMatch || !targetBinMatch || !materialMatch) return;
 
             const workCenterId = Number(workCenterMatch[1]);
             const targetBin = targetBinMatch[1].trim();
@@ -237,20 +269,6 @@ export async function GET(request: Request) {
             const key = `${Number(materialMatch[1])}:${normalizeBatchNo(batchNo)}`;
             if (!stagedDestinationByMaterialBatch.has(key)) {
                 stagedDestinationByMaterialBatch.set(key, targetBin);
-            }
-        });
-
-        const defaultLotByBranchProduct = new Map<string, { lotId: number; batchNo: string; quantity: number }>();
-        stockByBranchProductBatchLot.forEach((lot) => {
-            if (lot.quantity <= 0) return;
-            const productKey = branchProductKey(lot.branchId, lot.productId);
-            const currentLot = defaultLotByBranchProduct.get(productKey);
-            if (!currentLot || lot.quantity > currentLot.quantity) {
-                defaultLotByBranchProduct.set(productKey, {
-                    lotId: lot.lotId,
-                    batchNo: lot.batchNo,
-                    quantity: lot.quantity
-                });
             }
         });
 
@@ -303,12 +321,7 @@ export async function GET(request: Request) {
         });
 
         const getJoId = (val: unknown): number => {
-            if (!val) return 0;
-            if (typeof val === "object") {
-                const obj = val as Record<string, unknown>;
-                return Number(obj.job_order_id || obj.id || 0);
-            }
-            return Number(val);
+            return numericRelationId(val, ["job_order_id", "id"]);
         };
 
         const materialById = new Map<number, DirectusMaterial>();
@@ -317,20 +330,22 @@ export async function GET(request: Request) {
             if (materialId) materialById.set(materialId, material);
         });
 
-        const stagingMovementByKey = new Map<string, { quantity: number; lotId: number; stagingBin: string | null; negativeOverride: boolean }>();
+        const stagingMovementByKey = new Map<string, { quantity: number; lotId: number; inventoryLotId: number; stagingBin: string | null; negativeOverride: boolean }>();
         rawMovements.forEach((movement) => {
             const remarks = String(movement.remarks || "");
             const productId = Number(movement.product_id || 0);
             const lotId = Number(movement.mm_lot_id || 0);
+            const inventoryLotId = Number(movement.inventory_lot_id || 0);
             const jobOrderId = Number(movement.source_document_id || 0);
             const branchId = Number(movement.branch_id || 0);
             const batchNo = String(movement.batch_no || "").trim().toLowerCase();
             const quantity = Number(movement.quantity || 0);
             const isStagingMovement = remarks.includes("[MM-MATERIAL-STAGING]");
             const isReturnMovement = remarks.includes("[MM-MATERIAL-STAGING-RETURN]");
+            const isCanonicalIssue = canonicalTypeName(String((movement as unknown as Record<string, unknown>).transaction_type || "")) === "MATERIAL_STAGING_ISSUE";
             if (
                 (!isStagingMovement && !isReturnMovement) ||
-                Number(movement.transaction_type_id) !== 4 ||
+                (!isCanonicalIssue && Number(movement.transaction_type_id) !== 4) ||
                 quantity === 0 ||
                 !productId ||
                 !lotId ||
@@ -339,12 +354,18 @@ export async function GET(request: Request) {
                 !batchNo
             ) return;
 
-            const key = `${jobOrderId}:${branchId}:${productId}:${batchNo}`;
+            const key = `${jobOrderId}:${branchId}:${productId}:${lotId}:${inventoryLotId}:${batchNo}`;
             const targetBin = remarks.match(/target_bin=([^;|]+)/i)?.[1]?.trim() || null;
+            const stagedQuantity = isReturnMovement
+                ? -Math.abs(quantity)
+                : isCanonicalIssue || quantity < 0
+                    ? Math.abs(quantity)
+                    : quantity;
             const current = stagingMovementByKey.get(key);
             stagingMovementByKey.set(key, {
-                quantity: (current?.quantity || 0) + quantity,
+                quantity: (current?.quantity || 0) + stagedQuantity,
                 lotId: lotId || current?.lotId || 0,
+                inventoryLotId: inventoryLotId || current?.inventoryLotId || 0,
                 stagingBin: isReturnMovement ? (current?.stagingBin || null) : (targetBin || current?.stagingBin || null),
                 negativeOverride: isReturnMovement
                     ? Boolean(current?.negativeOverride)
@@ -362,35 +383,45 @@ export async function GET(request: Request) {
             jo_material_id?: number;
             product_id?: number;
             mm_lot_id?: number;
+            inventory_lot_id?: number;
             lot_id?: number;
             batch_no?: string;
             reserved_quantity?: number;
+            staged_quantity?: number;
+            staging_bin?: string;
             created_at?: string;
         }) => {
-            const materialId = Number(res.jo_material_id || 0);
+            const materialId = numericRelationId(res.jo_material_id, ["jo_material_id", "id"]);
             const material = materialById.get(materialId);
             const joId = getJoId(material?.job_order_id);
-            const productId = Number(res.product_id || material?.product_id || 0);
-            const branchId = Number(res.branch_id || 0);
+            const productId = numericRelationId(res.product_id || material?.product_id, ["product_id", "id"]);
+            const branchId = numericRelationId(res.branch_id, ["branch_id", "id"]);
             const batchNo = String(res.batch_no || "").trim();
             const normalizedBatchNo = normalizeBatchNo(batchNo);
-            const reservationLotId = Number(res.mm_lot_id || 0);
-            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${normalizedBatchNo}`);
+            const reservationLotId = numericRelationId(res.mm_lot_id, ["lot_id", "mm_lot_id", "id"]);
+            const reservationInventoryLotId = numericRelationId(res.inventory_lot_id, ["inventory_lot_id", "id"]);
+            const stagingMovement = stagingMovementByKey.get(`${joId}:${branchId}:${productId}:${reservationLotId}:${reservationInventoryLotId}:${normalizedBatchNo}`)
+                || [...stagingMovementByKey.entries()].find(([key]) => key.startsWith(`${joId}:${branchId}:${productId}:${reservationLotId}:`) && key.endsWith(`:${normalizedBatchNo}`))?.[1];
             const lot = reservationLotId > 0
                 ? stockByBranchProductBatchLot.get(
                     branchProductLotBatchKey(branchId, productId, reservationLotId, normalizedBatchNo)
                 )
                 : resolveUniqueLot(branchId, productId, normalizedBatchNo);
-            const stagingKey = `${joId}:${branchId}:${productId}:${normalizedBatchNo}`;
+            const stagingKey = `${joId}:${branchId}:${productId}:${reservationLotId}:${reservationInventoryLotId}:${normalizedBatchNo}`;
             const stagingQuantity = Number(stagingMovement?.quantity || 0);
             const previouslyAssignedQuantity = assignedStagingQuantityByBatch.get(stagingKey) || 0;
             const reservedQuantity = Math.max(0, Number(res.reserved_quantity || 0));
-            const stagedQuantity = Math.min(
+            const movementStagedQuantity = Math.min(
                 Math.max(0, stagingQuantity - previouslyAssignedQuantity),
                 reservedQuantity
             );
+            const persistedStagedQuantity = Math.min(
+                Math.max(0, Number(res.staged_quantity || 0)),
+                reservedQuantity
+            );
+            const stagedQuantity = persistedStagedQuantity > 0 ? persistedStagedQuantity : movementStagedQuantity;
             assignedStagingQuantityByBatch.set(stagingKey, previouslyAssignedQuantity + stagedQuantity);
-            const isHard = stagedQuantity > 0;
+            const isHard = stagedQuantity + 0.000001 >= reservedQuantity && reservedQuantity > 0;
             if (joId) {
                 const list = allAllocationsByJo.get(joId) || [];
                 list.push({
@@ -404,8 +435,9 @@ export async function GET(request: Request) {
                     batch_no: batchNo,
                     allocated_quantity: Number(res.reserved_quantity || 0),
                     reserved_quantity: Number(res.reserved_quantity || 0),
-                    staged_quantity: stagedQuantity,
-                    staging_bin: stagedQuantity > 0 ? stagingMovement?.stagingBin || "MAIN-STORE" : "MAIN-STORE",
+                    inventory_lot_id: stagingMovement?.inventoryLotId || reservationInventoryLotId || 0,
+                    staged_quantity: Number(res.staged_quantity || 0) || stagedQuantity,
+                    staging_bin: stagedQuantity > 0 ? res.staging_bin || stagingMovement?.stagingBin || "MAIN-STORE" : res.staging_bin || "MAIN-STORE",
                     reservation_status: isHard ? "HARD" : "SOFT",
                     override_negative: stagedQuantity > 0 && Boolean(stagingMovement?.negativeOverride),
                     created_at: res.created_at
@@ -432,14 +464,16 @@ export async function GET(request: Request) {
             remarks?: string | null;
             created_at?: string;
         }) => {
-            const joId = Number(jo.job_order_id || jo.id || 0);
-            const joProduct = productMap.get(Number(jo.product_id));
-            const primaryWorkCenterId = jo.primary_work_center_id ? Number(jo.primary_work_center_id) : null;
+            const joId = numericRelationId(jo.job_order_id || jo.id, ["job_order_id", "id"]);
+            const joProductId = numericRelationId(jo.product_id, ["product_id", "id"]);
+            const joProduct = productMap.get(joProductId);
+            const primaryWorkCenterId = jo.primary_work_center_id ? numericRelationId(jo.primary_work_center_id, ["work_center_id", "id"]) : null;
             const primaryWorkCenter = primaryWorkCenterId ? workCenterMap.get(primaryWorkCenterId) : null;
             const stagingWorkCenter = primaryWorkCenter?.is_active ? primaryWorkCenter : fallbackWorkCenter;
             const stagingWorkCenterId = stagingWorkCenter?.work_center_id || null;
             const wcName = stagingWorkCenter?.work_center_name || "No active work center";
-            const branchInfo = jo.branch_id ? branchMap.get(Number(jo.branch_id)) : null;
+            const branchId = jo.branch_id ? numericRelationId(jo.branch_id, ["branch_id", "id"]) : 0;
+            const branchInfo = branchId ? branchMap.get(branchId) : null;
 
             // The staging bin is derived from the same active work center used by the UI and transfer API.
             const suggestedStagingBin = stagingWorkCenterId
@@ -455,7 +489,7 @@ export async function GET(request: Request) {
             let hasAnyShortage = false;
 
             const mappedMaterials = joMaterials.map((mat) => {
-                const mProductId = typeof mat.product_id === "object" ? Number(mat.product_id?.product_id) : Number(mat.product_id);
+                const mProductId = numericRelationId(mat.product_id, ["product_id", "id"]);
                 const matProdInfo = productMap.get(mProductId);
                 const requiredQty = Number(mat.allocated_quantity || 0);
                 const matId = Number(mat.jo_material_id || mat.id || 0);
@@ -469,22 +503,34 @@ export async function GET(request: Request) {
                 const allocatedLots = relatedAllocs.map((al, idx) => {
                     const lotNo = (al.batch_no || `LOT-${jo.job_order_no}-${idx + 1}`).trim();
                     const lotMeta = lotMetadataMap.get(`${mProductId}:${normalizeBatchNo(lotNo)}`);
-                    const lotId = Number(al.lot_id || 0);
-                    const onHandLotQty = getLotStock(Number(jo.branch_id || 0), mProductId, lotId, lotNo);
-                    const resStatus = (al.reservation_status === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING")) ? "HARD" : "SOFT";
-                    const isStaged = resStatus === "HARD" || al.staging_bin?.startsWith("FLOOR-STAGING");
-                    const allocationStagingBin = al.staging_bin?.trim();
-                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${normalizeBatchNo(lotNo)}`);
+                    const lotId = Number(al.mm_lot_id || al.lot_id || 0);
+                    const inventoryLotId = Number(al.inventory_lot_id || 0);
+                    const exactInventoryKey = `${branchId}:${mProductId}:${inventoryLotId}:${normalizeBatchNo(lotNo)}`;
+                    const exactInventoryStock = inventoryLotId
+                        ? stockByBranchProductInventoryLotBatch.get(exactInventoryKey)
+                        : undefined;
+                    // Existing allocations must retain their exact inventory
+                    // lot identity. An aggregate MM-lot/batch balance could
+                    // belong to another inventory lot with the same label.
+                    const onHandLotQty = inventoryLotId > 0
+                        ? Math.max(0, exactInventoryStock ?? 0)
+                        : getLotStock(branchId, mProductId, lotId, lotNo);
                     const allocQty = Number(al.allocated_quantity || al.reserved_quantity || requiredQty);
                     const stagedQty = Number(al.staged_quantity || 0);
+                    const effectiveStagedQty = stagedQty > 0 ? stagedQty : 0;
+                    const resStatus = effectiveStagedQty >= allocQty && allocQty > 0 ? "HARD" : "SOFT";
+                    const isStaged = effectiveStagedQty > 0;
+                    const allocationStagingBin = al.staging_bin?.trim();
+                    const movementStagingBin = stagedDestinationByMaterialBatch.get(`${matId}:${normalizeBatchNo(lotNo)}`);
 
                     return {
                         allocation_id: al.allocation_id || al.id,
                         mm_lot_id: lotId,
+                        inventory_lot_id: inventoryLotId,
                         lot_id: lotId,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
-                        staged_quantity: isStaged ? (stagedQty > 0 ? stagedQty : allocQty) : 0,
+                        staged_quantity: effectiveStagedQty,
                         expiry_date: lotMeta?.expiry_date || null,
                         qa_status: lotMeta?.qa_status || "Passed",
                         reservation_status: resStatus as "SOFT" | "HARD",
@@ -498,34 +544,10 @@ export async function GET(request: Request) {
                     };
                 });
 
-                // If no specific lot allocations exist, synthesize a default allocation from available stock
-                if (allocatedLots.length === 0 && requiredQty > 0) {
-                    const defaultLot = defaultLotByBranchProduct.get(
-                        branchProductKey(Number(jo.branch_id || 0), mProductId)
-                    );
-                    const defaultOnHand = defaultLot?.quantity ?? 0;
-                    allocatedLots.push({
-                        allocation_id: undefined,
-                        mm_lot_id: defaultLot?.lotId || 0,
-                        lot_id: defaultLot?.lotId || 0,
-                        batch_no: defaultLot?.batchNo || `LOT-${mProductId}-MAIN`,
-                        allocated_quantity: requiredQty,
-                        staged_quantity: 0,
-                        expiry_date: null,
-                        qa_status: "Passed",
-                        reservation_status: "SOFT" as const,
-                        staging_bin: "MAIN-STORE",
-                        source_bin: "MAIN-STORE",
-                        on_hand_lot_quantity: Math.max(0, defaultOnHand),
-                        override_negative: false,
-                        created_at: null
-                    });
-                }
-
                 const totalAllocatedQty = allocatedLots.reduce((sum, l) => sum + l.allocated_quantity, 0);
                 const totalStagedQty = allocatedLots.reduce((sum, l) => sum + l.staged_quantity, 0);
                 const onHandStock = stockByBranchProduct.get(
-                    branchProductKey(Number(jo.branch_id || 0), mProductId)
+                    branchProductKey(branchId, mProductId)
                 ) || 0;
                 const shortageQty = Math.max(0, requiredQty - onHandStock);
                 const isItemShort = onHandStock < requiredQty && totalStagedQty < requiredQty;
@@ -581,7 +603,7 @@ export async function GET(request: Request) {
                 job_order_id: joId,
                 job_order_no: jo.job_order_no,
                 parent_job_order_id: jo.parent_job_order_id ? Number(jo.parent_job_order_id) : null,
-                product_id: Number(jo.product_id),
+                product_id: joProductId,
                 product_name: joProduct?.product_name || `Product #${jo.product_id}`,
                 product_code: joProduct?.product_code || `ITEM-${jo.product_id}`,
                 version_id: jo.version_id ? Number(jo.version_id) : null,
@@ -594,7 +616,7 @@ export async function GET(request: Request) {
                 staging_work_center_id: stagingWorkCenterId,
                 suggested_staging_bin: suggestedStagingBin,
                 shift_option: jo.shift_option || "Shift 1 (Day)",
-                branch_id: jo.branch_id ? Number(jo.branch_id) : null,
+                branch_id: branchId || null,
                 branch_name: branchInfo?.branchName || "Main Facility",
                 remarks: jo.remarks || null,
                 materials: mappedMaterials,

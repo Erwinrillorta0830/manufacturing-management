@@ -34,6 +34,7 @@ export interface JobOrderMaterialReturnLine {
     uomShortcut: string;
     branchId: number;
     mmLotId: number;
+    inventoryLotId: number;
     batchNo: string;
     sourceBin: string;
     targetBin: string;
@@ -93,6 +94,7 @@ interface StagedEntry {
     productId: number;
     branchId: number;
     mmLotId: number;
+    inventoryLotId: number;
     batchNo: string;
     stagedQuantity: number;
     sourceBin: string;
@@ -108,6 +110,14 @@ interface ReservationAggregate {
 interface ReleaseTarget {
     id: number;
     reservedQuantity: number;
+    stagedQuantity: number;
+    actualUsedQuantity: number;
+    reservationStatus: string | null;
+}
+
+interface ReservationSnapshot {
+    id: number;
+    payload: Record<string, unknown>;
 }
 
 interface ComputedCancellation {
@@ -171,6 +181,40 @@ async function directusWrite<T>(path: string, method: "POST" | "PATCH", payload:
     return (parsed?.data ?? parsed) as T;
 }
 
+function canonicalTypeName(value: unknown): string {
+    return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+async function resolveTransactionTypeId(typeName: string, direction: "IN" | "OUT"): Promise<number> {
+    const rows = await directusGet<RawRecord[]>(
+        "/items/inventory_transaction_types?fields=transaction_type_id,type_name&limit=-1",
+        "load inventory transaction types"
+    );
+    const wanted = canonicalTypeName(typeName);
+    const found = rows.find((row) => canonicalTypeName(row.type_name ?? row.name ?? row.code) === wanted);
+    const foundId = num(found?.transaction_type_id ?? found?.id);
+    if (foundId > 0) return foundId;
+    const created = await directusWrite<RawRecord>(
+        "/items/inventory_transaction_types",
+        "POST",
+        { type_name: typeName, direction, origin_table: "inventory_movements" },
+        `create ${typeName} transaction type`
+    );
+    const createdId = num(created.transaction_type_id ?? created.id);
+    if (createdId <= 0) {
+        throw new JobOrderCancellationError(
+            `The ${typeName} transaction type did not return an ID.`,
+            503,
+            "TRANSACTION_TYPE_UNAVAILABLE"
+        );
+    }
+    return createdId;
+}
+
 async function directusDelete(path: string, label: string): Promise<void> {
     const response = await fetch(`${DIRECTUS_URL}${path}`, { method: "DELETE", headers });
     if (!response.ok) {
@@ -212,22 +256,26 @@ async function fetchJobOrder(joId: string | number): Promise<ResolvedJobOrder> {
 }
 
 function movementsPath(jobOrderId: number): string {
-    return `/items/inventory_movements?filter[source_document_id][_eq]=${jobOrderId}&fields=movement_id,product_id,mm_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks&limit=-1`;
+    return `/items/inventory_movements?filter[source_document_id][_eq]=${jobOrderId}&fields=movement_id,product_id,mm_lot_id,inventory_lot_id,branch_id,transaction_type_id,source_document_id,source_document_no,batch_no,quantity,remarks,staging_operation_id,staging_allocation_line_id&limit=-1`;
 }
 
 function netStagedByKey(movements: RawRecord[]): Map<string, number> {
     const net = new Map<string, number>();
     for (const movement of movements) {
         const remarks = String(movement.remarks || "");
-        const typeId = num(movement.transaction_type_id);
         const quantity = num(movement.quantity);
-        const isStaging = typeId === 4 && quantity > 0 && remarks.includes(STAGING_MARKER);
-        const isReturn = typeId === 4 && quantity < 0 && remarks.includes(RETURN_MARKER);
+        const isReturn = remarks.includes(RETURN_MARKER) && quantity !== 0;
+        const isStaging = remarks.includes(STAGING_MARKER) && !isReturn && quantity !== 0;
         if (!isStaging && !isReturn) continue;
         const joMaterialId = Number(parseRemarkValue(remarks, "jo_material_id") || 0);
         if (!joMaterialId) continue;
-        const key = `${joMaterialId}:${num(movement.branch_id)}:${num(movement.mm_lot_id)}:${String(movement.batch_no || "").trim()}`;
-        net.set(key, (net.get(key) || 0) + quantity);
+        const stagingQuantity = isReturn
+            ? -Math.abs(quantity)
+            : quantity < 0
+                ? Math.abs(quantity)
+                : quantity;
+        const key = `${joMaterialId}:${num(movement.branch_id)}:${num(movement.mm_lot_id)}:${num(movement.inventory_lot_id)}:${String(movement.batch_no || "").trim()}`;
+        net.set(key, (net.get(key) || 0) + stagingQuantity);
     }
     return net;
 }
@@ -254,7 +302,7 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
     const [reservations, movements, genealogy, products] = await Promise.all([
         materialIds.length > 0
             ? directusGet<RawRecord[]>(
-                `/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,product_id,branch_id,batch_no,jo_material_id,reserved_quantity,actual_used_quantity&limit=-1`,
+                `/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,jo_material_id,reserved_quantity,staged_quantity,actual_used_quantity,reservation_status,staging_operation_id,staging_allocation_line_id,staging_bin&limit=-1`,
                 "load the Job Order material reservations"
             )
             : Promise.resolve([] as RawRecord[]),
@@ -287,25 +335,25 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
     };
 
     const stagedByKey = new Map<string, StagedEntry>();
-    const stagedByMaterialBatch = new Map<string, StagedEntry>();
+    const stagedByMaterialBatch = new Map<string, StagedEntry | null>();
     for (const movement of movements) {
         const remarks = String(movement.remarks || "");
-        const typeId = num(movement.transaction_type_id);
         const quantity = num(movement.quantity);
-        const isStaging = typeId === 4 && quantity > 0 && remarks.includes(STAGING_MARKER);
-        const isReturn = typeId === 4 && quantity < 0 && remarks.includes(RETURN_MARKER);
+        const isReturn = remarks.includes(RETURN_MARKER) && quantity !== 0;
+        const isStaging = remarks.includes(STAGING_MARKER) && !isReturn && quantity !== 0;
         if (!isStaging && !isReturn) continue;
 
         const productId = num(movement.product_id);
         const branchId = num(movement.branch_id) || jobOrder.branchId;
         const mmLotId = num(movement.mm_lot_id) || num(movement.lot_id);
+        const inventoryLotId = num(movement.inventory_lot_id);
         const batchNo = String(movement.batch_no || "").trim();
         const parsedMaterialId = Number(parseRemarkValue(remarks, "jo_material_id") || 0);
         const candidateMaterials = materialIdsByProduct.get(productId) || [];
         const joMaterialId = parsedMaterialId || (candidateMaterials.length === 1 ? candidateMaterials[0] : 0);
         if (!productId || !mmLotId || !batchNo || !joMaterialId) continue;
 
-        const key = `${joMaterialId}:${branchId}:${mmLotId}:${batchNo}`;
+        const key = `${joMaterialId}:${branchId}:${mmLotId}:${inventoryLotId}:${batchNo}`;
         let entry = stagedByKey.get(key);
         if (!entry) {
             entry = {
@@ -314,15 +362,24 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
                 productId,
                 branchId,
                 mmLotId,
+                inventoryLotId,
                 batchNo,
                 stagedQuantity: 0,
                 sourceBin: "",
                 reservationIds: []
             };
             stagedByKey.set(key, entry);
-            stagedByMaterialBatch.set(`${joMaterialId}:${normalizeBatch(batchNo)}`, entry);
+            if (!stagedByMaterialBatch.has(`${joMaterialId}:${normalizeBatch(batchNo)}`)) {
+                stagedByMaterialBatch.set(`${joMaterialId}:${normalizeBatch(batchNo)}`, entry);
+            } else {
+                stagedByMaterialBatch.set(`${joMaterialId}:${normalizeBatch(batchNo)}`, null);
+            }
         }
-        entry.stagedQuantity += quantity;
+        entry.stagedQuantity += isReturn
+            ? -Math.abs(quantity)
+            : quantity < 0
+                ? Math.abs(quantity)
+                : quantity;
         if (isStaging) {
             const targetBin = parseRemarkValue(remarks, "target_bin");
             if (targetBin) entry.sourceBin = targetBin;
@@ -356,17 +413,25 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
         if (!material) continue;
         const branchId = num(reservation.branch_id) || jobOrder.branchId;
         const mmLotId = num(reservation.mm_lot_id) || num(reservation.lot_id);
+        const inventoryLotId = num(reservation.inventory_lot_id);
         const batchNo = String(reservation.batch_no || "").trim();
         const reserved = Math.max(0, num(reservation.reserved_quantity));
+        const staged = Math.max(0, num(reservation.staged_quantity));
         const used = Math.max(0, num(reservation.actual_used_quantity));
         const reservationId = num(reservation.jo_materials_reservation_id);
-        if (reservationId && reserved > 0) {
-            reservationReleaseTargets.push({ id: reservationId, reservedQuantity: reserved });
+        if (reservationId && (reserved > 0 || staged > 0)) {
+            reservationReleaseTargets.push({
+                id: reservationId,
+                reservedQuantity: reserved,
+                stagedQuantity: staged,
+                actualUsedQuantity: used,
+                reservationStatus: reservation.reservation_status ? String(reservation.reservation_status) : null
+            });
         }
-        if (reserved <= 0 && used <= 0) continue;
+        if (reserved <= 0 && staged <= 0 && used <= 0) continue;
 
-        const stagedEntry = stagedByKey.get(`${joMaterialId}:${branchId}:${mmLotId}:${batchNo}`)
-            || stagedByMaterialBatch.get(`${joMaterialId}:${normalizeBatch(batchNo)}`)
+        const stagedEntry = stagedByKey.get(`${joMaterialId}:${branchId}:${mmLotId}:${inventoryLotId}:${batchNo}`)
+            || (inventoryLotId <= 0 ? stagedByMaterialBatch.get(`${joMaterialId}:${normalizeBatch(batchNo)}`) : null)
             || null;
         const productId = num(reservation.product_id) || num(material.product_id);
         if (!stagedEntry) {
@@ -379,6 +444,7 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
                     uomShortcut: productUomShortcut(productId),
                     branchId,
                     mmLotId,
+                    inventoryLotId,
                     batchNo,
                     sourceBin: MAIN_STORE_BIN,
                     targetBin: MAIN_STORE_BIN,
@@ -432,6 +498,9 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
         if (aggregate.ids.length > 0 && returnableQuantity - aggregate.reserved > QUANTITY_EPSILON) {
             setReconciliationError(`Lot ${entry.batchNo} returnable quantity (${roundQuantity(returnableQuantity)}) exceeds the reservation remaining (${roundQuantity(aggregate.reserved)}).`);
         }
+        if (entry.inventoryLotId <= 0) {
+            setReconciliationError(`Lot ${entry.batchNo} does not have a canonical inventory-lot identifier. Reconcile the legacy staging record before returning material.`);
+        }
 
         lines.push({
             joMaterialId: entry.joMaterialId,
@@ -441,6 +510,7 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
             uomShortcut: productUomShortcut(entry.productId),
             branchId: entry.branchId,
             mmLotId: entry.mmLotId,
+            inventoryLotId: entry.inventoryLotId,
             batchNo: entry.batchNo,
             sourceBin: entry.sourceBin || fallbackBin,
             targetBin: MAIN_STORE_BIN,
@@ -458,7 +528,13 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
         const materialId = num(material.jo_material_id);
         const reservedQuantity = Math.max(0, num(material.reserved_quantity));
         if (materialId && reservedQuantity > 0) {
-            materialReleaseTargets.push({ id: materialId, reservedQuantity });
+            materialReleaseTargets.push({
+                id: materialId,
+                reservedQuantity,
+                stagedQuantity: 0,
+                actualUsedQuantity: 0,
+                reservationStatus: null
+            });
         }
     }
 
@@ -478,12 +554,23 @@ async function computeCancellation(jobOrder: ResolvedJobOrder): Promise<Computed
 function buildReturnRemarks(
     line: JobOrderMaterialReturnLine,
     jobOrder: ResolvedJobOrder,
-    reason: string
+    reason: string,
+    reversalOperationId: string,
+    reversalLineId: string
 ): string {
     const workCenterMatch = line.sourceBin.match(/FLOOR-STAGING-(\d+)/i);
     const workCenterId = workCenterMatch ? workCenterMatch[1] : "";
-    const allocationId = line.reservationIds[0] || "";
-    return `${RETURN_MARKER} source_bin=${line.sourceBin};target_bin=${MAIN_STORE_BIN};work_center_id=${workCenterId};jo_material_id=${line.joMaterialId};allocation_id=${allocationId}; JO #${jobOrder.jobOrderNo}. Reason: ${reason}`;
+    const allocationId = line.reservationIds.join(",");
+    return `${RETURN_MARKER} operation_id=${reversalOperationId};staging_allocation_line_id=${reversalLineId};source_bin=${line.sourceBin};target_bin=${MAIN_STORE_BIN};work_center_id=${workCenterId};jo_material_id=${line.joMaterialId};allocation_id=${allocationId}; JO #${jobOrder.jobOrderNo}. Reason: ${reason}`;
+}
+
+function reversalOperationId(jobOrderId: number, line: JobOrderMaterialReturnLine): string {
+    const batch = normalizeBatch(line.batchNo).replace(/[^a-z0-9_-]/g, "-").slice(0, 40);
+    return `staging-reversal-${jobOrderId}-${line.joMaterialId}-${line.mmLotId}-${line.inventoryLotId}-${batch}`;
+}
+
+function reversalLineId(line: JobOrderMaterialReturnLine): string {
+    return `return-${line.joMaterialId}-${line.mmLotId}-${line.inventoryLotId}-${normalizeBatch(line.batchNo).replace(/[^a-z0-9_-]/g, "-").slice(0, 40)}`;
 }
 
 async function executeCancellation(
@@ -492,7 +579,7 @@ async function executeCancellation(
     options: { reason: string; actorUserId: number | null; writeStatus: boolean }
 ): Promise<JobOrderCancellationExecution> {
     const createdMovementIds: number[] = [];
-    const reservationSnapshots: ReleaseTarget[] = [];
+    const reservationSnapshots: ReservationSnapshot[] = [];
     const materialSnapshots: ReleaseTarget[] = [];
     let joStatusSnapshot: string | null = null;
     let statusHistoryId: number | null = null;
@@ -502,6 +589,9 @@ async function executeCancellation(
         (line) => !line.releaseOnly && line.returnableQuantity > QUANTITY_EPSILON
     );
     const returnedQuantity = roundQuantity(returnLines.reduce((sum, line) => sum + line.returnableQuantity, 0));
+    const reversalTransactionTypeId = returnLines.length > 0
+        ? await resolveTransactionTypeId("MATERIAL_STAGING_REVERSAL", "IN")
+        : null;
 
     const compensate = async () => {
         const failures: string[] = [];
@@ -517,7 +607,7 @@ async function executeCancellation(
                 await directusWrite(
                     `/items/manufacturing_job_order_materials_reservations/${snapshot.id}`,
                     "PATCH",
-                    { reserved_quantity: snapshot.reservedQuantity },
+                    snapshot.payload,
                     `restore reservation ${snapshot.id}`
                 );
             } catch (error) {
@@ -570,39 +660,77 @@ async function executeCancellation(
 
     try {
         for (const line of returnLines) {
-            const remarks = buildReturnRemarks(line, jobOrder, options.reason);
+            if (!reversalTransactionTypeId) {
+                throw new JobOrderCancellationError(
+                    "The material-staging reversal transaction type could not be resolved.",
+                    503,
+                    "TRANSACTION_TYPE_UNAVAILABLE"
+                );
+            }
+            const operationId = reversalOperationId(jobOrder.jobOrderId, line);
+            const allocationId = reversalLineId(line);
+            const existing = await directusGet<RawRecord[]>(
+                `/items/inventory_movements?filter[staging_operation_id][_eq]=${encodeURIComponent(operationId)}&fields=movement_id,product_id,branch_id,mm_lot_id,inventory_lot_id,batch_no,transaction_type_id,quantity&limit=-1`,
+                `check the existing material-staging reversal for ${line.batchNo}`
+            );
+            if (existing.length > 1) {
+                throw new JobOrderCancellationError(
+                    `Multiple material-staging reversals already exist for ${line.batchNo}. Reconciliation is required.`,
+                    503,
+                    "RECONCILIATION_REQUIRED"
+                );
+            }
+            if (existing.length === 1) {
+                const persisted = existing[0];
+                const matches = num(persisted.product_id) === line.productId
+                    && num(persisted.branch_id) === line.branchId
+                    && num(persisted.mm_lot_id) === line.mmLotId
+                    && num(persisted.inventory_lot_id) === line.inventoryLotId
+                    && normalizeBatch(persisted.batch_no) === normalizeBatch(line.batchNo)
+                    && num(persisted.transaction_type_id) === reversalTransactionTypeId
+                    && Math.abs(num(persisted.quantity) - line.returnableQuantity) <= QUANTITY_EPSILON;
+                if (!matches) {
+                    throw new JobOrderCancellationError(
+                        `The existing material-staging reversal for ${line.batchNo} does not match the requested quantity or lot identity.`,
+                        409,
+                        "JOB_ORDER_RETURN_CONFLICT"
+                    );
+                }
+                continue;
+            }
+
+            const remarks = buildReturnRemarks(line, jobOrder, options.reason, operationId, allocationId);
             const base: Record<string, unknown> = {
                 product_id: line.productId,
                 mm_lot_id: line.mmLotId,
+                inventory_lot_id: line.inventoryLotId,
                 lot_id: null,
                 branch_id: line.branchId,
                 source_document_id: jobOrder.jobOrderId,
                 source_document_no: jobOrder.jobOrderNo,
                 batch_no: line.batchNo,
+                transaction_type_id: reversalTransactionTypeId,
+                staging_operation_id: operationId,
+                staging_allocation_line_id: allocationId,
+                quantity: line.returnableQuantity,
                 remarks
             };
             if (options.actorUserId && options.actorUserId > 0) base.created_by = options.actorUserId;
-            const movementPayloads = [
-                { ...base, transaction_type_id: 4, quantity: -line.returnableQuantity },
-                { ...base, transaction_type_id: 3, quantity: line.returnableQuantity }
-            ];
-            for (const payload of movementPayloads) {
-                const created = await directusWrite<RawRecord>(
-                    "/items/inventory_movements",
-                    "POST",
-                    payload,
-                    "create the raw material return movement"
+            const created = await directusWrite<RawRecord>(
+                "/items/inventory_movements",
+                "POST",
+                base,
+                "create the raw material staging reversal movement"
+            );
+            const movementId = num(created.movement_id ?? created.id);
+            if (!movementId) {
+                throw new JobOrderCancellationError(
+                    "The raw material staging reversal movement did not return an ID.",
+                    503,
+                    "MOVEMENT_WRITE_FAILED"
                 );
-                const movementId = num(created.movement_id ?? created.id);
-                if (!movementId) {
-                    throw new JobOrderCancellationError(
-                        "The raw material return movement did not return an ID.",
-                        503,
-                        "MOVEMENT_WRITE_FAILED"
-                    );
-                }
-                createdMovementIds.push(movementId);
             }
+            createdMovementIds.push(movementId);
         }
 
         // Re-read the staging ledger after writing so a concurrent cancellation
@@ -614,7 +742,7 @@ async function executeCancellation(
             );
             const freshNet = netStagedByKey(freshMovements);
             for (const line of returnLines) {
-                const key = `${line.joMaterialId}:${line.branchId}:${line.mmLotId}:${line.batchNo}`;
+                const key = `${line.joMaterialId}:${line.branchId}:${line.mmLotId}:${line.inventoryLotId}:${line.batchNo}`;
                 if ((freshNet.get(key) ?? 0) < -QUANTITY_EPSILON) {
                     throw new JobOrderCancellationError(
                         "Another cancellation or return was processed for the same material. Refresh the Job Order and try again.",
@@ -626,12 +754,21 @@ async function executeCancellation(
         }
 
         for (const target of computed.reservationReleaseTargets) {
-            if (target.reservedQuantity <= 0) continue;
-            reservationSnapshots.push(target);
+            if (target.reservedQuantity <= 0 && target.stagedQuantity <= 0) continue;
+            const restorePayload = {
+                reserved_quantity: target.reservedQuantity,
+                staged_quantity: target.stagedQuantity,
+                reservation_status: target.reservationStatus
+            };
+            reservationSnapshots.push({ id: target.id, payload: restorePayload });
             await directusWrite(
                 `/items/manufacturing_job_order_materials_reservations/${target.id}`,
                 "PATCH",
-                { reserved_quantity: 0 },
+                {
+                    reserved_quantity: 0,
+                    staged_quantity: roundQuantity(Math.min(target.stagedQuantity, target.actualUsedQuantity)),
+                    reservation_status: "RELEASED"
+                },
                 `release reservation ${target.id}`
             );
         }
