@@ -239,15 +239,6 @@ export function StockConversionModal({
               (oh) => Number(oh.productId) === Number(product.productId)
             );
 
-            // Resolve live product-level total from Spring Boot /api/mm-product-onhand
-            const productOnhandEntry = (productOnhandData || []).find(
-              (p) => Number(p.productId) === Number(product.productId)
-            );
-            const liveQty = productOnhandEntry
-              ? Number(productOnhandEntry.onhandQuantity || 0)
-              : null;
-            setLiveProductQty(liveQty);
-
             // Map lot_id to lot_name from lotsData (authoritative database names)
             const lotNameMap = new Map<number, string>();
             (lotsData || []).forEach((l) => {

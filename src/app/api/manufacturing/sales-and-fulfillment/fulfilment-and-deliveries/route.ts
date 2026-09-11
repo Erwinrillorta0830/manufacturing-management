@@ -4,10 +4,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { DIRECTUS_URL, headers as directusHeaders } from "../../directus-api";
 import { getUserIdFromToken } from "../../invoice-consolidation/_auth";
 import { getPhTimestamp } from "../../invoice-consolidation/_time-utils";
-import { LineItemReservation } from "@/modules/manufacturing-management/mm/sales-and-fulfillment/fulfilment-and-deliveries/types";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export interface LineItemReservation {
+    reservation_id: number;
+    sales_order_detail_id: number;
+    inventory_lot_id: number;
+    product_id?: number;
+    lot_id?: number;
+    lot_name?: string;
+    lot_number?: string;
+    batch_no?: string;
+    reserved_quantity: number;
+    picked_quantity: number;
+    returned_quantity?: number;
+    status: string;
+}
 
 interface DirectusConsolidator {
     id: number;

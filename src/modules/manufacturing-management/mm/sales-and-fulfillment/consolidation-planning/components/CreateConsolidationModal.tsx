@@ -230,7 +230,6 @@ export default function CreateConsolidationModal({
         setExpandedStep3ProdIds(new Set());
         setSearch("");
         setSelectedCustomer("ALL");
-        setSelectedDocType("ALL");
         setDateFrom("");
         setDateTo("");
         resetStep2Filters();
@@ -316,7 +315,6 @@ export default function CreateConsolidationModal({
     const resetFilters = () => {
         setSearch("");
         setSelectedCustomer("ALL");
-        setSelectedDocType("ALL");
         setDateFrom("");
         setDateTo("");
     };
