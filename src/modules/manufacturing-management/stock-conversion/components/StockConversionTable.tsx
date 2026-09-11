@@ -8,7 +8,6 @@ import { DataTable } from "@/components/ui/new-data-table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { SearchableCombobox } from "@/modules/manufacturing-management/stock-transfer/shared/components/searchable-combobox";
 import { SearchableSelect } from "@/modules/manufacturing-management/shared/components/SearchableSelect";
 
 interface StockConversionTableProps {
@@ -213,7 +212,7 @@ export function StockConversionTable({
       {/* Primary Controls: Branch, Inventory Type & Supplier side by side */}
       <div className="flex items-center gap-1.5 shrink-0">
         <div className="w-[145px]">
-          <SearchableCombobox
+          <SearchableSelect
             options={branches
               ?.filter((b) => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
               .map((b) => ({
@@ -221,8 +220,9 @@ export function StockConversionTable({
                 label: String(b.branch_name || b.name || b.id),
               })) || []}
             value={localBranchId ? String(localBranchId) : ""}
-            onValueChange={(val: string | null) => setLocalBranchId(val ? Number(val) : undefined)}
+            onValueChange={(val: string) => setLocalBranchId(val ? Number(val) : undefined)}
             placeholder="Select Branch"
+            searchPlaceholder="Search branch..."
             className="h-9"
             disabled={isLoading}
           />
@@ -241,14 +241,15 @@ export function StockConversionTable({
         </div>
 
         <div className="w-[150px]">
-          <SearchableCombobox
+          <SearchableSelect
             options={uniqueSuppliers.map(s => ({
               value: s.name || "Unknown",
               label: s.name || "Unknown",
             }))}
             value={supplierFilter}
-            onValueChange={setSupplierFilter}
+            onValueChange={(val: string) => setSupplierFilter(val || "")}
             placeholder={isFinishedGoods ? "Not Applicable" : "Select Supplier"}
+            searchPlaceholder="Search supplier..."
             className="h-9"
             disabled={isLoading || !localBranchId || !inventoryType || isFinishedGoods}
           />
@@ -287,42 +288,45 @@ export function StockConversionTable({
         </div>
 
         <div className="w-[110px]">
-          <SearchableCombobox
+          <SearchableSelect
             options={uniqueBrands.map(b => ({
               value: b.name || "Unknown",
               label: b.name || "Unknown",
             }))}
             value={brandFilter}
-            onValueChange={setBrandFilter}
+            onValueChange={(val: string) => setBrandFilter(val || "")}
             placeholder="All Brands"
+            searchPlaceholder="Search brand..."
             className="h-9"
             disabled={isLoading || !isPrimaryFilterSelected}
           />
         </div>
 
         <div className="w-[125px]">
-          <SearchableCombobox
+          <SearchableSelect
             options={uniqueCategories.map(c => ({
               value: c.name || "Unknown",
               label: c.name || "Unknown",
             }))}
             value={categoryFilter}
-            onValueChange={setCategoryFilter}
+            onValueChange={(val: string) => setCategoryFilter(val || "")}
             placeholder="Categories"
+            searchPlaceholder="Search category..."
             className="h-9"
             disabled={isLoading || !isPrimaryFilterSelected}
           />
         </div>
 
         <div className="w-[100px]">
-          <SearchableCombobox
+          <SearchableSelect
             options={uniqueUnits.map(u => ({
               value: u.name || "Unknown",
               label: u.name || "Unknown",
             }))}
             value={unitFilter}
-            onValueChange={setUnitFilter}
+            onValueChange={(val: string) => setUnitFilter(val || "")}
             placeholder="All Units"
+            searchPlaceholder="Search unit..."
             className="h-9"
             disabled={isLoading || !isPrimaryFilterSelected}
           />

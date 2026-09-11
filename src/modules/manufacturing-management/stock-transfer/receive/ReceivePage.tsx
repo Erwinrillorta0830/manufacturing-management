@@ -249,7 +249,7 @@ export default function StockTransferReceiveView({ currentUser }: { currentUser:
                               </div>
                             )}
                             <div className="flex flex-col">
-                              <span className="font-bold text-sm group-hover:text-primary transition-colors">{productName}</span>
+                              <span title={productName} className="font-bold text-sm group-hover:text-primary transition-colors">{productName}</span>
                               <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                                 <span className="text-[10px] text-muted-foreground font-mono">SKU: {product?.product_code || product?.barcode || 'N/A'}</span>
                                 {item.batch_no && (

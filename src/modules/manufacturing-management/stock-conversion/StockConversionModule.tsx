@@ -106,6 +106,7 @@ export default function StockConversionModule({
       pricePerUnit: selectedProduct.pricePerUnit,
       branchId,
       userId: currentUserId,
+      remarks: outputBatch?.remarks || "",
       sourceLotId: outputBatch?.sourceLotId,
       sourceInventoryLotId: outputBatch?.sourceInventoryLotId,
       sourceBatchNo: outputBatch?.sourceBatchNo || outputBatch?.sourceBatchSummary,

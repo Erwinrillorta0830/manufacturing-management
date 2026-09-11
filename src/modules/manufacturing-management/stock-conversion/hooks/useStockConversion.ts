@@ -73,7 +73,7 @@ export function useStockConversion() {
 
       const onhandList: Array<{ productId: number; branchId: number; onhandQuantity: number; totalQuantityIn: number; totalQuantityOut: number }> = await res.json();
       console.group(`📦 [ProductOnhand] /api/manufacturing/product-onhand (Branch: ${activeBranchId || 'ALL'})`);
-      console.log(`📌 Raw API response:`, onhandList);
+      // console.log(`📌 Raw API response:`, onhandList);
       console.groupEnd();
 
       onhandList.forEach((item) => {
@@ -88,7 +88,7 @@ export function useStockConversion() {
         return prev.map(p => {
           if (!fetchableIds.includes(p.productId)) return p;
           const finalQty = invMap[p.productId] ?? 0;
-          console.log(`[ProductOnhand] "${p.productName}" (ID: ${p.productId}) → ${finalQty} ${p.currentUnit}`);
+          // console.log(`[ProductOnhand] "${p.productName}" (ID: ${p.productId}) → ${finalQty} ${p.currentUnit}`);
           return {
             ...p,
             quantity: finalQty,

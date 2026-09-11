@@ -164,43 +164,50 @@ export default function AddAssetModal({
     }
   }, [open]);
 
+  const resetModalState = () => {
+    const now = new Date();
+    setIsLegacyAsset(false);
+    setItemNameSearch("");
+    if (previewUrl && previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    form.reset({
+      item_name: "",
+      item_type: "",
+      item_classification: "",
+      asset_type: "Administrative",
+      depreciation_method: "Straight Line",
+      barcode: "",
+      rfid_code: "",
+      condition: "Good",
+      quantity: 1,
+      cost_per_item: 0,
+      acquisition_cost: 0,
+      residual_value: 0,
+      life_span: 5,
+      useful_life_months: 60,
+      maximum_unit_produced_capacity: 0,
+      production_unit_id: null,
+      date_acquired: now,
+      depreciation_start_date: now,
+      department: 0,
+      employee: null,
+      serial: "",
+      is_active_warning: 0,
+      asset_origin: "New",
+      opening_book_value: undefined,
+      opening_accumulated_depreciation: 0,
+      opening_production_units: 0,
+      opening_production_date: now,
+    });
+    form.clearErrors();
+  };
+
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
-    if (isOpen) {
-      const now = new Date();
-      setIsLegacyAsset(false);
-      form.reset({
-        item_name: "",
-        item_type: "",
-        item_classification: "",
-        asset_type: "Administrative",
-        depreciation_method: "Straight Line",
-        barcode: "",
-        rfid_code: "",
-        condition: "Good",
-        quantity: 1,
-        cost_per_item: 0,
-        acquisition_cost: 0,
-        residual_value: 0,
-        life_span: 5,
-        useful_life_months: 60,
-        maximum_unit_produced_capacity: 0,
-        production_unit_id: null,
-        date_acquired: now,
-        depreciation_start_date: now,
-        department: 0,
-        employee: null,
-        serial: "",
-        is_active_warning: 0,
-        asset_origin: "New",
-        opening_book_value: undefined,
-        opening_accumulated_depreciation: 0,
-        opening_production_units: 0,
-        opening_production_date: now,
-      });
-      setSelectedFile(null);
-      setPreviewUrl(null);
-    }
+    resetModalState();
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -385,6 +392,7 @@ export default function AddAssetModal({
       });
 
       toast.success("Asset created successfully");
+      resetModalState();
       setOpen(false);
     } catch (error) {
       console.error(error);
@@ -1306,7 +1314,7 @@ export default function AddAssetModal({
                 <Button
                   variant="outline"
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={() => handleOpenChange(false)}
                   disabled={loading}
                 >
                   Cancel

@@ -118,39 +118,39 @@ export default function ConsolidationDetailSheet({
         const batchId = consolidation.id;
         let active = true;
 
-        console.log("[ConsolidationDetail] OPENED batch:", {
-            id: consolidation.id,
-            consolidatorNo: consolidation.consolidatorNo,
-            status: consolidation.status,
-            branchId: consolidation.branchId,
-            branchName: consolidation.branchName,
-            invoices: consolidation.invoices?.map((inv) => ({
-                invoiceId: inv.invoiceId,
-                invoiceNo: inv.invoiceNo,
-            })),
-            details: consolidation.details?.map((d) => ({
-                productId: d.productId,
-                productName: d.productName,
-                orderedQuantity: d.orderedQuantity,
-                pickedQuantity: d.pickedQuantity,
-            })),
-        });
+        // console.log("[ConsolidationDetail] OPENED batch:", {
+        //     id: consolidation.id,
+        //     consolidatorNo: consolidation.consolidatorNo,
+        //     status: consolidation.status,
+        //     branchId: consolidation.branchId,
+        //     branchName: consolidation.branchName,
+        //     invoices: consolidation.invoices?.map((inv) => ({
+        //         invoiceId: inv.invoiceId,
+        //         invoiceNo: inv.invoiceNo,
+        //     })),
+        //     details: consolidation.details?.map((d) => ({
+        //         productId: d.productId,
+        //         productName: d.productName,
+        //         orderedQuantity: d.orderedQuantity,
+        //         pickedQuantity: d.pickedQuantity,
+        //     })),
+        // });
 
         fetchAllocations(batchId)
             .then((allocations) => {
                 if (active) {
-                    console.log(`[ConsolidationDetail] fetchAllocations result for batchId=${batchId} (${allocations.length} rows):`);
-                    console.log(JSON.stringify(allocations.map((a) => ({
-                        productId: a.productId,
-                        productName: a.productName,
-                        inventoryLotId: a.inventoryLotId,
-                        lotId: a.lotId,
-                        lotName: a.lotName,
-                        batchNo: a.batchNo,
-                        quantity: a.quantity,
-                        pickedQuantity: a.pickedQuantity,
-                        status: a.status,
-                    })), null, 2));
+                    // console.log(`[ConsolidationDetail] fetchAllocations result for batchId=${batchId} (${allocations.length} rows):`);
+                    // console.log(JSON.stringify(allocations.map((a) => ({
+                    //     productId: a.productId,
+                    //     productName: a.productName,
+                    //     inventoryLotId: a.inventoryLotId,
+                    //     lotId: a.lotId,
+                    //     lotName: a.lotName,
+                    //     batchNo: a.batchNo,
+                    //     quantity: a.quantity,
+                    //     pickedQuantity: a.pickedQuantity,
+                    //     status: a.status,
+                    // })), null, 2));
                     setAllocationState({ batchId, allocations, error: null });
                 }
             })
@@ -170,10 +170,11 @@ export default function ConsolidationDetailSheet({
         [allocationState, consolidation?.id]
     );
 
-    // Group allocations by productId
+    // Group allocations by productId (excluding zero quantity allocations)
     const allocationsByProduct = useMemo(() => {
         const map = new Map<number, LotAllocation[]>();
         for (const alloc of allocations) {
+            if ((alloc.quantity || 0) <= 0) continue;
             const list = map.get(alloc.productId) || [];
             list.push(alloc);
             map.set(alloc.productId, list);

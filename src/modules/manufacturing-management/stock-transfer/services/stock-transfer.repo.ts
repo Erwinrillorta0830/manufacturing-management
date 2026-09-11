@@ -20,6 +20,14 @@ export async function fetchStockTransfers(status?: string): Promise<StockTransfe
   const params: Record<string, unknown> = {
     fields: [
       "*",
+      "source_inventory_lot_id.inventory_lot_id",
+      "source_inventory_lot_id.batch_no",
+      "source_inventory_lot_id.manufacturing_date",
+      "source_inventory_lot_id.expiry_date",
+      "source_inventory_lot_id.qa_status",
+      "source_inventory_lot_id.lot_id",
+      "source_lot_id.lot_id",
+      "source_lot_id.lot_name",
       "product_id.product_id",
       "product_id.product_name",
       "product_id.description",
@@ -92,15 +100,6 @@ export async function fetchBranches(): Promise<BranchRow[]> {
       }),
     ]);
 
-    console.log("[StockTransferRepo:fetchBranches] Raw branches count:", branchesRes.data?.length);
-    console.log("[StockTransferRepo:fetchBranches] Raw salesmen count:", salesmenRes.data?.length);
-    console.log("[StockTransferRepo:fetchBranches] All salesmen from DB:", JSON.stringify(salesmenRes.data, null, 2));
-
-    const activeSalesmen = (salesmenRes.data || []).filter(
-      (s) => s.isActive === undefined || s.isActive === true || s.isActive === 1 || s.isActive === "1"
-    );
-    console.log("[StockTransferRepo:fetchBranches] Active salesmen count:", activeSalesmen.length);
-
     const extractId = (val: unknown): number | null => {
       if (typeof val === "number") return val;
       if (typeof val === "string" && !isNaN(Number(val)) && Number(val) > 0) return Number(val);
@@ -156,10 +155,10 @@ export async function fetchBranches(): Promise<BranchRow[]> {
         };
       });
 
-    console.log(
-      "[StockTransferRepo:fetchBranches] Processed branches summary:",
-      processedBranches.map((b) => ({ id: b.id, name: b.branch_name, code: b.branch_code, salesman: b.salesman_name }))
-    );
+    // console.log(
+    //   "[StockTransferRepo:fetchBranches] Processed branches summary:",
+    //   processedBranches.map((b) => ({ id: b.id, name: b.branch_name, code: b.branch_code, salesman: b.salesman_name }))
+    // );
 
     return processedBranches;
   } catch (err) {
@@ -305,7 +304,7 @@ export async function fetchBranchInventory(branchId: number, token?: string, byp
   if (!bypassCache) {
     const cached = getCached<Record<string, unknown>[]>(CACHE_KEY);
     if (cached) {
-      console.log(`[Stock Transfer Repo] Inventory cache HIT for branch ${branchId}`);
+      // console.log(`[Stock Transfer Repo] Inventory cache HIT for branch ${branchId}`);
       return cached;
     }
   }
@@ -460,7 +459,7 @@ export async function updateTransfersStatus(
   // Execute one bulk PATCH per unique payload shape
   await Promise.all(
     Object.entries(grouped).map(([dataJson, ids]) => {
-      console.log("[DEBUG] Executing bulkUpdateItems for IDs:", ids, "Payload:", dataJson);
+      // console.log("[DEBUG] Executing bulkUpdateItems for IDs:", ids, "Payload:", dataJson);
       return bulkUpdateItems("items/mm_stock_transfer", ids, JSON.parse(dataJson) as Record<string, unknown>);
     })
   );
@@ -503,7 +502,7 @@ export async function fetchStockTransfersByIds(ids: number[]): Promise<StockTran
     const chunk = ids.slice(i, i + CHUNK_SIZE);
     const res = await fetchItems<StockTransferRow>("items/mm_stock_transfer", {
       "filter[id][_in]": chunk.join(","),
-      fields: "*,product_id.product_id,product_id.product_name",
+      fields: "*, product_id.product_id,product_id.product_name,product_id.product_type",
       limit: -1,
     });
     allRows.push(...res.data);
@@ -552,7 +551,7 @@ export async function fetchStockTransferDetails(transferIds: number[]): Promise<
   if (transferIds.length === 0) return [];
   const res = await fetchItems<MMStockTransferDetail>("items/mm_stock_transfer_details", {
     "filter[stock_transfer_id][_in]": transferIds.join(","),
-    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiry_date,lot_id.lot_id,lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
+    fields: "*,inventory_lot_id.inventory_lot_id,inventory_lot_id.batch_no,inventory_lot_id.manufacturing_date,inventory_lot_id.expiry_date,inventory_lot_id.qa_status,lot_id.lot_id,lot_id.lot_name,target_inventory_lot_id.inventory_lot_id,target_inventory_lot_id.batch_no,target_inventory_lot_id.manufacturing_date,target_inventory_lot_id.expiry_date,target_lot_id.lot_id,target_lot_id.lot_name,product_id.product_id,product_id.product_name,unit_id.unit_id,unit_id.unit_name",
     limit: -1,
   });
   return res.data;
@@ -572,6 +571,55 @@ export async function fetchMmLotsByIds(lotIds: number[]): Promise<Record<number,
   (res.data || []).forEach(l => {
     if (l && l.lot_id) {
       map[l.lot_id] = l;
+    }
+  });
+  return map;
+}
+
+/**
+ * Fetches inventory lot master records from mm_inventory_lots by inventory_lot_ids.
+ */
+export async function fetchInventoryLotsByIds(invLotIds: number[]): Promise<Record<number, {
+  inventory_lot_id: number;
+  lot_id: number;
+  product_id: number;
+  batch_no: string;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  qa_status?: string | null;
+  unit_cost?: number;
+}>> {
+  if (invLotIds.length === 0) return {};
+  const cleanIds = Array.from(new Set(invLotIds)).filter(id => id > 0);
+  if (cleanIds.length === 0) return {};
+  const res = await fetchItems<{
+    inventory_lot_id: number;
+    lot_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    qa_status?: string | null;
+    unit_cost?: number;
+  }>("items/mm_inventory_lots", {
+    "filter[inventory_lot_id][_in]": cleanIds.join(","),
+    fields: "inventory_lot_id,lot_id,product_id,batch_no,manufacturing_date,expiry_date,qa_status,unit_cost",
+    limit: -1,
+  }).catch(() => ({ data: [] }));
+
+  const map: Record<number, {
+    inventory_lot_id: number;
+    lot_id: number;
+    product_id: number;
+    batch_no: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    qa_status?: string | null;
+    unit_cost?: number;
+  }> = {};
+  (res.data || []).forEach(item => {
+    if (item && item.inventory_lot_id) {
+      map[item.inventory_lot_id] = item;
     }
   });
   return map;

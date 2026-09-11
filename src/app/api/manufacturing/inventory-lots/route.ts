@@ -28,18 +28,10 @@ export async function GET(req: Request) {
     const fields = "*,lot_id.lot_id,lot_id.lot_name,lot_id.branch_id,branch_id.id,branch_id.branch_name,branch_id.branch_code,product_id.product_id,product_id.product_name,product_id.product_code,product_id.product_type,product_id.product_category.category_name,product_id.unit_of_measurement.unit_name";
 
     // Try mm_inventory_lots first
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
       headers,
       cache: "no-store",
     });
-
-    if (!res.ok) {
-      // Fallback to inventory_lots
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
-        headers,
-        cache: "no-store",
-      });
-    }
 
     if (!res.ok) {
       const errTxt = await res.text();
@@ -89,19 +81,13 @@ export async function POST(req: Request) {
       created_by: userId ? Number(userId) : body.created_by || 24,
     };
 
-    let res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots`, {
+    const res = await fetch(`${DIRECTUS_URL}/items/mm_inventory_lots`, {
       method: "POST",
       headers,
       body: JSON.stringify(postBody),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(postBody),
-      });
-    }
+ 
 
     if (!res.ok) {
       const errTxt = await res.text();

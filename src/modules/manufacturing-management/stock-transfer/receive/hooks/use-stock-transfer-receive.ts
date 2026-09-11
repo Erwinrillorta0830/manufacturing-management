@@ -18,6 +18,12 @@ import type { OrderGroup, OrderGroupItem, ProductRow, ScanLog, CurrentUser, Bran
 
 const LOCAL_STORAGE_KEY_RECEIVE = 'scm_receive_scans_v1';
 
+function normalizeRouteBranch(branch: number | null | undefined): number | null {
+  if (branch === null || branch === undefined || branch === 0) return null;
+  const parsed = Number(branch);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 /**
  * Hook for managing the "Stock Transfer Receive" phase (RFID Verification at Target).
  */
@@ -119,6 +125,9 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
   // Enrich items — match received scans to the correct line item via dispatched_rfids
   const orderGroups = useMemo(() => {
     return base.baseOrderGroups.map((group: OrderGroup) => {
+      const sourceBranch = normalizeRouteBranch(group.sourceBranch);
+      const targetBranch = normalizeRouteBranch(group.targetBranch);
+
       const scanLogs = receivedItemsState[group.orderNo] || [];
       const successScans = scanLogs.filter(s => s.status === 'SUCCESS');
 
@@ -167,6 +176,8 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
 
       return {
         ...group,
+        sourceBranch,
+        targetBranch,
         items: enrichedItems
       };
     });
@@ -280,8 +291,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
             }));
           setTargetLots(activeLots);
           if (activeLots.length > 0) {
-            const tempMap = buildLotStoredProductSummaryMap(onhand || [], activeLots, undefined, invLots || []);
-            // Pre-assign destination lot (auto-fill target bad stock lot if target is bad branch, or match source lot in target branch)
+            // Pre-assign destination lot (auto-fill target bad stock lot if target is bad branch)
             const targetBranchObj = typeof (selectedGroup?.items?.[0]?.target_branch_id) === 'object' && selectedGroup?.items?.[0]?.target_branch_id !== null ? (selectedGroup.items[0].target_branch_id as BranchRow) : null;
             const targetBranchName = selectedGroup?.targetBranchName || targetBranchObj?.branch_name || targetBranchObj?.name || '';
             const isTargetBadBranch = isBadStockLot(undefined, { branch_name: targetBranchName });
@@ -292,10 +302,6 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
                 const currentLotId = updated[item.id];
                 const isValid = activeLots.some((l: MMLot) => l.lot_id === currentLotId);
                 if (!currentLotId || !isValid) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const itemAny = item as any;
-                  const sourceLotId = itemAny.source_lot_id || itemAny.lot_id || itemAny.lot_allocations?.[0]?.lot_id;
-                  const sourceLotName = itemAny.source_lot_name || itemAny.lot_name || itemAny.lot_allocations?.[0]?.lot_name;
                   const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadBranch;
 
                   // 1. If target branch is bad stock branch or item is bad stock, auto-fill bad stock lot in target branch
@@ -307,26 +313,7 @@ export function useStockTransferReceive({ currentUser }: { currentUser?: Current
                     }
                   }
 
-                  // 2. Otherwise for standard target branch, match exact source lot if present in target branch
-                  if (sourceLotId || sourceLotName) {
-                    const matchedTargetLot = activeLots.find((l: MMLot) => {
-                      if (sourceLotId && Number(l.lot_id) === Number(sourceLotId)) return true;
-                      if (sourceLotName && l.lot_name.trim().toLowerCase() === String(sourceLotName).trim().toLowerCase()) return true;
-                      return false;
-                    });
-
-                    if (matchedTargetLot) {
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      const p = typeof item.product_id === 'object' && item.product_id !== null ? (item.product_id as any) : ({} as any);
-                      const itemClass = resolveProductClassification(p.product_type, p.product_category, p.product_code, p.product_name);
-                      const stored = tempMap.get(Number(matchedTargetLot.lot_id));
-                      if (checkLotProductTypeCompatibility(stored, itemClass).isCompatible) {
-                        updated[item.id] = matchedTargetLot.lot_id;
-                        return;
-                      }
-                    }
-                  }
-                  // Do not auto-fill for regular target branch if no matching source lot exists
+                  // Do not auto-fill source lot for regular target branch by default
                   delete updated[item.id];
                 }
               });

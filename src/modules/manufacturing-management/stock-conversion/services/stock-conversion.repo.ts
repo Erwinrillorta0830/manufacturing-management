@@ -53,7 +53,7 @@ interface StockAdjustmentPayload {
   batch_no?: string | null;
   manufacturing_date?: string | null;
   expiry_date?: string | null;
-  remarks: string;
+  remarks?: string | null;
 }
 
 interface StockAdjustmentHeaderPayload {
@@ -68,7 +68,7 @@ interface StockAdjustmentHeaderPayload {
   date_created?: string;
   date_updated?: string;
   amount: number;
-  remarks: string;
+  remarks?: string | null;
   isPosted?: boolean;
   postedAt?: string;
   posted_at?: string;
@@ -79,7 +79,7 @@ export const stockConversionRepo = {
     const headers = getHeaders();
     const url = `${DIRECTUS_API}/items/products?limit=${limit}&offset=${offset}&meta=filter_count&fields=product_id,product_name,description,product_code,parent_id,unit_of_measurement,unit_of_measurement_count,product_brand,product_category,cost_per_unit,price_per_unit,product_supplier.id,product_supplier.supplier_name,product_supplier.supplier_shortcut,product_per_supplier.supplier_id.id,product_per_supplier.supplier_id.supplier_name,product_per_supplier.supplier_id.supplier_shortcut&sort=product_name${filters ? `&${filters}` : ""}`;
     
-    console.log(`[Repo] Fetching products from Directus: ${url}`);
+    // console.log(`[Repo] Fetching products from Directus: ${url}`);
     const res = await fetchWithTimeout(url, { headers, cache: "no-store" });
     if (!res.ok) {
       console.error(`[Repo] Directus fetch failed: ${res.status} ${res.statusText}`);
@@ -170,7 +170,7 @@ export const stockConversionRepo = {
     if (!queryParams) {
       const cached = getCached<Record<number, number>>(CACHE_KEY);
       if (cached) {
-        console.log(`[Repo] Inventory cache HIT for branch ${branchId}`);
+        // console.log(`[Repo] Inventory cache HIT for branch ${branchId}`);
         return cached;
       }
     }
@@ -229,14 +229,14 @@ export const stockConversionRepo = {
             }
             params.delete("product");
           }
-          console.log(`[StockConversionRepo] Product-onhand map (specific products):`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
+          // console.log(`[StockConversionRepo] Product-onhand map (specific products):`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
           return invMap;
         }
       }
 
       // Branch-level: fetch all products on-hand for this branch
       const url = `${SPRING_API}/api/mm-product-onhand/filter?${params.toString()}`;
-      console.log(`[Repo] Fetching product on-hand from Spring: ${url}`);
+      // console.log(`[Repo] Fetching product on-hand from Spring: ${url}`);
       const res = await fetchWithTimeout(url, {
         headers: { "Content-Type": "application/json", "Accept": "application/json", ...(effectiveToken ? { Authorization: `Bearer ${effectiveToken}` } : {}) },
         cache: "no-store",
@@ -245,7 +245,7 @@ export const stockConversionRepo = {
       if (res.ok) {
         const data = await res.json();
         const items = Array.isArray(data) ? data : (data?.data || []);
-        console.log(`[StockConversionRepo] Product-onhand entries from Spring: ${items.length} (Branch: ${branchId || 'All'})`);
+        // console.log(`[StockConversionRepo] Product-onhand entries from Spring: ${items.length} (Branch: ${branchId || 'All'})`);
         items.forEach((item: Record<string, unknown>) => {
           const pId = Number(item.productId || item.product_id || 0);
           const itemBranchId = item.branchId ?? item.branch_id;
@@ -255,7 +255,7 @@ export const stockConversionRepo = {
           const onhand = Number(item.onhandQuantity ?? item.onhand_quantity ?? 0);
           if (pId > 0) invMap[pId] = Math.max(0, onhand);
         });
-        console.log(`[StockConversionRepo] Final inventory balance map:`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
+        // console.log(`[StockConversionRepo] Final inventory balance map:`, Object.entries(invMap).map(([p, q]) => `Product ${p}: ${q}`));
       } else {
         console.warn(`[Repo] mm-product-onhand returned HTTP ${res.status}`);
       }
@@ -355,7 +355,7 @@ export const stockConversionRepo = {
         headers,
         body: JSON.stringify({ keys: ids, data: { status } })
       });
-      console.log(`[Repo] Successfully marked ${ids.length} tags as ${status}`);
+      // console.log(`[Repo] Successfully marked ${ids.length} tags as ${status}`);
     } else {
       console.warn(`[Repo] No tags found to update status: ${rfidTags.join(", ")}`);
     }

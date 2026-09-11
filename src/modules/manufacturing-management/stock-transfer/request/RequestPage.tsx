@@ -70,6 +70,12 @@ export default function StockTransferRequestView(props: { salesmanName?: string 
       });
       return;
     }
+    if (sourceBranch === targetBranch) {
+      toast.error('Invalid Branch Selection', {
+        description: 'Source and target branch cannot be the same.',
+      });
+      return;
+    }
     if (scannedItems.length === 0) {
       toast.error('No Items', {
         description: 'Select at least one product to transfer.',
@@ -95,10 +101,6 @@ export default function StockTransferRequestView(props: { salesmanName?: string 
   };
 
   const handlePrint = () => {
-    const resolvedSalesman = resolveBranchSalesman(targetBranch, branches);
-    console.log('[RequestPage:handlePrint] targetBranch ID:', targetBranch);
-    console.log('[RequestPage:handlePrint] Available branches:', branches);
-    console.log('[RequestPage:handlePrint] Resolved Salesman Name:', resolvedSalesman);
     setShowPreview(true);
   };
 

@@ -74,11 +74,6 @@ interface DirectusSalesman {
     salesman_name?: string;
 }
 
-interface SalesOrderHeader {
-    order_id: number;
-    order_no: string;
-}
-
 interface DirectusCustomer {
     customer_code: string;
     customer_name: string;
@@ -183,16 +178,26 @@ export async function GET(request: Request) {
             return NextResponse.json({ details: formattedDetails });
         }
 
-        const limit = searchParams.get("limit") || "500";
+        const pageParam = searchParams.get("page");
+        const limitParam = searchParams.get("limit");
+        const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+        const limit = limitParam ? parseInt(limitParam, 10) : -1;
+        const offset = limit > 0 ? (page - 1) * limit : 0;
         const includeDetails = searchParams.get("includeDetails") === "true";
 
-        // 1. Fetch Invoices
-        const invoicesRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?limit=${limit}&sort=-invoice_id`, { headers, cache: "no-store" });
+        // 1. Fetch Invoices with pagination & meta count
+        const invoiceQuery = limit > 0
+            ? `limit=${limit}&offset=${offset}&meta=*&sort=-invoice_id`
+            : `limit=-1&meta=*&sort=-invoice_id`;
+        const invoicesRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?${invoiceQuery}`, { headers, cache: "no-store" });
         if (!invoicesRes.ok) {
             throw new Error(`Failed to fetch sales invoices for FM Report: ${invoicesRes.status}`);
         }
         const invoicesJson = await invoicesRes.json();
         const invoices: SalesInvoiceHeader[] = invoicesJson.data || [];
+        console.log("saas", invoices);
+        const totalCount = Number(invoicesJson.meta?.filter_count ?? invoicesJson.meta?.total_count ?? invoices.length);
+        const totalPages = limit > 0 ? Math.max(1, Math.ceil(totalCount / limit)) : 1;
 
         // 2. Fetch Salesmen
         let salesmanMap = new Map<number, DirectusSalesman>();
@@ -213,26 +218,121 @@ export async function GET(request: Request) {
             console.error("Error fetching salesman mapping:", err);
         }
 
-        // 3. Fetch Sales Orders
-        const orderIds = [...new Set(invoices.map((inv) => inv.order_id).filter(Boolean))];
-        let soMap = new Map<number, string>();
-        if (orderIds.length > 0) {
-            try {
-                const chunkSize = 50;
-                const soDataList: SalesOrderHeader[] = [];
-                for (let i = 0; i < orderIds.length; i += chunkSize) {
-                    const chunk = orderIds.slice(i, i + chunkSize);
-                    const escChunk = chunk.map(id => encodeURIComponent(String(id))).join(",");
-                    const soRes = await fetch(`${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${escChunk}&limit=-1&fields=order_id,order_no`, { headers, cache: "no-store" });
-                    if (soRes.ok) {
-                        const data = (await soRes.json()).data || [];
-                        soDataList.push(...data);
-                    }
-                }
-                soMap = new Map(soDataList.map((s: SalesOrderHeader) => [Number(s.order_id), s.order_no]));
-            } catch (err) {
-                console.error("Error mapping sales orders for FM report:", err);
+        // 2b. Fetch Branches & Payment Terms
+        let branchMap = new Map<number, { id: number; branch_name: string; branch_code: string }>();
+        try {
+            const bRes = await fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code`, { headers, cache: "no-store" });
+            if (bRes.ok) {
+                const bData = (await bRes.json()).data || [];
+                branchMap = new Map(bData.map((b: { id: number; branch_name: string; branch_code: string }) => [Number(b.id), b]));
             }
+        } catch (err) {
+            console.error("Error fetching branches mapping:", err);
+        }
+
+        let ptMap = new Map<number | string, { id: number | string; payment_name: string; payment_days?: number }>();
+        try {
+            const ptRes = await fetch(`${DIRECTUS_URL}/items/payment_terms?limit=-1&fields=id,payment_name,payment_days`, { headers, cache: "no-store" });
+            if (ptRes.ok) {
+                const ptData = (await ptRes.json()).data || [];
+                ptMap = new Map(ptData.map((pt: { id: number | string; payment_name: string; payment_days?: number }) => [pt.id, pt]));
+            }
+        } catch (err) {
+            console.error("Error fetching payment terms mapping:", err);
+        }
+
+        function extractOrderIdAndNo(invObj: Record<string, unknown>): { orderId: number | null; orderNo: string | null } {
+            let orderId: number | null = null;
+            let orderNo: string | null = null;
+
+            const rawOrder = invObj.order_id ?? invObj.sales_order_id ?? invObj.sales_order;
+            if (typeof rawOrder === "object" && rawOrder !== null) {
+                const subObj = rawOrder as Record<string, unknown>;
+                const idVal = Number(subObj.order_id ?? subObj.id);
+                if (Number.isFinite(idVal) && idVal > 0) orderId = idVal;
+                if (typeof subObj.order_no === "string" && subObj.order_no.trim()) {
+                    orderNo = subObj.order_no.trim();
+                }
+            } else if (typeof rawOrder === "number") {
+                orderId = rawOrder;
+            } else if (typeof rawOrder === "string") {
+                const trimmed = rawOrder.trim();
+                if (/^\d+$/.test(trimmed)) {
+                    orderId = Number(trimmed);
+                } else if (trimmed) {
+                    orderNo = trimmed;
+                }
+            }
+
+            const explicitNo = invObj.order_no ?? invObj.sales_order_no;
+            if (!orderNo && typeof explicitNo === "string" && explicitNo.trim()) {
+                orderNo = explicitNo.trim();
+            }
+
+            return { orderId, orderNo };
+        }
+
+        // 3. Fetch Sales Orders (including branch & payment_terms fallback)
+        const numericOrderIds: number[] = [];
+        const stringOrderNos: string[] = [];
+        for (const inv of invoices as unknown as Record<string, unknown>[]) {
+            const { orderId, orderNo } = extractOrderIdAndNo(inv);
+            if (orderId) numericOrderIds.push(orderId);
+            if (orderNo) stringOrderNos.push(orderNo);
+        }
+        const uniqueNumericIds = [...new Set(numericOrderIds)];
+        const uniqueStringNos = [...new Set(stringOrderNos)];
+
+        const soMap = new Map<string, { order_no: string; branch_id?: number; payment_terms?: number | string; transaction_status?: string }>();
+
+        try {
+            const chunkSize = 50;
+            const soDataList: Array<{ order_id: number; order_no: string; branch_id?: number; payment_terms?: number | string; order_status?: string; transaction_status?: string }> = [];
+
+            for (let i = 0; i < uniqueNumericIds.length; i += chunkSize) {
+                const chunk = uniqueNumericIds.slice(i, i + chunkSize);
+                const escChunk = chunk.map(id => encodeURIComponent(String(id))).join(",");
+                const soRes = await fetch(`${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${escChunk}&limit=-1&fields=order_id,order_no,branch_id,payment_terms,order_status`, { headers, cache: "no-store" });
+                if (soRes.ok) {
+                    const data = (await soRes.json()).data || [];
+                    soDataList.push(...data);
+                } else {
+                    const errText = await soRes.text();
+                    console.error("[Sales Invoices] Directus sales_order fetch failed (numeric IDs):", soRes.status, errText);
+                }
+            }
+
+            for (let i = 0; i < uniqueStringNos.length; i += chunkSize) {
+                const chunk = uniqueStringNos.slice(i, i + chunkSize);
+                const escChunk = chunk.map(no => encodeURIComponent(no)).join(",");
+                const soRes = await fetch(`${DIRECTUS_URL}/items/sales_order?filter[order_no][_in]=${escChunk}&limit=-1&fields=order_id,order_no,branch_id,payment_terms,order_status`, { headers, cache: "no-store" });
+                if (soRes.ok) {
+                    const data = (await soRes.json()).data || [];
+                    soDataList.push(...data);
+                } else {
+                    const errText = await soRes.text();
+                    console.error("[Sales Invoices] Directus sales_order fetch failed (string orderNos):", soRes.status, errText);
+                }
+            }
+
+            console.log(`[Sales Invoices] Matched ${soDataList.length} sales orders for ${uniqueNumericIds.length + uniqueStringNos.length} IDs`);
+
+            for (const s of soDataList) {
+                const val = {
+                    order_no: s.order_no,
+                    branch_id: s.branch_id ? Number(s.branch_id) : undefined,
+                    payment_terms: s.payment_terms,
+                    transaction_status: s.order_status || s.transaction_status,
+                };
+                if (s.order_id !== undefined && s.order_id !== null) {
+                    soMap.set(String(s.order_id), val);
+                }
+                if (s.order_no) {
+                    soMap.set(String(s.order_no), val);
+                }
+            }
+        } catch (err) {
+            console.error("Error mapping sales orders for FM report:", err);
         }
 
         // 4. Fetch Customers
@@ -273,7 +373,10 @@ export async function GET(request: Request) {
         }
 
         // 6. Returns
-        const returnsRes = await fetch(`${DIRECTUS_URL}/items/sales_return?limit=${limit}&sort=-created_at`, { headers, cache: "no-store" });
+        const returnQuery = limit > 0
+            ? `limit=${limit}&offset=${offset}&sort=-created_at`
+            : `limit=-1&sort=-created_at`;
+        const returnsRes = await fetch(`${DIRECTUS_URL}/items/sales_return?${returnQuery}`, { headers, cache: "no-store" });
         const returns: DirectusReturn[] = returnsRes.ok ? ((await returnsRes.json()).data || []) : [];
 
         const returnNumbers = returns.map((ret) => ret.return_number).filter(Boolean);
@@ -345,8 +448,19 @@ export async function GET(request: Request) {
 
         invoices.forEach((inv: SalesInvoiceHeader) => {
             const invId = Number(inv.invoice_id);
-            const salesOrderId = inv.order_id ? Number(inv.order_id) : null;
-            const salesOrderNo = salesOrderId ? soMap.get(salesOrderId) : null;
+            const invObj = inv as unknown as Record<string, unknown>;
+            const { orderId: salesOrderId, orderNo: extractedNo } = extractOrderIdAndNo(invObj);
+
+            const soInfo = salesOrderId
+                ? soMap.get(String(salesOrderId))
+                : (extractedNo ? soMap.get(extractedNo) : undefined);
+
+            const salesOrderNo = extractedNo
+                || soInfo?.order_no
+                || (salesOrderId ? soMap.get(String(salesOrderId))?.order_no : null)
+                || null;
+
+            console.log("SalesORder", salesOrderNo, "salesOrderId:", salesOrderId, "extractedNo:", extractedNo, "soInfo:", soInfo);
             const custCode = inv.customer_code || "GEN";
             const cust = customerMap.get(custCode);
             const custName = cust ? cust.customer_name : `Customer: ${custCode}`;
@@ -357,6 +471,20 @@ export async function GET(request: Request) {
             const sm = smId ? salesmanMap.get(smId) : null;
             const smName = sm?.salesman_name || (smId ? `Salesman #${smId}` : "Unassigned");
             const smCode = sm?.salesman_code || "N/A";
+
+            // Resolve Branch
+            const branchId = inv.branch_id ? Number(inv.branch_id) : (soInfo?.branch_id ?? null);
+            const branchObj = branchId ? branchMap.get(branchId) : undefined;
+            const branchName = branchObj ? branchObj.branch_name : (branchId ? `Branch #${branchId}` : "N/A");
+            const branchCode = branchObj ? branchObj.branch_code : "N/A";
+
+            // Resolve Payment Terms
+            const pTerms = inv.payment_terms !== undefined && inv.payment_terms !== null ? inv.payment_terms : (soInfo?.payment_terms ?? null);
+            const ptObj = pTerms ? ptMap.get(pTerms) : undefined;
+            const paymentTermName = ptObj ? ptObj.payment_name : (pTerms ? `Term: ${pTerms}` : "N/A");
+
+            // Transaction Status
+            const transactionStatus = inv.transaction_status || soInfo?.transaction_status || "Prepared";
 
             let paid = 0;
             let paymentHistory: PaymentHistoryItem[] = [];
@@ -377,7 +505,7 @@ export async function GET(request: Request) {
             const vatAmount = Number(inv.vat_amount || 0);
             const discountAmount = Number(inv.discount_amount || 0);
 
-            const displayStatus = inv.transaction_status === "Cancelled"
+            const displayStatus = (inv.transaction_status === "Cancelled" || transactionStatus === "Cancelled")
                 ? "Cancelled"
                 : paid >= netAmount && netAmount > 0
                     ? "Paid"
@@ -402,7 +530,13 @@ export async function GET(request: Request) {
                 salesman_code: smCode,
                 salesman_name: smName,
                 sales_order_id: salesOrderId,
-                sales_order_no: salesOrderNo || "Manual",
+                sales_order_no: salesOrderNo,
+                branch_id: branchId,
+                branch_name: branchName,
+                branch_code: branchCode,
+                payment_terms: pTerms,
+                payment_term_name: paymentTermName,
+                transaction_status: transactionStatus,
                 gross_amount: grossAmount,
                 discount_amount: discountAmount,
                 vat_amount: vatAmount,
@@ -455,6 +589,12 @@ export async function GET(request: Request) {
                 salesman_name: "Unassigned",
                 sales_order_id: null,
                 sales_order_no: "N/A",
+                branch_id: null,
+                branch_name: "N/A",
+                branch_code: "N/A",
+                payment_terms: null,
+                payment_term_name: "N/A",
+                transaction_status: "Returned",
                 gross_amount: -retNetAmount,
                 discount_amount: 0,
                 vat_amount: 0,
@@ -483,7 +623,13 @@ export async function GET(request: Request) {
         return NextResponse.json({
             data: dataList,
             salesmen: salesmanList,
-            detailsMap
+            detailsMap,
+            pagination: {
+                page,
+                limit,
+                total: totalCount,
+                totalPages
+            }
         });
     } catch (e) {
         console.error("API Error in FM Sales Invoice Report GET:", e);

@@ -3,15 +3,18 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Truck, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Hand, Layers, FileText } from 'lucide-react';
+import { Truck, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Hand, Layers, FileText, AlertTriangle } from 'lucide-react';
 import { useStockTransferDispatchManual } from './hooks/use-stock-transfer-dispatch-manual';
 import { OrderGroupItem, ProductRow, ScannedItem, CurrentUser } from '../types/stock-transfer.types';
 import { cn } from '@/lib/utils';
 import { StockTransferPrintPreview } from '../shared/components/StockTransferPrintPreview';
 import { getAssetUrl } from '@/lib/assets';
+import { toast } from 'sonner';
 import { resolveBranchSalesman, getLotAndBatchDisplayLines } from '../services/stock-transfer.helpers';
 import { StockAllocationModal } from '@/modules/manufacturing-management/shared/components/StockAllocationModal';
 import { isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import { getProductClassification } from '@/modules/manufacturing-management/stock-transfer/shared/components/ProductSelectionModal';
+import type { EnrichedProduct } from '../types/stock-transfer.types';
 import type { StockAllocationPlan, BatchAllocationResult } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 // Shared components
@@ -65,6 +68,13 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
   ] = useState<OrderGroupItem | null>(null);
 
   const handleOpenAllocationModal = (item: OrderGroupItem) => {
+    const manualQty = scannedQtys[item.id] ?? 0;
+    if (manualQty <= 0) {
+      toast.warning('Enter Manual Quantity First', {
+        description: 'Please set the Manual Qty for this item before allocating source batch and lot.',
+      });
+      return;
+    }
     setActivePickingItem(item);
     setLotBatchModalOpen(true);
   };
@@ -233,7 +243,7 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
                                 </div>
                               )}
                               <div className="flex flex-col min-w-0">
-                                <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                <span  title={productName} className="font-semibold text-sm line-clamp-1">{productName}</span>
                               </div>
                             </div>
                           </TableCell>
@@ -243,25 +253,51 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
                             <div className="flex flex-col gap-1">
                               {(() => {
                                 const displayLines = getLotAndBatchDisplayLines(item);
+                                const isZeroQty = targetQty === 0 && availableQty === 0;
+                                const hasManualQty = currentQty > 0;
+                                const isAllocationDisabled = selectedGroup?.status !== 'For Picking' || isZeroQty || !hasManualQty;
+
+                                const allocatedBatchQty = (item.lot_allocations || []).reduce((sum, grp) => {
+                                  const bSum = (grp.batches || []).reduce((s, b) => s + Number(b.quantity || 0), 0);
+                                  return sum + (bSum > 0 ? bSum : Number(grp.allocated_quantity || 0));
+                                }, 0);
+                                const isQtyMismatched = currentQty > 0 && allocatedBatchQty > 0 && currentQty !== allocatedBatchQty;
+
                                 if (displayLines.length > 0) {
                                   return (
                                     <button
                                       type="button"
-                                      disabled={selectedGroup?.status !== 'For Picking'}
+                                      disabled={selectedGroup?.status !== 'For Picking' || isZeroQty}
                                       onClick={() => handleOpenAllocationModal(item)}
                                       className={cn(
-                                        "inline-flex flex-col items-start gap-1 text-[10px] font-mono font-semibold px-2.5 py-1.5 rounded bg-primary/10 border border-primary/20 text-primary transition-all text-left w-fit",
-                                        selectedGroup?.status === 'For Picking' && "hover:bg-primary/20 hover:border-primary/40 cursor-pointer shadow-xs"
+                                        "inline-flex flex-col items-start gap-1 text-[10px] font-mono font-semibold px-2.5 py-1.5 rounded transition-all text-left w-fit",
+                                        isQtyMismatched
+                                          ? "bg-amber-500/15 border border-amber-500/60 text-amber-900 dark:text-amber-300 hover:bg-amber-500/25"
+                                          : "bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 hover:border-primary/40",
+                                        selectedGroup?.status === 'For Picking' && !isZeroQty && "cursor-pointer shadow-xs",
+                                        (selectedGroup?.status !== 'For Picking' || isZeroQty) && "opacity-40 cursor-not-allowed"
                                       )}
-                                      title={selectedGroup?.status === 'For Picking' ? "Click to change picked lot and batch" : undefined}
+                                      title={
+                                        isQtyMismatched
+                                          ? `Quantity Mismatch: Allocated ${allocatedBatchQty} across batches but Manual Qty is ${currentQty}. Click to re-allocate.`
+                                          : isZeroQty
+                                          ? "No stock available to allocate"
+                                          : (selectedGroup?.status === 'For Picking' ? "Click to change picked lot and batch" : undefined)
+                                      }
                                     >
                                       {displayLines.map((line, idx) => (
                                         <div key={idx} className="flex items-center gap-1.5 text-[10px] font-mono leading-tight">
-                                          {idx === 0 && <Layers className="w-3 h-3 text-primary shrink-0" />}
+                                          {idx === 0 && <Layers className={cn("w-3 h-3 shrink-0", isQtyMismatched ? "text-amber-600 dark:text-amber-400" : "text-primary")} />}
                                           {idx > 0 && <span className="w-3 shrink-0" />}
                                           <span>{line.displayText}</span>
                                         </div>
                                       ))}
+                                      {isQtyMismatched && (
+                                        <div className="flex items-center gap-1 text-[9px] font-bold text-amber-700 dark:text-amber-400 pt-0.5 animate-pulse">
+                                          <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                                          <span>Mismatch: {allocatedBatchQty} alloc ≠ {currentQty} manual</span>
+                                        </div>
+                                      )}
                                     </button>
                                   );
                                 }
@@ -270,12 +306,24 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    disabled={selectedGroup?.status !== 'For Picking'}
+                                    disabled={isAllocationDisabled}
                                     onClick={() => handleOpenAllocationModal(item)}
-                                    className="h-7 text-[10px] font-bold uppercase tracking-wider gap-1.5 border-dashed border-primary/50 text-primary hover:bg-primary/10 hover:border-primary px-2 shadow-none w-fit"
+                                    title={
+                                      isZeroQty
+                                        ? "No stock available to allocate"
+                                        : !hasManualQty
+                                        ? "Enter manual quantity first to allocate source batch and lot"
+                                        : `Click to allocate source batch and lot for ${currentQty} ${unitName}`
+                                    }
+                                    className={cn(
+                                      "h-7 text-[10px] font-bold uppercase tracking-wider gap-1.5 border-dashed px-2.5 shadow-none w-fit transition-all",
+                                      hasManualQty && !isAllocationDisabled
+                                        ? "border-amber-500/80 text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 hover:border-amber-600 cursor-pointer animate-pulse duration-1000"
+                                        : "border-muted-foreground/30 text-muted-foreground opacity-50 cursor-not-allowed"
+                                    )}
                                   >
-                                    <Layers className="w-3 h-3" />
-                                    Allocate Stock
+                                    <Layers className="w-3.5 h-3.5" />
+                                    {hasManualQty ? `Allocate Source Batch & Lot (${currentQty} ${unitName})` : 'Allocate Source Batch & Lot'}
                                   </Button>
                                 );
                               })()}
@@ -455,9 +503,11 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
         const uomName = typeof product?.unit_of_measurement === 'object' && product.unit_of_measurement !== null
           ? ((product.unit_of_measurement as { unit_name?: string }).unit_name || 'units')
           : 'units';
-        const requestedQty = Number(activePickingItem.allocated_quantity || activePickingItem.ordered_quantity || 1);
+        const manualQty = scannedQtys[activePickingItem.id] ?? 0;
+        const requestedQty = manualQty > 0 ? manualQty : Number(activePickingItem.allocated_quantity || activePickingItem.ordered_quantity || 1);
+        const productClassification = product ? getProductClassification(product as unknown as EnrichedProduct) : undefined;
 
-        // Build initial allocations from existing lot data on the item
+        // Build initial allocations from confirmed lot data on the item
         const existingAllocations: BatchAllocationResult[] | undefined =
           activePickingItem.lot_allocations && activePickingItem.lot_allocations.length > 0
             ? activePickingItem.lot_allocations.flatMap((grp) =>
@@ -480,24 +530,6 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
                   is_eligible: true,
                 }))
               )
-            : activePickingItem.batch_no && activePickingItem.source_inventory_lot_id
-            ? [{
-                inventory_lot_id: activePickingItem.source_inventory_lot_id ?? 0,
-                lot_id: activePickingItem.source_lot_id ?? 0,
-                batch_no: activePickingItem.batch_no,
-                expiry_date: null,
-                manufacturing_date: null,
-                unit_cost: 0,
-                qa_status: 'GOOD' as const,
-                status: 'ACTIVE' as const,
-                available_quantity: requestedQty,
-                allocated_quantity: requestedQty,
-                priority_index: 0,
-                priority_label: 'P1',
-                days_until_expiry: null,
-                is_expired: false,
-                is_eligible: true,
-              } as BatchAllocationResult]
             : undefined;
 
         const targetBranchName = getBranchName(selectedGroup.targetBranch);
@@ -517,6 +549,7 @@ export default function StockTransferDispatchManualView(props: { currentUser?: C
             isTargetBadStock={isTargetBadStock}
             productId={productId}
             productName={productName}
+            productClassification={productClassification}
             requestedQuantity={requestedQty}
             uomName={uomName}
             initialAllocations={existingAllocations}

@@ -29,6 +29,12 @@ interface BatchMovementsDialogProps {
     loading?: boolean;
 }
 
+function isExpired(expirationDate?: string | null): boolean {
+    if (!expirationDate) return false;
+    const expTime = new Date(expirationDate).getTime();
+    return !isNaN(expTime) && expTime <= new Date().setHours(23, 59, 59, 999);
+}
+
 export default function BatchMovementsDialog({
     isOpen,
     onClose,
@@ -179,7 +185,7 @@ export default function BatchMovementsDialog({
                     </div>
 
                     {/* Metadata chips */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/40">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-3 pt-3 border-t border-border/40">
                         <div className="flex items-center gap-2">
                             <Package className="h-4 w-4 text-muted-foreground shrink-0" />
                             <div className="truncate">
@@ -202,6 +208,25 @@ export default function BatchMovementsDialog({
 
                         <div className="flex items-center gap-2">
                             <Layers className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="truncate">
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Mfg Date</p>
+                                <p className="text-xs font-bold text-foreground truncate">
+                                    {batch.manufacturingDate ? String(batch.manufacturingDate).substring(0, 10) : "N/A"}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-amber-500 shrink-0" />
+                            <div className="truncate">
+                                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Expiry Date</p>
+                                <p className={`text-xs font-bold truncate ${isExpired(batch.expirationDate) ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}>
+                                    {batch.expirationDate ? String(batch.expirationDate).substring(0, 10) : "N/A"}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
                             <div className="truncate">
                                 <p className="text-[10px] text-muted-foreground uppercase font-semibold">Live On-Hand</p>
                                 <p className={`text-xs font-black ${liveQuantity < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>

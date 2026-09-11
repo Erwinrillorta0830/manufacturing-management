@@ -2,13 +2,13 @@
 "use client";
 
 import React from "react";
-import { Plus, Trash2, Shield, Settings, Clock, Layers, Users, Briefcase } from "lucide-react";
+import { Plus, Trash2, Shield, Settings, Clock, Layers, Users, Briefcase, Sparkles, Sliders, ChevronDown, ChevronUp, Calculator, CheckCircle2, AlertCircle } from "lucide-react";
 import { RouteStep, RouteBOMItem, OperationType, WorkCenter, QATemplate, Unit, VersionLaborPosition, BFFCatalogProduct } from "../types";
 import { BOMMaterialSelect } from "./BOMMaterialSelect";
 import { MaterialTypeSelect } from "./MaterialTypeSelect";
 import { CreatableSelect } from "./CreatableSelect";
 import { Button } from "@/components/ui/button";
-import { calculateMaterialCost } from "../costing";
+import { calculateMaterialCost, calculateBottleneckBaseQuantity, calculateNetRunTime, BottleneckCalculationResult } from "../costing";
 import { getProductFamilyUOMOptions, extractProductUomShortcut } from "../utils/uom-rules";
 import { formatNumberWithCommas } from "../utils/formatters";
 import {
@@ -342,6 +342,134 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     const totalManpowerCount = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.manpower_count) || 0), 0);
     const totalLaborHoursRequired = versionLaborPositions.reduce((sum, pos) => sum + (Number(pos.hours_required) || 0), 0);
 
+    // Dynamic Bottleneck Runtime Model State
+    const [isAutoBaseQty, setIsAutoBaseQty] = React.useState<boolean>(false);
+    const [showRuntimeSettings, setShowRuntimeSettings] = React.useState<boolean>(false);
+    const [shiftHours, setShiftHours] = React.useState<number>(18);
+    const [shiftMinutes, setShiftMinutes] = React.useState<number>(0);
+    const [downtimeMinutes, setDowntimeMinutes] = React.useState<number>(16);
+    const [downtimeSeconds, setDowntimeSeconds] = React.useState<number>(7);
+
+    const [rawBaseQty, setRawBaseQty] = React.useState<string>(
+        String(editedVersionDetails?.base_quantity !== undefined ? editedVersionDetails.base_quantity : 1)
+    );
+
+    // Sync raw string when base_quantity updates externally
+    React.useEffect(() => {
+        if (editedVersionDetails?.base_quantity !== undefined) {
+            const currentNum = parseFloat(rawBaseQty);
+            const targetNum = Number(editedVersionDetails.base_quantity);
+            if (isNaN(currentNum) || Math.abs(currentNum - targetNum) > 0.00001) {
+                setRawBaseQty(String(editedVersionDetails.base_quantity));
+            }
+        }
+    }, [editedVersionDetails?.base_quantity]);
+
+    // Compute dynamic bottleneck and base quantity
+    const bottleneckCalc: BottleneckCalculationResult = React.useMemo(() => {
+        return calculateBottleneckBaseQuantity({
+            routes: editedRoutes,
+            workCenters,
+            operationTypes,
+            shiftHours,
+            shiftMinutes,
+            downtimeMinutes,
+            downtimeSeconds,
+            expectedYieldPercentage: editedVersionDetails?.expected_yield_percentage ?? 100
+        });
+    }, [editedRoutes, workCenters, operationTypes, shiftHours, shiftMinutes, downtimeMinutes, downtimeSeconds, editedVersionDetails?.expected_yield_percentage]);
+
+    // Log step-by-step calculation to console for verification
+    React.useEffect(() => {
+        if (editedRoutes.length === 0) return;
+        const yieldPct = editedVersionDetails?.expected_yield_percentage ?? 100;
+        const currentBase = Number(editedVersionDetails?.base_quantity) > 0
+            ? Number(editedVersionDetails.base_quantity)
+            : (bottleneckCalc.computedBaseQuantity > 0 ? bottleneckCalc.computedBaseQuantity : 1);
+        const laborPerUnit = totalLaborBatchCost / currentBase;
+
+        console.group(`%c[Bottleneck Runtime Model] Step-by-Step Calculation: ${editedVersionDetails?.version_name || "Current Version"}`, "color: #2563eb; font-weight: bold; font-size: 12px;");
+        console.log("%c==================================================", "color: #94a3b8;");
+        console.log("%cActive Model: Option 3 (Hybrid Recipe Rate capped by Workstation Machine Ceiling)", "font-weight: bold; color: #7c3aed;");
+        console.log("%cStep 1: Calculate Net Operational Run Time (T_run)", "font-weight: bold; color: #0284c7;");
+        console.log(`  • Target Shift Duration : ${shiftHours} hrs ${shiftMinutes} mins (${(shiftHours + shiftMinutes / 60).toFixed(6)} Decimal Hours)`);
+        console.log(`  • Planned Downtime       : ${downtimeMinutes} mins ${downtimeSeconds} secs (${((downtimeMinutes / 60) + (downtimeSeconds / 3600)).toFixed(6)} Decimal Hours)`);
+        console.log(`  • T_run Equation         : Shift Hours - Downtime Hours`);
+        console.log(`  • T_run Result           : ${(shiftHours + shiftMinutes / 60).toFixed(6)} - ${((downtimeMinutes / 60) + (downtimeSeconds / 3600)).toFixed(6)} = %c${bottleneckCalc.netProductionHours.toFixed(6)} Decimal Hours%c (Display: ${bottleneckCalc.netProductionHours.toFixed(4)} hrs)`, "color: #059669; font-weight: bold;", "color: inherit;");
+        
+        console.log("%cStep 2: Calculate Step Throughput Rates & Find Bottleneck (CAP_bottleneck)", "font-weight: bold; color: #0284c7;");
+        console.table(bottleneckCalc.stepCapacities.map(s => ({
+            Step: `Step #${s.stepNum}`,
+            Operation: s.operationName,
+            "Work Center": s.workCenterName,
+            "Step Batch Size": s.stepBatchSize,
+            "Total Time (hrs)": Number(s.totalHours.toFixed(4)),
+            "Recipe Rate": Number(s.calculatedRate.toFixed(4)),
+            "Workstation Ceiling": s.workCenterCapacity ? `${s.workCenterCapacity.toFixed(2)}/hr` : "No Cap",
+            "Effective Rate": Number(s.hourlyRate.toFixed(4)),
+            "Capped by WC?": s.isCapped ? "YES (Capped)" : "No",
+            Bottleneck: s.stepIndex === bottleneckCalc.bottleneckStepIndex ? ">>> BOTTLENECK <<<" : "OK"
+        })));
+
+        if (bottleneckCalc.cappedSteps.length > 0) {
+            console.log("%c[Capped Capacity Alert (Option 3)]:", "color: #d97706; font-weight: bold;");
+            bottleneckCalc.cappedSteps.forEach(cs => {
+                console.log(`  • Step #${cs.stepNum} (${cs.operationName} at ${cs.workCenterName}): Recipe rate ${cs.calculatedRate.toFixed(4)} exceeded machine cap ${cs.workCenterCapacity?.toFixed(4)}. Capped to ${cs.hourlyRate.toFixed(4)}.`);
+            });
+        }
+
+        console.log(`  • Bottleneck Station     : Step #${bottleneckCalc.bottleneckStepIndex + 1} (${bottleneckCalc.stepCapacities[bottleneckCalc.bottleneckStepIndex]?.operationName || "N/A"})`);
+        console.log(`  • Line Bottleneck Rate   : %c${bottleneckCalc.bottleneckRate.toFixed(4)} ${unitShortcut}/hr`, "color: #d97706; font-weight: bold;");
+
+        console.log("%cStep 3: Compute Gross Output", "font-weight: bold; color: #0284c7;");
+        console.log("  • Equation               : Line Bottleneck Capacity * Net Production Hours");
+        console.log(`  • Gross Output           : ${bottleneckCalc.bottleneckRate.toFixed(4)} * ${bottleneckCalc.netProductionHours.toFixed(6)} = %c${bottleneckCalc.grossOutput.toFixed(4)} ${unitShortcut}`, "color: #059669; font-weight: bold;");
+
+        console.log("%cStep 4: Compute Net Base Quantity", "font-weight: bold; color: #0284c7;");
+        console.log(`  • Expected Yield %       : ${yieldPct}%`);
+        console.log("  • Equation               : Gross Output * (Expected Yield % / 100)");
+        console.log(`  • Net Base Quantity      : ${bottleneckCalc.grossOutput.toFixed(4)} * (${yieldPct} / 100) = %c${bottleneckCalc.computedBaseQuantity.toFixed(4)} ${unitShortcut}%c (Display: ${bottleneckCalc.computedBaseQuantity.toFixed(4)} ${unitShortcut})`, "color: #2563eb; font-weight: bold;", "color: inherit;");
+
+        console.log("%cStep 5: Compute Downstream Direct Labor Cost per Unit", "font-weight: bold; color: #0284c7;");
+        console.log(`  • Total Batch Labor Cost : ₱${totalLaborBatchCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+        console.log(`  • Applied Base Quantity  : ${currentBase.toFixed(4)} ${unitShortcut}`);
+        console.log(`  • Equation               : Total Batch Labor Cost / Base Quantity`);
+        console.log(`  • Direct Labor / Unit    : ₱${totalLaborBatchCost.toFixed(2)} / ${currentBase.toFixed(4)} = %c₱${laborPerUnit.toFixed(4)} / ${unitShortcut}`, "color: #059669; font-weight: bold;");
+        console.log("%c==================================================", "color: #94a3b8;");
+        console.groupEnd();
+    }, [bottleneckCalc, editedRoutes, shiftHours, shiftMinutes, downtimeMinutes, downtimeSeconds, editedVersionDetails?.expected_yield_percentage, editedVersionDetails?.base_quantity, editedVersionDetails?.version_name, totalLaborBatchCost, unitShortcut]);
+
+    // When in Auto mode, sync calculated base quantity dynamically
+    React.useEffect(() => {
+        if (!isAutoBaseQty || isVersionLocked) return;
+        if (bottleneckCalc.computedBaseQuantity > 0) {
+            const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+            if (Math.abs(Number(editedVersionDetails?.base_quantity || 0) - computed) > 0.0001) {
+                setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
+                setHasUnsavedChanges(true);
+            }
+        }
+    }, [isAutoBaseQty, bottleneckCalc.computedBaseQuantity, isVersionLocked, editedVersionDetails?.base_quantity, setEditedVersionDetails, setHasUnsavedChanges]);
+
+    // Primary route step 1 batch size for instant parity sync
+    const primaryStepBatchSize = editedRoutes[0]?.step_batch_size ? Number(editedRoutes[0].step_batch_size) : null;
+
+    const handleApplyBottleneckQty = () => {
+        if (isVersionLocked || bottleneckCalc.computedBaseQuantity <= 0) return;
+        const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+        setRawBaseQty(String(computed));
+        setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
+        setHasUnsavedChanges(true);
+    };
+
+    const handleSyncWithStep1 = () => {
+        if (isVersionLocked || !primaryStepBatchSize) return;
+        setRawBaseQty(String(primaryStepBatchSize));
+        setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: primaryStepBatchSize }));
+        setIsAutoBaseQty(false);
+        setHasUnsavedChanges(true);
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -364,9 +492,37 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                 <div className="space-y-4">
                     {/* BOM Version Specifications Card */}
                     <div className="bg-card border border-border/85 rounded-xl p-5 shadow-xs space-y-4">
-                        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 border-b pb-2">
-                            <Layers className="h-4 w-4 text-primary/80" /> BOM Version Specifications
-                        </h3>
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                                <Layers className="h-4 w-4 text-primary/80" /> BOM Version Specifications
+                            </h3>
+                            {editedRoutes.length > 0 && !isVersionLocked && (
+                                <div className="flex items-center gap-2">
+                                    {/* {primaryStepBatchSize !== null && (
+                                        <button
+                                            type="button"
+                                            onClick={handleSyncWithStep1}
+                                            className="text-[11px] font-medium text-muted-foreground hover:text-foreground px-2 py-1 rounded-md border border-border/70 hover:bg-muted/40 transition-colors flex items-center gap-1 cursor-pointer"
+                                            title="Set master Base Quantity equal to Step #1 capacity"
+                                        >
+                                            <Layers className="h-3 w-3 text-primary/70" />
+                                            Sync to Step #1 ({primaryStepBatchSize} {unitShortcut})
+                                        </button>
+                                    )} */}
+                                    {/* <button
+                                        type="button"
+                                        onClick={handleApplyBottleneckQty}
+                                        disabled={bottleneckCalc.computedBaseQuantity <= 0}
+                                        className="text-[11px] font-medium text-primary hover:text-primary/90 px-2 py-1 rounded-md border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                        title="Recalculate and apply Base Quantity using Bottleneck Runtime Formula"
+                                    >
+                                        <Calculator className="h-3 w-3" />
+                                        Apply Bottleneck Base Qty ({bottleneckCalc.computedBaseQuantity.toFixed(2)} {unitShortcut})
+                                    </button> */}
+                                </div>
+                            )}
+                        </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="space-y-1">
                                 <label htmlFor="version-name-input" className="text-[11px] font-bold text-muted-foreground uppercase">Version Name</label>
@@ -382,18 +538,75 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all disabled:opacity-60 disabled:bg-muted/30"
                                 />
                             </div>
+
                             <div className="space-y-1">
-                                <label htmlFor="version-base-qty-input" className="text-[11px] font-bold text-muted-foreground uppercase">Base Quantity (Batch Size)</label>
+                                <div className="flex items-center justify-between">
+                                    <label htmlFor="version-base-qty-input" className="text-[11px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+                                        Base Quantity (Batch Size)
+                                    </label>
+                                    {!isVersionLocked && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const nextMode = !isAutoBaseQty;
+                                                setIsAutoBaseQty(nextMode);
+                                                if (nextMode && bottleneckCalc.computedBaseQuantity > 0) {
+                                                    const computed = parseFloat(bottleneckCalc.computedBaseQuantity.toFixed(4));
+                                                    setRawBaseQty(String(computed));
+                                                    setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: computed }));
+                                                    setHasUnsavedChanges(true);
+                                                }
+                                            }}
+                                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-all flex items-center gap-1 cursor-pointer ${
+                                                isAutoBaseQty
+                                                    ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                                                    : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
+                                            }`}
+                                            title={isAutoBaseQty ? "Auto-synced with Bottleneck Runtime Model" : "Click to enable Automatic Bottleneck Synchronization"}
+                                        >
+                                            {isAutoBaseQty ? (
+                                                <>
+                                                     Auto (Bottleneck)
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Sliders className="h-2.5 w-2.5" /> Manual Input
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
                                 <div className="relative">
                                     <input
                                         id="version-base-qty-input"
                                         type="number"
                                         step="0.0001"
+                                        min="0.0001"
                                         disabled={isVersionLocked}
-                                        value={editedVersionDetails.base_quantity !== undefined ? editedVersionDetails.base_quantity : 1}
-                                        onChange={e => {
-                                            setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parseFloat(e.target.value) || 0 }));
-                                            setHasUnsavedChanges(true);
+                                        value={rawBaseQty}
+                                        onFocus={(e) => e.target.select()}
+                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                        onChange={(e) => {
+                                            setRawBaseQty(e.target.value);
+                                            setIsAutoBaseQty(false); // User manual override
+                                            const parsed = parseFloat(e.target.value);
+                                            if (!isNaN(parsed) && parsed > 0) {
+                                                setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parsed }));
+                                                setHasUnsavedChanges(true);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            const parsed = parseFloat(rawBaseQty);
+                                            if (isNaN(parsed) || parsed <= 0) {
+                                                const fallback = 1;
+                                                setRawBaseQty(String(fallback));
+                                                setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: fallback }));
+                                                setHasUnsavedChanges(true);
+                                            } else {
+                                                setRawBaseQty(String(parsed));
+                                                setEditedVersionDetails((prev: any) => ({ ...prev, base_quantity: parsed }));
+                                                setHasUnsavedChanges(true);
+                                            }
                                         }}
                                         className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all pr-12 disabled:opacity-60 disabled:bg-muted/30"
                                     />
@@ -402,6 +615,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     </span>
                                 </div>
                             </div>
+
                             <div className="space-y-1">
                                 <label htmlFor="version-expected-yield-input" className="text-[11px] font-bold text-muted-foreground uppercase">Expected Yield (%)</label>
                                 <input
@@ -412,6 +626,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                     max="100"
                                     disabled={isVersionLocked}
                                     value={editedVersionDetails.expected_yield_percentage !== undefined ? editedVersionDetails.expected_yield_percentage : 100}
+                                    onFocus={(e) => e.target.select()}
+                                    onClick={(e) => (e.target as HTMLInputElement).select()}
                                     onChange={e => {
                                         setEditedVersionDetails((prev: any) => ({ ...prev, expected_yield_percentage: parseFloat(e.target.value) || 0 }));
                                         setHasUnsavedChanges(true);
@@ -420,35 +636,138 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                 />
                             </div>
                         </div>
-                        {editedRoutes.length > 0 && (() => {
-                            const stepCapacities = editedRoutes.map(r => {
-                                const matchedWc = workCenters.find(wc => wc.work_center_id === r.work_center_id) || r.work_center;
-                                return Number(matchedWc?.capacity_per_hour ?? 0);
-                            });
-                            const validCapacities = stepCapacities.filter(cap => cap > 0);
-                            const capacitiesToUse = validCapacities.length > 0 ? validCapacities : stepCapacities;
-                            const bottleneckRate = capacitiesToUse.length > 0 ? Math.min(...capacitiesToUse) : 0;
-                            const avgRate = capacitiesToUse.length > 0 ? capacitiesToUse.reduce((sum, cap) => sum + cap, 0) / capacitiesToUse.length : 0;
 
-                            return (
-                                <div className="pt-3 border-t border-border/50 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                                    <div>
-                                        <span className="font-semibold text-foreground">Line Bottleneck Capacity: </span>
-                                        <span className="font-mono text-primary bg-primary/5 px-1.5 py-0.5 rounded border border-primary/10">
-                                            {bottleneckRate.toFixed(4)}{" "}
-                                            {unitShortcut}/hour
+                        {/* Bottleneck Runtime Model & Verification Matrix */}
+                        {editedRoutes.length > 0 && (
+                            <div className="pt-3 border-t border-border/60 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <Calculator className="h-4 w-4 text-primary" />
+                                        <span className="font-semibold text-foreground">Bottleneck Runtime Model &amp; Capacity</span>
+                                        {bottleneckCalc.bottleneckStepIndex >= 0 && (
+                                            <span className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-medium">
+                                                Bottleneck: Step #{bottleneckCalc.bottleneckStepIndex + 1} ({bottleneckCalc.stepCapacities[bottleneckCalc.bottleneckStepIndex]?.operationName})
+                                            </span>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowRuntimeSettings(prev => !prev)}
+                                        className="text-[11px] font-medium text-muted-foreground hover:text-foreground flex items-center gap-1 cursor-pointer transition-colors"
+                                    >
+                                        <Clock className="h-3 w-3 text-primary/70" />
+                                        <span>Shift &amp; Downtime Parameters</span>
+                                        {showRuntimeSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                    </button>
+                                </div>
+
+                                {/* Expandable Shift & Downtime Configuration Panel */}
+                                {showRuntimeSettings && (
+                                    <div className="p-3 bg-muted/20 rounded-lg border border-border/70 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                        <div className="space-y-1">
+                                            <label htmlFor="shift-hours-input" className="text-[10px] font-bold text-muted-foreground uppercase">Target Shift Hours</label>
+                                            <input
+                                                id="shift-hours-input"
+                                                type="number"
+                                                min="1"
+                                                max="48"
+                                                disabled={isVersionLocked}
+                                                value={shiftHours}
+                                                onFocus={(e) => e.target.select()}
+                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                onChange={(e) => setShiftHours(Math.max(0, parseInt(e.target.value) || 0))}
+                                                className="w-full h-8 px-2.5 rounded-md border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label htmlFor="shift-mins-input" className="text-[10px] font-bold text-muted-foreground uppercase">Target Shift Minutes</label>
+                                            <input
+                                                id="shift-mins-input"
+                                                type="number"
+                                                min="0"
+                                                max="59"
+                                                disabled={isVersionLocked}
+                                                value={shiftMinutes}
+                                                onFocus={(e) => e.target.select()}
+                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                onChange={(e) => setShiftMinutes(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                                                className="w-full h-8 px-2.5 rounded-md border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label htmlFor="downtime-mins-input" className="text-[10px] font-bold text-muted-foreground uppercase">Planned Downtime Mins</label>
+                                            <input
+                                                id="downtime-mins-input"
+                                                type="number"
+                                                min="0"
+                                                max="360"
+                                                disabled={isVersionLocked}
+                                                value={downtimeMinutes}
+                                                onFocus={(e) => e.target.select()}
+                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                onChange={(e) => setDowntimeMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                                                className="w-full h-8 px-2.5 rounded-md border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label htmlFor="downtime-secs-input" className="text-[10px] font-bold text-muted-foreground uppercase">Planned Downtime Secs</label>
+                                            <input
+                                                id="downtime-secs-input"
+                                                type="number"
+                                                min="0"
+                                                max="59"
+                                                disabled={isVersionLocked}
+                                                value={downtimeSeconds}
+                                                onFocus={(e) => e.target.select()}
+                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                onChange={(e) => setDowntimeSeconds(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                                                className="w-full h-8 px-2.5 rounded-md border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Calculation Verification Matrix Cards */}
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-1 text-xs">
+                                    <div className="p-2.5 rounded-lg border bg-muted/10 border-border/60">
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">1. Bottleneck Rate</span>
+                                        <span className="font-mono text-xs font-semibold text-primary block mt-0.5">
+                                            {bottleneckCalc.bottleneckRate.toFixed(4)} {unitShortcut}/hr
                                         </span>
                                     </div>
-                                    <div>
-                                        <span className="font-semibold text-foreground">Average Work Center Capacity: </span>
-                                        <span className="font-mono text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/30">
-                                            {avgRate.toFixed(4)}{" "}
-                                            {unitShortcut}/hour
+                                    <div className="p-2.5 rounded-lg border bg-muted/10 border-border/60">
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">2. Net Run Time (T_run)</span>
+                                        <span className="font-mono text-xs font-semibold text-foreground block mt-0.5">
+                                            {bottleneckCalc.netProductionHours.toFixed(4)} hrs
+                                        </span>
+                                    </div>
+                                    <div className="p-2.5 rounded-lg border bg-muted/10 border-border/60">
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">3. Gross Output</span>
+                                        <span className="font-mono text-xs font-semibold text-foreground block mt-0.5">
+                                            {bottleneckCalc.grossOutput.toFixed(4)} {unitShortcut}
+                                        </span>
+                                    </div>
+                                    <div className="p-2.5 rounded-lg border bg-muted/10 border-border/60">
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold block">4. Expected Yield</span>
+                                        <span className="font-mono text-xs font-semibold text-foreground block mt-0.5">
+                                            {editedVersionDetails.expected_yield_percentage !== undefined ? editedVersionDetails.expected_yield_percentage : 100}%
+                                        </span>
+                                    </div>
+                                    <div className="p-2.5 rounded-lg border bg-primary/5 border-primary/20">
+                                        <span className="text-[10px] text-primary uppercase font-bold block">5. Net Base Qty</span>
+                                        <span className="font-mono text-xs font-bold text-primary block mt-0.5">
+                                            {bottleneckCalc.computedBaseQuantity.toFixed(4)} {unitShortcut}
+                                        </span>
+                                    </div>
+                                    <div className="p-2.5 rounded-lg border bg-emerald-500/5 border-emerald-500/20">
+                                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase font-bold block">6. Unit Labor Cost</span>
+                                        <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400 block mt-0.5">
+                                            ₱{laborCostPerUnit.toFixed(4)} / {unitShortcut}
                                         </span>
                                     </div>
                                 </div>
-                            );
-                        })()}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -481,11 +800,26 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                             >
                                 {/* Header */}
                                 <div className="flex justify-between items-center px-4 py-3 bg-muted/10 border-b border-muted/50">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                         <div className="flex items-center justify-center h-6 w-6 rounded-full bg-primary/10 text-primary font-bold text-xs">
                                             {stepNum}
                                         </div>
                                         <h4 className="text-sm font-semibold">Route Step #{stepNum}</h4>
+                                        {(() => {
+                                            const stepCap = bottleneckCalc.stepCapacities.find(s => s.stepIndex === index);
+                                            if (stepCap?.isCapped) {
+                                                return (
+                                                    <span
+                                                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full"
+                                                        title={`Recipe throughput: ${stepCap.calculatedRate.toFixed(2)} ${unitShortcut}/hr exceeds workstation capacity: ${stepCap.workCenterCapacity?.toFixed(2)} ${unitShortcut}/hr. Capped at ${stepCap.hourlyRate.toFixed(2)} ${unitShortcut}/hr.`}
+                                                    >
+                                                        <AlertCircle className="h-3 w-3" />
+                                                        Capped at Workstation Capacity ({stepCap.hourlyRate.toFixed(2)} {unitShortcut}/hr)
+                                                    </span>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="flex items-center gap-1 text-xs">
@@ -713,6 +1047,8 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             type="number"
                                             disabled={isVersionLocked}
                                             value={r.step_batch_size}
+                                            onFocus={(e) => e.target.select()}
+                                            onClick={(e) => (e.target as HTMLInputElement).select()}
                                             onChange={(e) => handleUpdateRoute(r.route_id, "step_batch_size", parseFloat(e.target.value) || 1)}
                                             className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                         />
@@ -779,10 +1115,10 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                 <tbody>
                                                     {(r.bom_items || []).map((b) => {
                                                         const compCost = calculateMaterialCost({
-                                                             quantity: b.quantity_required,
-                                                             unitCost: b.cost_per_unit || 0,
-                                                             wastagePercent: b.wastage_factor_percentage
-                                                         });
+                                                            quantity: b.quantity_required,
+                                                            unitCost: b.cost_per_unit || 0,
+                                                            wastagePercent: b.wastage_factor_percentage
+                                                        });
                                                         const selectedMaterialType = b.material_type || materialTypeFromProduct(b.product_type, b.has_versions);
                                                         return (
                                                             <tr key={b.id} className="border-b border-muted/50 hover:bg-muted/5">

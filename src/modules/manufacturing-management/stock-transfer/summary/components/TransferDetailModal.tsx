@@ -190,7 +190,7 @@ export function TransferDetailModal({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[920px] max-h-[90vh] flex flex-col p-0 overflow-hidden bg-card border-border shadow-2xl">
+        <DialogContent className="sm:max-w-[980px] max-h-[90vh] flex flex-col p-0 overflow-hidden bg-card border-border shadow-2xl">
           <DialogHeader className="p-6 border-b border-border bg-muted/20">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
@@ -262,6 +262,7 @@ export function TransferDetailModal({
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Unit</TableHead>
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Ordered</TableHead>
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Allocated</TableHead>
+                    <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Picked</TableHead>
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-center">Received</TableHead>
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-right">Unit Price</TableHead>
                     <TableHead className="font-bold text-[10px] uppercase tracking-widest text-right">Total Amount</TableHead>
@@ -323,6 +324,9 @@ export function TransferDetailModal({
                         </TableCell>
                         <TableCell className="text-center">
                           <span className="font-semibold text-sm text-amber-600">{formatQuantity(item.allocated_quantity)}</span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="font-semibold text-sm text-blue-600">{formatQuantity(item.picked_quantity)}</span>
                         </TableCell>
                         <TableCell className="text-center">
                           <span className="font-semibold text-sm text-emerald-600">{formatQuantity(item.received_quantity)}</span>

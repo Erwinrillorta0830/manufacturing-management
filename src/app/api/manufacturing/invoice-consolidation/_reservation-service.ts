@@ -23,6 +23,7 @@ export interface DetailRow {
     product_id: number;
     quantity: number;
     isSalesInvoiceDetail?: boolean;
+    order_id?: number;
 }
 
 interface InventoryLotRow {
@@ -1201,7 +1202,7 @@ export async function allocateInvoicesWithCustomAllocations(
                 if (
                     item.productId === pId &&
                     ((item.invoiceDetailId && item.invoiceDetailId === detail.detail_id) ||
-                        (item.invoiceId && item.invoiceId === Number(detail.invoice_no)))
+                        (item.invoiceId && (item.invoiceId === Number(detail.invoice_no) || item.invoiceId === Number(detail.order_id))))
                 ) {
                     const take = Math.min(remaining, item.quantity);
                     console.log(`[allocateCustom] PASS 1 MATCH detail_id=${detail.detail_id} product_id=${pId} → using alloc inventory_lot_id=${item.inventoryLotId} lot_id=${item.lotId} batch_no="${item.batchNo}" take=${take}`);
@@ -1230,7 +1231,7 @@ export async function allocateInvoicesWithCustomAllocations(
                 for (const item of allocPool) {
                     if (remaining <= 0) break;
                     if (item.quantity <= 0) continue;
-                    if (item.productId === pId && !item.invoiceDetailId && !item.invoiceId) {
+                    if (item.productId === pId) {
                         const take = Math.min(remaining, item.quantity);
                         console.log(`[allocateCustom] PASS 2 FALLBACK detail_id=${detail.detail_id} product_id=${pId} → using alloc inventory_lot_id=${item.inventoryLotId} lot_id=${item.lotId} batch_no="${item.batchNo}" take=${take}`);
                         pendingRows.push({

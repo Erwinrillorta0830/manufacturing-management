@@ -10,13 +10,12 @@ import { cn } from '@/lib/utils';
 import { getAssetUrl } from '@/lib/assets';
 import { StockTransferReceivingPreview } from '../shared/components/StockTransferReceivingPreview';
 import { resolveBranchSalesman } from '../services/stock-transfer.helpers';
-import { SearchableSelect } from '@/modules/manufacturing-management/shared/components/SearchableSelect';
-import { checkLotProductTypeCompatibility, isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
+import { isBadStockLot } from '@/modules/manufacturing-management/shared/services/lot-tracking.service';
 import { LotBatchSelectionModal, LotBatchSelectionResult } from '@/modules/manufacturing-management/shared/components/LotBatchSelectionModal';
+import { QAStatus, LotAllocationGroup } from '@/modules/manufacturing-management/shared/types/lot-tracking.types';
 
 // Shared components
 import { OrderSelectionModal } from '../shared/components/OrderSelectionModal';
-import { QuantityStepper } from '../shared/components/QuantityStepper';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -102,10 +101,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
     updateDestinationBatchNo,
     itemLotAllocations,
     updateItemLotAllocations,
-    targetLots,
-    loadingLots,
-    lotStoredSummaryMap,
-    getItemClassification,
+    markAllocationReviewed,
     getLotCompatibility,
     selectedFiles,
     isUploading,
@@ -133,6 +129,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
 
   const handleApplyLotBatch = (result: LotBatchSelectionResult) => {
     if (!activeItem) return;
+    markAllocationReviewed(activeItem.id);
     if (result.lot_allocations && result.lot_allocations.length > 0) {
       updateItemLotAllocations(activeItem.id, result.lot_allocations);
     } else if (result.lot_id) {
@@ -392,7 +389,6 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">UOM</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[90px]">Allocated Qty</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-center w-[100px]">Dispatched Qty</TableHead>
-                      <TableHead className="text-[10px] uppercase font-bold text-center w-[130px] print:hidden">Received Qty</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold min-w-[280px] print:hidden">Lot & Batches</TableHead>
                       <TableHead className="text-[10px] uppercase font-bold text-right py-4 px-6 w-[110px]">Amount</TableHead>
                     </TableRow>
@@ -407,7 +403,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                       const product = typeof item.product_id === 'object' && item.product_id !== null ? item.product_id : null;
                       const productName = product?.description || product?.product_name || (typeof item.product_id === 'number' ? `Product #${item.product_id}` : 'Product');
                       const productImage = getAssetUrl(product?.product_image);
-                      const rawAllocs = itemLotAllocations[item.id] || (item.lot_allocations && item.lot_allocations.length > 0 ? item.lot_allocations : undefined);
+                      const rawAllocs = itemLotAllocations[item.id];
                       const allocs = (dispatchedQty > 0 || !isDispatchedStatus) ? rawAllocs : undefined;
                       const hasMultiLotAlloc = Boolean(allocs && allocs.length > 0 && allocs.some(a => (a.batches || []).some(b => Number(b.quantity || 0) > 0)));
                       const batchTotalQty = hasMultiLotAlloc
@@ -452,7 +448,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                                   </div>
                                 )}
                                 <div className="flex flex-col min-w-0">
-                                  <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                  <span title={productName} className="font-semibold text-sm line-clamp-1">{productName}</span>
                                   <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">SKU: {String(product?.product_code || product?.barcode || 'N/A')}</span>
                                 </div>
                               </div>
@@ -471,57 +467,9 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                             {/* 4. Dispatched Qty */}
                             <TableCell className="text-sm font-bold text-center font-mono">{dispatchedQty}</TableCell>
 
-                            {/* 5. Received Qty */}
-                            <TableCell className="text-center print:hidden py-2">
-                              <QuantityStepper 
-                                value={currentQty}
-                                max={targetQty}
-                                onChange={(val) => {
-                                  updateReceivedQty(item.id, val, targetQty);
-                                  if (allocs && allocs.length > 0) {
-                                    if (allocs.length === 1 && allocs[0].batches?.length === 1) {
-                                      const updatedAllocs = [{
-                                        ...allocs[0],
-                                        batches: [{ ...allocs[0].batches[0], quantity: val }]
-                                      }];
-                                      updateItemLotAllocations(item.id, updatedAllocs);
-                                    } else {
-                                      let diff = val - (batchTotalQty ?? 0);
-                                      const clonedAllocs = allocs.map(g => ({
-                                        ...g,
-                                        batches: (g.batches || []).map(b => ({ ...b }))
-                                      }));
-                                      const allBatches = clonedAllocs.flatMap(g => g.batches);
-                                      if (diff < 0) {
-                                        for (let i = allBatches.length - 1; i >= 0 && diff < 0; i--) {
-                                          const b = allBatches[i];
-                                          const canReduce = b.quantity;
-                                          const reduceBy = Math.min(canReduce, Math.abs(diff));
-                                          b.quantity -= reduceBy;
-                                          diff += reduceBy;
-                                        }
-                                      } else if (diff > 0) {
-                                        if (allBatches.length > 0) {
-                                          allBatches[allBatches.length - 1].quantity += diff;
-                                        }
-                                      }
-                                      clonedAllocs.forEach(g => {
-                                        g.allocated_quantity = (g.batches || []).reduce((s, b) => s + b.quantity, 0);
-                                      });
-                                      updateItemLotAllocations(item.id, clonedAllocs);
-                                    }
-                                  }
-                                }}
-                                className="h-8 w-fit mx-auto"
-                                size="sm"
-                              />
-                            </TableCell>
-
-                            {/* 6. Lot & Batches */}
+                            {/* 5. Lot & Batches */}
                             <TableCell className="print:hidden py-2">
                               {(() => {
-                                const itemClass = getItemClassification(item);
-
                                 if (hasMultiLotAlloc) {
                                   const hasConflict = allocs!.some((g) => {
                                     const compat = getLotCompatibility(item, g.lot_id);
@@ -559,126 +507,22 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                                   );
                                 }
 
-                                const selectedLotId = destinationLotIds[item.id];
-                                const selectedCompat = selectedLotId ? getLotCompatibility(item, selectedLotId) : null;
-                                const isConflict = selectedCompat?.isTypeMismatch;
-                                const storedForSelected = selectedLotId ? lotStoredSummaryMap.get(Number(selectedLotId)) : null;
-
-                                const productUom = typeof product?.unit_of_measurement === 'object' ? product.unit_of_measurement : null;
-                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                const itemUomId = Number(productUom?.unit_id || (product as any)?.unit_id || 0);
-
-                                const targetBranchObj = branches.find((b) => Number(b.id) === Number(selectedGroup.targetBranch));
-                                const isTargetBadStock = isBadStockLot(undefined, targetBranchObj || { branch_name: getBranchName(selectedGroup.targetBranch) });
-                                const itemIsBad = (item.qa_status && item.qa_status !== 'GOOD') || (item.inventory_condition && item.inventory_condition !== 'GOOD') || isTargetBadStock;
-                                const compatibleLots = targetLots.filter((l) => {
-                                  if (l.status && l.status !== 'ACTIVE') return false;
-                                  if (l.unit_id && itemUomId && Number(l.unit_id) !== Number(itemUomId)) return false;
-                                  const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                  const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                  if (!tCompat.isCompatible) return false;
-                                  const lotIsBad = isBadStockLot(l);
-                                  if (itemIsBad && !lotIsBad) return false;
-                                  if (!itemIsBad && lotIsBad) return false;
-                                  return true;
-                                });
-
-                                const matchedOptions = targetLots.filter(
-                                  (l) => Number(l.lot_id) === Number(destinationLotIds[item.id]) || compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id))
-                                );
-                                const optionsLots = matchedOptions.length > 0 ? matchedOptions : targetLots.filter((l) => !l.status || l.status === 'ACTIVE');
-
                                 return (
-                                  <div className="flex items-center gap-2 min-w-[280px]">
-                                    <div className="flex-1 min-w-[140px]">
-                                      <SearchableSelect
-                                        options={[
-                                          {
-                                            value: "0",
-                                            label: "None",
-                                            subLabel: "Do not assign a storage lot",
-                                            badge: "Unassigned",
-                                            badgeClassName: "bg-muted text-muted-foreground border-border/60 font-mono",
-                                          },
-                                          ...optionsLots.map((l) => {
-                                            const lStock = Number(l.current_stock_quantity || 0);
-                                            const lCap = Number(l.max_batch_capacity || 0);
-                                            const isF = lCap > 0 && lStock >= lCap;
-                                            const stored = lotStoredSummaryMap.get(Number(l.lot_id));
-                                            const tCompat = checkLotProductTypeCompatibility(stored, itemClass);
-                                            const isTConflict = tCompat.isTypeMismatch;
-                                            const isDraft = stored?.is_draft_allocation;
-                                            const typeSourceLabel = isDraft ? "Draft" : "Stock";
-                                            const lotIsBad = isBadStockLot(l);
-
-                                            let badgeText: string | undefined;
-                                            let badgeClass = "bg-muted text-muted-foreground border-border/60 font-mono";
-
-                                            if (isTConflict && stored) {
-                                              badgeText = `Mismatch (${typeSourceLabel}: ${stored.primary_classification_label})`;
-                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                            } else if (isF) {
-                                              badgeText = `Full (${lStock}/${lCap})`;
-                                              badgeClass = "bg-destructive/15 text-destructive border-destructive/40 font-bold";
-                                            } else if (lotIsBad) {
-                                              badgeText = "Bad Stock / Quarantine";
-                                              badgeClass = "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-bold";
-                                            } else if (stored && !stored.is_empty && stored.primary_classification === itemClass.code) {
-                                              badgeText = `Matched (${stored.primary_classification_label})${isDraft ? " [Draft]" : ""}`;
-                                              badgeClass = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40 font-bold";
-                                            } else if (stored?.is_empty) {
-                                              badgeText = "Empty Lot";
-                                              badgeClass = "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30 font-semibold";
-                                            }
-
-                                            const prefix = isTConflict ? "🚫 " : isF ? "🚫 " : "";
-                                            const capStr = lCap ? ` (Cap: ${lCap})` : "";
-                                            const storedTypeStr = stored && !stored.is_empty ? ` • Stored: ${stored.primary_classification_label}` : " • [Empty Lot]";
-
-                                            return {
-                                              value: String(l.lot_id),
-                                              label: `${prefix}${l.lot_name}${capStr}`,
-                                              subLabel: `Stock: ${lStock.toLocaleString()} ${l.unit_name || ""}${lCap ? ` • Max Cap: ${lCap.toLocaleString()}` : ""}${storedTypeStr}`,
-                                              badge: badgeText,
-                                              badgeClassName: badgeClass,
-                                            };
-                                          })
-                                        ]}
-                                        value={destinationLotIds[item.id] !== undefined ? String(destinationLotIds[item.id]) : "0"}
-                                        onValueChange={(val) => updateDestinationLot(item.id, Number(val))}
-                                        placeholder={loadingLots ? "Loading..." : "Select Lot"}
-                                        searchPlaceholder="Search lots..."
-                                        disabled={loadingLots}
-                                        emptyMessage="No compatible storage lots found."
-                                        triggerClassName={`h-8 text-xs font-semibold w-full border-border bg-background ${isConflict ? "border-destructive ring-1 ring-destructive/40 text-destructive" : ""}`}
-                                      />
-                                      {isConflict && (
-                                        <div className="flex items-center gap-1 text-[10px] text-destructive font-bold mt-1">
-                                          <AlertTriangle className="w-3 h-3 shrink-0" />
-                                          <span>Type conflict: {storedForSelected?.primary_classification_label}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <Input
-                                        value={destinationBatchNos[item.id] ?? item.batch_no ?? item.lot_allocations?.[0]?.batches?.[0]?.batch_no ?? ''}
-                                        onChange={(e) => updateDestinationBatchNo(item.id, e.target.value)}
-                                        className="h-8 text-xs font-mono w-[100px] border-border bg-background"
-                                        placeholder="Batch No"
-                                      />
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleOpenLotBatchModal(item)}
-                                        className="h-8 px-1.5 text-[9px] font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10 shrink-0 cursor-pointer"
-                                        title="Split across multiple storage lots or batches"
-                                      >
-                                        <Layers className="w-3 h-3" />
-                                        Splits
-                                      </Button>
-                                    </div>
-                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleOpenLotBatchModal(item)}
+                                    disabled={dispatchedQty === 0}
+                                    title={dispatchedQty === 0 ? "Dispatched quantity is 0" : "Allocate to target storage lots and batches"}
+                                    className={cn(
+                                      "h-8 px-3 text-[10px] font-bold gap-1.5 border-dashed border-primary/50 text-primary hover:bg-primary/10 hover:border-primary shadow-none w-fit",
+                                      dispatchedQty === 0 && "opacity-40 cursor-not-allowed"
+                                    )}
+                                  >
+                                    <Layers className="w-3 h-3" />
+                                    Allocate Target Batches
+                                  </Button>
                                 );
                               })()}
                             </TableCell>
@@ -711,7 +555,7 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                       <TableCell colSpan={6} className="text-right text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Total Verification Value</TableCell>
                       <TableCell className="text-right text-sm font-bold text-foreground font-mono">
                         ₱{selectedGroup.items.reduce((sum: number, item: OrderGroupItem) => {
-                          const itAllocs = itemLotAllocations[item.id] || (item.lot_allocations && item.lot_allocations.length > 0 ? item.lot_allocations : undefined);
+                          const itAllocs = itemLotAllocations[item.id];
                           const itBatchTotal = (itAllocs && itAllocs.length > 0)
                             ? itAllocs.reduce((s, g) => s + (g.batches || []).reduce((bS, b) => bS + Number(b.quantity || 0), 0), 0)
                             : undefined;
@@ -872,25 +716,145 @@ export default function StockTransferReceiveManualView({ currentUser }: { curren
                 )
           }
           adjustmentType="IN"
-          initialLotAllocations={itemLotAllocations[activeItem.id] || activeItem.lot_allocations}
+          initialLotAllocations={(() => {
+            let resAlloc: LotAllocationGroup[] | undefined = undefined;
+            const srcAllocGroups = ((activeItem as unknown as { source_lot_allocations?: LotAllocationGroup[] }).source_lot_allocations || activeItem.lot_allocations);
+            if (itemLotAllocations[activeItem.id]) {
+              resAlloc = itemLotAllocations[activeItem.id];
+            } else if (srcAllocGroups && srcAllocGroups.length > 0) {
+              const allIncomingBatches = srcAllocGroups.flatMap((g) => g.batches || []);
+              resAlloc = [
+                {
+                  lot_id: destinationLotIds[activeItem.id] || 0,
+                  lot_name: '',
+                  max_batch_capacity: 10,
+                  allocated_quantity: allIncomingBatches.reduce((sum, b) => sum + Number(b.quantity || 0), 0),
+                  batches: allIncomingBatches.map((b) => ({
+                    ...b,
+                    inventory_lot_id: b.inventory_lot_id,
+                    batch_no: b.batch_no,
+                    manufacturing_date: b.manufacturing_date ? String(b.manufacturing_date).substring(0, 10) : '',
+                    expiry_date: b.expiry_date ? String(b.expiry_date).substring(0, 10) : '',
+                    quantity: Number(b.quantity || 0),
+                    qa_status: (b.qa_status as QAStatus) || 'GOOD',
+                  })),
+                },
+              ];
+            } else {
+              const rawItem = activeItem as unknown as {
+                batches?: Array<{ batch_no?: string; manufacturing_date?: string; expiry_date?: string; quantity?: number; qa_status?: string }>;
+                source_inventory_lot_id?: { batch_no?: string; manufacturing_date?: string; expiry_date?: string; expiration_date?: string; inventory_lot_id?: number } | number | null;
+                source_lot_id?: { lot_id?: number; lot_name?: string } | number | null;
+                expiration_date?: string;
+              };
+              if (rawItem.batches && rawItem.batches.length > 0) {
+                resAlloc = [
+                  {
+                    lot_id: destinationLotIds[activeItem.id] || 0,
+                    lot_name: '',
+                    max_batch_capacity: 10,
+                    allocated_quantity: rawItem.batches.reduce((sum: number, b) => sum + Number(b.quantity || 0), 0),
+                    batches: rawItem.batches.map((b) => ({
+                      batch_no: b.batch_no || '',
+                      manufacturing_date: b.manufacturing_date ? String(b.manufacturing_date).substring(0, 10) : '',
+                      expiry_date: b.expiry_date ? String(b.expiry_date).substring(0, 10) : '',
+                      quantity: Number(b.quantity || 0),
+                      qa_status: (b.qa_status as QAStatus) || 'GOOD',
+                    })),
+                  },
+                ];
+              } else {
+                const srcInvObj = typeof rawItem.source_inventory_lot_id === 'object' && rawItem.source_inventory_lot_id !== null ? rawItem.source_inventory_lot_id : null;
+                const bNo = activeItem.batch_no || srcInvObj?.batch_no || '';
+                const mfg = activeItem.manufacturing_date || srcInvObj?.manufacturing_date || '';
+                const exp = activeItem.expiry_date || rawItem.expiration_date || srcInvObj?.expiry_date || srcInvObj?.expiration_date || '';
+                if (bNo) {
+                  const targetQty = (receivedQtys[activeItem.id] ?? 0) > 0
+                    ? receivedQtys[activeItem.id]
+                    : Math.max(
+                        0,
+                        activeItem.dispatched_quantity ??
+                          activeItem.picked_quantity ??
+                          activeItem.scanned_quantity ??
+                          activeItem.allocated_quantity ??
+                          activeItem.ordered_quantity ??
+                          1
+                      );
+                  const splitBatches = bNo.split(',').map((s: string) => s.trim()).filter(Boolean);
+                  const batchCount = splitBatches.length || 1;
+                  const perBatchQty = Math.max(1, Math.floor(targetQty / batchCount));
+                  const batchesList = (splitBatches.length > 1 ? splitBatches : [bNo]).map((singleBatch, idx) => {
+                    const isLast = idx === (splitBatches.length > 1 ? splitBatches.length - 1 : 0);
+                    const bQty = isLast ? Math.max(0, targetQty - perBatchQty * (batchCount - 1)) : perBatchQty;
+                    return {
+                      batch_no: singleBatch,
+                      manufacturing_date: mfg ? String(mfg).substring(0, 10) : '',
+                      expiry_date: exp ? String(exp).substring(0, 10) : '',
+                      quantity: bQty,
+                      qa_status: (activeItem.qa_status as QAStatus) || 'GOOD',
+                    };
+                  });
+                  resAlloc = [
+                    {
+                      lot_id: destinationLotIds[activeItem.id] || 0,
+                      lot_name: '',
+                      max_batch_capacity: 10,
+                      allocated_quantity: targetQty,
+                      batches: batchesList,
+                    },
+                  ];
+                }
+              }
+            }
+            return resAlloc;
+          })()}
           initialValues={(() => {
-            const sourceBatches = (activeItem.lot_allocations && activeItem.lot_allocations.length > 0)
-              ? activeItem.lot_allocations.flatMap((g) => g.batches || [])
+            const rawItem = activeItem as unknown as {
+              batches?: Array<{ batch_no?: string; manufacturing_date?: string; expiry_date?: string; quantity?: number; qa_status?: string }>;
+              source_inventory_lot_id?: { batch_no?: string; manufacturing_date?: string; expiry_date?: string; expiration_date?: string; inventory_lot_id?: number } | number | null;
+              source_lot_id?: { lot_id?: number; lot_name?: string } | number | null;
+              expiration_date?: string;
+            };
+            const srcAllocGroups = ((activeItem as unknown as { source_lot_allocations?: LotAllocationGroup[] }).source_lot_allocations || activeItem.lot_allocations);
+            const sourceBatches = (srcAllocGroups && srcAllocGroups.length > 0)
+              ? srcAllocGroups.flatMap((g) => g.batches || [])
+              : (rawItem.batches && rawItem.batches.length > 0)
+              ? rawItem.batches
               : [];
             const primarySourceBatch = sourceBatches.find((b) => b.batch_no) || sourceBatches[0];
+
+            const srcInvObj = typeof rawItem.source_inventory_lot_id === 'object' && rawItem.source_inventory_lot_id !== null ? rawItem.source_inventory_lot_id : null;
+            const rawResolvedBatchNo = destinationBatchNos[activeItem.id] || primarySourceBatch?.batch_no || activeItem.batch_no || srcInvObj?.batch_no || '';
+            const resolvedBatchNo = rawResolvedBatchNo.includes(',') ? rawResolvedBatchNo.split(',')[0].trim() : rawResolvedBatchNo;
+            const resolvedMfgDate = primarySourceBatch?.manufacturing_date || activeItem.manufacturing_date || srcInvObj?.manufacturing_date || undefined;
+            const resolvedExpDate = primarySourceBatch?.expiry_date || activeItem.expiry_date || rawItem.expiration_date || srcInvObj?.expiry_date || srcInvObj?.expiration_date || undefined;
 
             const targetBranchObj = branches.find((b) => Number(b.id) === Number(selectedGroup.targetBranch));
             const isTargetBadStock = isBadStockLot(undefined, targetBranchObj || { branch_name: getBranchName(selectedGroup.targetBranch) });
 
-            return {
+            const initVals = {
               lot_id: destinationLotIds[activeItem.id] || undefined,
-              batch_no: destinationBatchNos[activeItem.id] || primarySourceBatch?.batch_no || activeItem.batch_no || '',
-              manufacturing_date: primarySourceBatch?.manufacturing_date || activeItem.manufacturing_date || undefined,
-              expiry_date: primarySourceBatch?.expiry_date || activeItem.expiry_date || undefined,
+              batch_no: resolvedBatchNo,
+              manufacturing_date: resolvedMfgDate,
+              expiry_date: resolvedExpDate,
+              quantity: (receivedQtys[activeItem.id] ?? 0) > 0
+                ? receivedQtys[activeItem.id]
+                : Math.max(
+                    0,
+                    activeItem.dispatched_quantity ??
+                      activeItem.picked_quantity ??
+                      activeItem.scanned_quantity ??
+                      activeItem.allocated_quantity ??
+                      activeItem.ordered_quantity ??
+                      1
+                  ),
               qa_status: isTargetBadStock
                 ? ("EXPIRED" as const)
                 : ((primarySourceBatch?.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || (activeItem.qa_status as "GOOD" | "DAMAGED" | "QUARANTINED" | "EXPIRED") || "GOOD"),
             };
+            console.log("[ReceiveManualPage] LotBatchSelectionModal activeItem:", activeItem);
+            console.log("[ReceiveManualPage] LotBatchSelectionModal initialValues:", initVals);
+            return initVals;
           })()}
           onConfirm={handleApplyLotBatch}
         />

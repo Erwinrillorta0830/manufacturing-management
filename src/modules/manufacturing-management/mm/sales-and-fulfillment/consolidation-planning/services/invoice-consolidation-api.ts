@@ -60,27 +60,27 @@ export async function fetchConsolidations(params: {
     if (params.size != null) qs.set("size", String(params.size));
     if (params.status) qs.set("status", params.status);
     if (params.search) qs.set("search", params.search);
-    const res = await fetchWithSessionRetry(`/api/manufacturing/invoice-consolidation?${qs.toString()}`);
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-and-fulfillment/consolidation-planning?${qs.toString()}`);
     return handleResponse(res, "Failed to load consolidations");
 }
 
 export async function fetchSummary(branchId: number): Promise<StatusSummary> {
-    const res = await fetchWithSessionRetry(`/api/manufacturing/invoice-consolidation/summary?branchId=${branchId}`);
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-and-fulfillment/consolidation-planning/summary?branchId=${branchId}`);
     return handleResponse(res, "Failed to load summary");
 }
 
 export async function fetchCandidates(branchId: number): Promise<CandidateInvoice[]> {
-    const res = await fetchWithSessionRetry(`/api/manufacturing/invoice-consolidation/candidates?branchId=${branchId}`);
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-and-fulfillment/consolidation-planning/candidates?branchId=${branchId}`);
     return handleResponse(res, "Failed to load candidate invoices");
 }
 
 export async function fetchConsolidationByNo(consolidatorNo: string): Promise<InvoiceConsolidation> {
-    const res = await fetchWithSessionRetry(`/api/manufacturing/invoice-consolidation/${encodeURIComponent(consolidatorNo)}`);
+    const res = await fetchWithSessionRetry(`/api/manufacturing/sales-and-fulfillment/consolidation-planning/${encodeURIComponent(consolidatorNo)}`);
     return handleResponse(res, "Failed to load consolidation");
 }
 
 export async function createConsolidation(payload: CreateConsolidationPayload): Promise<InvoiceConsolidation> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/invoice-consolidation", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-and-fulfillment/consolidation-planning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -92,7 +92,7 @@ export async function fetchAllocationPreview(
     payload: CreateConsolidationPayload,
     signal?: AbortSignal
 ): Promise<AllocationPreview> {
-    const res = await fetchWithSessionRetry("/api/manufacturing/invoice-consolidation/allocation-preview", {
+    const res = await fetchWithSessionRetry("/api/manufacturing/sales-and-fulfillment/consolidation-planning/allocation-preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

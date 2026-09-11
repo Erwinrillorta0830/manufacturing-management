@@ -181,6 +181,7 @@ export default function LotManagementModule() {
 
     const availableLotsForSelect = useMemo(() => {
         const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
+        const hasGhostBatches = batches.some((b) => !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId)));
 
         const ghostLot: Lot = {
             lotId: 0,
@@ -195,10 +196,10 @@ export default function LotManagementModule() {
             status: "ACTIVE",
             createdBy: "System Virtual",
             updatedBy: "System Virtual",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            createdAt: "2025-01-01T00:00:00.000Z",
+            updatedAt: "2025-01-01T00:00:00.000Z"
         };
-        let baseLots = [ghostLot, ...lots];
+        let baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
 
         if (selectedBranchId !== "ALL") {
             baseLots = baseLots.filter((l) => Number(l.lotId) === 0 || Number(l.branchId) === Number(selectedBranchId));

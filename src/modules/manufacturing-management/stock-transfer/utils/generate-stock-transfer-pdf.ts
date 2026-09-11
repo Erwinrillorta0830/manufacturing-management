@@ -240,7 +240,7 @@ function drawCorporateHeader(doc: jsPDF, companyData: CompanyData | null, margin
 
 export function generateStockTransferPDF(data: StockTransferPDFData): jsPDF {
   const { orderNo, status, sourceBranchLabel, targetBranchLabel, leadDate, scannedItems, companyData, salesmanName, documentTitle } = data;
-  console.log('[generateStockTransferPDF:Debug] Generating PDF with salesmanName:', salesmanName, 'for targetBranchLabel:', targetBranchLabel);
+  // console.log('[generateStockTransferPDF:Debug] Generating PDF with salesmanName:', salesmanName, 'for targetBranchLabel:', targetBranchLabel);
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'legal' });
 

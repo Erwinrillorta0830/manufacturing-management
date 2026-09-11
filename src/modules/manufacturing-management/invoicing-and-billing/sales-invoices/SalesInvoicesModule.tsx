@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Receipt,
@@ -17,6 +17,8 @@ import {
     User,
     Calendar,
     XCircle,
+    ChevronLeft,
+    ChevronRight,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -48,6 +50,10 @@ export default function SalesInvoicesModule() {
         loading,
         loadingDetails,
         metrics,
+        page,
+        limit,
+        setPage,
+        setLimit,
         loadInvoiceDetails,
         exportToCSV,
     } = useSalesInvoices();
@@ -97,6 +103,20 @@ export default function SalesInvoicesModule() {
             return matchesStatus && matchesSalesman && matchesDate && matchesSearch;
         });
     }, [invoices, search, statusFilter, salesmanFilter, startDate, endDate]);
+
+    const totalRecords = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / limit));
+
+    useEffect(() => {
+        if (page > totalPages) {
+            setPage(1);
+        }
+    }, [page, totalPages, setPage]);
+
+    const paginatedInvoices = useMemo(() => {
+        const start = (page - 1) * limit;
+        return filtered.slice(start, start + limit);
+    }, [filtered, page, limit]);
 
     const cards = [
         {
@@ -413,24 +433,28 @@ export default function SalesInvoicesModule() {
                         No sales invoices found matching the current criteria.
                     </div>
                 ) : (
-                    <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+                    <table className="w-full min-w-[1050px] border-collapse text-left text-xs">
                         <thead>
                             <tr className="border-b bg-muted/20 text-[10px] font-bold uppercase text-muted-foreground">
                                 <th className="p-3">Invoice No</th>
                                 <th className="p-3">Customer</th>
                                 <th className="p-3">Salesman</th>
+                                <th className="p-3">Branch</th>
+                                <th className="p-3">Terms</th>
                                 <th className="p-3">Invoice Date</th>
                                 <th className="p-3">Due Date</th>
                                 <th className="p-3">SO Ref</th>
-                                <th className="p-3 text-right">Gross Amount</th>
-                                <th className="p-3 text-right">VAT Amount</th>
+                                <th className="p-3 text-right">Gross</th>
+                                <th className="p-3 text-right">VAT</th>
                                 <th className="p-3 text-right">Net Billed</th>
+                                <th className="p-3 text-center">Lifecycle</th>
                                 <th className="p-3 text-center">Status</th>
+                                <th className="p-3">Remarks</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
                             <AnimatePresence mode="wait">
-                                {filtered.map((invoice, index) => (
+                                {paginatedInvoices.map((invoice, index) => (
                                     <motion.tr
                                         key={invoice.invoice_id}
                                         initial={{ opacity: 0, y: -8 }}
@@ -439,6 +463,11 @@ export default function SalesInvoicesModule() {
                                         transition={{ duration: 0.2, delay: index * 0.02 }}
                                         className="hover:bg-muted/30 cursor-pointer transition-colors"
                                         onClick={() => {
+                                            console.log(
+                                                `%c[Sales Invoice Row Clicked] Record #${invoice.invoice_id} (${invoice.invoice_no}):`,
+                                                "color: #059669; font-weight: bold;",
+                                                invoice
+                                            );
                                             setSelectedInvoiceId(invoice.invoice_id);
                                             loadInvoiceDetails(invoice.invoice_id);
                                         }}
@@ -446,11 +475,20 @@ export default function SalesInvoicesModule() {
                                         <td className="p-3 font-bold text-foreground">
                                             {invoice.invoice_no}
                                         </td>
-                                        <td className="p-3 font-medium text-foreground">
-                                            {invoice.customer_name}
+                                        <td className="p-3">
+                                            <div className="font-semibold text-foreground">{invoice.customer_name}</div>
+                                            <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[9px] font-mono font-bold bg-muted text-muted-foreground border">
+                                                {invoice.customer_code}
+                                            </span>
                                         </td>
                                         <td className="p-3 text-muted-foreground">
                                             {invoice.salesman_name || "Unassigned"}
+                                        </td>
+                                        <td className="p-3 text-muted-foreground">
+                                            {invoice.branch_name || "N/A"}
+                                        </td>
+                                        <td className="p-3 text-muted-foreground">
+                                            {invoice.payment_term_name || "N/A"}
                                         </td>
                                         <td className="p-3 text-muted-foreground">
                                             {new Date(invoice.invoice_date).toLocaleDateString()}
@@ -485,19 +523,27 @@ export default function SalesInvoicesModule() {
                                             )}
                                         </td>
                                         <td className="p-3 text-center">
+                                            <span className="rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase border bg-primary/10 text-primary border-primary/20">
+                                                {invoice.transaction_status || "Prepared"}
+                                            </span>
+                                        </td>
+                                        <td className="p-3 text-center">
                                             <span
                                                 className={`rounded-full px-2.5 py-0.5 text-[9px] font-extrabold uppercase border ${
                                                     invoice.status === "Paid"
-                                                        ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
-                                                        : invoice.status === "Partially Paid"
-                                                        ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
-                                                        : invoice.status === "Cancelled"
-                                                        ? "bg-muted text-muted-foreground border-muted-foreground/30"
-                                                        : "bg-rose-500/10 text-rose-600 border-rose-500/30"
-                                                }`}
+                                                         ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                                                         : invoice.status === "Partially Paid"
+                                                         ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                                                         : invoice.status === "Cancelled"
+                                                         ? "bg-muted text-muted-foreground border-muted-foreground/30"
+                                                         : "bg-rose-500/10 text-rose-600 border-rose-500/30"
+                                                 }`}
                                             >
                                                 {invoice.status}
                                             </span>
+                                        </td>
+                                        <td className="p-3 text-muted-foreground max-w-[120px] truncate" title={invoice.remarks?.trim() ? invoice.remarks : "No remarks"}>
+                                            {invoice.remarks?.trim() ? invoice.remarks : "No remarks"}
                                         </td>
                                     </motion.tr>
                                 ))}
@@ -505,6 +551,67 @@ export default function SalesInvoicesModule() {
                         </tbody>
                     </table>
                 )}
+            </div>
+
+            {/* Pagination Controls Footer */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-2.5 rounded-xl border bg-card text-xs shadow-xs">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground font-medium">Rows per page:</span>
+                        <select
+                            value={limit}
+                            onChange={(e) => {
+                                setLimit(Number(e.target.value));
+                                setPage(1);
+                            }}
+                            className="rounded-lg border bg-background px-2.5 py-1 text-xs font-semibold outline-none focus:border-primary"
+                        >
+                            {[10, 25, 50, 100].map((size) => (
+                                <option key={size} value={size}>
+                                    {size}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <span className="text-muted-foreground">
+                        Showing{" "}
+                        <span className="font-bold text-foreground">
+                            {totalRecords > 0 ? (page - 1) * limit + 1 : 0}
+                        </span>{" "}
+                        to{" "}
+                        <span className="font-bold text-foreground">
+                            {Math.min(page * limit, totalRecords)}
+                        </span>{" "}
+                        of <span className="font-bold text-foreground">{totalRecords}</span> records
+                    </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground font-medium">
+                        Page <span className="font-bold text-foreground">{page}</span> of{" "}
+                        <span className="font-bold text-foreground">{totalPages}</span>
+                    </span>
+
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                            disabled={page <= 1}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            aria-label="Previous Page"
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                            disabled={page >= totalPages}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            aria-label="Next Page"
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
             </div>
 
             {/* Selected Invoice Read-Only Detail Modal */}

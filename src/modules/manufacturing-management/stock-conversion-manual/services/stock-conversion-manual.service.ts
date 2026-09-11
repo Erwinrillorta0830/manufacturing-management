@@ -12,6 +12,7 @@ export const stockConversionManualService = {
     try {
       return await stockConversionService.executeConversion({
         ...payload,
+        remarks: payload.remarks || "Manual Stock Conversion",
         rfidTags: [],
         sourceRfidTags: [],
       });

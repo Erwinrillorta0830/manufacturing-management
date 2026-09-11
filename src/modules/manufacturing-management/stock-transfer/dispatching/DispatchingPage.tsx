@@ -336,12 +336,12 @@ export default function StockTransferDispatchView({ currentUser }: { currentUser
                                     />
                                   </div>
                                 ) : (
-                                  <div className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
+                                  <div title={productName} className="h-9 w-9 rounded-lg bg-muted/30 border border-border/40 flex items-center justify-center shrink-0 text-[10px] font-mono font-bold text-muted-foreground/60">
                                     {productName.substring(0, 2).toUpperCase()}
                                   </div>
                                 )}
                                 <div className="flex flex-col min-w-0">
-                                  <span className="font-semibold text-sm line-clamp-1">{productName}</span>
+                                  <span title={productName} className="font-semibold text-sm line-clamp-1">{productName}</span>
                                   <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tight">SKU: {String(product?.product_code || product?.barcode || 'N/A')}</span>
                                   {item.isLoosePack && (
                                     <span className="text-[9px] bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded w-fit mt-1 font-bold flex items-center gap-1">

@@ -59,13 +59,13 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
       setLoading(true);
       try {
         const res = await stockTransferLifecycleService.fetchTransfers();
-        console.log('[useStockTransferRequest:ClientDebug] Fetched transfers response:', res);
-        console.log('[useStockTransferRequest:ClientDebug] Fetched branches with salesman_name:', res.branches?.map(b => ({
-          id: b.id,
-          branch_name: b.branch_name,
-          branch_code: b.branch_code,
-          salesman_name: b.salesman_name
-        })));
+        // console.log('[useStockTransferRequest:ClientDebug] Fetched transfers response:', res);
+        // console.log('[useStockTransferRequest:ClientDebug] Fetched branches with salesman_name:', res.branches?.map(b => ({
+        //   id: b.id,
+        //   branch_name: b.branch_name,
+        //   branch_code: b.branch_code,
+        //   salesman_name: b.salesman_name
+        // })));
         if (isMounted) {
           setStockTransfers(res.stockTransfers ?? []);
           setBranches(res.branches ?? []);
@@ -161,6 +161,12 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
   }, []);
 
   const confirmTransfer = useCallback(async () => {
+    if (sourceBranch && targetBranch && sourceBranch === targetBranch) {
+      toast.error('Invalid Branch Selection', {
+        description: 'Source and target branch cannot be the same.',
+      });
+      return;
+    }
     setConfirming(true);
     try {
       const res = await stockTransferLifecycleService.submitTransferRequest({ 
@@ -179,8 +185,17 @@ export function useStockTransferRequest(): UseStockTransferRequestReturn {
       }
       toast.success('Transfer request submitted successfully!');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Something went wrong';
+      let message = err instanceof Error ? err.message : 'Something went wrong';
       console.error('confirmTransfer error:', err);
+
+      try {
+        const parsed = JSON.parse(message);
+        if (Array.isArray(parsed) && parsed[0]?.message) {
+          message = parsed.map((p: { message?: string }) => p.message).filter(Boolean).join(', ');
+        }
+      } catch {
+        // message is not JSON
+      }
 
       if (message.includes('Unauthorized') || message.includes('401')) {
         toast.error('Session Expired', {

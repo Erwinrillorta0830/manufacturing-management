@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     X,
@@ -8,8 +8,15 @@ import {
     Calendar,
     Receipt,
     Loader2,
+    Printer,
+    ArrowLeft,
+    ShieldCheck,
 } from "lucide-react";
+import { toast } from "sonner";
 import { SalesInvoiceHeader, SalesInvoiceDetail } from "../types";
+import { ReceiptPreview } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/components/ReceiptPreview";
+import { generateInvoiceReceiptPdf } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/utils/generateInvoiceReceiptPdf";
+import { PrintableInvoice } from "@/modules/manufacturing-management/invoicing-and-billing/invoicing/types";
 
 interface SalesInvoiceDetailModalProps {
     invoice: SalesInvoiceHeader | null;
@@ -27,6 +34,20 @@ export default function SalesInvoiceDetailModal({
     loadingDetails,
 }: SalesInvoiceDetailModalProps) {
     const [now] = useState(() => Date.now());
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+    useEffect(() => {
+        if (isOpen && invoice) {
+            console.group(
+                `%c[Sales Invoice Record] Invoice #${invoice.invoice_id} (${invoice.invoice_no || "No Invoice No"})`,
+                "color: #2563eb; font-weight: bold; font-size: 12px;"
+            );
+            console.log("%cInvoice Header Record:", "font-weight: bold; color: #0284c7;", invoice);
+            console.log("%cLine Items Details:", "font-weight: bold; color: #0284c7;", invoiceDetails);
+            console.groupEnd();
+        }
+    }, [isOpen, invoice, invoiceDetails]);
 
     if (!isOpen || !invoice) return null;
 
@@ -35,6 +56,66 @@ export default function SalesInvoiceDetailModal({
     const vatAmount = Number(invoice.vat_amount);
     const paidAmount = Number(invoice.paid_amount);
     const remainingBalance = Math.max(0, netAmount - paidAmount);
+
+    const printableInvoice: PrintableInvoice = {
+        invoiceId: invoice.invoice_id,
+        invoiceNo: invoice.invoice_no,
+        invoiceDate: invoice.invoice_date || invoice.created_date || new Date().toISOString(),
+        dueDate: invoice.due_date || "",
+        transactionStatus: invoice.transaction_status || "Prepared",
+        receiptType: {
+            id: 1,
+            type: "Charge Invoice",
+            isOfficial: true,
+            maxLength: 50,
+        },
+        orderNo: invoice.sales_order_no || `SO-${invoice.order_id}`,
+        poNo: "N/A",
+        customerName: invoice.customer_name,
+        storeName: invoice.customer_name,
+        customerTin: invoice.customer_tin || "N/A",
+        customerAddress: invoice.customer_address || "N/A",
+        salesmanName: invoice.salesman_name || "Unassigned",
+        paymentTermName: invoice.payment_term_name || "30 Days",
+        lines: invoiceDetails.map((d, index) => ({
+            detailId: d.id || index + 1,
+            productCode: d.product?.product_code || `P-${d.product?.product_id}`,
+            productName: d.product?.description || d.product?.product_name || "Item",
+            quantity: Number(d.quantity || 0),
+            unit: d.product?.uom || "PCS",
+            unitPrice: Number(d.unit_price || 0),
+            discountAmount: Number(d.discount_amount || 0),
+            grossAmount: Number(d.gross_amount || 0),
+            netAmount: Number(d.net_amount || 0),
+        })),
+        totals: {
+            gross: grossAmount,
+            discount: Number(invoice.discount_amount || 0),
+            vat: vatAmount,
+            net: netAmount,
+        },
+    };
+
+    const handleDownloadPdf = async () => {
+        setDownloadingPdf(true);
+        try {
+            const doc = await generateInvoiceReceiptPdf(printableInvoice, { includeBackground: false });
+            const blob = doc.output("blob");
+            const a = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            a.href = url;
+            a.download = `${invoice.invoice_no}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            toast.success("BIR Charge Invoice receipt downloaded successfully.");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to generate receipt PDF");
+        } finally {
+            setDownloadingPdf(false);
+        }
+    };
 
     const daysElapsed = (() => {
         if (!invoice.invoice_date) return "N/A";
@@ -127,7 +208,13 @@ export default function SalesInvoiceDetailModal({
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                    
+                                    <button
+                                        onClick={() => setShowPreviewModal(true)}
+                                        className="flex items-center gap-1.5 rounded-xl border bg-background px-3.5 py-2 text-xs font-semibold hover:bg-muted transition-colors shadow-2xs text-primary"
+                                    >
+                                        <Printer className="h-4 w-4 text-primary" />
+                                        Print Receipt
+                                    </button>
                                     <button
                                         onClick={onClose}
                                         className="rounded-full p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -200,21 +287,25 @@ export default function SalesInvoiceDetailModal({
                                             <div className="grid grid-cols-2 gap-2 text-xs pt-1">
                                                 <div>
                                                     <span className="text-[10px] uppercase font-bold text-muted-foreground block">Customer Code</span>
-                                                    <span className="font-bold text-foreground">{invoice.customer_code}</span>
+                                                    <span className="font-bold text-foreground bg-muted px-2 py-0.5 rounded border inline-block mt-0.5">{invoice.customer_code}</span>
                                                 </div>
                                                 <div>
                                                     <span className="text-[10px] uppercase font-bold text-muted-foreground block">Tax Identification No (TIN)</span>
-                                                    <span className="font-bold text-foreground">{invoice.customer_tin}</span>
+                                                    <span className="font-bold text-foreground">{invoice.customer_tin || "N/A"}</span>
                                                 </div>
                                             </div>
                                             <div className="pt-1">
                                                 <span className="text-[10px] uppercase font-bold text-muted-foreground block">Billing Address</span>
                                                 <span className="text-xs font-medium text-foreground">{invoice.customer_address}</span>
                                             </div>
+                                            <div className="pt-2 border-t text-xs">
+                                                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Remarks / Notes</span>
+                                                <p className="text-muted-foreground italic mt-0.5">{invoice.remarks?.trim() ? invoice.remarks : "No remarks"}</p>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {/* Right: Document & Salesman References */}
+                                    {/* Right: Document & Sales Audit References */}
                                     <div className="rounded-2xl border bg-background p-5 space-y-3 shadow-2xs">
                                         <div className="flex items-center gap-2 border-b pb-2 text-xs font-bold text-muted-foreground uppercase">
                                             <Calendar className="h-4 w-4 text-primary" />
@@ -223,13 +314,31 @@ export default function SalesInvoiceDetailModal({
                                         <div className="space-y-2.5 text-xs">
                                             <div className="flex items-center justify-between">
                                                 <span className="text-muted-foreground font-semibold">Sales Order Reference:</span>
-                                                <span className="font-extrabold text-primary">{invoice.sales_order_no || "-"}</span>
+                                                <span className="font-extrabold text-primary">{invoice.sales_order_no || "Manual"}</span>
                                             </div>
                                             <div className="flex items-center justify-between">
                                                 <span className="text-muted-foreground font-semibold">Assigned Salesman:</span>
                                                 <span className="font-bold text-foreground">
                                                     {invoice.salesman_name || "Unassigned"}
                                                     {invoice.salesman_code && invoice.salesman_code !== "N/A" ? ` (${invoice.salesman_code})` : ""}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-muted-foreground font-semibold">Branch:</span>
+                                                <span className="font-bold text-foreground">
+                                                    {invoice.branch_name || "N/A"}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-muted-foreground font-semibold">Payment Terms:</span>
+                                                <span className="font-bold text-foreground">
+                                                    {invoice.payment_term_name || "N/A"}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-muted-foreground font-semibold">Transaction Status:</span>
+                                                <span className="font-extrabold text-primary bg-primary/10 px-2 py-0.5 rounded-full text-[10px] uppercase">
+                                                    {invoice.transaction_status || "Prepared"}
                                                 </span>
                                             </div>
                                             <div className="flex items-center justify-between">
@@ -355,8 +464,14 @@ export default function SalesInvoiceDetailModal({
                             </div>
 
                             {/* Modal Footer */}
-                            <div className="flex items-center justify-end border-t px-6 py-4 bg-muted/30">
- 
+                            <div className="flex items-center justify-between border-t px-6 py-4 bg-muted/30">
+                                <button
+                                    onClick={() => setShowPreviewModal(true)}
+                                    className="flex items-center gap-1.5 rounded-xl border bg-background px-4 py-2 text-xs font-semibold hover:bg-muted transition-colors shadow-2xs text-primary"
+                                >
+                                    <Printer className="h-4 w-4 text-primary" />
+                                    Print Receipt
+                                </button>
 
                                 <button
                                     onClick={onClose}
@@ -367,6 +482,62 @@ export default function SalesInvoiceDetailModal({
                             </div>
                         </motion.div>
                     </div>
+
+                    {/* BIR CHARGE INVOICE PREVIEW MODAL STEP */}
+                    {showPreviewModal && (
+                        <div className="fixed inset-0 z-60 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-sm overflow-y-auto">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="relative flex flex-col w-full max-w-4xl max-h-[92vh] rounded-2xl bg-card border shadow-2xl overflow-hidden"
+                            >
+                                <div className="flex items-center justify-between border-b px-6 py-3.5 bg-muted/40">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="rounded-lg p-2 bg-primary/10 text-primary">
+                                            <ShieldCheck className="h-5 w-5" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-foreground">
+                                                BIR Charge Invoice Document Preview
+                                            </h3>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Verify tax document details before official printing
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setShowPreviewModal(false)}
+                                            className="flex items-center gap-1.5 rounded-xl border bg-background px-3.5 py-1.5 text-xs font-semibold hover:bg-muted transition-colors"
+                                        >
+                                            <ArrowLeft className="h-3.5 w-3.5" />
+                                            Back to Details
+                                        </button>
+                                        <button
+                                            onClick={handleDownloadPdf}
+                                            disabled={downloadingPdf}
+                                            className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-xs"
+                                        >
+                                            {downloadingPdf ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Printer className="h-3.5 w-3.5" />
+                                            )}
+                                            Print Invoice Receipt
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 overflow-auto p-4 sm:p-6 bg-muted/20 flex justify-center">
+                                    <div className="shadow-lg rounded-sm overflow-hidden bg-white">
+                                        <ReceiptPreview invoice={printableInvoice} scale={0.9} />
+                                    </div>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
 
                     {/* DEDICATED FORMAL A4 PRINTABLE DOCUMENT TEMPLATE */}
                     <div id="printable-sales-invoice-root" className="hidden">
@@ -407,14 +578,17 @@ export default function SalesInvoiceDetailModal({
                                     <div><span className="font-bold">Customer Code:</span> {invoice.customer_code}</div>
                                     <div><span className="font-bold">TIN:</span> {invoice.customer_tin || "N/A"}</div>
                                     <div className="mt-1"><span className="font-bold">Address:</span> {invoice.customer_address}</div>
+                                    <div className="mt-1"><span className="font-bold">Remarks:</span> {invoice.remarks?.trim() ? invoice.remarks : "No remarks"}</div>
                                 </div>
 
                                 <div className="border-l border-gray-300 pl-4">
                                     <h3 className="font-extrabold uppercase border-b border-gray-300 pb-1 mb-1.5 text-[11px]">
                                         INVOICE AUDIT & REFERENCES
                                     </h3>
-                                    <div><span className="font-bold">Sales Order No:</span> {invoice.sales_order_no || "-"}</div>
+                                    <div><span className="font-bold">Sales Order No:</span> {invoice.sales_order_no || "Manual"}</div>
                                     <div><span className="font-bold">Salesman:</span> {invoice.salesman_name || "Unassigned"} ({invoice.salesman_code || "N/A"})</div>
+                                    <div><span className="font-bold">Branch:</span> {invoice.branch_name || "N/A"}</div>
+                                    <div><span className="font-bold">Terms:</span> {invoice.payment_term_name || "N/A"}</div>
                                     <div><span className="font-bold">Invoice Date:</span> {new Date(invoice.invoice_date).toLocaleDateString()}</div>
                                     <div><span className="font-bold">Due Date:</span> {invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : "N/A"}</div>
                                     <div><span className="font-bold">Days Elapsed:</span> {daysElapsed}</div>

@@ -38,6 +38,7 @@ import {
   Trash2,
   Gauge,
   Boxes,
+  FileText,
 } from "lucide-react";
 import { StockConversionProduct, UnitTarget } from "../types/stock-conversion.types";
 import {
@@ -46,13 +47,13 @@ import {
   LotAllocationGroup,
   BatchRowAllocation,
   QAStatus,
+  LotStatus,
   ProductClassification,
 } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import {
   fetchLotsByBranch,
   fetchBatchOnhand,
   fetchInventoryLots,
-  fetchProductOnhand,
   resolveProductClassification,
   buildLotStoredProductSummaryMap,
   checkLotProductTypeCompatibility,
@@ -85,6 +86,7 @@ export interface OutputBatchDetails {
     qa_status?: string;
     unit_cost?: number;
   }>;
+  remarks?: string;
 }
 
 interface StockConversionModalProps {
@@ -123,14 +125,12 @@ export function StockConversionModal({
   // Toolbar Dates (stored locally until user clicks 'Apply to all')
   const [toolbarDates, setToolbarDates] = useState<Record<number, { mfg: string; exp: string }>>({});
 
-  // Live stock from Spring Boot /api/mm-product-onhand
-  const [liveProductQty, setLiveProductQty] = useState<number | null>(null);
-
   // Allocation Mode: AUTO (FEFO) vs MANUAL for source stock
   const [allocationMode, setAllocationMode] = useState<"AUTO" | "MANUAL">("AUTO");
   const [manualAllocations, setManualAllocations] = useState<Record<number, number>>({});
   const [showExpired, setShowExpired] = useState<boolean>(false);
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState<boolean>(false);
+  const [remarks, setRemarks] = useState<string>("");
 
   // Target Product Classification (RM, PKG, FG, OTHER)
   const targetClassification = useMemo(() => {
@@ -183,6 +183,7 @@ export function StockConversionModal({
         setTargetLotGroups([]);
         setToolbarDates({});
         setHasAttemptedSubmit(false);
+        setRemarks("");
       }, 0);
 
       // Load branch lots & live source batch on-hand balances
@@ -191,9 +192,8 @@ export function StockConversionModal({
           fetchLotsByBranch(branchId),
           fetchBatchOnhand({ branchId }),
           fetchInventoryLots({ branchId }),
-          fetchProductOnhand({ branchId, productId: product.productId }),
         ])
-          .then(([lotsData, allBranchOnhand, invLotsData, productOnhandData]) => {
+          .then(([lotsData, allBranchOnhand, invLotsData]) => {
             setRawBranchOnhand(allBranchOnhand || []);
             setRawBranchInvLots(invLotsData || []);
 
@@ -237,15 +237,6 @@ export function StockConversionModal({
               (oh) => Number(oh.productId) === Number(product.productId)
             );
 
-            // Resolve live product-level total from Spring Boot /api/mm-product-onhand
-            const productOnhandEntry = (productOnhandData || []).find(
-              (p) => Number(p.productId) === Number(product.productId)
-            );
-            const liveQty = productOnhandEntry
-              ? Number(productOnhandEntry.onhandQuantity || 0)
-              : null;
-            setLiveProductQty(liveQty);
-
             // Map lot_id to lot_name from lotsData (authoritative database names)
             const lotNameMap = new Map<number, string>();
             (lotsData || []).forEach((l) => {
@@ -254,56 +245,104 @@ export function StockConversionModal({
               }
             });
 
-            // Build live batches strictly from live on-hand movement balances (Spring Boot)
-            const liveBatches: MMInventoryLot[] = (onhandData || [])
-              .filter((oh) => Number(oh.onhandQuantity || 0) > 0)
-              .map((oh) => {
-                const lId = Number(oh.mmLotId || 1);
-                const resolvedLotName = lotNameMap.get(lId) || oh.lotName;
+            // Index Spring Boot live onhand balances and dates for quick lookup
+            const onhandByInvLotId = new Map<number, number>();
+            const onhandByLotAndBatch = new Map<string, number>();
+            const onhandByBatchNo = new Map<string, number>();
+            const onhandDatesByInvLotId = new Map<number, { mfg?: string | null; exp?: string | null }>();
+            const onhandDatesByLotAndBatch = new Map<string, { mfg?: string | null; exp?: string | null }>();
+
+            (onhandData || []).forEach((oh) => {
+              const qty = Number(oh.onhandQuantity || 0);
+              const invLotId = Number(oh.inventoryLotId || 0);
+              const lotId = Number(oh.mmLotId || 0);
+              const batchStr = String(oh.batchNo || "").trim().toLowerCase();
+              const dates = {
+                mfg: (oh.manufacturingDate as string) || null,
+                exp: (oh.expirationDate as string) || null,
+              };
+
+              if (invLotId > 0) {
+                if (qty > 0) {
+                  onhandByInvLotId.set(invLotId, (onhandByInvLotId.get(invLotId) || 0) + qty);
+                }
+                if (!onhandDatesByInvLotId.has(invLotId)) {
+                  onhandDatesByInvLotId.set(invLotId, dates);
+                }
+              }
+
+              if (batchStr) {
+                if (lotId > 0) {
+                  const key = `${lotId}:${batchStr}`;
+                  if (qty > 0) {
+                    onhandByLotAndBatch.set(key, (onhandByLotAndBatch.get(key) || 0) + qty);
+                  }
+                  if (!onhandDatesByLotAndBatch.has(key)) {
+                    onhandDatesByLotAndBatch.set(key, dates);
+                  }
+                }
+                if (qty > 0) {
+                  onhandByBatchNo.set(batchStr, (onhandByBatchNo.get(batchStr) || 0) + qty);
+                }
+              }
+            });
+
+            // Filter strictly to mm_inventory_lots belonging to this product and branch
+            const productInvLots = (invLotsData || []).filter(
+              (il) =>
+                Number(il.product_id) === Number(product.productId) &&
+                Number(il.branch_id) === Number(branchId) &&
+                (!il.status || il.status === "ACTIVE")
+            );
+
+            // Build live batches strictly from mm_inventory_lots with live on-hand quantities
+            const liveBatches: MMInventoryLot[] = productInvLots
+              .map((invLot) => {
+                const invLotId = Number(invLot.inventory_lot_id || 0);
+                const lId = Number(invLot.lot_id || 0);
+                const batchStr = String(invLot.batch_no || "").trim().toLowerCase();
+                const lotBatchKey = `${lId}:${batchStr}`;
+
+                let availableQty = 0;
+                if (invLotId > 0 && onhandByInvLotId.has(invLotId)) {
+                  availableQty = onhandByInvLotId.get(invLotId) || 0;
+                } else if (lotBatchKey && onhandByLotAndBatch.has(lotBatchKey)) {
+                  availableQty = onhandByLotAndBatch.get(lotBatchKey) || 0;
+                } else if (batchStr && onhandByBatchNo.has(batchStr)) {
+                  availableQty = onhandByBatchNo.get(batchStr) || 0;
+                } else {
+                  availableQty = Number(invLot.available_quantity || 0);
+                }
+
+                const resolvedLotName = lotNameMap.get(lId) || invLot.lot_name;
                 const cleanLotName = resolvedLotName
-                  ? (resolvedLotName.toLowerCase().startsWith('lot')
+                  ? (resolvedLotName.toLowerCase().startsWith("lot")
                       ? resolvedLotName
-                      : `Lot ${resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, '').trim()}`)
-                  : `Lot #${lId}`;
+                      : `Lot ${resolvedLotName.replace(/^lot\s*[:#-]?\s*/i, "").trim()}`)
+                  : (lId > 0 ? `Lot #${lId}` : "Main Lot");
+
+                const datesFallback =
+                  (invLotId > 0 ? onhandDatesByInvLotId.get(invLotId) : null) ||
+                  (lotBatchKey ? onhandDatesByLotAndBatch.get(lotBatchKey) : null);
 
                 return {
-                  inventory_lot_id: Number(oh.inventoryLotId || oh.mmLotId || 1),
+                  inventory_lot_id: invLotId,
                   lot_id: lId,
-                  branch_id: Number(oh.branchId || branchId),
-                  product_id: Number(oh.productId || product.productId),
-                  batch_no: String(oh.batchNo || "BATCH"),
-                  manufacturing_date: (oh.manufacturingDate as string) || null,
-                  expiry_date: (oh.expirationDate as string) || null,
-                  unit_cost: product.pricePerUnit || 0,
-                  qa_status: (oh.inventoryCondition as QAStatus) || "GOOD",
-                  status: "ACTIVE",
-                  available_quantity: Number(oh.onhandQuantity || 0),
+                  branch_id: Number(invLot.branch_id || branchId),
+                  product_id: Number(invLot.product_id || product.productId),
+                  batch_no: String(invLot.batch_no || ""),
+                  manufacturing_date: (invLot.manufacturing_date as string) || datesFallback?.mfg || null,
+                  expiry_date: (invLot.expiry_date as string) || datesFallback?.exp || null,
+                  unit_cost: Number(invLot.unit_cost ?? product.pricePerUnit ?? 0),
+                  qa_status: (invLot.qa_status as QAStatus) || "GOOD",
+                  status: (invLot.status as LotStatus) || ("ACTIVE" as const),
+                  available_quantity: availableQty,
                   lot_name: cleanLotName,
-                  product_name: oh.productName || product.productName,
-                  product_code: oh.productCode || product.productCode,
+                  product_name: invLot.product_name || product.productName,
+                  product_code: invLot.product_code || product.productCode,
                 };
-              });
-
-            // Fallback if no specific batch onhand exists but product running stock is positive
-            const prodQty = liveQty !== null ? liveQty : Math.max(0, Number(product.quantity) || 0);
-            if (liveBatches.length === 0 && prodQty > 0) {
-              liveBatches.push({
-                inventory_lot_id: 1,
-                lot_id: lotsData[0]?.lot_id || 1,
-                branch_id: branchId,
-                product_id: product.productId,
-                batch_no: "DEFAULT-BATCH",
-                manufacturing_date: null,
-                expiry_date: null,
-                unit_cost: product.pricePerUnit || 0,
-                qa_status: "GOOD",
-                status: "ACTIVE",
-                available_quantity: prodQty,
-                lot_name: lotsData[0]?.lot_name || "Main Lot",
-                product_name: product.productName,
-                product_code: product.productCode,
-              });
-            }
+              })
+              .filter((b) => Number(b.available_quantity || 0) > 0);
 
             setLots(enrichedLots);
             setSourceBatches(liveBatches);
@@ -512,14 +551,13 @@ export function StockConversionModal({
     return "";
   }, [activeAllocations]);
 
-  // Live total available stock
+  // Live total available stock (strictly from registered branch batches in mm_inventory_lots)
   const totalAvailableStock = useMemo(() => {
-    if (liveProductQty !== null) return liveProductQty;
     if (sourceBatches.length > 0) {
       return sourceBatches.reduce((sum, b) => sum + (Number(b.available_quantity) || 0), 0);
     }
-    return Number(product?.quantity) || 0;
-  }, [liveProductQty, sourceBatches, product?.quantity]);
+    return 0;
+  }, [sourceBatches]);
 
   // ── Auto-split Target Batches & Cascade MFG / EXP Dates from Source Allocations ──
   useEffect(() => {
@@ -565,7 +603,7 @@ export function StockConversionModal({
             const expDate = alloc.expiry_date?.substring(0, 10) || null;
 
             splits.push({
-              batch_no: existingB?.batch_no || "",
+              batch_no: existingB?.batch_no || alloc.batch_no || "",
               quantity: splitQty,
               manufacturing_date: mfgDate,
               expiry_date: expDate,
@@ -579,7 +617,7 @@ export function StockConversionModal({
         } else {
           splits = [
             {
-              batch_no: existingBatches[0]?.batch_no || "",
+              batch_no: existingBatches[0]?.batch_no || sourceBatches[0]?.batch_no || "",
               quantity: wholeUnits,
               manufacturing_date: todayStr,
               expiry_date: defaultExpDate || null,
@@ -597,7 +635,8 @@ export function StockConversionModal({
             return (
               eb.quantity !== s.quantity ||
               eb.manufacturing_date !== s.manufacturing_date ||
-              eb.expiry_date !== s.expiry_date
+              eb.expiry_date !== s.expiry_date ||
+              (!eb.batch_no && s.batch_no)
             );
           });
 
@@ -630,6 +669,7 @@ export function StockConversionModal({
     todayStr,
     defaultExpDate,
     lots,
+    sourceBatches,
   ]);
 
   // Total allocated across all target lot groups and batches
@@ -667,10 +707,10 @@ export function StockConversionModal({
         allocated_quantity: 0,
         batches: [
           {
-            batch_no: "",
+            batch_no: activeAllocations[0]?.batch_no || "",
             quantity: 0,
-            manufacturing_date: todayStr,
-            expiry_date: defaultExpDate || null,
+            manufacturing_date: activeAllocations[0]?.manufacturing_date?.substring(0, 10) || todayStr,
+            expiry_date: activeAllocations[0]?.expiry_date?.substring(0, 10) || defaultExpDate || null,
             qa_status: "GOOD",
           },
         ],
@@ -708,13 +748,13 @@ export function StockConversionModal({
       prev.map((g, idx) => {
         if (idx !== gIdx) return g;
         const nextBatchIdx = g.batches.length;
-        const matchedSource = activeAllocations[nextBatchIdx];
+        const matchedSource = activeAllocations[nextBatchIdx] || activeAllocations[0];
         return {
           ...g,
           batches: [
             ...g.batches,
             {
-              batch_no: "",
+              batch_no: matchedSource?.batch_no || "",
               quantity: 0,
               manufacturing_date: matchedSource?.manufacturing_date?.substring(0, 10) || todayStr,
               expiry_date: matchedSource?.expiry_date?.substring(0, 10) || defaultExpDate || null,
@@ -820,7 +860,7 @@ export function StockConversionModal({
     const stepInSource = targetFactor / sourceFactor;
 
     // 1. Build stream of target output splits from source allocations (with dates)
-    const stream: { quantity: number; mfgDate: string; expDate: string | null; qaStatus: QAStatus }[] = [];
+    const stream: { batchNo?: string; quantity: number; mfgDate: string; expDate: string | null; qaStatus: QAStatus }[] = [];
     if (activeAllocations.length > 0) {
       let remainingTargetQty = wholeUnits;
       activeAllocations.forEach((alloc, idx) => {
@@ -842,6 +882,7 @@ export function StockConversionModal({
         const expDate = alloc.expiry_date?.substring(0, 10) || null;
         if (splitQty > 0) {
           stream.push({
+            batchNo: alloc.batch_no || "",
             quantity: splitQty,
             mfgDate,
             expDate,
@@ -854,6 +895,7 @@ export function StockConversionModal({
       }
     } else {
       stream.push({
+        batchNo: activeAllocations[0]?.batch_no || "",
         quantity: wholeUnits,
         mfgDate: todayStr,
         expDate: defaultExpDate || null,
@@ -892,7 +934,7 @@ export function StockConversionModal({
 
         const bIdx = lotBatches.length;
         lotBatches.push({
-          batch_no: existingBatchNos[bIdx] || "",
+          batch_no: existingBatchNos[bIdx] || currentItem.batchNo || "",
           quantity: canTake,
           manufacturing_date: currentItem.mfgDate,
           expiry_date: currentItem.expDate,
@@ -912,7 +954,7 @@ export function StockConversionModal({
 
       if (lotBatches.length === 0) {
         lotBatches.push({
-          batch_no: existingBatchNos[0] || "",
+          batch_no: existingBatchNos[0] || activeAllocations[0]?.batch_no || "",
           quantity: 0,
           manufacturing_date: todayStr,
           expiry_date: defaultExpDate || null,
@@ -1088,6 +1130,10 @@ export function StockConversionModal({
       });
     }
 
+    if (!remarks || remarks.trim() === "") {
+      errs.push("Remarks are required for stock conversion.");
+    }
+
     return errs;
   }, [
     selectedTargetUnit,
@@ -1109,6 +1155,7 @@ export function StockConversionModal({
     lotStoredSummaryMap,
     targetClassification,
     lots,
+    remarks,
   ]);
 
   const isValid = validationErrors.length === 0;
@@ -1161,6 +1208,7 @@ export function StockConversionModal({
             unit_cost: match?.unit_cost ?? product.pricePerUnit ?? 0,
           };
         }),
+        remarks: remarks.trim(),
       });
   };
 
@@ -1944,17 +1992,8 @@ export function StockConversionModal({
                                   return true;
                                 });
 
-                                const otherSelectedLotIds = new Set(
-                                  targetLotGroups
-                                    .filter((_, idx) => idx !== gIdx)
-                                    .map((og) => Number(og.lot_id))
-                                    .filter(Boolean)
-                                );
-
                                 const optionsLots = (lots || []).filter((l) => {
                                   if (l.status && l.status !== "ACTIVE") return false;
-                                  if (group.lot_id && Number(l.lot_id) === Number(group.lot_id)) return true;
-                                  if (otherSelectedLotIds.has(Number(l.lot_id))) return false;
                                   if (!isLotSameUnit(l)) return false;
                                   return compatibleLots.some((c) => Number(c.lot_id) === Number(l.lot_id));
                                 });
@@ -2593,6 +2632,31 @@ export function StockConversionModal({
               </div>
             </div>
           )}
+
+          {/* REQUIRED REMARKS INPUT */}
+          <div className="bg-card border border-border/70 rounded-xl p-3.5 space-y-1.5 shadow-sm">
+            <Label className="text-xs font-bold text-foreground flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-primary" />
+                <span>Remarks <span className="text-destructive">*</span></span>
+              </span>
+              <span className="text-[10px] font-semibold text-destructive">Required</span>
+            </Label>
+            <Input
+              type="text"
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              placeholder="Enter conversion reason or audit remarks..."
+              className={`h-9 text-xs bg-background ${
+                hasAttemptedSubmit && !remarks.trim() ? "border-destructive ring-2 ring-destructive/40 bg-destructive/5" : ""
+              }`}
+            />
+            {hasAttemptedSubmit && !remarks.trim() && (
+              <span className="text-[10px] text-destructive font-semibold flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 shrink-0" /> Remarks are required for stock conversion
+              </span>
+            )}
+          </div>
 
           {/* VALIDATION ERROR ALERTS SUMMARY */}
           {!isValid && validationErrors.length > 0 && (hasAttemptedSubmit || (selectedTargetUnit && qtyToConvert)) && (

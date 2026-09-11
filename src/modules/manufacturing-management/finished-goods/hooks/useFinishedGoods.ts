@@ -111,7 +111,13 @@ export function useFinishedGoods(initialTab: string = "details") {
 
     // Version Registration Modal states
     const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
-    const [versionForm, setVersionForm] = useState({
+    const [versionForm, setVersionForm] = useState<{
+        versionName: string;
+        baseQuantity: number | string;
+        uomId: number;
+        expectedYield: number | string;
+        baseVersionId: string;
+    }>({
         versionName: "",
         baseQuantity: 1,
         uomId: 0,

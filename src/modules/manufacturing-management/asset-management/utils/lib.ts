@@ -210,28 +210,28 @@ export function calculateAssetFinancials(
 
     if (typeof window !== "undefined" || process.env.NODE_ENV !== "production") {
       console.group(`[Asset Depreciation Calculation] ${asset.item_name || asset.itemName || "Asset"}`);
-      console.log("Raw Input Fields Used:", {
-        "item_name / itemName": asset.item_name || asset.itemName,
-        "depreciation_start_date / depreciationStartDate": asset.depreciation_start_date || asset.depreciationStartDate,
-        "date_acquired / dateAcquired": asset.date_acquired || asset.dateAcquired,
-        "acquisition_cost / cost_per_item": acqCost,
-        "opening_book_value / openingBookValue": openingBookValue,
-        "residual_value / residualValue": resVal,
-        "depreciable_basis": remainingDepreciableBasis,
-        "useful_life_months / life_span": usefulMonths,
-        "depreciation_method": method,
-        "as_of_projection_date": projDate.toISOString()
-      });
-      console.log("Calculation Breakdown (Straight Line):", {
-        "1. Depreciable Basis": `${formatPHP(acqCost)} (Cost) - ${formatPHP(resVal)} (Residual) = ${formatPHP(remainingDepreciableBasis)}`,
-        "2. Useful Life": `${usefulMonths} months (${(usefulMonths / 12).toFixed(1)} yrs)`,
-        "3. Monthly Depreciation Rate": `${formatPHP(remainingDepreciableBasis)} / ${usefulMonths} mos = ${formatPHP(monthlyDep)} / month`,
-        "4. Depreciation Start Date": startDate.toLocaleString(),
-        "5. As-Of Projection Date": projDate.toLocaleString(),
-        "6. Months Elapsed": `${monthsElapsed.toFixed(2)} months (${(monthsElapsed / 12).toFixed(2)} yrs)`,
-        "7. Total Accumulated Dep.": `${formatPHP(monthlyDep)} * ${monthsElapsed.toFixed(2)} mos = ${formatPHP(accumulatedDep)}`,
-        "8. Current Book Value": `${formatPHP(openingBookValue)} - ${formatPHP(systemDepreciation)} = ${formatPHP(bookValue)}`
-      });
+      // console.log("Raw Input Fields Used:", {
+      //   "item_name / itemName": asset.item_name || asset.itemName,
+      //   "depreciation_start_date / depreciationStartDate": asset.depreciation_start_date || asset.depreciationStartDate,
+      //   "date_acquired / dateAcquired": asset.date_acquired || asset.dateAcquired,
+      //   "acquisition_cost / cost_per_item": acqCost,
+      //   "opening_book_value / openingBookValue": openingBookValue,
+      //   "residual_value / residualValue": resVal,
+      //   "depreciable_basis": remainingDepreciableBasis,
+      //   "useful_life_months / life_span": usefulMonths,
+      //   "depreciation_method": method,
+      //   "as_of_projection_date": projDate.toISOString()
+      // });
+      // console.log("Calculation Breakdown (Straight Line):", {
+      //   "1. Depreciable Basis": `${formatPHP(acqCost)} (Cost) - ${formatPHP(resVal)} (Residual) = ${formatPHP(remainingDepreciableBasis)}`,
+      //   "2. Useful Life": `${usefulMonths} months (${(usefulMonths / 12).toFixed(1)} yrs)`,
+      //   "3. Monthly Depreciation Rate": `${formatPHP(remainingDepreciableBasis)} / ${usefulMonths} mos = ${formatPHP(monthlyDep)} / month`,
+      //   "4. Depreciation Start Date": startDate.toLocaleString(),
+      //   "5. As-Of Projection Date": projDate.toLocaleString(),
+      //   "6. Months Elapsed": `${monthsElapsed.toFixed(2)} months (${(monthsElapsed / 12).toFixed(2)} yrs)`,
+      //   "7. Total Accumulated Dep.": `${formatPHP(monthlyDep)} * ${monthsElapsed.toFixed(2)} mos = ${formatPHP(accumulatedDep)}`,
+      //   "8. Current Book Value": `${formatPHP(openingBookValue)} - ${formatPHP(systemDepreciation)} = ${formatPHP(bookValue)}`
+      // });
       console.groupEnd();
     }
 

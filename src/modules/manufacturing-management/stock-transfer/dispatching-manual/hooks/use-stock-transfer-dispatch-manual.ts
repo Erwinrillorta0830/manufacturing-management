@@ -128,18 +128,39 @@ export function useStockTransferDispatchManual() {
         const rawAvailable = scannedInventory[pid as number] ?? (st as OrderGroupItem).qtyAvailable ?? 0;
         const pickedLot = itemLots[st.id];
 
+        const isOrderForPicking = group.status === 'For Picking';
         const isPhantomStr = (str?: string | null) => !str || /^BATCH-\d+-\d{10,}$/.test(str.trim()) || str.trim() === 'N/A';
-        const effectiveBatchNo = pickedLot?.batch_no ?? (isPhantomStr(st.batch_no) ? null : st.batch_no);
-        const effectiveLotId = pickedLot?.lot_id ?? (isPhantomStr(st.batch_no) ? null : st.source_lot_id);
+        // In manual dispatching for "For Picking", do not display pre-allocated batches on load/select.
+        // The user must first enter manual quantity, then click allocate source batch and lot.
+        const effectiveBatchNo = pickedLot
+          ? pickedLot.batch_no
+          : isOrderForPicking
+          ? null
+          : (isPhantomStr(st.batch_no) ? null : st.batch_no);
+        const effectiveLotId = pickedLot
+          ? pickedLot.lot_id
+          : isOrderForPicking
+          ? null
+          : (isPhantomStr(st.batch_no) ? null : st.source_lot_id);
+        const effectiveInvLotId = pickedLot
+          ? pickedLot.inventory_lot_id
+          : isOrderForPicking
+          ? null
+          : (isPhantomStr(st.batch_no) ? null : st.source_inventory_lot_id);
+        const effectiveLotAllocs = pickedLot
+          ? pickedLot.lot_allocations
+          : isOrderForPicking
+          ? undefined
+          : st.lot_allocations;
 
         return {
           ...st,
           batch_no: effectiveBatchNo,
           source_lot_id: effectiveLotId,
-          source_inventory_lot_id: pickedLot?.inventory_lot_id ?? (isPhantomStr(st.batch_no) ? null : st.source_inventory_lot_id),
+          source_inventory_lot_id: effectiveInvLotId,
           manufacturing_date: pickedLot?.manufacturing_date ?? st.manufacturing_date,
           expiry_date: pickedLot?.expiry_date ?? st.expiry_date,
-          lot_allocations: pickedLot?.lot_allocations ?? st.lot_allocations,
+          lot_allocations: effectiveLotAllocs,
           scannedQty: scannedQtys[st.id] ?? 0, 
           qtyAvailable: Math.max(0, rawAvailable),
           isLoosePack: loosePack,
@@ -233,7 +254,7 @@ export function useStockTransferDispatchManual() {
           return {
             id: i.id,
             status: 'For Loading',
-            dispatched_quantity: scannedQtys[i.id] ?? i.picked_quantity ?? i.allocated_quantity ?? 0,
+            dispatched_quantity: Number(scannedQtys[i.id] ?? i.picked_quantity ?? i.allocated_quantity ?? 0),
             batch_no: pickedLot?.batch_no ?? i.batch_no,
             source_lot_id: pickedLot?.lot_id ?? i.source_lot_id,
             source_inventory_lot_id: pickedLot?.inventory_lot_id ?? i.source_inventory_lot_id,
@@ -265,13 +286,79 @@ export function useStockTransferDispatchManual() {
     try {
       const group = orderGroups.find((g: OrderGroup) => g.orderNo === orderNo);
       if (group) {
+        // 1. Check if any items have manual quantity entered
+        const itemsWithQty = group.items.filter((i: OrderGroupItem) => (scannedQtys[i.id] ?? 0) > 0);
+
+        if (itemsWithQty.length === 0) {
+          toast.error('No items to pick', {
+            description: 'Please enter a manual quantity and allocate source batch and lot for at least one item.',
+          });
+          return;
+        }
+
+        // 2. Validate that EVERY item with manual quantity has allocated lot/batches
+        const unallocatedItems = itemsWithQty.filter((i: OrderGroupItem) => {
+          const pickedLot = itemLots[i.id];
+          const hasBatches = (pickedLot?.lot_allocations && pickedLot.lot_allocations.some(grp => (grp.batches?.length ?? 0) > 0)) ||
+            (Boolean(pickedLot?.batch_no) && Boolean(pickedLot?.inventory_lot_id || pickedLot?.lot_id));
+          return !hasBatches;
+        });
+
+        if (unallocatedItems.length > 0) {
+          const productNames = unallocatedItems.map((i: OrderGroupItem) => {
+            const product = typeof i.product_id === 'object' && i.product_id !== null ? (i.product_id as ProductRow).product_name : `Item #${i.id}`;
+            const qty = scannedQtys[i.id] ?? 0;
+            return `${product} (${qty} units)`;
+          });
+          toast.error('Source Batch & Lot Allocation Required', {
+            description: `The following item(s) have manual quantity entered but no allocated lot/batches:\n${productNames.join(', ')}.\nPlease allocate source batch and lot before marking as done picking.`,
+            duration: 6000,
+          });
+          return;
+        }
+
+        // 3. Validate that total allocated quantity strictly matches the manual quantity
+        const quantityMismatches = itemsWithQty.filter((i: OrderGroupItem) => {
+          const manualQty = scannedQtys[i.id] ?? 0;
+          const pickedLot = itemLots[i.id];
+          let totalAllocated = 0;
+          if (pickedLot?.lot_allocations && pickedLot.lot_allocations.length > 0) {
+            totalAllocated = pickedLot.lot_allocations.reduce((sum, grp) => {
+              const bSum = (grp.batches || []).reduce((s, b) => s + Number(b.quantity || 0), 0);
+              return sum + (bSum > 0 ? bSum : Number(grp.allocated_quantity || 0));
+            }, 0);
+          }
+          return totalAllocated !== manualQty;
+        });
+
+        if (quantityMismatches.length > 0) {
+          const mismatchDetails = quantityMismatches.map((i: OrderGroupItem) => {
+            const product = typeof i.product_id === 'object' && i.product_id !== null ? (i.product_id as ProductRow).product_name : `Item #${i.id}`;
+            const manualQty = scannedQtys[i.id] ?? 0;
+            const pickedLot = itemLots[i.id];
+            let totalAllocated = 0;
+            if (pickedLot?.lot_allocations && pickedLot.lot_allocations.length > 0) {
+              totalAllocated = pickedLot.lot_allocations.reduce((sum, grp) => {
+                const bSum = (grp.batches || []).reduce((s, b) => s + Number(b.quantity || 0), 0);
+                return sum + (bSum > 0 ? bSum : Number(grp.allocated_quantity || 0));
+              }, 0);
+            }
+            return `• ${product}: Allocated ${totalAllocated} ≠ Manual ${manualQty}`;
+          });
+          toast.error('Batch Allocation Quantity Mismatch', {
+            description: `Allocated batch quantities must match manual quantity exactly before marking as done picking:\n${mismatchDetails.join('\n')}\nPlease re-allocate to match.`,
+            duration: 6000,
+          });
+          return;
+        }
+
         await stockTransferLifecycleService.submitStatusUpdate({
-          items: group.items.map((i: OrderGroupItem) => {
+          items: itemsWithQty.map((i: OrderGroupItem) => {
             const pickedLot = itemLots[i.id];
             return { 
               id: i.id, 
               status: 'Picked',
-              picked_quantity: scannedQtys[i.id] ?? i.picked_quantity ?? 0,
+              picked_quantity: Number(scannedQtys[i.id] ?? i.picked_quantity ?? 0),
               batch_no: pickedLot?.batch_no ?? i.batch_no,
               source_lot_id: pickedLot?.lot_id ?? i.source_lot_id,
               source_inventory_lot_id: pickedLot?.inventory_lot_id ?? i.source_inventory_lot_id,
