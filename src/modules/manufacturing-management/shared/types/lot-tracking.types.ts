@@ -178,6 +178,7 @@ export interface LotAllocationGroup {
   allocated_quantity: number;
   active_batch_count?: number;
   current_stock_quantity?: number;
+  is_bad_stock?: boolean;
   batches: BatchRowAllocation[];
 }
 

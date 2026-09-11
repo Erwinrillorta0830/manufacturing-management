@@ -857,7 +857,7 @@ export async function POST(request: Request) {
                 total_amount: totalAmount,
                 discount_amount: 0,
                 net_amount: totalAmount - totalDiscount,
-                remarks: remarks || `Directly Created Sales Order.`,
+                remarks: remarks,
                 created_date: localCreatedDate,
                 draft_at: body.submitForApproval ? null : localCreatedDate,
                 for_approval_at: body.submitForApproval ? localCreatedDate : null,

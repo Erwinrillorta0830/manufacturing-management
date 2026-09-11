@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { SalesInvoiceHeader, SalesInvoiceDetail, FMInvoiceMetrics, SalesmanOption } from "../types";
+import { SalesInvoiceHeader, SalesInvoiceDetail, FMInvoiceMetrics, SalesmanOption, PaginationMeta } from "../types";
 import { fetchSalesInvoices, fetchSalesInvoiceDetails } from "../services/sales-invoices-api";
 
 export function useSalesInvoices() {
@@ -11,11 +11,20 @@ export function useSalesInvoices() {
     const [detailsMap, setDetailsMap] = useState<Record<number, SalesInvoiceDetail[]>>({});
     const [loading, setLoading] = useState<boolean>(true);
     const [loadingDetails, setLoadingDetails] = useState<Record<number, boolean>>({});
+    const [page, setPage] = useState<number>(1);
+    const [limit, setLimit] = useState<number>(10);
 
     const loadInvoices = useCallback(async () => {
         setLoading(true);
         try {
-            const { data, salesmen: salesmenData, detailsMap: initialMap } = await fetchSalesInvoices(false);
+            const { data, salesmen: salesmenData, detailsMap: initialMap } = await fetchSalesInvoices({
+                includeDetails: false,
+            });
+            console.log(
+                "%c[Sales Invoices] Loaded invoice records from API:",
+                "color: #2563eb; font-weight: bold;",
+                data
+            );
             setInvoices(data);
             if (salesmenData) setSalesmen(salesmenData);
             if (initialMap) setDetailsMap(initialMap);
@@ -27,6 +36,13 @@ export function useSalesInvoices() {
         }
     }, []);
 
+    const pagination: PaginationMeta = useMemo(() => ({
+        page,
+        limit,
+        total: invoices.length,
+        totalPages: Math.max(1, Math.ceil(invoices.length / limit)),
+    }), [invoices.length, page, limit]);
+
     useEffect(() => {
         loadInvoices();
     }, [loadInvoices]);
@@ -36,6 +52,11 @@ export function useSalesInvoices() {
         setLoadingDetails((prev) => ({ ...prev, [invoiceId]: true }));
         try {
             const details = await fetchSalesInvoiceDetails(invoiceId);
+            console.log(
+                `%c[Sales Invoice #${invoiceId}] Loaded line items:`,
+                "color: #0284c7; font-weight: bold;",
+                details
+            );
             setDetailsMap((prev) => ({ ...prev, [invoiceId]: details }));
         } catch (err) {
             const msg = err instanceof Error ? err.message : `Failed to load details for Invoice #${invoiceId}.`;
@@ -123,6 +144,11 @@ export function useSalesInvoices() {
         loading,
         loadingDetails,
         metrics,
+        page,
+        limit,
+        pagination,
+        setPage,
+        setLimit,
         loadInvoices,
         loadInvoiceDetails,
         exportToCSV,

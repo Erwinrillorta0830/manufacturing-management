@@ -310,44 +310,6 @@ export async function GET(req: NextRequest) {
             });
         }
 
-        // 2. Process Job Orders
-        for (const jo of jobOrders) {
-            const pId = Number(jo.product_id);
-            const prod = prodMap.get(pId);
-            const qty = Number(jo.actual_quantity_produced || jo.target_quantity || 0);
-            if (qty <= 0) continue;
-
-            const vId = Number(jo.version_id || 0) || null;
-            const vName = vId ? (versionTitleMap.get(vId) || `v${vId}`) : null;
-
-            candidates.push({
-                invoiceId: jo.job_order_id,
-                invoiceNo: jo.job_order_no,
-                invoiceDate: jo.start_date || new Date().toISOString().slice(0, 10),
-                deliveryDate: jo.end_date || null,
-                grossAmount: 0,
-                netAmount: 0,
-                branchId: jo.branch_id,
-                customerCode: "INTERNAL",
-                customerName: "Job Order Production",
-                orderId: jo.job_order_id,
-                orderNo: jo.job_order_no,
-                poNo: "",
-                orderStatus: jo.status,
-                documentType: "JOB_ORDER",
-                products: [
-                    {
-                        productId: pId,
-                        productName: prod?.description || prod?.product_name || `Product #${pId}`,
-                        productCode: prod?.product_code || "",
-                        quantity: qty,
-                        versionId: vId,
-                        versionName: vName,
-                    },
-                ],
-            });
-        }
-
         return NextResponse.json(candidates);
     } catch (e) {
         console.error("invoice-consolidation candidates GET error:", e);

@@ -53,6 +53,12 @@ export interface SalesInvoiceHeader {
     salesman_name?: string;
     sales_order_id?: number | null;
     sales_order_no?: string;
+    branch_id?: number | null;
+    branch_name?: string;
+    branch_code?: string;
+    payment_terms?: number | string | null;
+    payment_term_name?: string;
+    transaction_status?: string;
     gross_amount: number;
     discount_amount: number;
     vat_amount: number;
@@ -62,6 +68,13 @@ export interface SalesInvoiceHeader {
     status: "Unpaid" | "Paid" | "Partially Paid" | "Overdue" | "Cancelled";
     payment_history: PaymentRecord[];
     remarks: string;
+}
+
+export interface PaginationMeta {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
 }
 
 export interface FMInvoiceMetrics {
@@ -78,3 +91,4 @@ export interface InvoiceFilterState {
     startDate: string;
     endDate: string;
 }
+

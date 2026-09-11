@@ -141,7 +141,9 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
   try {
     // If running in browser (Client Component), call Next.js API BFF route
     if (typeof window !== "undefined") {
-      const url = branchId ? `/api/manufacturing/lots?branch_id=${branchId}` : "/api/manufacturing/lots";
+      const url = branchId
+        ? `/api/manufacturing/lots?branch_id=${branchId}&include_all=true`
+        : "/api/manufacturing/lots?include_all=true";
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
         await notifyClientApiError(res, "Failed to fetch lots from BFF");
@@ -157,15 +159,33 @@ export async function fetchLotsByBranch(branchId?: number, token?: string): Prom
         const isBad = Boolean(r.is_bad_stock || r.isBadStock || r.branch_is_bad_stock || r.branchIsBadStock);
         const branchIsBad = Boolean(r.branch_is_bad_stock || r.branchIsBadStock);
 
+        let resolvedUnitId: number | null = null;
+        let resolvedUnitName: string | undefined = undefined;
+
+        const rawUom = r.unit_id ?? r.uomId ?? r.uom_id;
+        if (rawUom && typeof rawUom === 'object') {
+          const uObj = rawUom as { id?: number; unit_id?: number; unit_name?: string };
+          resolvedUnitId = uObj.unit_id ?? uObj.id ?? null;
+          resolvedUnitName = uObj.unit_name;
+        } else if (rawUom !== null && rawUom !== undefined && rawUom !== '') {
+          const parsed = Number(rawUom);
+          if (!isNaN(parsed) && parsed > 0) {
+            resolvedUnitId = parsed;
+          }
+        }
+        if (!resolvedUnitName) {
+          resolvedUnitName = (r.unit_name || r.uomName || r.uom_name) as string | undefined;
+        }
+
         return {
           lot_id: Number(r.lot_id || r.lotId || r.id),
           lot_name: String(r.lot_name || r.lotName || `Lot #${r.lot_id || r.lotId || r.id}`),
           branch_id: bId,
-          unit_id: r.unit_id ? Number(r.unit_id) : (r.uomId ? Number(r.uomId) : null),
+          unit_id: resolvedUnitId,
           max_batch_capacity: Number(r.max_batch_capacity || r.maxBatchCapacity || 10),
           description: (r.description as string) || null,
           status: (r.status as 'ACTIVE' | 'CLOSED' | 'INACTIVE') || 'ACTIVE',
-          unit_name: (r.unit_name || r.uomName) as string | undefined,
+          unit_name: resolvedUnitName,
           branch_name: (r.branch_name || r.branchName) as string | undefined,
           branch_code: (r.branch_code || r.branchCode) as string | undefined,
           is_bad_stock: isBad,

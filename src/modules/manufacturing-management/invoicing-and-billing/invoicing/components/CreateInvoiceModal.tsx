@@ -42,7 +42,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
     const [invoiceNo, setInvoiceNo] = useState(`INV-${candidate.order_no.replace(/^SO-/, "")}`);
     const [invoiceDate, setInvoiceDate] = useState(() => getLocalPHDateString());
     const [dueDate, setDueDate] = useState(() => getLocalPHDueDateString(30));
-    const [remarks, setRemarks] = useState(`Billing for Sales Order ${candidate.order_no}`);
+    const [remarks, setRemarks] = useState("");
     const [receiptTypes, setReceiptTypes] = useState<ReceiptType[]>([]);
     const [invoiceTypeId, setInvoiceTypeId] = useState(0);
     const [createdResult, setCreatedResult] = useState<CreatedInvoiceResult | null>(null);
@@ -255,8 +255,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         void fetchSalesOrderAvailability(candidate.order_id).then(data => {
             if (!cancelled) {
                 console.group(`[Invoicing Debug] Availability & Picked Quantities for Order #${candidate.order_no} (ID: ${candidate.order_id})`);
-                console.log("Consolidator Batch:", data?.consolidatorNo || "None (Standalone)");
-                console.log("Raw Availability Payload:", data);
+                // console.log("Consolidator Batch:", data?.consolidatorNo || "None (Standalone)");
+                // console.log("Raw Availability Payload:", data);
                 if (data?.rawDetails && data.rawDetails.length > 0) {
                     console.group("Raw sales_order_details");
                     console.table(data.rawDetails);
@@ -990,6 +990,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                         <textarea 
                                             rows={3} 
                                             value={remarks} 
+                                            placeholder="Add Remarks"
                                             onChange={e => setRemarks(e.target.value)} 
                                             className="w-full resize-none rounded-xl border bg-background px-3.5 py-2 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" 
                                         />

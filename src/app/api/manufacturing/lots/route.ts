@@ -6,6 +6,8 @@ import { Lot } from "@/modules/manufacturing-management/lot-management/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SPRING_API_BASE = process.env.SPRING_API_BASE_URL;
+
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const filterBranchId = searchParams.get("branch_id") ? Number(searchParams.get("branch_id")) : null;
@@ -46,7 +48,23 @@ export async function GET(request: Request) {
     try {
         const fields = "*";
         const timestamp = Date.now();
-        const [usersRes, unitsRes, branchesRes] = await Promise.all([
+        let token: string | undefined;
+        try {
+            const cookieStore = await cookies();
+            token = cookieStore.get("vos_access_token")?.value;
+        } catch {
+            // ignore
+        }
+
+        const reqHeaders: Record<string, string> = {
+            Accept: "application/json",
+        };
+        if (token) {
+            reqHeaders["Authorization"] = `Bearer ${token}`;
+            reqHeaders["Cookie"] = `vos_access_token=${token}`;
+        }
+
+        const [usersRes, unitsRes, branchesRes, invLotsRes, movementsRes] = await Promise.all([
             fetch(
                 `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname&_t=${timestamp}`,
                 { headers, cache: "no-store" }
@@ -58,7 +76,14 @@ export async function GET(request: Request) {
             fetch(
                 `${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id&_t=${timestamp}`,
                 { headers, cache: "no-store" }
-            ).catch(() => null)
+            ).catch(() => null),
+            fetch(
+                `${DIRECTUS_URL}/items/mm_inventory_lots?limit=-1&fields=id,inventory_lot_id,lot_id&_t=${timestamp}`,
+                { headers, cache: "no-store" }
+            ).catch(() => null),
+            SPRING_API_BASE
+                ? fetch(`${SPRING_API_BASE}/api/mm-inventory-movements/all`, { headers: reqHeaders, cache: "no-store" }).catch(() => null)
+                : Promise.resolve(null)
         ]);
 
         const branchFilter = filterBranchId ? `&filter[branch_id][_eq]=${filterBranchId}` : "";
@@ -103,6 +128,54 @@ export async function GET(request: Request) {
                 console.error("Error parsing branches in GET lots:", err);
             }
         }
+
+        const invLotToLotMap = new Map<number, number>();
+        if (invLotsRes && invLotsRes.ok) {
+            try {
+                const invLotsJson = await invLotsRes.json();
+                const invLotsData: Record<string, unknown>[] = invLotsJson.data || [];
+                invLotsData.forEach((row) => {
+                    const invId = Number(row.inventory_lot_id || row.id || 0);
+                    const rawL = row.lot_id;
+                    const lId = typeof rawL === "object" && rawL !== null
+                        ? Number((rawL as { lot_id?: number; id?: number }).lot_id ?? (rawL as { lot_id?: number; id?: number }).id ?? 0)
+                        : Number(rawL || 0);
+                    if (invId > 0 && lId > 0) {
+                        invLotToLotMap.set(invId, lId);
+                    }
+                });
+            } catch (err) {
+                console.error("Error parsing mm_inventory_lots in GET lots:", err);
+            }
+        }
+
+        let rawMovements: Record<string, unknown>[] = [];
+        if (movementsRes && movementsRes.ok) {
+            try {
+                const movJson = await movementsRes.json();
+                rawMovements = Array.isArray(movJson) ? movJson : movJson?.data || [];
+            } catch (err) {
+                console.error("Error parsing movements in GET lots:", err);
+            }
+        }
+
+        const lotIdsWithMovements = new Set<number>();
+        rawMovements.forEach((m) => {
+            const rawLotId = m.mmLotId ?? m.mm_lot_id ?? m.lotId ?? m.lot_id;
+            if (rawLotId !== null && rawLotId !== undefined) {
+                const numLot = Number(rawLotId);
+                if (numLot > 0) {
+                    lotIdsWithMovements.add(numLot);
+                }
+            }
+            const rawInvId = Number(m.inventoryLotId || m.inventory_lot_id || 0);
+            if (rawInvId > 0 && invLotToLotMap.has(rawInvId)) {
+                const mappedLId = invLotToLotMap.get(rawInvId);
+                if (mappedLId && mappedLId > 0) {
+                    lotIdsWithMovements.add(mappedLId);
+                }
+            }
+        });
 
         const mappedLots: Lot[] = rawLots.map((row) => {
             let uomId: number | null = null;
@@ -189,9 +262,14 @@ export async function GET(request: Request) {
             };
         });
 
-        const filteredLots = filterBranchId
+        const includeAll = searchParams.get("include_all") === "true";
+        let filteredLots = filterBranchId
             ? mappedLots.filter(l => Number(l.branchId) === Number(filterBranchId))
             : mappedLots;
+
+        if (!includeAll) {
+            filteredLots = filteredLots.filter(l => lotIdsWithMovements.has(Number(l.lotId)));
+        }
 
         return NextResponse.json(filteredLots);
     } catch (e) {

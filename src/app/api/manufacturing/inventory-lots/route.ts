@@ -34,14 +34,6 @@ export async function GET(req: Request) {
     });
 
     if (!res.ok) {
-      // Fallback to inventory_lots
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots?limit=-1&fields=${fields}${queryStr}`, {
-        headers,
-        cache: "no-store",
-      });
-    }
-
-    if (!res.ok) {
       const errTxt = await res.text();
       console.warn(`[InventoryLots API] Directus fetch failed (${res.status}): ${errTxt}`);
       return NextResponse.json([]);
@@ -95,13 +87,7 @@ export async function POST(req: Request) {
       body: JSON.stringify(postBody),
     });
 
-    if (!res.ok) {
-      res = await fetch(`${DIRECTUS_URL}/items/inventory_lots`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(postBody),
-      });
-    }
+ 
 
     if (!res.ok) {
       const errTxt = await res.text();
