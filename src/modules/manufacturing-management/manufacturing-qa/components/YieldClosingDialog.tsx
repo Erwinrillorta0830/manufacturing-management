@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { JobOrder } from "../types";
+import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 interface YieldClosingDialogProps {
     isYieldDialogOpen: boolean;
@@ -23,6 +25,10 @@ interface YieldClosingDialogProps {
     setYieldQty: (qty: string) => void;
     lotNumber: string;
     setLotNumber: (lot: string) => void;
+    eligibleLots: EligibleFinishedGoodsLot[];
+    selectedMmLotId: string;
+    setSelectedMmLotId: (lotId: string) => void;
+    loadingEligibleLots: boolean;
     manufacturingDate: string;
     setManufacturingDate: (date: string) => void;
     expiryDate: string;
@@ -45,6 +51,10 @@ export function YieldClosingDialog({
     setYieldQty,
     lotNumber,
     setLotNumber,
+    eligibleLots,
+    selectedMmLotId,
+    setSelectedMmLotId,
+    loadingEligibleLots,
     manufacturingDate,
     setManufacturingDate,
     expiryDate,
@@ -166,13 +176,30 @@ export function YieldClosingDialog({
                             </div>
 
                             <div className="col-span-2 space-y-1.5">
-                                <Label htmlFor="lotNo" className="font-semibold text-xs">Lot Number</Label>
+                                <Label className="font-semibold text-xs">
+                                    Storage Lot <span className="text-destructive">*</span>
+                                </Label>
+                                <FinishedGoodsLotSelect
+                                    lots={eligibleLots}
+                                    value={selectedMmLotId}
+                                    onValueChange={setSelectedMmLotId}
+                                    loading={loadingEligibleLots}
+                                    disabled={actionLoading}
+                                    placeholder="Select storage lot..."
+                                    className="min-h-11 w-full justify-between text-sm"
+                                />
+                            </div>
+
+                            <div className="col-span-2 space-y-1.5">
+                                <Label htmlFor="lotNo" className="font-semibold text-xs">
+                                    Batch Number <span className="text-destructive">*</span>
+                                </Label>
                                 <Input 
                                     id="lotNo"
-                                    placeholder={`MFG-${selectedJO.jo_id}`}
+                                    placeholder="e.g. BATCH-2026-001"
                                     value={lotNumber}
                                     onChange={e => setLotNumber(e.target.value)}
-                                    className="min-h-11 text-sm"
+                                    className="min-h-11 text-sm font-mono"
                                 />
                             </div>
 
@@ -229,7 +256,7 @@ export function YieldClosingDialog({
                     <Button 
                         variant="default"
                         onClick={handleSubmitYieldClosing}
-                        disabled={actionLoading || yieldMaterialsLoading || Boolean(yieldMaterialsError)}
+                        disabled={actionLoading || yieldMaterialsLoading || Boolean(yieldMaterialsError) || !selectedMmLotId || !lotNumber.trim()}
                         className="min-h-11 text-sm font-semibold gap-1.5"
                     >
                         {yieldMaterialsLoading ? (

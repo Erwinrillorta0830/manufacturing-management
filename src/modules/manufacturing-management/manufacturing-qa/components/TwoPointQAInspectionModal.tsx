@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { 
     CheckCircle2, 
     AlertTriangle, 
@@ -36,6 +36,8 @@ import {
 import { toast } from "sonner";
 import { JobOrder, QARejectionReason, TwoPointQAInspectionPayload } from "../types";
 import { displayJobOrderStatus, isTerminalJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
+import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 interface TwoPointQAInspectionModalProps {
     isOpen: boolean;
@@ -101,7 +103,10 @@ function TwoPointQAFormContent({
     const [passedQty, setPassedQty] = useState<string>(String(remainingToInspect));
     const [rejectedQty, setRejectedQty] = useState<string>("0");
     const [rejectionReasonId, setRejectionReasonId] = useState<string>("");
-    const [lotNumber, setLotNumber] = useState<string>(`MFG-${joNo}`);
+    const [lotNumber, setLotNumber] = useState<string>("");
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [selectedMmLotId, setSelectedMmLotId] = useState<string>("");
+    const [loadingLots, setLoadingLots] = useState(true);
     const [manufacturingDate, setManufacturingDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
     const [expiryDate, setExpiryDate] = useState<string>(() => {
         const nextYear = new Date();
@@ -110,6 +115,29 @@ function TwoPointQAFormContent({
     });
     const [unitCost] = useState<string>(String(jobOrder.unit_cost || 0));
     const [remarks, setRemarks] = useState<string>("");
+
+    useEffect(() => {
+        const branchId = Number(jobOrder.branch_id || 0);
+        const productId = Number(jobOrder.product_id || 0);
+        let cancelled = false;
+        const loadEligibleLots = branchId > 0 && productId > 0
+            ? fetchEligibleFinishedGoodsLots(branchId, productId).then((response) => {
+                if (cancelled) return;
+                setEligibleLots(response.lots);
+                setSelectedMmLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+            })
+            : Promise.resolve();
+        loadEligibleLots
+            .catch((error) => {
+                if (!cancelled) console.error("Error loading eligible finished-goods lots:", error);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingLots(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [jobOrder.job_order_id, jobOrder.id, jobOrder.branch_id, jobOrder.product_id]);
 
     // Handle Inspected Quantity change
     const handleInspectedQtyChange = (val: string) => {
@@ -187,6 +215,17 @@ function TwoPointQAFormContent({
             return;
         }
 
+        if (numPass > 0) {
+            if (!selectedMmLotId) {
+                toast.error("Select an existing storage lot for the finished-goods output.");
+                return;
+            }
+            if (!lotNumber.trim()) {
+                toast.error("Enter a batch number for the finished-goods output.");
+                return;
+            }
+        }
+
         const payload: TwoPointQAInspectionPayload = {
             job_order_id: Number(jobOrder.job_order_id || jobOrder.id || jobOrder.order_id),
             job_order_no: joNo,
@@ -196,7 +235,8 @@ function TwoPointQAFormContent({
             passed_quantity: numPass,
             rejected_quantity: numRej,
             rejection_reason_id: hasRejections ? Number(rejectionReasonId) : null,
-            lot_number: lotNumber.trim() || `MFG-${joNo}`,
+            lot_number: lotNumber.trim() || undefined,
+            mm_lot_id: selectedMmLotId ? Number(selectedMmLotId) : null,
             manufacturing_date: manufacturingDate || undefined,
             expiry_date: expiryDate || undefined,
             unit_cost: parseFloat(unitCost) || 0,
@@ -445,17 +485,33 @@ function TwoPointQAFormContent({
                                 Finished Goods Lot & Ledger Tracking
                             </h4>
 
+                            <div className="space-y-1">
+                                <Label className="text-xs font-semibold flex items-center gap-1">
+                                    <Tag className="h-3 w-3 text-muted-foreground" />
+                                    Storage Lot <span className="text-destructive">*</span>
+                                </Label>
+                                <FinishedGoodsLotSelect
+                                    lots={eligibleLots}
+                                    value={selectedMmLotId}
+                                    onValueChange={setSelectedMmLotId}
+                                    loading={loadingLots}
+                                    disabled={actionLoading}
+                                    placeholder="Select storage lot..."
+                                    className="min-h-11 w-full justify-between text-sm"
+                                />
+                            </div>
+
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div className="space-y-1">
                                     <Label htmlFor="lot-number" className="text-xs font-semibold flex items-center gap-1">
                                         <Tag className="h-3 w-3 text-muted-foreground" />
-                                        Batch / Lot No
+                                        Batch Number
                                     </Label>
                                     <Input
                                         id="lot-number"
                                         value={lotNumber}
                                         onChange={e => setLotNumber(e.target.value)}
-                                        placeholder={`MFG-${joNo}`}
+                                        placeholder="e.g. BATCH-2026-001"
                                     className="font-mono text-sm min-h-11"
                                     />
                                 </div>

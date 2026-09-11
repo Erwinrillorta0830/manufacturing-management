@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { toast } from "sonner";
 
 interface JobOrderShiftLogModalProps {
@@ -55,7 +57,8 @@ export function JobOrderShiftLogModal({
     const [batchNo, setBatchNo] = useState("");
     const [expiryDate, setExpiryDate] = useState("");
     const [manufacturingDate, setManufacturingDate] = useState("");
-    const [lots, setLots] = useState<any[]>([]);
+    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [selectedLotId, setSelectedLotId] = useState<string>("");
     const [shiftQAStatus, setShiftQAStatus] = useState<"Passed" | "QA Hold" | "Pending">("Pending");
     const [shiftMaterials, setShiftMaterials] = useState<any[]>([]);
@@ -149,16 +152,21 @@ export function JobOrderShiftLogModal({
                 setShiftName(available[0].value);
             }
 
-            // Fetch physical warehouse lots/locations
-            fetch(`/api/manufacturing/planning-engineering?action=lots&_t=${Date.now()}`)
-                .then((res) => res.json())
-                .then((data) => {
-                    setLots(data);
-                    if (data && data.length > 0) {
-                        setSelectedLotId(String(data[0].lot_id || data[0].id || "1"));
-                    }
-                })
-                .catch((err) => console.error("Error loading physical lots:", err));
+            // Load eligible finished-goods storage lots for the JO branch + UOM
+            const eligibleBranchId = Number(selectedJobOrder.branch_id || 0);
+            const eligibleProductId = Number(selectedJobOrder.product_id || 0);
+            setEligibleLots([]);
+            setSelectedLotId("");
+            if (eligibleBranchId > 0 && eligibleProductId > 0) {
+                setLoadingEligibleLots(true);
+                fetchEligibleFinishedGoodsLots(eligibleBranchId, eligibleProductId)
+                    .then((response) => {
+                        setEligibleLots(response.lots);
+                        setSelectedLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+                    })
+                    .catch((err) => console.error("Error loading eligible finished-goods lots:", err))
+                    .finally(() => setLoadingEligibleLots(false));
+            }
 
             // Fetch rejection reasons
             fetchRejectionReasons()
@@ -253,6 +261,11 @@ export function JobOrderShiftLogModal({
         }
         if (!manufacturingDate) {
             toast.error("Please select a manufacturing date.");
+            return;
+        }
+
+        if (newYield > 0 && !selectedLotId) {
+            toast.error("Select an existing storage lot for the finished-goods output.");
             return;
         }
 
@@ -548,23 +561,17 @@ export function JobOrderShiftLogModal({
 
                                             <div className="space-y-1.5">
                                                 <Label htmlFor="targetLotSelect" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Location
+                                                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Location <span className="text-destructive">*</span>
                                                 </Label>
-                                                <div className="relative">
-                                                    <select
-                                                        id="targetLotSelect"
-                                                        value={selectedLotId}
-                                                        onChange={(e) => setSelectedLotId(e.target.value)}
-                                                        className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all duration-200 cursor-pointer appearance-none"
-                                                        required
-                                                    >
-                                                        {lots.map((l) => (
-                                                            <option key={l.lot_id || l.id} value={l.lot_id || l.id}>
-                                                                {l.lot_name || `Location #${l.lot_id || l.id}`}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
+                                                <FinishedGoodsLotSelect
+                                                    lots={eligibleLots}
+                                                    value={selectedLotId}
+                                                    onValueChange={setSelectedLotId}
+                                                    loading={loadingEligibleLots}
+                                                    disabled={submittingShiftLog}
+                                                    placeholder="Select storage lot..."
+                                                    className="h-10 w-full justify-between rounded-xl border-border/80 text-xs font-semibold"
+                                                />
                                             </div>
 
                                             <div className="space-y-1.5">

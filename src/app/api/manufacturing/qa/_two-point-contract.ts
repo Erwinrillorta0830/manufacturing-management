@@ -15,6 +15,7 @@ export const twoPointQAInspectionRequestSchema = z.object({
     rejected_quantity: nonnegativeQuantity,
     rejection_reason_id: positiveInteger.nullable().optional(),
     lot_number: z.string().trim().max(100).optional(),
+    mm_lot_id: positiveInteger.optional(),
     manufacturing_date: optionalDate,
     expiry_date: optionalDate,
     unit_cost: z.number().finite().nonnegative().optional().default(0),
@@ -43,6 +44,24 @@ export const twoPointQAInspectionRequestSchema = z.object({
             path: ["rejection_reason_id"],
             message: "Rejection reason is required when rejected quantity is greater than zero."
         });
+    }
+
+    // Positive output must reuse an existing master lot and carry a batch.
+    if (payload.passed_quantity > 0) {
+        if (!payload.mm_lot_id) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["mm_lot_id"],
+                message: "An existing storage lot is required when passed quantity is greater than zero."
+            });
+        }
+        if (!payload.lot_number?.trim()) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["lot_number"],
+                message: "A batch number is required when passed quantity is greater than zero."
+            });
+        }
     }
 });
 
