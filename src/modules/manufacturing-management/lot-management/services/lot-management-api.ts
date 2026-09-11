@@ -41,7 +41,7 @@ export async function fetchBranches(): Promise<Branch[]> {
 }
 
 export async function fetchProducts(): Promise<ProductItem[]> {
-    const res = await fetch("/api/manufacturing/lots/products", { cache: "no-store" });
+    const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management/products", { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch products lookup from BFF"));
     }
@@ -49,7 +49,7 @@ export async function fetchProducts(): Promise<ProductItem[]> {
 }
 
 export async function fetchLots(): Promise<Lot[]> {
-    const res = await fetch(`/api/manufacturing/lots?_t=${Date.now()}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management?_t=${Date.now()}&include_all=true`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch lots from BFF"));
     }
@@ -57,7 +57,7 @@ export async function fetchLots(): Promise<Lot[]> {
 }
 
 export async function createLot(payload: CreateLotPayload): Promise<{ success: boolean; data: Lot }> {
-    const res = await fetch("/api/manufacturing/lots", {
+    const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -74,7 +74,7 @@ export async function updateLot(
     lotId: number,
     payload: UpdateLotPayload
 ): Promise<{ success: boolean; data: Lot }> {
-    const res = await fetch(`/api/manufacturing/lots/${lotId}`, {
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/${lotId}`, {
         method: "PATCH",
         headers: {
             "Content-Type": "application/json"
@@ -89,7 +89,7 @@ export async function updateLot(
 }
 
 export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
-    const res = await fetch(`/api/manufacturing/lots/${lotId}`, {
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/${lotId}`, {
         method: "DELETE"
     });
     if (!res.ok) {
@@ -99,7 +99,7 @@ export async function deleteLot(lotId: number): Promise<{ success: boolean }> {
 }
 
 export async function fetchUoms(): Promise<UnitOfMeasure[]> {
-    const res = await fetch("/api/manufacturing/lots/uoms", { cache: "no-store" });
+    const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management/uoms", { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch UOM lookup from BFF"));
     }
@@ -110,7 +110,7 @@ export async function fetchUoms(): Promise<UnitOfMeasure[]> {
 
 export async function fetchBatches(lotId?: number): Promise<Batch[]> {
     const query = lotId ? `?lotId=${lotId}&_t=${Date.now()}` : `?_t=${Date.now()}`;
-    const res = await fetch(`/api/manufacturing/lots/batches${query}`, { cache: "no-store" });
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches${query}`, { cache: "no-store" });
     if (!res.ok) {
         throw new Error(await extractErrorMessage(res, "Failed to fetch batches from BFF"));
     }
@@ -118,7 +118,7 @@ export async function fetchBatches(lotId?: number): Promise<Batch[]> {
 }
 
 export async function createBatch(payload: CreateBatchPayload): Promise<{ success: boolean; data: Batch }> {
-    const res = await fetch("/api/manufacturing/lots/batches", {
+    const res = await fetch("/api/manufacturing/inventory-warehousing/lot-management/batches", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -135,7 +135,7 @@ export async function updateBatch(
     batchId: number,
     payload: UpdateBatchPayload
 ): Promise<{ success: boolean; data: Batch }> {
-    const res = await fetch(`/api/manufacturing/lots/batches/${batchId}`, {
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches/${batchId}`, {
         method: "PATCH",
         headers: {
             "Content-Type": "application/json"
@@ -149,7 +149,7 @@ export async function updateBatch(
 }
 
 export async function deleteBatch(batchId: number): Promise<{ success: boolean }> {
-    const res = await fetch(`/api/manufacturing/lots/batches/${batchId}`, {
+    const res = await fetch(`/api/manufacturing/inventory-warehousing/lot-management/batches/${batchId}`, {
         method: "DELETE"
     });
     if (!res.ok) {

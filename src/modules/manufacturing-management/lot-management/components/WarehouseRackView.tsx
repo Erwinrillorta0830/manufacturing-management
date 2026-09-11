@@ -95,6 +95,9 @@ export default function WarehouseRackView({
     }, [batches, selectedProductId]);
 
     const sortedLots = React.useMemo(() => {
+        const knownLotIds = new Set(lots.map((l) => Number(l.lotId)));
+        const hasGhostBatches = batches.some((b) => !b.lotId || Number(b.lotId) === 0 || !knownLotIds.has(Number(b.lotId)));
+
         const ghostLot: Lot = {
             lotId: 0,
             lotName: "Unassigned / Pending Storage Rack (Ghost Rack)",
@@ -108,10 +111,10 @@ export default function WarehouseRackView({
             status: "ACTIVE",
             createdBy: "System Virtual",
             updatedBy: "System Virtual",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            createdAt: "2025-01-01T00:00:00.000Z",
+            updatedAt: "2025-01-01T00:00:00.000Z"
         };
-        let baseLots = [ghostLot, ...lots];
+        let baseLots = hasGhostBatches ? [ghostLot, ...lots] : [...lots];
 
         if (selectedBranchId !== "ALL") {
             baseLots = baseLots.filter((lot) => Number(lot.lotId) === 0 || Number(lot.branchId) === Number(selectedBranchId));
@@ -314,8 +317,6 @@ export default function WarehouseRackView({
                             return isGhostLot ? isUnassigned : Number(b.lotId) === Number(lot.lotId);
                         })
                     );
-                    const totalRackOccupancy = allLotBatches.reduce((sum, b) => sum + (Number(b.quantity) || 0), 0);
-                    const isRackNegative = totalRackOccupancy < 0;
 
                     const positiveStockQty = allLotBatches.reduce((sum, b) => {
                         const q = Number(b.quantity) || 0;
@@ -327,19 +328,13 @@ export default function WarehouseRackView({
                         return q < 0 ? sum + Math.abs(q) : sum;
                     }, 0);
 
+                    // Physical rack occupancy and capacity reflect positive stock stored in this rack
+                    const totalRackOccupancy = positiveStockQty;
+                    const isRackNegative = negativeStockQty > 0;
+
                     const cap = lot.maxBatchCapacity > 0 ? lot.maxBatchCapacity : 100;
-                    const scale = Math.max(cap, positiveStockQty + negativeStockQty);
-
-                    const negativePercent = Math.min(100, Math.round((negativeStockQty / scale) * 100));
-                    const positivePercent = Math.min(100 - negativePercent, Math.round((positiveStockQty / scale) * 100));
-
-                    const capacityPercent = Math.max(
-                        0,
-                        Math.min(
-                            100,
-                            lot.maxBatchCapacity > 0 ? Math.round((totalRackOccupancy / lot.maxBatchCapacity) * 100) : 0
-                        )
-                    );
+                    const positivePercent = Math.max(0, Math.min(100, Math.round((positiveStockQty / cap) * 100)));
+                    const capacityPercent = positivePercent;
 
                     // Capacity status color
                     let progressColorClass = "bg-emerald-500";
@@ -491,30 +486,27 @@ export default function WarehouseRackView({
                                 {/* Capacity Fill Indicator */}
                                 <div className="mt-3 space-y-1.5">
                                     <div className="flex items-center justify-between text-[11px]">
-                                        <span className={`font-semibold ${isRackNegative ? "text-rose-600 dark:text-rose-400 font-bold" : "text-muted-foreground"}`}>
-                                            {isRackNegative ? (
-                                                <>Occupancy: <span className="font-mono">{totalRackOccupancy.toLocaleString()}</span> / {lot.maxBatchCapacity.toLocaleString()} {uomLabel} (Deficit)</>
-                                            ) : (
-                                                <>Occupancy: {totalRackOccupancy.toLocaleString()} / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}</>
+                                        <span className="font-semibold text-muted-foreground">
+                                            Occupancy: <span className="font-mono text-foreground font-bold">{totalRackOccupancy.toLocaleString()}</span> / {lot.maxBatchCapacity.toLocaleString()} {uomLabel}
+                                            {negativeStockQty > 0 && (
+                                                <span className="ml-1 text-rose-600 dark:text-rose-400 font-bold">
+                                                    (-{negativeStockQty.toLocaleString()} Shortfall)
+                                                </span>
                                             )}
                                         </span>
                                         <span className={`px-1.5 py-0.2 rounded font-bold text-[10px] border ${progressBadgeClass}`}>
-                                            {isRackNegative ? "Deficit" : `${capacityPercent}%`}
+                                            {isRackNegative ? "Shortfall" : `${capacityPercent}%`}
                                         </span>
                                     </div>
-                                    <div className="h-2 w-full bg-muted/60 rounded-full overflow-hidden flex relative">
-                                        {negativeStockQty > 0 && (
-                                            <div
-                                                className="h-full bg-rose-500 transition-all duration-300 shrink-0"
-                                                style={{ width: `${negativePercent}%` }}
-                                                title={`Deficit / Negative Stock: -${negativeStockQty.toLocaleString()} ${uomLabel}`}
-                                            />
-                                        )}
+                                    <div
+                                        className="h-2 w-full bg-muted/60 rounded-full overflow-hidden flex relative"
+                                        title={`Physical Occupancy: ${totalRackOccupancy.toLocaleString()} / ${lot.maxBatchCapacity.toLocaleString()} ${uomLabel}${negativeStockQty > 0 ? ` (-${negativeStockQty.toLocaleString()} Shortfall)` : ""}`}
+                                    >
                                         {positiveStockQty > 0 && (
                                             <div
-                                                className={cn("h-full transition-all duration-300 shrink-0", progressColorClass)}
+                                                className={cn("h-full transition-all duration-300 rounded-full shrink-0", progressColorClass)}
                                                 style={{ width: `${positivePercent}%` }}
-                                                title={`Current Positive Stock: +${positiveStockQty.toLocaleString()} ${uomLabel}`}
+                                                title={`Current Positive Stock: ${positiveStockQty.toLocaleString()} / ${cap.toLocaleString()} ${uomLabel} (${positivePercent}%)`}
                                             />
                                         )}
                                     </div>

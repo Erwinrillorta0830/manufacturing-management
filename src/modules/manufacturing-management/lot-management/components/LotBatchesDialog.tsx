@@ -70,14 +70,26 @@ export default function LotBatchesDialog({
     if (!lot) return null;
 
     const unitLabel = lot.uomShortcut || lot.uomName || "";
-    const totalQuantity = lotBatches.reduce((sum, b) => sum + Number(b.quantity || 0), 0);
+    const positiveQuantity = lotBatches.reduce((sum, b) => {
+        const q = Number(b.quantity || 0);
+        return q > 0 ? sum + q : sum;
+    }, 0);
+
+    const negativeQuantity = lotBatches.reduce((sum, b) => {
+        const q = Number(b.quantity || 0);
+        return q < 0 ? sum + Math.abs(q) : sum;
+    }, 0);
+
+    const totalQuantity = positiveQuantity;
     const maxCapacity = Number(lot.maxBatchCapacity || 0);
-    const isNegative = totalQuantity < 0;
+    const isNegative = negativeQuantity > 0;
     const occupancyPct = maxCapacity > 0
-        ? Math.max(0, Math.min(100, Math.round((totalQuantity / maxCapacity) * 100)))
+        ? Math.max(0, Math.min(100, Math.round((positiveQuantity / maxCapacity) * 100)))
         : 0;
-    const isOverCapacity = maxCapacity > 0 && totalQuantity > maxCapacity;
-    const isNearCapacity = maxCapacity > 0 && totalQuantity >= maxCapacity * 0.8 && !isOverCapacity && !isNegative;
+    const isOverCapacity = maxCapacity > 0 && positiveQuantity > maxCapacity;
+    const isNearCapacity = maxCapacity > 0 && positiveQuantity >= maxCapacity * 0.8 && !isOverCapacity && !isNegative;
+
+    const greenPercent = maxCapacity > 0 ? Math.max(0, Math.min(100, Math.round((positiveQuantity / maxCapacity) * 100))) : 0;
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -120,9 +132,9 @@ export default function LotBatchesDialog({
                             )}
 
                             {isNegative ? (
-                                <span className="px-2.5 py-1 rounded-md text-xs font-bold border flex items-center gap-1.5 bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30 animate-pulse">
+                                <span className="px-2.5 py-1 rounded-md text-xs font-bold border flex items-center gap-1.5 bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30">
                                     <AlertTriangle className="h-3.5 w-3.5" />
-                                    Stock Deficit ({totalQuantity.toLocaleString()} {unitLabel})
+                                    Shortfall (-{negativeQuantity.toLocaleString()} {unitLabel})
                                 </span>
                             ) : (
                                 <span
@@ -147,35 +159,29 @@ export default function LotBatchesDialog({
                             <span className="text-[11px] font-semibold text-muted-foreground shrink-0">
                                 Capacity:
                             </span>
-                            <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden border border-border/30">
-                                {isNegative ? (
+                            <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden border border-border/30 flex relative">
+                                {positiveQuantity > 0 && (
                                     <div
-                                        className="h-full rounded-full bg-rose-500 transition-all duration-300 animate-pulse"
-                                        style={{ width: "100%" }}
-                                        title={`Stock Deficit: ${totalQuantity.toLocaleString()} ${unitLabel}`}
-                                    />
-                                ) : (
-                                    <div
-                                        className={`h-full rounded-full transition-all duration-300 ${
+                                        className={`h-full rounded-full transition-all duration-300 shrink-0 ${
                                             isOverCapacity
                                                 ? "bg-rose-600"
                                                 : isNearCapacity
                                                   ? "bg-amber-500"
                                                   : "bg-primary"
                                         }`}
-                                        style={{ width: `${occupancyPct}%` }}
+                                        style={{ width: `${greenPercent}%` }}
+                                        title={`Current Positive Stock: ${positiveQuantity.toLocaleString()} / ${maxCapacity.toLocaleString()} ${unitLabel} (${greenPercent}%)`}
                                     />
                                 )}
                             </div>
-                            <span className={`text-[11px] font-medium shrink-0 ${isNegative ? "text-rose-600 dark:text-rose-400 font-bold" : "text-muted-foreground"}`}>
-                                {isNegative ? (
-                                    <>
-                                        <span className="font-mono">{totalQuantity.toLocaleString()}</span> / {maxCapacity.toLocaleString()} {unitLabel} (Deficit)
-                                    </>
+                            <span className="text-[11px] font-medium shrink-0 text-muted-foreground">
+                                {positiveQuantity.toLocaleString()} / {maxCapacity.toLocaleString()} {unitLabel}
+                                {negativeQuantity > 0 ? (
+                                    <span className="ml-1 text-rose-600 dark:text-rose-400 font-bold">
+                                        (-{negativeQuantity.toLocaleString()} Shortfall)
+                                    </span>
                                 ) : (
-                                    <>
-                                        {totalQuantity.toLocaleString()} / {maxCapacity.toLocaleString()} {unitLabel} ({occupancyPct}%)
-                                    </>
+                                    ` (${occupancyPct}%)`
                                 )}
                             </span>
                         </div>
