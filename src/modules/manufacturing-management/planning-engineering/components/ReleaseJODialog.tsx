@@ -471,7 +471,7 @@ export function ReleaseJODialog({
                     <DialogTitle className="text-lg font-bold flex items-center justify-between text-foreground">
                         <span>Release Production Run</span>
                         <span className="text-xs bg-primary/20 text-primary border border-primary/30 px-2.5 py-0.5 rounded-full font-semibold">
-                            Step {currentStep} of 3
+                            Step {currentStep} of 4
                         </span>
                     </DialogTitle>
                     <DialogDescription className="text-muted-foreground text-xs">
@@ -480,14 +480,28 @@ export function ReleaseJODialog({
                 </DialogHeader>
 
                 {/* Progress Indicators */}
-                <div className="flex items-center gap-1.5 px-1 py-1">
-                    {[1, 2, 3].map((s) => (
-                        <div
-                            key={s}
-                            className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
-                                s <= currentStep ? "bg-primary" : "bg-muted"
-                            }`}
-                        />
+                <div className="flex items-center gap-2 px-1 py-1">
+                    {[
+                        { step: 1, label: "Header" },
+                        { step: 2, label: "Materials & Timing" },
+                        { step: 3, label: "Team" },
+                        { step: 4, label: "Review" }
+                    ].map(({ step, label }) => (
+                        <div key={step} className="flex flex-1 items-center gap-2">
+                            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                                step < currentStep
+                                    ? "bg-emerald-500 text-white"
+                                    : step === currentStep
+                                        ? "bg-primary text-primary-foreground"
+                                        : "bg-muted text-muted-foreground"
+                            }`}>
+                                {step < currentStep ? "✓" : step}
+                            </span>
+                            <span className={`text-[11px] font-semibold ${step === currentStep ? "text-foreground" : "text-muted-foreground"}`}>
+                                {label}
+                            </span>
+                            {step < 4 && <span className="h-px flex-1 bg-border" />}
+                        </div>
                     ))}
                 </div>
 
@@ -999,7 +1013,7 @@ export function ReleaseJODialog({
                                                         <div className="space-y-1">
                                                             <div className="flex items-center gap-2">
                                                                 <span className="text-[9px] font-black bg-muted text-muted-foreground border border-border px-2 py-0.5 rounded-md">
-                                                                    Step {seq}0
+                                                                    Step {seq}
                                                                 </span>
                                                                 <h5 className="text-xs font-bold text-foreground">{route.operation_name || "Production Operation"}</h5>
                                                             </div>
@@ -1036,6 +1050,66 @@ export function ReleaseJODialog({
                             </div>
                         )}
 
+                        {/* STEP 4: REVIEW & CONFIRM */}
+                        {currentStep === 4 && (
+                            <div className="space-y-4">
+                                <div className="bg-muted/50 border border-border/80 rounded-xl p-4 text-xs space-y-2">
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Job Order Reference:</span>
+                                        <span className="font-mono font-bold text-foreground">{joNumber}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Product:</span>
+                                        <span className="font-bold text-foreground">{selectedLines[0]?.product_id?.product_name}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Recipe Version:</span>
+                                        <span className="font-bold text-primary">{selectedLines[0]?.bom_version_name || "Default"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Target Branch:</span>
+                                        <span className="font-semibold text-foreground">
+                                            {(branches.find((b) => b.id === selectedBranchId) as any)?.branch_name || selectedBranchId}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Target Quantity:</span>
+                                        <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Due Date:</span>
+                                        <span className="font-semibold text-foreground">{dueDate || "Not set"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Shift:</span>
+                                        <span className="font-semibold text-foreground">{shiftOption}h</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Consolidated Lines / Sales Orders:</span>
+                                        <span className="font-semibold text-foreground">{selectedLines.length}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Routing Steps:</span>
+                                        <span className="font-semibold text-foreground">{routings.length}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Operator Assignments:</span>
+                                        <span className="font-semibold text-foreground">
+                                            {Object.values(assignments).reduce((sum, ids) => sum + ids.length, 0)}
+                                        </span>
+                                    </div>
+                                    {remarks && (
+                                        <div className="border-t border-border/60 pt-2 text-muted-foreground">
+                                            Remarks: <span className="text-foreground">{remarks}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">
+                                    Review the details above, then confirm to release the Job Order and lock FIFO material reservations.
+                                </p>
+                            </div>
+                        )}
+
                     </div>
                 )}
 
@@ -1062,14 +1136,14 @@ export function ReleaseJODialog({
                         >
                             Cancel
                         </Button>
-                        {currentStep < 3 ? (
+                        {currentStep < 4 ? (
                             <Button
                                 size="sm"
                                 onClick={() => setCurrentStep((prev) => prev + 1)}
                                 disabled={loadingDetails || !joNumber || targetQuantity <= 0}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
-                                Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+                                {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
                             <Button

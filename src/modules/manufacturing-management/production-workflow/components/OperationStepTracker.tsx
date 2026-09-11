@@ -108,7 +108,7 @@ export function OperationStepTracker({
                                         {isCompleted ? <CheckCircle2 className="h-3.5 w-3.5" /> : task.sequence_order}
                                     </span>
                                     <span className="text-[10px] font-mono uppercase font-bold text-muted-foreground">
-                                        Step {task.sequence_order}0
+                                        Step {task.sequence_order}
                                     </span>
                                 </div>
                                 <Badge
@@ -162,7 +162,7 @@ export function OperationStepTracker({
                             )}
 
                             {/* QA Gate Indicator */}
-                            {task.requires_qa === 1 && (
+                            {task.requires_qa === 1 ? (
                                 <div className="flex items-center justify-between text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/5 p-1.5 rounded-lg border border-amber-500/20 font-semibold">
                                     <span className="flex items-center gap-1">
                                         <ShieldAlert className="h-3.5 w-3.5 text-amber-500" /> QA Checklist Required
@@ -181,6 +181,23 @@ export function OperationStepTracker({
                                         </Button>
                                     )}
                                 </div>
+                            ) : (
+                                !isCompleted && !readOnly && (
+                                    <div className="flex items-center justify-between text-[10px] text-muted-foreground bg-muted/20 p-1.5 rounded-lg border border-border/50 font-semibold">
+                                        <span>No QA gate on this step</span>
+                                        <Button
+                                            size="xs"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onOpenQAModal(task.id);
+                                            }}
+                                            className="h-5 text-[10px] px-1.5"
+                                        >
+                                            Complete Step
+                                        </Button>
+                                    </div>
+                                )
                             )}
                         </div>
                     );

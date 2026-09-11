@@ -35,6 +35,7 @@ interface OperatorPanelProps {
     handleStopTimer: (taskId: number, opUserId: number) => void;
     handleSaveManualHours: (taskId: number, opUserId: number, hours: string) => void;
     handleCompleteStepClick: (taskId: number) => void;
+    readOnly?: boolean;
 }
 
 interface BreakdownMaterial {
@@ -101,7 +102,8 @@ export default function OperatorPanel({
     handleStartTimer,
     handleStopTimer,
     handleSaveManualHours,
-    handleCompleteStepClick
+    handleCompleteStepClick,
+    readOnly = false
 }: OperatorPanelProps) {
     const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
     const [localAssigneeId, setLocalAssigneeId] = useState("");
@@ -308,7 +310,7 @@ export default function OperatorPanel({
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
                     <div>
                         <span className="text-[10px] font-bold text-primary uppercase tracking-widest block font-mono">
-                            Workstation Step {selectedTask.sequence_order}0
+                            Workstation Step {selectedTask.sequence_order}
                         </span>
                         <CardTitle className="text-base sm:text-lg font-extrabold text-foreground mt-0.5">
                             {selectedTask.name}
@@ -372,7 +374,7 @@ export default function OperatorPanel({
                     </div>
 
                     {/* Compact flex-row operator check-in toolbar */}
-                    {!isJobOnHold && (
+                    {!isJobOnHold && !readOnly && (
                         <div className="flex flex-wrap gap-2 items-center bg-muted/30 p-2 border border-border/50 rounded-xl">
                             <div className="flex-1 min-w-[200px]">
                                 <SearchableSelect
@@ -501,6 +503,7 @@ export default function OperatorPanel({
                                                                 size="xs"
                                                                 className="h-6.5 text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-900/50 dark:hover:bg-amber-950/40 px-2 text-[10px] font-medium"
                                                                 onClick={() => handleStopTimer(selectedTask.id, gop.user_id)}
+                                                                disabled={readOnly}
                                                             >
                                                                 <Square className="mr-1 h-3 w-3 fill-current" /> Stop
                                                             </Button>
@@ -510,6 +513,7 @@ export default function OperatorPanel({
                                                                 size="xs"
                                                                 className="h-6.5 text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-900/50 dark:hover:bg-emerald-950/40 px-2 text-[10px] font-medium"
                                                                 onClick={() => handleStartTimer(selectedTask.id, gop.user_id)}
+                                                                disabled={readOnly}
                                                             >
                                                                 <Play className="mr-1 h-3 w-3 fill-current" /> Run
                                                             </Button>
@@ -522,6 +526,7 @@ export default function OperatorPanel({
                                                                 setLocalActiveManualUserId(gop.user_id);
                                                                 setLocalManualHours(gop.total_logged_hours.toString());
                                                             }}
+                                                            disabled={readOnly}
                                                             title="Edit hours manually"
                                                         >
                                                             Manual
@@ -531,6 +536,7 @@ export default function OperatorPanel({
                                                             size="xs"
                                                             className="h-6.5 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 px-1.5"
                                                             onClick={() => handleRemoveOperator(selectedTask.id, gop.user_id)}
+                                                            disabled={readOnly}
                                                             title="Remove operator assignment"
                                                         >
                                                             <Trash className="h-3.5 w-3.5" />
@@ -553,6 +559,7 @@ export default function OperatorPanel({
                     variant="outline"
                     size="sm"
                     onClick={() => setIsBreakdownOpen(true)}
+                    disabled={readOnly}
                     className="font-bold border-red-500/25 bg-red-950/5 text-red-500 hover:bg-red-900/10 h-8 text-xs px-3"
                 >
                     <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Workstation Halt / Breakdown
@@ -583,7 +590,7 @@ export default function OperatorPanel({
                             >
                                 {sortedTasks.map((t) => (
                                     <option key={t.id} value={t.name}>
-                                        {t.name} (Step {t.sequence_order}0)
+                                        {t.name} (Step {t.sequence_order})
                                     </option>
                                 ))}
                             </select>

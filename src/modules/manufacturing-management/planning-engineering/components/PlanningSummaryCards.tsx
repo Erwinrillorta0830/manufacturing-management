@@ -25,15 +25,15 @@ export function PlanningSummaryCards({
                     onSelectTab ? "cursor-pointer hover:border-primary/50 hover:shadow-md" : ""
                 }`}
             >
-                <div className="space-y-1">
+                <div className="space-y-1" title="Unfulfilled Sales Order lines for the selected branch.">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Pending Demand Lines
+                        Sales Order Demand
                     </p>
                     <div className="text-2xl font-black text-foreground">
                         {demandLinesCount.toLocaleString()}
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        For Production and In Production demand lines
+                        Unfulfilled demand lines in this branch
                     </p>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
@@ -48,7 +48,7 @@ export function PlanningSummaryCards({
                     shortfallItemsCount > 0 ? "border-amber-500/30 bg-amber-500/5" : ""
                 } ${onSelectTab ? "cursor-pointer hover:border-amber-500/50 hover:shadow-md" : ""}`}
             >
-                <div className="space-y-1">
+                <div className="space-y-1" title="Net requirement items that need purchasing or replenishment.">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         Material Shortfalls
                     </p>
@@ -71,15 +71,15 @@ export function PlanningSummaryCards({
                     onSelectTab ? "cursor-pointer hover:border-sky-500/50 hover:shadow-md" : ""
                 }`}
             >
-                <div className="space-y-1">
+                <div className="space-y-1" title="Scheduled and released Job Orders for the selected branch, including their staging state.">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Unreleased JO Queue
+                        Job Order Queue
                     </p>
                     <div className="text-2xl font-black text-foreground">
                         {unreleasedJobsCount.toLocaleString()}
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        Draft & Planned job orders
+                        Scheduled &amp; released Job Orders
                     </p>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-500 shrink-0">

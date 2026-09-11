@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder, PRODUCTION_WORKFLOW_STATUS_FILTERS } from "../types";
-import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../../job-order-status";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { resolveJobOrderJourney } from "../../shared/job-order-journey";
+import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
+import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -20,24 +23,8 @@ interface ReleasedJobQueueProps {
     branches: any[];
     selectedBranchFilter: string;
     setSelectedBranchFilter: (b: string) => void;
+    onClearFilters?: () => void;
 }
-
-const getStatusBadgeVariant = (status: string) => {
-    switch (normalizeJobOrderStatus(status)) {
-        case "Draft":
-            return "secondary";
-        case "Proceed":
-            return "outline";
-        case "Ongoing":
-            return "default";
-        case "On Hold":
-            return "destructive";
-        case "Finished":
-            return "default";
-        default:
-            return "outline";
-    }
-};
 
 export function ReleasedJobQueue({
     filteredJobOrders,
@@ -51,7 +38,8 @@ export function ReleasedJobQueue({
     loadingJobs,
     branches,
     selectedBranchFilter,
-    setSelectedBranchFilter
+    setSelectedBranchFilter,
+    onClearFilters
 }: ReleasedJobQueueProps) {
     // Find all Job Orders that have a parent present in the current filtered list
     const childJobOrderIds = new Set<string>();
@@ -72,13 +60,12 @@ export function ReleasedJobQueue({
         const parentJo = isChild ? jobOrders.find((j) => Number(j.order_id) === Number(jo.parentJobOrderId)) : null;
         const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
 
-        const producedQty = jo.producedQty || 0;
-        const normalizedStatus = normalizeJobOrderStatus(jo.status);
-        const statusLabel = normalizedStatus === JOB_ORDER_STATUS.PROCEED
-            ? JOB_ORDER_STATUS.RELEASED
-            : normalizedStatus === JOB_ORDER_STATUS.ONGOING
-            ? JOB_ORDER_STATUS.IN_PROGRESS
-            : displayJobOrderStatus(jo.status);
+        const producedQty = jo.producedQty ?? jo.completed_quantity ?? 0;
+        const journey = resolveJobOrderJourney({
+            status: jo.status,
+            allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
+            jobOrderNo: jo.jo_id
+        });
 
         return (
             <div
@@ -101,20 +88,10 @@ export function ReleasedJobQueue({
                     <span className="font-mono text-sm font-semibold tracking-tight">
                         {jo.jo_id}
                     </span>
-                    <Badge
-                        variant={getStatusBadgeVariant(jo.status)}
-                        className={
-                            isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS)
-                                ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                                : isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.CLOSED)
-                                ? "bg-blue-500 hover:bg-blue-600 text-white"
-                                : ""
-                        }
-                    >
-                        {statusLabel}
-                    </Badge>
+                    <JobOrderStatusBadge status={jo.status} />
                 </div>
                 <h4 className="font-medium text-sm line-clamp-1 mb-1">{jo.product_name}</h4>
+                <JobOrderJourneyBar journey={journey} compact className="mb-2" />
                 {jo.version_name && (
                     <div className="text-[10px] font-mono text-primary font-bold mb-2">
                         Recipe: {jo.version_name}
@@ -211,7 +188,13 @@ export function ReleasedJobQueue({
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground text-sm border-2 border-dashed rounded-lg">
                         <AlertCircle className="mx-auto h-8 w-8 mb-2 text-muted-foreground/60" />
-                        No matching Job Orders found.
+                        <p>No matching Job Orders found.</p>
+                        <p className="text-xs mt-1">Try a different status chip or branch, or clear the filters.</p>
+                        {onClearFilters && (
+                            <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-3 h-8 text-xs">
+                                Clear filters
+                            </Button>
+                        )}
                     </div>
                 ) : (
                     <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">

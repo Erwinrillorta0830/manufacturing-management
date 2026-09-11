@@ -1,8 +1,11 @@
 /* eslint-disable */
 import React from "react";
+import Link from "next/link";
 import { Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { resolveJobOrderJourney } from "../../shared/job-order-journey";
+import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
+import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 
 export interface FamilyGroup {
     familyId: string;
@@ -27,7 +30,7 @@ export function JOTable({
     if (unreleasedJobs.length === 0) {
         return (
             <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg bg-muted/20">
-                No unreleased (Draft or Planned) job orders found in this branch.
+                No Job Orders in this branch yet. Release a Sales Order demand line above, or create a Buffer JO to start the workflow.
             </div>
         );
     }
@@ -41,7 +44,7 @@ export function JOTable({
                         <th className="px-4 py-3">Product Name</th>
                         <th className="px-4 py-3 text-right">Target Qty</th>
                         <th className="px-4 py-3">Duration / Lead Time</th>
-                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Stage / Status</th>
                         <th className="px-4 py-3">Remarks / Constraints</th>
                         <th className="px-4 py-3 text-center">Actions</th>
                     </tr>
@@ -67,6 +70,7 @@ export function JOTable({
                         if (!fg.isFamily) {
                             const jo = fg.parentJo;
                             const metrics = computeJoMetrics(jo);
+                            const journey = resolveJobOrderJourney({ status: jo.status, jobOrderNo: jo.jo_id });
                             return (
                                 <tr key={jo.jo_id || jo.id} className="hover:bg-muted/10">
                                     <td className="px-4 py-3 font-semibold text-primary">{jo.jo_id}</td>
@@ -98,26 +102,41 @@ export function JOTable({
                                         )}
                                     </td>
                                     <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            isJobOrderStatus(jo.status, JOB_ORDER_STATUS.DRAFT)
-                                                ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                        }`}>
-                                            {displayJobOrderStatus(jo.status)}
-                                        </span>
+                                        <div className="space-y-1.5">
+                                            <JobOrderStatusBadge status={jo.status} />
+                                            <JobOrderJourneyBar journey={journey} compact />
+                                        </div>
                                     </td>
                                     <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={jo.remarks || ""}>
                                         {jo.remarks || "No planning constraints logged."}
                                     </td>
                                     <td className="px-4 py-3 text-center">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => handleOpenDetails(jo)}
-                                            className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
-                                        >
-                                            Manage / View Details
-                                        </Button>
+                                        <div className="flex items-center justify-center gap-1.5">
+                                            {journey.nextAction?.href && !journey.nextAction.blockedReason ? (
+                                                <Button asChild size="sm" className="h-8 text-xs font-semibold">
+                                                    <Link href={journey.nextAction.href}>{journey.nextAction.label}</Link>
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleOpenDetails(jo)}
+                                                    disabled={Boolean(journey.nextAction?.blockedReason)}
+                                                    title={journey.nextAction?.blockedReason || journey.nextAction?.description}
+                                                    className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                >
+                                                    {journey.nextAction?.label || "Manage / View Details"}
+                                                </Button>
+                                            )}
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={() => handleOpenDetails(jo)}
+                                                className="h-8 text-xs text-muted-foreground"
+                                            >
+                                                Details
+                                            </Button>
+                                        </div>
                                     </td>
                                 </tr>
                             );
@@ -202,13 +221,13 @@ export function JOTable({
                                         )}
                                     </td>
                                     <td className="px-4 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            isJobOrderStatus(fg.parentJo.status, JOB_ORDER_STATUS.DRAFT)
-                                                ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                        }`}>
-                                            {displayJobOrderStatus(fg.parentJo.status)}
-                                        </span>
+                                        <div className="space-y-1.5">
+                                            <JobOrderStatusBadge status={fg.parentJo.status} />
+                                            <JobOrderJourneyBar
+                                                journey={resolveJobOrderJourney({ status: fg.parentJo.status, jobOrderNo: fg.parentJo.jo_id })}
+                                                compact
+                                            />
+                                        </div>
                                     </td>
                                     <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={fg.parentJo.remarks || ""}>
                                         {fg.parentJo.remarks || "No planning constraints logged."}
@@ -265,13 +284,7 @@ export function JOTable({
                                                 )}
                                             </td>
                                             <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                     isJobOrderStatus(cJo.status, JOB_ORDER_STATUS.DRAFT)
-                                                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                                        : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                                                }`}>
-                                                     {displayJobOrderStatus(cJo.status)}
-                                                </span>
+                                                <JobOrderStatusBadge status={cJo.status} />
                                             </td>
                                             <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>
                                                 {cJo.remarks || "Auto-spawned for sub-assembly shortfall."}

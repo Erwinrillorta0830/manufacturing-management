@@ -352,6 +352,8 @@ export const printYieldClosingReceipt = (data: PrintReceiptData) => {
 export function useManufacturingQA() {
     // Primary Tab State (defaults to QA & Rework Inspection Workcenter)
     const [activeTab, setActiveTab] = useState("jo-inspection");
+    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const [closingLoaded, setClosingLoaded] = useState(false);
 
     // Core Data Lists
     const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
@@ -387,6 +389,8 @@ export function useManufacturingQA() {
         reason: "all"
     });
     const [holdsSearch, setHoldsSearch] = useState("");
+    const [holdsStatusFilter, setHoldsStatusFilter] = useState<"pending" | "resolved" | "all">("pending");
+    const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
     const [dailySearch, setDailySearch] = useState("");
     const [finalSearch, setFinalSearch] = useState("");
     const setJobOrderSearch = useCallback((value: string) => {
@@ -469,7 +473,7 @@ export function useManufacturingQA() {
     // Supervisor Override Dialog states
     const [selectedDisp, setSelectedDisp] = useState<DispositionRecord | null>(null);
     const [isOverrideDialogOpen, setIsOverrideDialogOpen] = useState(false);
-    const [overrideDecision, setOverrideDecision] = useState<"Release with Deviation" | "Rework" | "Scrap">("Release with Deviation");
+    const [overrideDecision, setOverrideDecision] = useState<"" | "Release with Deviation" | "Rework" | "Scrap">("");
     const [overrideComments, setOverrideComments] = useState("");
 
     // Daily Yield QA & Final release QA states
@@ -530,7 +534,7 @@ export function useManufacturingQA() {
     const [microbiologicalStatus, setMicrobiologicalStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
     const [packagingSealPassed, setPackagingSealPassed] = useState(true);
     const [labelCompliancePassed, setLabelCompliancePassed] = useState(true);
-    const [overallDisposition, setOverallDisposition] = useState<"Approved" | "Quarantined" | "Rejected">("Approved");
+    const [overallDisposition, setOverallDisposition] = useState<"" | "Approved" | "Quarantined" | "Rejected">("");
     const [coaRefNo, setCoaRefNo] = useState("");
     const [finalRemarks, setFinalRemarks] = useState("");
     const [isFinalQAAuditOpen, setIsFinalQAAuditOpen] = useState(false);
@@ -746,7 +750,9 @@ export function useManufacturingQA() {
                     page: holdsPage,
                     pageSize: holdsPageSize,
                     search: holdsSearch,
-                    status: "Pending",
+                    // Fetch every status; the tab filters client-side so the
+                    // pending list used for quarantine gating stays populated.
+                    status: "",
                     signal: controller.signal
                 });
                 setDispositions(result.data);
@@ -795,7 +801,10 @@ export function useManufacturingQA() {
             if (!silent) console.error(`Manufacturing QA ${tab} fetch error:`, error);
             throw error instanceof Error ? error : new Error(message);
         } finally {
-            if (!controller.signal.aborted) setTabLoading(false);
+            if (!controller.signal.aborted) {
+                setTabLoading(false);
+                if (tab === "closing") setClosingLoaded(true);
+            }
         }
     }, [
         inspectionPage,
@@ -1049,6 +1058,37 @@ export function useManufacturingQA() {
         });
         setIsYieldDialogOpen(true);
     };
+
+    // Deep link support:
+    //   /mm/manufacturing-qa?jo=JO-XXXX opens yield closing for that JO
+    //   /mm/manufacturing-qa?tab=final-qa opens a specific tab
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const params = new URLSearchParams(window.location.search);
+        const tab = params.get("tab");
+        const validTabs = ["jo-inspection", "qa-inspection-logs", "closing", "holds", "daily-qa", "final-qa", "closed-qa"];
+        if (tab && validTabs.includes(tab)) {
+            setActiveTab(tab);
+        }
+        const jo = params.get("jo");
+        if (jo) {
+            setPendingDeepLinkJo(jo);
+            // The closing queue only loads when its tab is active.
+            setActiveTab("closing");
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!pendingDeepLinkJo || !closingLoaded) return;
+        const match = closingJobOrders.find((jo) => String(jo.job_order_no || jo.jo_id || "") === pendingDeepLinkJo);
+        if (match) {
+            setActiveTab("closing");
+            handleOpenYieldDialog(match);
+        } else {
+            setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the Yield Closing queue. It may already be closed (check Closed Runs) or not yet eligible for closing.`);
+        }
+        setPendingDeepLinkJo(null);
+    }, [pendingDeepLinkJo, closingJobOrders, closingLoaded]);
 
     const handlePostingBranchModeChange = (mode: "existing" | "new") => {
         setPostingBranchMode(mode);
@@ -1340,7 +1380,7 @@ export function useManufacturingQA() {
     // Handle Open Supervisor Override Dialog
     const handleOpenOverrideDialog = (disp: DispositionRecord) => {
         setSelectedDisp(disp);
-        setOverrideDecision("Release with Deviation");
+        setOverrideDecision("");
         setOverrideComments("");
         setIsOverrideDialogOpen(true);
     };
@@ -1348,6 +1388,10 @@ export function useManufacturingQA() {
     // Submit Supervisor Override resolution
     const handleSubmitOverride = async () => {
         if (!selectedDisp) return;
+        if (!overrideDecision) {
+            toast.error("Select a disposition decision before applying the override.");
+            return;
+        }
         if (!overrideComments.trim()) {
             toast.error("Please enter supervisor reasoning comments.");
             return;
@@ -1522,7 +1566,7 @@ export function useManufacturingQA() {
         setMicrobiologicalStatus("Passed");
         setPackagingSealPassed(true);
         setLabelCompliancePassed(true);
-        setOverallDisposition("Approved");
+        setOverallDisposition("");
         setCoaRefNo(`COA-${lot.lot_number}`);
         setFinalRemarks("");
         setIsFinalReleaseOpen(true);
@@ -1556,6 +1600,11 @@ export function useManufacturingQA() {
     // Submit Final QA Release
     const handleSubmitFinalRelease = async () => {
         if (!selectedLot) return;
+
+        if (!overallDisposition) {
+            toast.error("Select an overall lot disposition before recording the release.");
+            return;
+        }
 
         if (getFinalReleaseForLot(selectedLot)) {
             toast.error("This lot already has a final QA result and cannot be released again.");
@@ -1759,6 +1808,10 @@ export function useManufacturingQA() {
         handleHoldsFiltersChange,
         handleDailyFiltersChange,
         handleFinalFiltersChange,
+        holdsStatusFilter,
+        setHoldsStatusFilter,
+        deepLinkNotice,
+        setDeepLinkNotice,
         inspectionPage,
         inspectionPageSize,
         inspectionMeta,

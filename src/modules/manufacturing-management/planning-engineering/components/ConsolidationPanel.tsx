@@ -59,7 +59,7 @@ export function ConsolidationPanel({
             <CardContent className="pt-4 space-y-4">
                 {selectedLines.length === 0 ? (
                     <div className="text-center py-6 text-xs text-muted-foreground font-medium">
-                        No lines selected. Use checkboxes in the demand table below to group orders.
+                        No lines selected. Use checkboxes in the demand table on the left to group orders.
                     </div>
                 ) : (
                     <div className="space-y-4">
@@ -150,6 +150,14 @@ export function ConsolidationPanel({
                                 >
                                     Direct Allocate & Invoice
                                 </Button>
+                            )}
+
+                            {mergeValidation.isValid && versionStock !== null && versionStock < totalRemaining && (
+                                <p className="text-[10px] text-muted-foreground leading-snug">
+                                    Direct Allocate &amp; Invoice becomes available when available version stock
+                                    ({(versionStock ?? 0).toLocaleString()}) covers the remaining quantity
+                                    ({totalRemaining.toLocaleString()}). Release a Job Order to reserve stock instead.
+                                </p>
                             )}
                         </div>
                     </div>
