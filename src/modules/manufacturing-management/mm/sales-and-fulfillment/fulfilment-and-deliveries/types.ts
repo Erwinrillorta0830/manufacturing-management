@@ -13,6 +13,21 @@ export type LineStatus =
     | "Fulfilled with Returns"
     | "Unfulfilled / Returns";
 
+export interface LineItemReservation {
+    reservation_id: number;
+    sales_order_detail_id: number;
+    inventory_lot_id: number;
+    product_id?: number;
+    lot_id?: number;
+    lot_name?: string;
+    lot_number?: string;
+    batch_no?: string;
+    reserved_quantity: number;
+    picked_quantity: number;
+    returned_quantity?: number;
+    status: string;
+}
+
 export interface ClearanceLineItem {
     detail_id: number;
     product_id: number;
@@ -27,6 +42,7 @@ export interface ClearanceLineItem {
     has_concern: boolean;
     concern_notes: string;
     line_status: LineStatus;
+    reservations?: LineItemReservation[];
 }
 
 export interface LinkedSalesReturn {
@@ -97,16 +113,20 @@ export interface ConsolidatedClearanceSubmissionPayload {
     orders: {
         order_id: number;
         invoice_id: number;
+        order_no?: string;
+        fulfillment_status?: FulfillmentStatus;
         clearance_remarks?: string;
         linked_return_id?: number | null;
         linked_return_number?: string | null;
         items: {
             detail_id: number;
             product_id: number;
+            ordered_quantity?: number;
             received_quantity: number;
             returned_quantity: number;
             has_concern: boolean;
             concern_notes: string;
+            reservations?: LineItemReservation[];
         }[];
     }[];
 }

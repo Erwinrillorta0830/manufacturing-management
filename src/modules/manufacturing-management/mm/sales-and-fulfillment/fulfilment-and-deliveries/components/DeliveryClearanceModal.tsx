@@ -159,7 +159,7 @@ export default function DeliveryClearanceModal({
 
             return {
                 ...ord,
-                remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : ord.remarks,
+                remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : "",
                 fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
                 linked_sales_return: savedLinkedReturn,
                 items,
@@ -249,7 +249,7 @@ export default function DeliveryClearanceModal({
 
                         return {
                             ...freshOrd,
-                            remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : freshOrd.remarks,
+                            remarks: savedOrder?.remarks !== undefined ? savedOrder.remarks : "",
                             fulfillment_status: savedOrder?.fulfillment_status || derivedStatus,
                             linked_sales_return: savedLinkedReturn,
                             items,
@@ -332,17 +332,33 @@ export default function DeliveryClearanceModal({
 
     const isMissingRequiredReturn = missingReturnOrders.length > 0;
 
-    // Check quantity invariants across all orders and items
+    // Strictly enforce remarks for orders with returns, concerns, or quantity variances
+    const missingRemarksOrders = useMemo(() => {
+        return orders.filter((ord) => {
+            const status = ord.fulfillment_status;
+            const hasVariance = (ord.items || []).some(
+                (i) => i.ordered_quantity !== i.received_quantity + i.returned_quantity
+            );
+            const requiresRemarks =
+                status === "Fulfilled with Returns" ||
+                status === "Fulfilled with Concerns" ||
+                status === "Unfulfilled / Returns" ||
+                hasVariance;
+
+            if (requiresRemarks) {
+                return !ord.remarks || ord.remarks.trim().length === 0;
+            }
+            return false;
+        });
+    }, [orders]);
+
+    const isMissingRequiredRemarks = missingRemarksOrders.length > 0;
+
+    // Check quantity validity across all orders and items (do not block variances, only invalid negative numbers)
     const validationIssues = useMemo(() => {
         const issues: string[] = [];
         orders.forEach((ord) => {
             ord.items.forEach((item, itemIdx) => {
-                const sum = item.received_quantity + item.returned_quantity;
-                if (sum !== item.ordered_quantity) {
-                    issues.push(
-                        `Order ${ord.order_no} Line ${itemIdx + 1} (${item.product_name}): Fulfilled (${item.received_quantity}) + Returned (${item.returned_quantity}) must equal Ordered (${item.ordered_quantity}).`
-                    );
-                }
                 if (item.received_quantity < 0 || item.returned_quantity < 0) {
                     issues.push(`Order ${ord.order_no} Line ${itemIdx + 1}: Quantities cannot be negative.`);
                 }
@@ -351,7 +367,7 @@ export default function DeliveryClearanceModal({
         return issues;
     }, [orders]);
 
-    const isValid = validationIssues.length === 0 && orders.length > 0 && !isMissingRequiredReturn;
+    const isValid = validationIssues.length === 0 && orders.length > 0 && !isMissingRequiredReturn && !isMissingRequiredRemarks;
 
     // Helper to redirect to Sales Return module for an order (edit existing or create new)
     const handleRedirectToSalesReturn = (ord: ConsolidatedSalesOrderRecord) => {
@@ -404,30 +420,57 @@ export default function DeliveryClearanceModal({
 
             let updatedItems = ord.items;
             if (preset === "Unfulfilled / Returns") {
-                // All items returned to hub: received is 0, returned equals ordered quantity
-                updatedItems = (ord.items || []).map((item) => ({
-                    ...item,
-                    received_quantity: 0,
-                    returned_quantity: item.ordered_quantity,
-                    has_concern: false,
-                    line_status: "Unfulfilled / Returns" as LineStatus,
-                }));
+                // All items returned to hub: received is 0, returned equals physical dispatch (picked/invoiced) or existing received
+                updatedItems = (ord.items || []).map((item) => {
+                    const physicalDispatched = (item.reservations || []).reduce(
+                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        0
+                    );
+                    const returnQty = physicalDispatched > 0
+                        ? physicalDispatched
+                        : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+                    return {
+                        ...item,
+                        received_quantity: 0,
+                        returned_quantity: returnQty,
+                        has_concern: false,
+                        line_status: "Unfulfilled / Returns" as LineStatus,
+                    };
+                });
             } else if (preset === "Fulfilled") {
-                updatedItems = (ord.items || []).map((item) => ({
-                    ...item,
-                    received_quantity: item.ordered_quantity,
-                    returned_quantity: 0,
-                    has_concern: false,
-                    line_status: "Fulfilled" as LineStatus,
-                }));
+                updatedItems = (ord.items || []).map((item) => {
+                    const physicalDispatched = (item.reservations || []).reduce(
+                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        0
+                    );
+                    const targetQty = physicalDispatched > 0
+                        ? Math.min(item.ordered_quantity, physicalDispatched)
+                        : (typeof item.received_quantity === "number" ? item.received_quantity : 0);
+                    return {
+                        ...item,
+                        received_quantity: targetQty,
+                        returned_quantity: 0,
+                        has_concern: false,
+                        line_status: "Fulfilled" as LineStatus,
+                    };
+                });
             } else if (preset === "Fulfilled with Concerns") {
-                updatedItems = (ord.items || []).map((item) => ({
-                    ...item,
-                    received_quantity: item.ordered_quantity,
-                    returned_quantity: 0,
-                    has_concern: true,
-                    line_status: "Fulfilled with Concerns" as LineStatus,
-                }));
+                updatedItems = (ord.items || []).map((item) => {
+                    const physicalDispatched = (item.reservations || []).reduce(
+                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        0
+                    );
+                    const targetQty = physicalDispatched > 0
+                        ? Math.min(item.ordered_quantity, physicalDispatched)
+                        : (typeof item.received_quantity === "number" ? item.received_quantity : 0);
+                    return {
+                        ...item,
+                        received_quantity: targetQty,
+                        returned_quantity: 0,
+                        has_concern: true,
+                        line_status: "Fulfilled with Concerns" as LineStatus,
+                    };
+                });
             } else if (preset === "Fulfilled with Returns") {
                 updatedItems = (ord.items || []).map((item) => ({
                     ...item,
@@ -447,23 +490,6 @@ export default function DeliveryClearanceModal({
 
     // Open Modal 2 for specific SO
     const handleOpenReconciliation = (index: number) => {
-        const targetOrder = orders[index];
-        console.log("[DeliveryClearanceModal] 🔍 Clicked SO row to reconcile:", {
-            orderIndex: index,
-            order_id: targetOrder?.order_id,
-            order_no: targetOrder?.order_no,
-            invoice_id: targetOrder?.invoice_id,
-            invoice_no: targetOrder?.invoice_no,
-            invoice_date: targetOrder?.invoice_date,
-            customer_name: targetOrder?.customer_name,
-            customer_code: targetOrder?.customer_code,
-            salesman_name: targetOrder?.salesman_name,
-            salesman_code: targetOrder?.salesman_code,
-            fulfillment_status: targetOrder?.fulfillment_status,
-            linked_sales_return: targetOrder?.linked_sales_return,
-            items_count: targetOrder?.items?.length,
-            raw_order_object: targetOrder,
-        });
         setSelectedOrderIndex(index);
     };
 
@@ -474,21 +500,29 @@ export default function DeliveryClearanceModal({
         updatedRemarks?: string
     ) => {
         if (selectedOrderIndex === null) return;
-        console.log("[DeliveryClearanceModal] 💾 Reconciled items received from ProductReconciliationModal:", {
-            orderIndex: selectedOrderIndex,
-            order_no: orders[selectedOrderIndex]?.order_no,
-            updatedItems,
-            updatedLinkedReturn,
-            updatedRemarks,
-        });
+        // console.log("[DeliveryClearanceModal] 💾 Reconciled items received from ProductReconciliationModal:", {
+        //     orderIndex: selectedOrderIndex,
+        //     order_no: orders[selectedOrderIndex]?.order_no,
+        //     updatedItems,
+        //     updatedLinkedReturn,
+        //     updatedRemarks,
+        // });
         setOrders((prev) => {
             const next = [...prev];
             const ord = next[selectedOrderIndex];
             const linkedReturn = updatedLinkedReturn !== undefined ? updatedLinkedReturn : ord.linked_sales_return;
             const computed = computePreviewStatus(updatedItems);
-            let newStatus = computed;
-            if (linkedReturn || ord.fulfillment_status === "Fulfilled with Returns") {
+            let newStatus = ord.fulfillment_status || computed;
+            if (linkedReturn) {
+                newStatus = "Fulfilled with Returns";
+            } else if (ord.fulfillment_status === "Fulfilled with Concerns") {
+                newStatus = "Fulfilled with Concerns";
+            } else if (ord.fulfillment_status === "Fulfilled with Returns") {
                 newStatus = computed === "Unfulfilled / Returns" ? "Unfulfilled / Returns" : "Fulfilled with Returns";
+            } else if (ord.fulfillment_status === "Unfulfilled / Returns") {
+                newStatus = "Unfulfilled / Returns";
+            } else {
+                newStatus = computed;
             }
             next[selectedOrderIndex] = {
                 ...ord,
@@ -512,8 +546,15 @@ export default function DeliveryClearanceModal({
             return;
         }
 
+        if (isMissingRequiredRemarks) {
+            setFormError(
+                `Remarks are required for Order ${missingRemarksOrders[0].order_no} (${missingRemarksOrders[0].fulfillment_status}). Please click the order row to enter remarks.`
+            );
+            return;
+        }
+
         if (!isValid) {
-            setFormError(validationIssues[0] || "Please balance Received + Returned before submitting.");
+            setFormError(validationIssues[0] || "Please check quantities and required fields before submitting.");
             return;
         }
 
@@ -526,16 +567,20 @@ export default function DeliveryClearanceModal({
             orders: orders.map((ord) => ({
                 order_id: ord.order_id,
                 invoice_id: ord.invoice_id,
+                order_no: ord.order_no,
+                fulfillment_status: ord.fulfillment_status,
                 clearance_remarks: ord.remarks,
                 linked_return_id: ord.linked_sales_return?.return_id || null,
                 linked_return_number: ord.linked_sales_return?.return_number || null,
                 items: ord.items.map((item) => ({
                     detail_id: item.detail_id,
                     product_id: item.product_id,
+                    ordered_quantity: item.ordered_quantity,
                     received_quantity: item.received_quantity,
                     returned_quantity: item.returned_quantity,
                     has_concern: item.has_concern,
                     concern_notes: item.concern_notes,
+                    reservations: item.reservations,
                 })),
             })),
         };
@@ -597,16 +642,20 @@ export default function DeliveryClearanceModal({
                 orders: orders.map((ord) => ({
                     order_id: ord.order_id,
                     invoice_id: ord.invoice_id,
+                    order_no: ord.order_no,
+                    fulfillment_status: ord.fulfillment_status,
                     clearance_remarks: ord.remarks,
                     linked_return_id: ord.linked_sales_return?.return_id || null,
                     linked_return_number: ord.linked_sales_return?.return_number || null,
                     items: ord.items.map((item) => ({
                         detail_id: item.detail_id,
                         product_id: item.product_id,
+                        ordered_quantity: item.ordered_quantity,
                         received_quantity: item.received_quantity,
                         returned_quantity: item.returned_quantity,
                         has_concern: item.has_concern,
                         concern_notes: item.concern_notes,
+                        reservations: item.reservations,
                     })),
                 })),
             };
@@ -862,6 +911,56 @@ export default function DeliveryClearanceModal({
                                 </div>
                             )}
 
+                            {/* Missing Remarks Warning Banners */}
+                            {missingRemarksOrders.length > 0 && !isReadOnly && (
+                                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5 shadow-xs">
+                                    <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-bold">
+                                        <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                        <span>Remarks Required for {missingRemarksOrders.length} Order(s) with Returns, Concerns, or Quantity Variances:</span>
+                                    </div>
+                                    <div className="space-y-1.5 pl-6">
+                                        {missingRemarksOrders.map((mo) => {
+                                            const origIdx = orders.findIndex(
+                                                (o) => o.order_id === mo.order_id && o.invoice_id === mo.invoice_id
+                                            );
+                                            const hasVar = (mo.items || []).some(
+                                                (i) => i.ordered_quantity !== i.received_quantity + i.returned_quantity
+                                            );
+
+                                            return (
+                                                <div
+                                                    key={mo.invoice_id || mo.order_id}
+                                                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-lg bg-background/60 border text-foreground"
+                                                >
+                                                    <div>
+                                                        <span className="font-bold">{mo.order_no}</span>
+                                                        <span className="text-muted-foreground font-mono ml-1.5">({mo.invoice_no})</span>
+                                                        <span className="text-muted-foreground ml-2">— {mo.customer_name}</span>
+                                                        <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                                                            {mo.fulfillment_status}
+                                                        </span>
+                                                        <span className="ml-2 text-rose-500 font-bold text-[11px]">
+                                                            {hasVar ? "(Variance Remarks Required)" : "(Remarks Required)"}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (origIdx !== -1) {
+                                                                handleOpenReconciliation(origIdx);
+                                                            }
+                                                        }}
+                                                        className="px-3 py-1 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto cursor-pointer shadow-xs"
+                                                    >
+                                                        <span>Enter Remarks</span>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Error Alert */}
                             {formError && (
                                 <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5">
@@ -976,10 +1075,7 @@ export default function DeliveryClearanceModal({
                                                                             </SelectTrigger>
                                                                             <SelectContent>
                                                                                 {ord.linked_sales_return ? (
-                                                                                    <>
-                                                                                        <SelectItem value="Fulfilled with Returns" className="text-amber-700 dark:text-amber-300 font-bold text-xs">Fulfilled with Returns</SelectItem>
-                                                                                        <SelectItem value="Unfulfilled / Returns" className="text-rose-700 dark:text-rose-300 font-bold text-xs">Unfulfilled / Returns</SelectItem>
-                                                                                    </>
+                                                                                    <SelectItem value="Fulfilled with Returns" className="text-amber-700 dark:text-amber-300 font-bold text-xs">Fulfilled with Returns</SelectItem>
                                                                                 ) : (
                                                                                     <>
                                                                                         <SelectItem value="Fulfilled" className="text-emerald-700 dark:text-emerald-300 font-bold text-xs">Fulfilled</SelectItem>
@@ -1119,6 +1215,8 @@ export default function DeliveryClearanceModal({
                                             title={
                                                 isMissingRequiredReturn
                                                     ? "Orders with returns require a registered Sales Return before clearance can be confirmed."
+                                                    : isMissingRequiredRemarks
+                                                    ? "Remarks are required for orders with returns or concerns before clearance can be confirmed."
                                                     : undefined
                                             }
                                             className={`px-6 py-2.5 rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-2 ${

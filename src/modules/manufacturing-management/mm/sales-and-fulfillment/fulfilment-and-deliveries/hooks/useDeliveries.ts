@@ -160,6 +160,54 @@ export function useDeliveries() {
     }, [page, size, searchQuery, statusFilter, selectedBranchId]);
 
     const handleClearanceSubmit = async (payload: ClearanceSubmissionPayload): Promise<boolean> => {
+        // Client-side validation guard on confirming clearance
+        if (!payload.is_draft) {
+            for (const ord of payload.orders || []) {
+                const status = ord.fulfillment_status || "";
+                const hasConcern =
+                    status === "Fulfilled with Concerns" ||
+                    (ord.items || []).some((i) => i.has_concern || (i.concern_notes && i.concern_notes.trim().length > 0));
+                const hasReturn =
+                    status === "Fulfilled with Returns" ||
+                    (ord.items || []).some((i) => i.returned_quantity > 0);
+                const isUnfulfilled = status === "Unfulfilled / Returns";
+                const hasVariance = (ord.items || []).some(
+                    (i) => i.ordered_quantity !== undefined && Number(i.ordered_quantity) !== Number(i.received_quantity || 0) + Number(i.returned_quantity || 0)
+                );
+
+                const remarks = typeof ord.clearance_remarks === "string" ? ord.clearance_remarks.trim() : "";
+                const orderRef = ord.order_no || `#${ord.order_id || ord.invoice_id}`;
+
+                if (isUnfulfilled && !remarks) {
+                    toast.error(
+                        `Remarks are required for order ${orderRef} (Unfulfilled / Returns) before clearance can be confirmed.`
+                    );
+                    return false;
+                }
+
+                if (hasConcern && !remarks) {
+                    toast.error(
+                        `Remarks are required for order ${orderRef} (Fulfilled with Concerns) before clearance can be confirmed.`
+                    );
+                    return false;
+                }
+
+                if (hasReturn && !remarks) {
+                    toast.error(
+                        `Remarks are required for order ${orderRef} (Fulfilled with Returns) before clearance can be confirmed.`
+                    );
+                    return false;
+                }
+
+                if (hasVariance && !remarks) {
+                    toast.error(
+                        `Remarks are required for order ${orderRef} due to quantity variance before clearance can be confirmed.`
+                    );
+                    return false;
+                }
+            }
+        }
+
         setSubmitting(true);
         try {
             const result = await submitDeliveryClearance(payload);
@@ -177,6 +225,8 @@ export function useDeliveries() {
             setSubmitting(false);
         }
     };
+
+    const handleConfirmClearance = handleClearanceSubmit;
 
     return {
         records,
@@ -202,6 +252,7 @@ export function useDeliveries() {
         openClearanceModal,
         closeClearanceModal,
         handleClearanceSubmit,
+        handleConfirmClearance,
         reload,
     };
 }
