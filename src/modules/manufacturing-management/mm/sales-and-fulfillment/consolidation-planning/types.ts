@@ -117,6 +117,7 @@ export interface CreateConsolidationPayload {
     branchId: number;
     invoiceIds: number[];
     customAllocations?: CustomAllocationItem[];
+    allowPartialAllocation?: boolean;
 }
 
 export interface InvoiceLineAllocationBreakdown {
