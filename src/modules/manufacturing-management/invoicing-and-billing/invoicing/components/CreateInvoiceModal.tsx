@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, Printer, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Boxes, Building2, Calendar, FileCheck2, FileText, Layers, Loader2, Package, Printer, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveInvoiceDocument, fetchCompanyInfo, fetchPrintableInvoice, fetchReceiptTemplate, fetchReceiptTypes, fetchSalesOrderAvailability } from "../services/invoicing-api";
 import { CompanyInfo, CreateInvoicePayload, CreatedInvoiceResult, InvoicingCandidate, LineAllocationPayload, LineBatchAllocation, LineAvailability, ORTemplate, PrintableInvoice, ReceiptType, SalesOrderAvailability, SiblingConsolidatedOrder } from "../types";
@@ -36,6 +36,31 @@ function getLocalPHDueDateString(days = 30): string {
     const d = new Date();
     d.setDate(d.getDate() + days);
     return getLocalPHDateString(d);
+}
+
+function getLineMaxInvoiceable(
+    detail: { ordered_quantity?: number },
+    lineAvail?: LineAvailability
+): number {
+    const orderedQty = Number(detail.ordered_quantity || 0);
+    if (!lineAvail) return orderedQty;
+
+    const batchPickedTotal = lineAvail.batches && lineAvail.batches.length > 0
+        ? lineAvail.batches.reduce((sum, b) => {
+            const q = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
+            return sum + (isNaN(q) ? 0 : q);
+        }, 0)
+        : undefined;
+
+    let availPool = lineAvail.totalPoolQuantity !== undefined
+        ? lineAvail.totalPoolQuantity
+        : (lineAvail.pickedQuantity ?? orderedQty);
+
+    if (batchPickedTotal !== undefined) {
+        availPool = Math.min(availPool, batchPickedTotal);
+    }
+
+    return Math.min(orderedQty, Math.max(0, availPool));
 }
 
 export default function CreateInvoiceModal({ candidate, submitting, onClose, onSubmit }: Props) {
@@ -105,12 +130,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
 
         for (const detail of candidate.details) {
             const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
-            const orderedQty = Number(detail.ordered_quantity || 0);
             const lineAvail = availability?.lines.find((l) => l.productId === pId);
-            const availPool = lineAvail?.totalPoolQuantity !== undefined
-                ? lineAvail.totalPoolQuantity
-                : (lineAvail?.pickedQuantity ?? orderedQty);
-            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
             const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
 
             lineQtyMap.set(pId, invoiceQty);
@@ -152,10 +173,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             const orderedQty = Number(detail.ordered_quantity || 0);
 
             const lineAvail = availability.lines.find((l) => l.productId === pId);
-            const availPool = lineAvail?.totalPoolQuantity !== undefined
-                ? lineAvail.totalPoolQuantity
-                : (lineAvail?.pickedQuantity ?? orderedQty);
-            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
             const invoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
 
             const siblingOrders = lineAvail?.siblingOrders || [];
@@ -300,12 +318,8 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 const initialMap: Record<number, number | string> = {};
                 for (const detail of candidate.details) {
                     const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
-                    const orderedQty = Number(detail.ordered_quantity || 0);
                     const lineAvail = data.lines?.find((l: LineAvailability) => l.productId === pId);
-                    const availPool = lineAvail?.totalPoolQuantity !== undefined
-                        ? lineAvail.totalPoolQuantity
-                        : (lineAvail?.pickedQuantity ?? orderedQty);
-                    const maxInv = Math.min(orderedQty, Math.max(0, availPool));
+                    const maxInv = getLineMaxInvoiceable(detail, lineAvail);
                     initialMap[pId] = maxInv;
                 }
                 setLineInvoiceQtys(initialMap);
@@ -331,16 +345,12 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
         const lineAllocations: LineAllocationPayload[] = candidate.details.map((detail) => {
             const pId = typeof detail.product_id === "object" ? Number(detail.product_id?.product_id) : Number(detail.product_id);
             const lineAvail = availability?.lines.find((l) => l.productId === pId);
-            const orderedQty = Number(detail.ordered_quantity || 0);
-            const availPool = lineAvail?.totalPoolQuantity !== undefined
-                ? lineAvail.totalPoolQuantity
-                : (lineAvail?.pickedQuantity ?? orderedQty);
-            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availPool));
+            const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
             const targetInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, maxInvoiceable));
 
             let remainingToAlloc = targetInvoiceQty;
             const batchAllocations: LineBatchAllocation[] = (lineAvail?.batches || []).map((b) => {
-                const batchCap = Number(b.pickedQuantity || b.onhandQuantity || 0);
+                const batchCap = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
                 const alloc = Math.min(remainingToAlloc, batchCap);
                 remainingToAlloc = Math.max(0, remainingToAlloc - alloc);
                 return {
@@ -727,15 +737,17 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                             const unitPrice = Number(line.unit_price || 0);
                                             const orderedQty = Number(line.ordered_quantity || 0);
                                             const lineAvail = availability?.lines.find((l) => l.productId === pId);
-                                            const availablePool = lineAvail?.totalPoolQuantity !== undefined
-                                                ? lineAvail.totalPoolQuantity
-                                                : (lineAvail?.pickedQuantity ?? orderedQty);
-                                            const maxInvoiceable = Math.min(orderedQty, Math.max(0, availablePool));
+                                            const maxInvoiceable = getLineMaxInvoiceable(line, lineAvail);
                                             const defaultQty = maxInvoiceable;
                                             const currentInvoiceQty = Math.min(maxInvoiceable, getLineInvoiceQty(pId, defaultQty));
                                             const rawInputValue = lineInvoiceQtys[pId] !== undefined ? lineInvoiceQtys[pId] : defaultQty;
                                             const lineBilledTotal = currentInvoiceQty * unitPrice;
                                             const lineShortfall = shortfallLines.find((s) => s.productId === pId);
+
+                                            const hasSiblings = Boolean(lineAvail?.siblingOrders && lineAvail.siblingOrders.length > 0);
+                                            const siblingInvoicedQty = Number(lineAvail?.siblingInvoicedQuantity || 0);
+                                            const takenBySiblings = hasSiblings ? Math.min(siblingInvoicedQty, Math.max(0, orderedQty - maxInvoiceable)) : 0;
+                                            const unallocatedShortfall = Math.max(0, orderedQty - maxInvoiceable - takenBySiblings);
 
                                             return (
                                                 <div key={line.detail_id} className="p-4 space-y-3 hover:bg-muted/5 transition-colors">
@@ -758,15 +770,66 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                     {/* Middle Row: Demand Info Badge */}
                                                     <div className="flex flex-wrap items-center gap-2 text-[10px]">
                                                         <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
-                                                            Ordered: <strong>{orderedQty} {uomStr}</strong> / Picked Left: <strong>{availablePool} {uomStr}</strong>
+                                                            Ordered: <strong>{orderedQty} {uomStr}</strong> / Picked Left: <strong>{maxInvoiceable} {uomStr}</strong>
                                                         </span>
-                                                        {maxInvoiceable < orderedQty && (
+                                                        {takenBySiblings > 0 ? (
                                                             <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
                                                                 <AlertTriangle className="h-3 w-3 shrink-0" />
-                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({orderedQty - maxInvoiceable} {uomStr} consumed by linked order)
+                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({takenBySiblings} {uomStr} taken by sibling sales order)
                                                             </span>
-                                                        )}
+                                                        ) : unallocatedShortfall > 0 ? (
+                                                            <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({unallocatedShortfall} {uomStr} unallocated shortfall)
+                                                            </span>
+                                                        ) : null}
                                                     </div>
+
+                                                    {/* Inline Allocated Batches Breakdown */}
+                                                    {lineAvail?.batches && lineAvail.batches.length > 0 && (
+                                                        <div className="rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-[10px] space-y-1.5">
+                                                            <div className="flex items-center justify-between text-[9px] font-extrabold uppercase text-muted-foreground">
+                                                                <span className="flex items-center gap-1">
+                                                                    <Boxes className="h-3 w-3 text-primary" />
+                                                                    Allocated Batches ({lineAvail.batches.length})
+                                                                </span>
+                                                                <span className="font-mono text-primary font-bold">
+                                                                    Total Picked: {maxInvoiceable} {uomStr}
+                                                                </span>
+                                                            </div>
+                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                                                                {lineAvail.batches.map((b, bIdx) => {
+                                                                    const bPicked = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
+                                                                    return (
+                                                                        <div key={bIdx} className="flex items-center justify-between rounded border border-border/30 bg-background/80 px-2.5 py-1 font-mono text-[10px]">
+                                                                            <span className="truncate text-foreground font-semibold">
+                                                                                {b.batchNo} <span className="text-muted-foreground font-normal">({b.lotName || `Lot #${b.lotId}`})</span>
+                                                                            </span>
+                                                                            <span className="shrink-0 font-bold text-primary ml-2">
+                                                                                Picked: {bPicked} {uomStr}
+                                                                            </span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Inline Shared Sibling Orders */}
+                                                    {lineAvail?.siblingOrders && lineAvail.siblingOrders.length > 0 && (
+                                                        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/30 bg-muted/20 px-2.5 py-1.5 text-[9px]">
+                                                            <Users className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                            <span className="font-extrabold uppercase text-muted-foreground">Shared Sibling Orders:</span>
+                                                            {lineAvail.siblingOrders.map((sib) => (
+                                                                <span
+                                                                    key={sib.orderId}
+                                                                    className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[9px] font-semibold border ${sib.isInvoiced ? "bg-muted text-muted-foreground line-through border-border/40" : "bg-primary/10 text-primary border-primary/20"}`}
+                                                                >
+                                                                    {sib.orderNo} {sib.customerName ? `(${sib.customerName})` : ""}: {sib.orderedQuantity} {uomStr} {sib.isInvoiced ? "✓ Invoiced" : "Pending"}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
 
                                                     {/* Bottom Row: Sales Invoice Qty Controls */}
                                                     <div className="flex items-center justify-between rounded-xl border bg-muted/20 p-2.5">
@@ -817,9 +880,9 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                         </div>
                                                     </div>
 
-                                                    {/* Dynamic Consolidation Shortfall Alert */}
+                                                    {/* Dynamic Sibling Allocation / Shortfall Warning Notice */}
                                                     <AnimatePresence>
-                                                        {lineShortfall && (
+                                                        {(takenBySiblings > 0 || unallocatedShortfall > 0 || lineShortfall) && (
                                                             <motion.div
                                                                 initial={{ opacity: 0, height: 0 }}
                                                                 animate={{ opacity: 1, height: "auto" }}
@@ -831,21 +894,41 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                                     <div className="flex items-start gap-2">
                                                                         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
                                                                         <div className="space-y-1">
-                                                                            <div className="font-bold flex items-center gap-1.5">
-                                                                                <span>Consolidation Shortfall Warning</span>
-                                                                                <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
-                                                                                    -{lineShortfall.siblingShortfall} {uomStr} Deficit
+                                                                            <div className="font-bold flex items-center gap-1.5 flex-wrap">
+                                                                                <span>
+                                                                                    {takenBySiblings > 0
+                                                                                        ? "Consolidation & Sibling Allocation Notice"
+                                                                                        : "Consolidation Allocation Shortfall Notice"}
                                                                                 </span>
+                                                                                {takenBySiblings > 0 && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{takenBySiblings} {uomStr} Taken by Sibling Orders
+                                                                                    </span>
+                                                                                )}
+                                                                                {unallocatedShortfall > 0 && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{unallocatedShortfall} {uomStr} Shortfall
+                                                                                    </span>
+                                                                                )}
+                                                                                {lineShortfall && (
+                                                                                    <span className="rounded bg-amber-500/20 px-1.5 py-0.2 font-mono text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                                                                                        -{lineShortfall.siblingShortfall} {uomStr} Deficit
+                                                                                    </span>
+                                                                                )}
                                                                             </div>
                                                                             <p className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-200/90">
-                                                                                Invoicing <strong>{lineShortfall.currentInvoiceQty} {uomStr}</strong> leaves only <strong>{lineShortfall.remainingForSiblings} {uomStr}</strong> in the shared consolidation pool (Total Allocated: {lineShortfall.totalConsolidatedPool} {uomStr}).
-                                                                                {lineShortfall.remainingForSiblings === 0 ? (
-                                                                                    <span className="block mt-0.5 font-bold text-amber-700 dark:text-amber-300">
-                                                                                        ⚠️ Other linked order(s) will have a 100% shortfall (0 {uomStr} left)!
-                                                                                    </span>
-                                                                                ) : (
-                                                                                    <span className="block mt-0.5 font-medium text-amber-700 dark:text-amber-300">
-                                                                                        ⚠️ Linked order(s) ({lineShortfall.unInvoicedSiblings.map((s) => s.orderNo).join(", ")}) requested {lineShortfall.siblingDemand} {uomStr} and will have an unfulfilled deficit of {lineShortfall.siblingShortfall} {uomStr}.
+                                                                                {takenBySiblings > 0 ? (
+                                                                                    <>
+                                                                                        Out of <strong>{orderedQty} {uomStr}</strong> originally requested for {candidate.order_no}, <strong>{takenBySiblings} {uomStr}</strong> was taken by linked sibling order(s) in this consolidation batch. Maximum available to invoice is strictly capped at <strong>{maxInvoiceable} {uomStr}</strong>.
+                                                                                    </>
+                                                                                ) : unallocatedShortfall > 0 ? (
+                                                                                    <>
+                                                                                        Out of <strong>{orderedQty} {uomStr}</strong> originally requested for {candidate.order_no}, only <strong>{maxInvoiceable} {uomStr}</strong> was allocated / picked in this consolidation batch ({unallocatedShortfall} {uomStr} unfulfilled shortfall). Maximum available to invoice is strictly capped at <strong>{maxInvoiceable} {uomStr}</strong>.
+                                                                                    </>
+                                                                                ) : null}
+                                                                                {lineShortfall && (
+                                                                                    <span className={`block ${takenBySiblings > 0 || unallocatedShortfall > 0 ? "mt-1 pt-1 border-t border-amber-500/20" : ""} font-medium`}>
+                                                                                        ⚠️ Invoicing <strong>{lineShortfall.currentInvoiceQty} {uomStr}</strong> leaves <strong>{lineShortfall.remainingForSiblings} {uomStr}</strong> in the shared pool for sibling order(s) ({lineShortfall.unInvoicedSiblings.map((s) => s.orderNo).join(", ")}), causing an unfulfilled deficit of {lineShortfall.siblingShortfall} {uomStr}.
                                                                                     </span>
                                                                                 )}
                                                                             </p>
