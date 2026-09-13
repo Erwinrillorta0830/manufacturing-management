@@ -1224,21 +1224,21 @@ export async function GET(req: NextRequest) {
                         // ─── GATEKEEPING RULE 4: Quantity Variance Check (Shortfall Allowed) ─────────
                         // Retain manifests even if total picked quantity in consolidator does not match total ordered quantity.
                         // Picking shortfalls are reconciled and cleared during delivery reconciliation.
-                        const conDetailsForThisCon = consolidatorDetails.filter(
-                            (cd) => Number(cd.consolidator_id) === conId
-                        );
+                        // const conDetailsForThisCon = consolidatorDetails.filter(
+                        //     (cd) => Number(cd.consolidator_id) === conId
+                        // );
 
-                        const totalPickedQty = conDetailsForThisCon.reduce((sum, cd) => {
-                            const picked = Number(cd.picked_quantity || 0);
-                            const applied = Number(cd.applied_quantity || 0);
-                            const ordered = Number(cd.ordered_quantity || 0);
-                            return sum + (picked > 0 ? picked : applied > 0 ? applied : ordered);
-                        }, 0);
+                        // const totalPickedQty = conDetailsForThisCon.reduce((sum, cd) => {
+                        //     const picked = Number(cd.picked_quantity || 0);
+                        //     const applied = Number(cd.applied_quantity || 0);
+                        //     const ordered = Number(cd.ordered_quantity || 0);
+                        //     return sum + (picked > 0 ? picked : applied > 0 ? applied : ordered);
+                        // }, 0);
 
-                        const totalInvoicedAllocationQty = childOrders.reduce(
-                            (sum, o) => sum + o.items.reduce((itemSum, item) => itemSum + item.ordered_quantity, 0),
-                            0
-                        );
+                        // const totalInvoicedAllocationQty = childOrders.reduce(
+                        //     (sum, o) => sum + o.items.reduce((itemSum, item) => itemSum + item.ordered_quantity, 0),
+                        //     0
+                        // );
 
                         // Calculate consolidator level aggregations
                         const totalOrdersCount = childOrders.length;

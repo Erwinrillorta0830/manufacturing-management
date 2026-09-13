@@ -170,7 +170,7 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
             const pId = product ? Number(product.product_id) : Number(detail.product_id);
             const displayName = product?.description || product?.product_name || "Item";
             const uomStr = product?.uom || "PCS";
-            const orderedQty = Number(detail.ordered_quantity || 0);
+            // const orderedQty = Number(detail.ordered_quantity || 0);
 
             const lineAvail = availability.lines.find((l) => l.productId === pId);
             const maxInvoiceable = getLineMaxInvoiceable(detail, lineAvail);
