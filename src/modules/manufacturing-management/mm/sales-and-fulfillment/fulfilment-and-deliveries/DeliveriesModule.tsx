@@ -46,7 +46,6 @@ import {
     ClipboardCheck,
     Calendar,
     Receipt,
-    AlertTriangle,
     Boxes,
     ExternalLink,
 } from "lucide-react";
@@ -96,6 +95,15 @@ export default function DeliveriesModule() {
         });
     };
 
+    const consolidationStatusStyles: Record<string, string> = {
+        Dispatched: "bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400",
+        Completed: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+        Delivered: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+        Approved: "bg-purple-500/10 border-purple-500/20 text-purple-600 dark:text-purple-400",
+        Audited: "bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400",
+        Pending: "bg-zinc-500/10 border-zinc-500/20 text-zinc-600 dark:text-zinc-400",
+    };
+
     const statusBadgeStyles: Record<FulfillmentStatus, string> = {
         Pending: "bg-zinc-500/10 border-zinc-500/20 text-zinc-600 dark:text-zinc-400",
         Fulfilled: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
@@ -106,11 +114,11 @@ export default function DeliveriesModule() {
 
     const statusOptions = [
         { value: "All", label: "All Statuses" },
-        { value: "Pending", label: "Pending Clearance" },
-        { value: "Fulfilled", label: "Fulfilled" },
-        { value: "Fulfilled with Concerns", label: "Fulfilled with Concerns" },
-        { value: "Fulfilled with Returns", label: "Fulfilled with Returns" },
-        { value: "Unfulfilled / Returns", label: "Unfulfilled / Returns" },
+        { value: "Dispatched", label: "Dispatched" },
+        { value: "Completed", label: "Completed" },
+        { value: "Approved", label: "Approved" },
+        { value: "Audited", label: "Audited" },
+        { value: "Pending", label: "Pending" },
     ];
 
     // Staggered top-to-bottom animation variants
@@ -414,7 +422,7 @@ export default function DeliveriesModule() {
                                     <th className="p-3 font-bold text-muted-foreground uppercase text-[10px]">Dispatch Date</th>
                                     <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Orders Count</th>
                                     <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-right">Manifest Value</th>
-                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Clearance Status</th>
+                                    <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Consolidation Status</th>
                                     <th className="p-3 font-bold text-muted-foreground uppercase text-[10px] text-center">Action</th>
                                 </tr>
                             </thead>
@@ -454,14 +462,9 @@ export default function DeliveriesModule() {
 
                                                 {/* Consolidator No */}
                                                 <td className="p-3 font-black text-foreground">
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <div className="flex items-center gap-1.5">
                                                         <Truck className="h-3.5 w-3.5 text-primary" />
                                                         <span>{record.consolidator_no}</span>
-                                                        {record.status === "Completed" && (
-                                                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                                                                Completed
-                                                            </span>
-                                                        )}
                                                     </div>
                                                 </td>
 
@@ -478,7 +481,7 @@ export default function DeliveriesModule() {
                                                     <span className="flex items-center gap-1">
                                                         <Calendar className="h-3 w-3" />
                                                         {new Date(record.dispatch_date).toLocaleDateString(undefined, {
-                                                            dateStyle: "medium",
+                                                             dateStyle: "medium",
                                                         })}
                                                     </span>
                                                 </td>
@@ -496,17 +499,18 @@ export default function DeliveriesModule() {
                                                     ₱{record.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </td>
 
-                                                {/* Clearance Status Badge */}
+                                                {/* Consolidation Status Badge */}
                                                 <td className="p-3 text-center">
                                                     <span
                                                         className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                                                            statusBadgeStyles[record.fulfillment_status] || statusBadgeStyles.Pending
+                                                            consolidationStatusStyles[record.status] || "bg-muted text-muted-foreground border-border"
                                                         }`}
                                                     >
-                                                        {record.fulfillment_status === "Fulfilled" && <CheckCircle2 className="h-3 w-3" />}
-                                                        {record.fulfillment_status === "Fulfilled with Returns" && <RotateCcw className="h-3 w-3" />}
-                                                        {record.fulfillment_status === "Unfulfilled / Returns" && <AlertTriangle className="h-3 w-3" />}
-                                                        {record.fulfillment_status}
+                                                        {record.status === "Completed" && <CheckCircle2 className="h-3 w-3" />}
+                                                        {record.status === "Delivered" && <CheckCircle2 className="h-3 w-3" />}
+                                                        {record.status === "Dispatched" && <Truck className="h-3 w-3" />}
+                                                        {record.status === "Approved" && <Check className="h-3 w-3" />}
+                                                        {record.status}
                                                     </span>
                                                 </td>
 
@@ -545,7 +549,7 @@ export default function DeliveriesModule() {
                                                                     </span>
                                                                 </div>
                                                                 <div className="text-[10px] text-muted-foreground">
-                                                                    Consolidator No: <b>{record.consolidator_no}</b> | Origin: <b>{record.branch_name}</b>
+                                                                    Consolidator No: <b>{record.consolidator_no}</b> | Origin: <b>{record.branch_name}</b> | Status: <b>{record.status}</b>
                                                                 </div>
                                                             </div>
 

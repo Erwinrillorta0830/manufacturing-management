@@ -133,6 +133,21 @@ export default function CreateConsolidationModal({
     const [allocationMode, setAllocationMode] = useState<AllocationMode>("auto");
     const [allowExpiredBatches, setAllowExpiredBatches] = useState(false);
     const [showExpiredConfirmModal, setShowExpiredConfirmModal] = useState(false);
+    const [showUnbalancedConfirmModal, setShowUnbalancedConfirmModal] = useState(false);
+    const [unbalancedLines, setUnbalancedLines] = useState<
+        Array<{
+            invoiceId: number;
+            invoiceNo: string;
+            customerName?: string;
+            productId: number;
+            productName: string;
+            productCode: string;
+            requiredQty: number;
+            allocatedQty: number;
+            difference: number;
+            type: "shortage" | "excess";
+        }>
+    >([]);
 
     // Filters for Step 1
     const [search, setSearch] = useState("");
@@ -888,7 +903,7 @@ export default function CreateConsolidationModal({
         getInvoiceLineAllocations,
     ]);
 
-    const handleSubmit = async () => {
+    const executeSubmit = async (allowPartial: boolean = false) => {
         if (selectedIds.size === 0 || submitting) return;
 
         let customAllocations: CustomAllocationItem[] | undefined = undefined;
@@ -929,20 +944,72 @@ export default function CreateConsolidationModal({
 
         setSubmitting(true);
 
-        const submitPayload = {
+        const submitPayload: CreateConsolidationPayload = {
             branchId: branch.id,
             invoiceIds: Array.from(selectedIds),
             customAllocations,
+            allowPartialAllocation: allowPartial,
         };
-
-        // console.log("[CreateConsolidation] SUBMIT CLICKED");
-        // console.log("[CreateConsolidation] allocationMode:", allocationMode);
-        // console.log("[CreateConsolidation] manualAllocations state:", JSON.parse(JSON.stringify(manualAllocations)));
-        // console.log("[CreateConsolidation] customAllocations built:", JSON.stringify(customAllocations, null, 2));
-        // console.log("[CreateConsolidation] FULL PAYLOAD to POST:", JSON.stringify(submitPayload, null, 2));
 
         await onSubmit(submitPayload);
         setSubmitting(false);
+    };
+
+    const handleSubmit = async () => {
+        if (selectedIds.size === 0 || submitting) return;
+
+        if (allocationMode === "manual") {
+            const discrepancies: Array<{
+                invoiceId: number;
+                invoiceNo: string;
+                customerName?: string;
+                productId: number;
+                productName: string;
+                productCode: string;
+                requiredQty: number;
+                allocatedQty: number;
+                difference: number;
+                type: "shortage" | "excess";
+            }> = [];
+
+            for (const inv of selectedInvoices) {
+                for (const p of inv.products) {
+                    const summary = getManualLineSummary(inv.invoiceId, p.productId, p.quantity);
+                    if (summary.difference !== 0) {
+                        discrepancies.push({
+                            invoiceId: inv.invoiceId,
+                            invoiceNo: inv.invoiceNo,
+                            customerName: inv.customerName,
+                            productId: p.productId,
+                            productName: p.productName,
+                            productCode: p.productCode,
+                            requiredQty: summary.required,
+                            allocatedQty: summary.allocated,
+                            difference: summary.difference,
+                            type: summary.difference < 0 ? "shortage" : "excess",
+                        });
+                    }
+                }
+            }
+
+            if (discrepancies.length > 0) {
+                setUnbalancedLines(discrepancies);
+                setShowUnbalancedConfirmModal(true);
+                return;
+            }
+        }
+
+        await executeSubmit(false);
+    };
+
+    const handleConfirmUnbalancedSubmit = async () => {
+        setShowUnbalancedConfirmModal(false);
+        await executeSubmit(true);
+    };
+
+    const handleReviewUnbalancedAllocations = () => {
+        setShowUnbalancedConfirmModal(false);
+        setStep(2);
     };
 
     const expiredAllocatedBatches = useMemo(() => {
@@ -2877,6 +2944,119 @@ export default function CreateConsolidationModal({
                                         className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground"
                                     >
                                         Proceed with Expired
+                                    </Button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
+
+                {/* Unbalanced Allocation (Shortage & Over-allocated) Confirmation Modal */}
+                <AnimatePresence>
+                    {showUnbalancedConfirmModal && (
+                        <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                transition={{ duration: 0.2 }}
+                                className="w-full max-w-lg rounded-3xl border border-amber-500/30 bg-background p-6 shadow-2xl space-y-4"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="rounded-2xl bg-amber-500/10 p-3 text-amber-600 dark:text-amber-400">
+                                        <AlertTriangle className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-black uppercase italic tracking-tight text-foreground">
+                                            Unbalanced Stock Allocations
+                                        </h3>
+                                        <p className="text-xs text-muted-foreground">
+                                            {unbalancedLines.length} product line(s) have allocation discrepancies (shortage or excess).
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="max-h-56 overflow-y-auto rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2.5 text-xs">
+                                    {unbalancedLines.map((item, i) => (
+                                        <div
+                                            key={`unbalanced-alloc-${item.invoiceId}-${item.productId}-${i}`}
+                                            className="flex items-center justify-between gap-3 border-b border-border/40 pb-2 last:border-0 last:pb-0"
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-mono font-bold text-foreground">
+                                                        Doc #{item.invoiceNo}
+                                                    </span>
+                                                    {item.customerName && (
+                                                        <span className="truncate text-[10px] text-muted-foreground">
+                                                            ({item.customerName})
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="truncate text-xs font-semibold text-foreground/90 mt-0.5">
+                                                    {item.productName}
+                                                </p>
+                                                <p className="font-mono text-[10px] text-muted-foreground">
+                                                    SKU: {item.productCode} • ID #{item.productId}
+                                                </p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <div className="flex items-center justify-end gap-1.5 text-[11px]">
+                                                    <span className="text-muted-foreground">Req: <strong className="text-foreground">{item.requiredQty}</strong></span>
+                                                    <span className="text-muted-foreground">|</span>
+                                                    <span className="font-bold text-foreground">Alloc: {item.allocatedQty}</span>
+                                                </div>
+                                                {item.type === "shortage" ? (
+                                                    <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                                        Shortage: -{Math.abs(item.difference)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-block mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-black uppercase bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                                                        Over-allocated: +{item.difference}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                    The custom allocations above do not match the required document quantities. Would you like to review and adjust your allocations, or proceed with the current allocations?
+                                </p>
+
+                                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setShowUnbalancedConfirmModal(false)}
+                                        disabled={submitting}
+                                        className="rounded-xl text-xs font-bold"
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleReviewUnbalancedAllocations}
+                                        disabled={submitting}
+                                        className="rounded-xl text-xs font-bold border-border/80 gap-1.5"
+                                    >
+                                        <Sliders className="h-3.5 w-3.5" />
+                                        Review & Adjust
+                                    </Button>
+                                    <Button
+                                        variant="default"
+                                        size="sm"
+                                        onClick={handleConfirmUnbalancedSubmit}
+                                        disabled={submitting}
+                                        className="rounded-xl text-xs font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
+                                    >
+                                        {submitting ? (
+                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                        )}
+                                        Proceed with Allocation
                                     </Button>
                                 </div>
                             </motion.div>

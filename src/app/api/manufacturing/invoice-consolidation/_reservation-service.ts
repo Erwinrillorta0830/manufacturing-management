@@ -1153,11 +1153,12 @@ export interface CustomAllocationInput {
 export async function allocateInvoicesWithCustomAllocations(
     invoiceIds: number[],
     customAllocations: CustomAllocationInput[],
-    userId: number
+    userId: number,
+    allowPartial: boolean = false
 ) {
     const createdReservationIds: number[] = [];
 
-    console.log("[allocateCustom] CALLED with invoiceIds:", invoiceIds, "userId:", userId);
+    console.log("[allocateCustom] CALLED with invoiceIds:", invoiceIds, "userId:", userId, "allowPartial:", allowPartial);
     console.log("[allocateCustom] customAllocations received:", JSON.stringify(customAllocations, null, 2));
 
     try {
@@ -1197,14 +1198,13 @@ export async function allocateInvoicesWithCustomAllocations(
 
             // Pass 1: Match allocations explicitly assigned to this detail or document
             for (const item of allocPool) {
-                if (remaining <= 0) break;
                 if (item.quantity <= 0) continue;
                 if (
                     item.productId === pId &&
                     ((item.invoiceDetailId && item.invoiceDetailId === detail.detail_id) ||
                         (item.invoiceId && (item.invoiceId === Number(detail.invoice_no) || item.invoiceId === Number(detail.order_id))))
                 ) {
-                    const take = Math.min(remaining, item.quantity);
+                    const take = item.quantity;
                     console.log(`[allocateCustom] PASS 1 MATCH detail_id=${detail.detail_id} product_id=${pId} → using alloc inventory_lot_id=${item.inventoryLotId} lot_id=${item.lotId} batch_no="${item.batchNo}" take=${take}`);
                     pendingRows.push({
                         sales_order_detail_id: detail.detail_id,
@@ -1221,7 +1221,7 @@ export async function allocateInvoicesWithCustomAllocations(
                         updated_by: userId,
                         updated_at: now,
                     });
-                    item.quantity -= take;
+                    item.quantity = 0;
                     remaining -= take;
                 }
             }
@@ -1256,7 +1256,10 @@ export async function allocateInvoicesWithCustomAllocations(
             }
 
             if (remaining > 0) {
-                throw new Error(`Insufficient custom allocation for product #${pId} in document #${detail.invoice_no}`);
+                if (!allowPartial) {
+                    throw new Error(`Insufficient custom allocation for product #${pId} in document #${detail.invoice_no}`);
+                }
+                console.log(`[allocateCustom] Partial allocation permitted for product #${pId} in document #${detail.invoice_no}: shortage of ${remaining}`);
             }
         }
 

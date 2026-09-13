@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
     ConsolidatedSalesOrderRecord,
     ClearanceLineItem,
+    LineItemReservation,
     LineStatus,
     FulfillmentStatus,
     LinkedSalesReturn,
@@ -34,7 +35,10 @@ import {
     RefreshCw,
     UserCheck,
     Link2,
+    SlidersHorizontal,
+    Lock,
 } from "lucide-react";
+import ReconciliationLotAllocationModal from "./ReconciliationLotAllocationModal";
 
 interface ProductReconciliationModalProps {
     order: ConsolidatedSalesOrderRecord | null;
@@ -49,6 +53,61 @@ interface ProductReconciliationModalProps {
     onRefresh?: () => Promise<void> | void;
 }
 
+function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem[] {
+    return items.map((item) => {
+        const reservations = (item.reservations || []).map((r) => ({ ...r }));
+        if (reservations.length === 0) {
+            return { ...item, reservations };
+        }
+
+        const retQty = Number(item.returned_quantity || 0);
+        const recQty = Number(item.received_quantity || 0);
+        const ordQty = Number(item.ordered_quantity || 0);
+        const physicalDispatched = reservations.reduce(
+            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+            0
+        );
+        const maxReturnable = physicalDispatched > 0 ? physicalDispatched : ordQty;
+
+        if ((recQty === 0 && retQty === ordQty) || retQty === maxReturnable || (recQty === 0 && retQty > maxReturnable)) {
+            // Full return of physical dispatch: all reservations return their picked (or reserved) qty
+            return {
+                ...item,
+                returned_quantity: maxReturnable,
+                reservations: reservations.map((r) => ({
+                    ...r,
+                    returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+                })),
+            };
+        }
+
+        if (retQty === 0) {
+            return {
+                ...item,
+                reservations: reservations.map((r) => ({ ...r, returned_quantity: 0 })),
+            };
+        }
+
+        // If returned_quantity is already allocated across reservations and sum matches, keep it
+        const currentSum = reservations.reduce((s, r) => s + (Number(r.returned_quantity) || 0), 0);
+        if (currentSum === retQty && retQty <= maxReturnable) {
+            return { ...item, reservations };
+        }
+
+        // Otherwise auto-allocate sequentially up to maxReturnable
+        const effectiveRetQty = Math.min(retQty, maxReturnable);
+        let remaining = effectiveRetQty;
+        const updatedResv = reservations.map((r) => {
+            const picked = Number(r.picked_quantity || r.reserved_quantity || 0);
+            const alloc = Math.min(picked, remaining);
+            remaining = Math.max(0, remaining - alloc);
+            return { ...r, returned_quantity: alloc };
+        });
+
+        return { ...item, returned_quantity: effectiveRetQty, reservations: updatedResv };
+    });
+}
+
 export default function ProductReconciliationModal({
     order,
     isOpen,
@@ -61,34 +120,17 @@ export default function ProductReconciliationModal({
     const [orderRemarks, setOrderRemarks] = useState<string>(() => order?.remarks || "");
     const [prevOrder, setPrevOrder] = useState<typeof order>(order);
 
+    const [lineItems, setLineItems] = useState<ClearanceLineItem[]>(() => {
+        return initLineItemReservations(order?.items || []);
+    });
+
     if (order !== prevOrder) {
         setPrevOrder(order);
         setOrderRemarks(order?.remarks || "");
+        setLineItems(initLineItemReservations(order?.items || []));
     }
 
-    const [lineItems, setLineItems] = useState<ClearanceLineItem[]>(() => {
-        const initial = (order?.items || []).map((item) => ({ ...item }));
-        if (order) {
-            console.log("[ProductReconciliationModal] 📦 Product Line Reconciliation Loaded for Order:", {
-                order_id: order.order_id,
-                order_no: order.order_no,
-                invoice_id: order.invoice_id,
-                invoice_no: order.invoice_no,
-                invoice_date: order.invoice_date,
-                customer_name: order.customer_name,
-                customer_code: order.customer_code,
-                salesman_name: order.salesman_name,
-                salesman_code: order.salesman_code,
-                fulfillment_status: order.fulfillment_status,
-                linked_sales_return: order.linked_sales_return,
-                remarks: order.remarks,
-                items_count: initial.length,
-                lineItems: initial,
-                raw_order: order,
-            });
-        }
-        return initial;
-    });
+    const [allocationModalItemIndex, setAllocationModalItemIndex] = useState<number | null>(null);
 
     const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -383,16 +425,19 @@ export default function ProductReconciliationModal({
 
     // Dynamic fulfillment status derived live from line items and selected order status
     const dynamicStatus: FulfillmentStatus = useMemo(() => {
+        // If order has a linked sales return, it MUST strictly be "Fulfilled with Returns"
+        if (selectedLinkedReturn) {
+            return "Fulfilled with Returns";
+        }
         const computed = computePreviewStatus(lineItems);
-        // If order was explicitly set as a return status or has linked return, maintain return status unless all items are unfulfilled
-        if (order?.fulfillment_status === "Fulfilled with Returns" || selectedLinkedReturn) {
+        if (order?.fulfillment_status === "Fulfilled with Returns") {
             if (computed === "Unfulfilled / Returns") return "Unfulfilled / Returns";
             return "Fulfilled with Returns";
         }
         if (order?.fulfillment_status === "Unfulfilled / Returns") {
             return "Unfulfilled / Returns";
         }
-        if (order?.fulfillment_status === "Fulfilled with Concerns" && computed === "Fulfilled") {
+        if (order?.fulfillment_status === "Fulfilled with Concerns") {
             return "Fulfilled with Concerns";
         }
         return computed;
@@ -424,6 +469,23 @@ export default function ProductReconciliationModal({
         ((lineItems || []).some((i) => i.returned_quantity > 0) ||
             order?.fulfillment_status === "Fulfilled with Returns" ||
             Boolean(sr));
+
+    // Terminal status lock: Any invoice that has reached a terminal status (Fulfilled, Fulfilled with Concerns, or Fulfilled with Returns)
+    const isTerminalStatus = Boolean(
+        order?.fulfillment_status === "Fulfilled" ||
+        order?.fulfillment_status === "Fulfilled with Concerns" ||
+        order?.fulfillment_status === "Fulfilled with Returns" ||
+        order?.is_cleared
+    );
+
+    // If invoice status is anything other than Unfulfilled / Pending, strictly lock inputs
+    const isStatusLocked = isTerminalStatus || Boolean(
+        order?.fulfillment_status &&
+        order.fulfillment_status !== "Pending" &&
+        order.fulfillment_status !== "Unfulfilled / Returns"
+    );
+
+    const effectiveReadOnly = isReadOnly || isStatusLocked;
 
     // Helper to redirect to Sales Return module for this order
     const handleRedirectToSalesReturn = () => {
@@ -488,19 +550,140 @@ export default function ProductReconciliationModal({
         setLineItems((prev) => {
             const next = [...prev];
             next[index] = { ...next[index], ...updates };
-            console.log("[ProductReconciliationModal] ✏️ Line updated at index:", index, "Updates:", updates, "New line:", next[index]);
             return next;
         });
+    };
+
+    const handleReturnedQtyChange = (originalIndex: number, newReturnedQty: number) => {
+        const item = lineItems[originalIndex];
+        const recQty = item.received_quantity;
+        const ordQty = item.ordered_quantity;
+
+        let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
+        const physicalDispatched = updatedReservations.reduce(
+            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+            0
+        );
+        const maxReturnable = physicalDispatched > 0
+            ? physicalDispatched
+            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+        const cappedQty = Math.min(newReturnedQty, maxReturnable);
+
+        if (updatedReservations.length === 1) {
+            updatedReservations[0].returned_quantity = cappedQty;
+        } else if (updatedReservations.length > 1) {
+            if ((recQty === 0 && cappedQty === ordQty) || cappedQty === maxReturnable) {
+                updatedReservations = updatedReservations.map((r) => ({
+                    ...r,
+                    returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+                }));
+            } else {
+                let remaining = cappedQty;
+                updatedReservations = updatedReservations.map((r) => {
+                    const picked = Number(r.picked_quantity || r.reserved_quantity || 0);
+                    const alloc = Math.min(picked, remaining);
+                    remaining = Math.max(0, remaining - alloc);
+                    return { ...r, returned_quantity: alloc };
+                });
+            }
+        }
+
+        updateLine(originalIndex, {
+            returned_quantity: cappedQty,
+            reservations: updatedReservations,
+        });
+    };
+
+    const handleReceivedQtyChange = (originalIndex: number, newReceivedQty: number) => {
+        const item = lineItems[originalIndex];
+        const retQty = item.returned_quantity;
+        const ordQty = item.ordered_quantity;
+
+        let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
+        const physicalDispatched = updatedReservations.reduce(
+            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+            0
+        );
+        const maxDeliverable = physicalDispatched > 0
+            ? physicalDispatched
+            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+        const cappedReceivedQty = Math.max(0, Math.min(newReceivedQty, maxDeliverable));
+        const maxReturnable = maxDeliverable;
+
+        if (cappedReceivedQty === 0 && (retQty === ordQty || retQty === maxReturnable) && updatedReservations.length > 0) {
+            updatedReservations = updatedReservations.map((r) => ({
+                ...r,
+                returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+            }));
+            updateLine(originalIndex, {
+                received_quantity: 0,
+                returned_quantity: maxReturnable,
+                reservations: updatedReservations,
+            });
+        } else {
+            updateLine(originalIndex, { received_quantity: cappedReceivedQty });
+        }
+    };
+
+    const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
+        if (allocationModalItemIndex === null) return;
+        updateLine(allocationModalItemIndex, {
+            reservations: updatedReservations,
+        });
+        setAllocationModalItemIndex(null);
+    };
+
+    // Helper to save remarks only when product reconciliation quantities are locked
+    const handleSaveRemarks = () => {
+        if (!order) return;
+        onSave(order.items, order.linked_sales_return ?? selectedLinkedReturn, orderRemarks);
+        toast.success("Order remarks updated successfully.");
+        onClose();
     };
 
     const handleSave = (e: React.FormEvent) => {
         e.preventDefault();
 
-        // 1. Validate non-negative quantities
-        const negativeLine = lineItems.find((item) => item.received_quantity < 0 || item.returned_quantity < 0);
-        if (negativeLine) {
-            toast.error(`Quantities cannot be negative for "${negativeLine.product_name}".`);
+        if (effectiveReadOnly) {
+            handleSaveRemarks();
             return;
+        }
+
+        // 2. Validate mandatory remarks for returns, concerns, unfulfilled, or quantity variances
+        const hasVariance = lineItems.some((i) => i.ordered_quantity !== i.received_quantity + i.returned_quantity);
+        const isRemarksRequired =
+            dynamicStatus === "Fulfilled with Returns" ||
+            dynamicStatus === "Fulfilled with Concerns" ||
+            dynamicStatus === "Unfulfilled / Returns" ||
+            hasVariance;
+
+        if (isRemarksRequired && (!orderRemarks || orderRemarks.trim().length === 0)) {
+            if (hasVariance) {
+                toast.error("Remarks are required due to quantity variance on this order. Please enter remarks below.");
+            } else {
+                toast.error(`Remarks are required when order status is "${dynamicStatus}". Please enter remarks below.`);
+            }
+            return;
+        }
+
+        // Validate batch reservations allocation for returns (strictly for Unfulfilled / Returns)
+        if (isUnfulfilled) {
+            for (const item of lineItems) {
+                if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
+                    const physicalDispatched = item.reservations.reduce(
+                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        0
+                    );
+                    const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
+                    const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+                    if (totalAlloc !== targetReturn) {
+                        toast.error(
+                            `Batch return allocation mismatch on "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned (physical dispatch). Please balance batch allocation.`
+                        );
+                        return;
+                    }
+                }
+            }
         }
 
         // Derive line status cleanly based on quantities
@@ -526,12 +709,12 @@ export default function ProductReconciliationModal({
             };
         });
 
-        console.log("[ProductReconciliationModal] ✅ Saving reconciled items:", {
-            order_no: order?.order_no,
-            linked_sales_return: selectedLinkedReturn,
-            remarks: orderRemarks,
-            items: processedItems,
-        });
+        // console.log("[ProductReconciliationModal] ✅ Saving reconciled items:", {
+        //     order_no: order?.order_no,
+        //     linked_sales_return: selectedLinkedReturn,
+        //     remarks: orderRemarks,
+        //     items: processedItems,
+        // });
         onSave(processedItems, selectedLinkedReturn, orderRemarks);
         onClose();
     };
@@ -709,6 +892,53 @@ export default function ProductReconciliationModal({
                             </div>
                         </div>
 
+                        {/* Terminal Status / Read-Only Alert Banner */}
+                        {effectiveReadOnly && (
+                            <div
+                                className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
+                                    order.fulfillment_status === "Fulfilled with Returns"
+                                        ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200"
+                                        : "bg-muted/60 border-border text-foreground"
+                                }`}
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div
+                                        className={`p-2 rounded-lg shrink-0 mt-0.5 ${
+                                            order.fulfillment_status === "Fulfilled with Returns"
+                                                ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                                                : "bg-muted text-muted-foreground"
+                                        }`}
+                                    >
+                                        <Lock className="h-4 w-4" />
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        <div className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                                            <span>Reconciliation Locked (Read-Only)</span>
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-background/80 border">
+                                                Status: {order.fulfillment_status || (order.is_cleared ? "Cleared" : "Closed")}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs opacity-90 leading-relaxed">
+                                            {order.fulfillment_status === "Fulfilled with Returns"
+                                                ? "This transaction is marked Fulfilled with Returns and quantities are locked to preserve the audit trail. Any subsequent return adjustments must be initiated strictly through the dedicated Sales Return module. You can still update order remarks below."
+                                                : "This transaction has reached terminal status and quantities are locked in read-only mode to preserve the audit trail. You can still update order remarks below."}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {order.fulfillment_status === "Fulfilled with Returns" && (
+                                    <button
+                                        type="button"
+                                        onClick={handleRedirectToSalesReturn}
+                                        className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer active:scale-95"
+                                    >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                        Open Sales Return Module
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Linked Sales Return Section (Only shown when status is Fulfilled with Returns) */}
                         {dynamicStatus === "Fulfilled with Returns" && (
                             <div className="p-4 rounded-xl border bg-card/60 shadow-xs space-y-3">
@@ -763,7 +993,7 @@ export default function ProductReconciliationModal({
                                             options={returnOptions}
                                             value={selectedLinkedReturn ? String(selectedLinkedReturn.return_id) : "none"}
                                             onValueChange={handleSelectReturn}
-                                            disabled={isReadOnly || isRefreshing}
+                                            disabled={effectiveReadOnly || isRefreshing}
                                             placeholder="Select a matching Sales Return to link..."
                                             searchPlaceholder="Search return number, SO, invoice, or date..."
                                             emptyMessage="No Sales Return matching this SO or Invoice."
@@ -785,7 +1015,7 @@ export default function ProductReconciliationModal({
                                                         (selectedLinkedReturn.is_received ? "Received" : "Pending")}
                                                 </span>
 
-                                                {!isReadOnly && (
+                                                {!effectiveReadOnly && (
                                                     <button
                                                         type="button"
                                                         onClick={() => handleSelectReturn("none")}
@@ -818,8 +1048,8 @@ export default function ProductReconciliationModal({
                                         Item Line Breakdown & Fulfillment Reconciliation
                                     </h3>
                                     <p className="text-xs font-semibold text-muted-foreground pt-0.5">
-                                        {isReadOnly
-                                            ? "Viewing finalized item line quantities and variance."
+                                        {effectiveReadOnly
+                                            ? "Viewing locked item line quantities and variance (Read-Only)."
                                             : "Adjust fulfilled and returned quantities for each product item."}
                                     </p>
                                 </div>
@@ -855,6 +1085,7 @@ export default function ProductReconciliationModal({
                                                 <th className="p-3.5 text-center w-20">Ordered</th>
                                                 <th className="p-3.5 text-center w-28 text-emerald-600 dark:text-emerald-400">Fulfilled</th>
                                                 <th className="p-3.5 text-center w-28 text-rose-600 dark:text-rose-400">Returned</th>
+                                                <th className="p-3.5 text-center w-40 text-amber-600 dark:text-amber-400">Batch Allocation</th>
                                                 <th className="p-3.5 text-center w-24">Variance</th>
                                             </tr>
                                         </thead>
@@ -862,7 +1093,7 @@ export default function ProductReconciliationModal({
                                             {filteredLineItemsWithIndex.length === 0 ? (
                                                 <tr>
                                                     <td
-                                                        colSpan={5}
+                                                        colSpan={6}
                                                         className="p-8 text-center text-muted-foreground text-xs font-semibold"
                                                     >
                                                         No products matching &quot;{searchQuery}&quot; found.
@@ -881,6 +1112,23 @@ export default function ProductReconciliationModal({
                                                                 <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded border border-border/50 inline-block mt-0.5">
                                                                     {item.product_code}
                                                                 </span>
+                                                                {/* Originating Batches from sales_order_reservation */}
+                                                                {item.reservations && item.reservations.length > 0 && (
+                                                                    <div className="mt-1.5 flex flex-wrap gap-1 items-center">
+                                                                        {item.reservations.map((r) => (
+                                                                            <span
+                                                                                key={r.reservation_id}
+                                                                                className="inline-flex items-center gap-1 text-[10px] bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 px-1.5 py-0.5 rounded font-mono"
+                                                                                title={`Originating Lot: ${r.lot_name || r.lot_number || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"} | Picked: ${r.picked_quantity || r.reserved_quantity}`}
+                                                                            >
+                                                                                <Boxes className="h-3 w-3 text-sky-500" />
+                                                                                <span>{r.lot_name || r.lot_number || `Lot #${r.lot_id}`}</span>
+                                                                                {r.batch_no && <span className="opacity-70">· {r.batch_no}</span>}
+                                                                                <span className="font-bold">({r.picked_quantity || r.reserved_quantity})</span>
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
                                                             </td>
 
                                                             {/* Ordered */}
@@ -890,49 +1138,121 @@ export default function ProductReconciliationModal({
 
                                                             {/* Fulfilled Input */}
                                                             <td className="p-3.5 text-center align-middle">
-                                                                {isReadOnly ? (
+                                                                {effectiveReadOnly ? (
                                                                     <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
                                                                         {item.received_quantity}
                                                                     </span>
                                                                 ) : (
-                                                                    <input
-                                                                        type="number"
-                                                                        min="0"
-                                                                        max={item.ordered_quantity}
-                                                                        value={item.received_quantity === 0 ? "" : item.received_quantity}
-                                                                        placeholder="0"
-                                                                        onFocus={(e) => e.target.select()}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                            updateLine(originalIndex, { received_quantity: isNaN(parsed) ? 0 : Math.max(0, parsed) });
-                                                                        }}
-                                                                        className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                    />
+                                                                    (() => {
+                                                                        const physicalDispatched = (item.reservations || []).reduce(
+                                                                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                                                                            0
+                                                                        );
+                                                                        const maxDeliverable = physicalDispatched > 0
+                                                                            ? physicalDispatched
+                                                                            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+                                                                        return (
+                                                                            <input
+                                                                                type="number"
+                                                                                min={0}
+                                                                                max={maxDeliverable}
+                                                                                value={item.received_quantity === 0 ? "" : item.received_quantity}
+                                                                                placeholder="0"
+                                                                                onFocus={(e) => e.target.select()}
+                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                                onChange={(e) => {
+                                                                                    const val = e.target.value;
+                                                                                    const parsed = val === "" ? 0 : parseInt(val, 10);
+                                                                                    handleReceivedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
+                                                                                }}
+                                                                                onBlur={(e) => {
+                                                                                    const val = e.target.value;
+                                                                                    if (val === "" || isNaN(parseInt(val, 10))) {
+                                                                                        handleReceivedQtyChange(originalIndex, 0);
+                                                                                    }
+                                                                                }}
+                                                                                className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                                                                            />
+                                                                        );
+                                                                    })()
                                                                 )}
                                                             </td>
 
                                                             {/* Returned Input */}
                                                             <td className="p-3.5 text-center align-middle">
-                                                                {isReadOnly ? (
+                                                                {effectiveReadOnly ? (
                                                                     <span className="font-black text-sm text-rose-500">
                                                                         {item.returned_quantity}
                                                                     </span>
                                                                 ) : (
-                                                                    <input
-                                                                        type="number"
-                                                                        min="0"
-                                                                        max={item.ordered_quantity}
-                                                                        value={item.returned_quantity === 0 ? "" : item.returned_quantity}
-                                                                        placeholder="0"
-                                                                        onFocus={(e) => e.target.select()}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                            updateLine(originalIndex, { returned_quantity: isNaN(parsed) ? 0 : Math.max(0, parsed) });
-                                                                        }}
-                                                                        className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                    />
+                                                                    (() => {
+                                                                        const physicalDispatched = (item.reservations || []).reduce(
+                                                                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                                                                            0
+                                                                        );
+                                                                        const maxReturnable = physicalDispatched > 0
+                                                                            ? physicalDispatched
+                                                                            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
+                                                                        return (
+                                                                            <input
+                                                                                type="number"
+                                                                                min={0}
+                                                                                max={maxReturnable}
+                                                                                value={item.returned_quantity === 0 ? "" : item.returned_quantity}
+                                                                                placeholder="0"
+                                                                                onFocus={(e) => e.target.select()}
+                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                                onChange={(e) => {
+                                                                                    const val = e.target.value;
+                                                                                    const parsed = val === "" ? 0 : parseInt(val, 10);
+                                                                                    handleReturnedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
+                                                                                }}
+                                                                                onBlur={(e) => {
+                                                                                    const val = e.target.value;
+                                                                                    if (val === "" || isNaN(parseInt(val, 10))) {
+                                                                                        handleReturnedQtyChange(originalIndex, 0);
+                                                                                    }
+                                                                                }}
+                                                                                className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                                                                            />
+                                                                        );
+                                                                    })()
+                                                                )}
+                                                            </td>
+
+                                                            {/* Dedicated Column: Lot & Batch Allocation */}
+                                                            <td className="p-3.5 text-center align-middle">
+                                                                {isUnfulfilled && item.returned_quantity > 0 && item.reservations && item.reservations.length > 0 ? (
+                                                                    <div className="flex flex-col items-center gap-1">
+                                                                        {!effectiveReadOnly && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setAllocationModalItemIndex(originalIndex)}
+                                                                                className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 rounded-md transition-colors shadow-2xs active:scale-95"
+                                                                                title="Allocate lots and batches for this returned item"
+                                                                            >
+                                                                                <SlidersHorizontal className="h-2.5 w-2.5" />
+                                                                                Allocate Batches
+                                                                            </button>
+                                                                        )}
+                                                                        {item.reservations.some((r) => (r.returned_quantity || 0) > 0) && (
+                                                                            <div className="flex flex-col items-center gap-0.5 mt-0.5">
+                                                                                {item.reservations
+                                                                                    .filter((r) => (r.returned_quantity || 0) > 0)
+                                                                                    .map((r) => (
+                                                                                        <span
+                                                                                            key={r.reservation_id}
+                                                                                            className="text-[9px] font-mono text-muted-foreground bg-muted/50 border border-border/50 px-1.5 py-0.5 rounded"
+                                                                                            title={`Lot: ${r.lot_name || `Lot #${r.lot_id}`} | Batch: ${r.batch_no || "N/A"}`}
+                                                                                        >
+                                                                                            {r.returned_quantity} → {r.lot_name || `Lot #${r.lot_id}`} {r.batch_no ? `(${r.batch_no})` : ""}
+                                                                                        </span>
+                                                                                    ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-muted-foreground/40 text-xs font-medium">—</span>
                                                                 )}
                                                             </td>
 
@@ -961,39 +1281,80 @@ export default function ProductReconciliationModal({
                         </div>
 
                         {/* Sales Order Remarks Card (Dedicated Card below product breakdown) */}
-                        <div className="p-4 rounded-xl border bg-card/60 shadow-xs space-y-2">
-                            <label className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                                <FileText className="h-3.5 w-3.5 text-primary" />
-                               Remarks / Notes
-                            </label>
-                            <p className="text-[11px] text-muted-foreground font-medium">
-                                Enter clearance notes, customer concerns, or return details for this sales order.
-                            </p>
-                            {isReadOnly ? (
-                                <div className="p-3 rounded-lg bg-muted/40 border text-xs text-foreground min-h-[48px]">
-                                    {orderRemarks || "No remarks recorded."}
+                        {(() => {
+                            const hasOrderVariance = lineItems.some(
+                                (i) => i.ordered_quantity !== i.received_quantity + i.returned_quantity
+                            );
+                            const isRemarksRequired =
+                                dynamicStatus === "Fulfilled with Returns" ||
+                                dynamicStatus === "Fulfilled with Concerns" ||
+                                dynamicStatus === "Unfulfilled / Returns" ||
+                                hasOrderVariance;
+
+                            return (
+                                <div className="p-4 rounded-xl border bg-card/60 shadow-xs space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                                            <FileText className="h-3.5 w-3.5 text-primary" />
+                                            Remarks / Notes
+                                            {isRemarksRequired && (
+                                                <span className="text-rose-500 font-bold text-[10px] ml-1.5">* Required</span>
+                                            )}
+                                        </label>
+                                        {isRemarksRequired && !orderRemarks.trim() && (
+                                            <span className="text-[10px] font-bold text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                                                {hasOrderVariance ? "Required (Quantity Variance)" : "Please provide reason / notes"}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground font-medium">
+                                        {hasOrderVariance
+                                            ? "Mandatory: Enter the reason for quantity variance / missing items for this sales order."
+                                            : isRemarksRequired
+                                            ? "Mandatory: Enter the reason for product return, customer concern, or delivery notes for this sales order."
+                                            : "Enter clearance notes, customer concerns, or return details for this sales order."}
+                                    </p>
+                                    <textarea
+                                        rows={2}
+                                        value={orderRemarks}
+                                        onChange={(e) => setOrderRemarks(e.target.value)}
+                                        placeholder={
+                                            hasOrderVariance
+                                                ? "Required: Enter explanation for quantity variance / missing items..."
+                                                : isRemarksRequired
+                                                ? "Required: Enter order remarks, reason for return, or concern details..."
+                                                : "Enter order remarks, notes, or reasons for concern / returns..."
+                                        }
+                                        className={`w-full bg-background border rounded-xl px-3.5 py-2.5 text-xs focus:border-primary outline-none text-foreground placeholder:text-muted-foreground shadow-xs resize-none transition-colors ${
+                                            isRemarksRequired && !orderRemarks.trim()
+                                                ? "border-rose-500/50 focus:border-rose-500"
+                                                : "border-input"
+                                        }`}
+                                    />
                                 </div>
-                            ) : (
-                                <textarea
-                                    rows={2}
-                                    value={orderRemarks}
-                                    onChange={(e) => setOrderRemarks(e.target.value)}
-                                    placeholder="Enter order remarks, notes, or reasons for concern / returns..."
-                                    className="w-full bg-background border border-input rounded-xl px-3.5 py-2.5 text-xs focus:border-primary outline-none text-foreground placeholder:text-muted-foreground shadow-xs resize-none"
-                                />
-                            )}
-                        </div>
+                            );
+                        })()}
 
                         {/* Footer Actions */}
                         <div className="flex items-center justify-end gap-3 pt-3 border-t">
-                            {isReadOnly ? (
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-black shadow-xs transition-all cursor-pointer"
-                                >
-                                    Close
-                                </button>
+                            {effectiveReadOnly ? (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={onClose}
+                                        className="px-5 py-2.5 rounded-xl border bg-background hover:bg-muted text-foreground text-xs font-bold transition-all cursor-pointer shadow-xs"
+                                    >
+                                        Close
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveRemarks}
+                                        className="px-6 py-2.5 rounded-xl text-xs font-black shadow-xs transition-all flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground cursor-pointer shadow-sm hover:shadow-md active:scale-95"
+                                    >
+                                        <Check className="h-4 w-4" />
+                                        Save Remarks
+                                    </button>
+                                </>
                             ) : (
                                 <>
                                     <button
@@ -1007,6 +1368,32 @@ export default function ProductReconciliationModal({
                             )}
                         </div>
                     </form>
+
+                    {/* Multi-Lot & Multi-Batch Allocation Modal - strictly for Unfulfilled / Returns */}
+                    {isUnfulfilled && allocationModalItemIndex !== null && lineItems[allocationModalItemIndex] && (() => {
+                        const targetItem = lineItems[allocationModalItemIndex];
+                        const physicalDispatched = (targetItem.reservations || []).reduce(
+                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                            0
+                        );
+                        const targetQty = physicalDispatched > 0
+                            ? Math.min(targetItem.returned_quantity, physicalDispatched)
+                            : targetItem.returned_quantity;
+
+                        return (
+                            <ReconciliationLotAllocationModal
+                                open={allocationModalItemIndex !== null}
+                                onClose={() => setAllocationModalItemIndex(null)}
+                                productId={targetItem.product_id}
+                                productName={targetItem.product_name}
+                                productCode={targetItem.product_code}
+                                uomName={targetItem.uom || "units"}
+                                requestedQuantity={targetQty}
+                                reservations={targetItem.reservations || []}
+                                onConfirm={handleConfirmLotAllocation}
+                            />
+                        );
+                    })()}
                 </motion.div>
             </div>
         </AnimatePresence>

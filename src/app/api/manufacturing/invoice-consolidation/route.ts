@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
         if (authError) return authError;
 
         const body = await req.json();
-        const { branchId, invoiceIds, customAllocations } = body;
+        const { branchId, invoiceIds, customAllocations, allowPartialAllocation } = body;
 
         if (!branchId || !invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
             return NextResponse.json({ message: "branchId and invoiceIds are required" }, { status: 400 });
@@ -349,7 +349,12 @@ export async function POST(req: NextRequest) {
 
         try {
             if (Array.isArray(customAllocations) && customAllocations.length > 0) {
-                const allocation = await allocateInvoicesWithCustomAllocations(allocationOrder, customAllocations, userId!);
+                const allocation = await allocateInvoicesWithCustomAllocations(
+                    allocationOrder,
+                    customAllocations,
+                    userId!,
+                    Boolean(allowPartialAllocation)
+                );
                 createdReservationIds = allocation.createdReservationIds;
             } else {
                 const allocation = await allocateInvoicesForConsolidation(allocationOrder, userId!);
@@ -405,6 +410,7 @@ export async function POST(req: NextRequest) {
             createdJunctionIds = linkData.map((j: { id: number }) => j.id);
 
             const detData = detCheck;
+            const reservedMap = new Map<number, number>();
             if (detailIds.length > 0) {
                 const reservationRes = await fetch(
                     `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&fields=sales_order_detail_id,reserved_quantity,quantity&limit=-1`,
@@ -412,7 +418,6 @@ export async function POST(req: NextRequest) {
                 );
                 if (reservationRes.ok) {
                     const reservationData: { sales_order_detail_id: number; reserved_quantity?: number; quantity?: number }[] = (await reservationRes.json()).data || [];
-                    const reservedMap = new Map<number, number>();
                     for (const reservation of reservationData) {
                         const detailId = Number(reservation.sales_order_detail_id);
                         reservedMap.set(detailId, (reservedMap.get(detailId) || 0) + Number(reservation.reserved_quantity ?? reservation.quantity ?? 0));
@@ -439,16 +444,21 @@ export async function POST(req: NextRequest) {
                 throw new Error("Selected documents have no valid product lines to consolidate");
             }
 
-            const detailPayload = detData.map((d) => ({
-                consolidator_id: newId,
-                sales_order_detail_id: d.detail_id || null,
-                product_id: d.product_id,
-                ordered_quantity: Number(d.quantity || 0),
-                picked_quantity: 0,
-                applied_quantity: 0,
-                picked_at: null,
-                picked_by: null,
-            }));
+            const detailPayload = detData.map((d) => {
+                const detailId = Number(d.detail_id);
+                const allocatedQty = reservedMap.get(detailId);
+                const baseQty = Number(d.quantity || 0);
+                return {
+                    consolidator_id: newId,
+                    sales_order_detail_id: d.detail_id || null,
+                    product_id: d.product_id,
+                    ordered_quantity: allocatedQty !== undefined && allocatedQty > baseQty ? allocatedQty : baseQty,
+                    picked_quantity: 0,
+                    applied_quantity: 0,
+                    picked_at: null,
+                    picked_by: null,
+                };
+            });
             const detCreateRes = await fetch(`${DIRECTUS_URL}/items/consolidator_details`, {
                 method: "POST",
                 headers: directusHeaders,

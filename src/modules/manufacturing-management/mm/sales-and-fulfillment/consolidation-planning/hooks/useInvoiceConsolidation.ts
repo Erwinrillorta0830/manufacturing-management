@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { InvoiceConsolidation, CandidateInvoice, StatusSummary, Branch } from "../types";
+import { InvoiceConsolidation, CandidateInvoice, StatusSummary, Branch, CreateConsolidationPayload } from "../types";
 import {
     fetchConsolidations,
     fetchSummary,
@@ -128,7 +128,7 @@ export function useInvoiceConsolidation() {
         }
     }, []);
 
-    const handleCreate = async (payload: { branchId: number; invoiceIds: number[] }) => {
+    const handleCreate = async (payload: CreateConsolidationPayload) => {
         setSubmitting(true);
         try {
             await createConsolidation(payload);
