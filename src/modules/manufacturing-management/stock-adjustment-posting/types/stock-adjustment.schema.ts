@@ -126,7 +126,7 @@ export const StockAdjustmentFormSchema = z
   .object({
     doc_no: z.string().min(1, "Document number is required"),
     branch_id: z.number().min(1, "Branch is required"),
-    supplier_id: z.number().min(1, "Supplier is required"),
+    supplier_id: z.number().nullable().optional(),
     type: StockAdjustmentTypeSchema,
     remarks: z.string().optional(),
     items: z.array(StockAdjustmentItemSchema).min(1, "At least one item is required"),

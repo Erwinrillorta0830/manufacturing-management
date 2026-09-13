@@ -210,7 +210,7 @@ export function useStockAdjustmentForm() {
           branch_id: values.branch_id,
           type: values.type,
           remarks: values.remarks,
-          supplier_id: values.supplier_id,
+          supplier_id: values.supplier_id ? Number(values.supplier_id) : null,
           amount: values.items.reduce(
             (acc, item) => acc + item.quantity * (item.cost_per_unit || 0),
             0
@@ -234,7 +234,7 @@ export function useStockAdjustmentForm() {
           branch_id: values.branch_id,
           type: values.type,
           remarks: values.remarks,
-          supplier_id: values.supplier_id,
+          supplier_id: values.supplier_id ? Number(values.supplier_id) : null,
           amount: values.items.reduce(
             (acc, item) => acc + item.quantity * (item.cost_per_unit || 0),
             0

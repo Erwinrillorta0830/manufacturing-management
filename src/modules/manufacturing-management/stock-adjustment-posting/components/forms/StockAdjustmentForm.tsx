@@ -1136,7 +1136,7 @@ export function StockAdjustmentForm({
 
                   <div className="space-y-2">
                     <Label htmlFor="supplier" className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                      Supplier <span className="text-red-500">*</span>
+                      Supplier
                     </Label>
                     <Combobox
                       value={watchedSupplierIdForSelect ? String(watchedSupplierIdForSelect) : ""}
