@@ -86,11 +86,11 @@ export async function GET(request: Request) {
         }
 
         // Fetch customer names from Directus customer collection to prioritize customer_name
-        const customerCodes = [...new Set(rawInvoices.map((inv: { customer_code?: string }) => inv.customer_code).filter((c): c is string => typeof c === "string" && c.trim().length > 0))];
+        const customerCodes: string[] = Array.from(new Set<string>(rawInvoices.map((inv: { customer_code?: string }) => inv.customer_code).filter((c: unknown): c is string => typeof c === "string" && c.trim().length > 0)));
         const customerNameMap = new Map<string, string>();
         if (customerCodes.length > 0) {
             try {
-                const escCodes = customerCodes.map(c => encodeURIComponent(c)).join(",");
+                const escCodes = customerCodes.map((c: string) => encodeURIComponent(c)).join(",");
                 const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${escCodes}&limit=-1&fields=customer_code,customer_name`, { headers, cache: "no-store" });
                 if (custRes.ok) {
                     const custData = (await custRes.json()).data || [];
