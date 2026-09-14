@@ -11,7 +11,8 @@ import type {
     WarehouseReceiptType,
     WarehouseReceivingCommand,
     WarehouseReceivingLine,
-    WarehouseReceivingOrder
+    WarehouseReceivingOrder,
+    WarehouseReceivingQueueResponse
 } from "../types";
 
 function today() {
@@ -31,6 +32,11 @@ export function useWarehouseReceiving() {
     const [receiptDate, setReceiptDate] = useState(today);
     const [receiptType, setReceiptType] = useState<WarehouseReceiptType>("full");
     const [search, setSearch] = useState("");
+    const [supplierId, setSupplierId] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
+    const [status, setStatus] = useState("ALL");
+    const [supplierOptions, setSupplierOptions] = useState<WarehouseReceivingQueueResponse["supplierOptions"]>([]);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -41,18 +47,21 @@ export function useWarehouseReceiving() {
     const queueController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
 
-    const loadQueue = useCallback(async (requestedPage = page, requestedSearch = search) => {
+    const filters = useMemo(() => ({ search, supplierId, dateFrom, dateTo, status }), [dateFrom, dateTo, search, status, supplierId]);
+
+    const loadQueue = useCallback(async (requestedPage: number, requestedFilters: typeof filters) => {
         queueController.current?.abort();
         const controller = new AbortController();
         queueController.current = controller;
         setLoading(true);
         setError(null);
         try {
-            const result = await fetchWarehouseReceivingQueue({ search: requestedSearch, page: requestedPage }, controller.signal);
+            const result = await fetchWarehouseReceivingQueue({ ...requestedFilters, page: requestedPage }, controller.signal);
             if (controller.signal.aborted) return;
             setOrders(result.items);
             setPage(result.page);
             setTotal(result.total);
+            setSupplierOptions(result.supplierOptions || []);
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;
             const message = caught instanceof Error ? caught.message : "Unable to load Warehouse Receiving.";
@@ -60,12 +69,12 @@ export function useWarehouseReceiving() {
         } finally {
             if (!controller.signal.aborted) setLoading(false);
         }
-    }, [page, search]);
+    }, []);
 
     useEffect(() => {
-        const timer = window.setTimeout(() => void loadQueue(1, search), 200);
+        const timer = window.setTimeout(() => void loadQueue(1, filters), 200);
         return () => window.clearTimeout(timer);
-    }, [loadQueue, search]);
+    }, [filters, loadQueue]);
 
     useEffect(() => () => {
         queueController.current?.abort();
@@ -109,6 +118,13 @@ export function useWarehouseReceiving() {
         if (!selectedOrder) return;
         setSubmitting(action);
         try {
+            const hasOverReceiving = selectedOrder.lines.some(line => {
+                const entered = Math.max(0, Number(quantities[line.lineId] || 0));
+                return entered > line.allowableQuantity + 1e-9;
+            });
+            if (hasOverReceiving && action !== "start") {
+                toast.warning("Over-receiving quantities will be recorded and flagged for review.");
+            }
             const result = await postWarehouseReceiving({
                 action,
                 purchaseOrderId: selectedOrder.id,
@@ -124,14 +140,14 @@ export function useWarehouseReceiving() {
                 toast.success(`${result.poNumber} was sent to QA Receiving.`);
                 setSelectedOrder(null);
                 setQuantities({});
-                await loadQueue(1, search);
+                await loadQueue(1, filters);
             } else {
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
                 setReceiptNumber(result.draft?.receiptNumber || receiptNumber);
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
                 setReceiptType(result.draft?.receiptType || receiptType);
-                await loadQueue(page, search);
+                await loadQueue(page, filters);
                 toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
             }
         } catch (caught) {
@@ -139,7 +155,7 @@ export function useWarehouseReceiving() {
         } finally {
             setSubmitting(null);
         }
-    }, [commandLines, loadQueue, page, receiptDate, receiptNumber, receiptType, search, selectedOrder]);
+    }, [commandLines, filters, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
 
     const totalPages = Math.max(1, Math.ceil(total / 25));
     const selectedLines: WarehouseReceivingLine[] = selectedOrder?.lines || [];
@@ -153,6 +169,11 @@ export function useWarehouseReceiving() {
         receiptDate,
         receiptType,
         search,
+        supplierId,
+        dateFrom,
+        dateTo,
+        status,
+        supplierOptions,
         page,
         total,
         totalPages,
@@ -162,9 +183,13 @@ export function useWarehouseReceiving() {
         detailError,
         submitting,
         setSearch,
+        setSupplierId,
+        setDateFrom,
+        setDateTo,
+        setStatus,
         setPage: (nextPage: number) => {
             setPage(nextPage);
-            void loadQueue(nextPage, search);
+            void loadQueue(nextPage, filters);
         },
         selectOrder,
         updateQuantity,
@@ -174,7 +199,7 @@ export function useWarehouseReceiving() {
         start: () => post("start"),
         saveDraft: () => post("save_draft"),
         submitToQa: () => post("submit_to_qa"),
-        retryQueue: () => loadQueue(page, search),
+        retryQueue: () => loadQueue(page, filters),
         clearSelection: () => {
             detailController.current?.abort();
             setSelectedOrder(null);
