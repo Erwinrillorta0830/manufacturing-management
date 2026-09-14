@@ -78,6 +78,8 @@ export interface TreasuryPouch {
     encoderName?: string;
     encoderId?: string | number;
     remarks?: string;
+    isPosted?: boolean | number | string | Buffer | { type?: string; data?: number[] };
+    status?: string;
     cashBuckets?: CashBucket[];
     allocations?: PouchAllocation[];
 }
@@ -254,8 +256,8 @@ export function ReviewSheet({
         pouch?.isPosted === 1 ||
         pouch?.isPosted === "1" ||
         (Buffer.isBuffer(pouch?.isPosted) && (pouch.isPosted as unknown as number[])[0] === 1) ||
-        (typeof pouch?.isPosted === "object" && (pouch?.isPosted as unknown as { data?: number[] })?.data?.[0] === 1) ||
-        (pouch as unknown as { status?: string })?.status === "POSTED"
+        (typeof pouch?.isPosted === "object" && pouch?.isPosted !== null && "data" in pouch.isPosted && (pouch.isPosted as { data?: number[] }).data?.[0] === 1) ||
+        pouch?.status === "POSTED"
     );
     const hasAllocations = (pouch?.allocations?.length ?? 0) > 0;
     const canPost = !isPosting && !isAlreadyPosted && hasAllocations && reviewMath.unallocatedInvoices.length === 0 && !reviewMath.isOverage;

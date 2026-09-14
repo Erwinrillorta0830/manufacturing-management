@@ -25,8 +25,6 @@ export async function POST(
             body: JSON.stringify({
                 isPosted: true,
                 is_posted: true,
-                isPosted: 1,
-                is_posted: 1,
                 date_posted: phDate
             })
         });
