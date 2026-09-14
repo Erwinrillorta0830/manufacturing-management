@@ -98,39 +98,93 @@ export async function GET(request: Request) {
         const collectionIds = items.map((item: { id?: number }) => item.id).filter(Boolean);
         const allocatedInvoicesMap = new Map<number, number>();
         const invoiceAmountMap = new Map<number, number>();
+        const pouchUniqueInvoicesMap = new Map<number, Set<number>>();
 
         if (collectionIds.length > 0) {
             try {
-                const invRes = await fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,invoice_id,amount`, { headers, cache: "no-store" });
-                if (invRes.ok) {
-                    const invData = (await invRes.json()).data || [];
-                    const invoiceIds = [...new Set(invData.map((inv: { invoice_id?: number }) => inv.invoice_id).filter(Boolean))];
+                const [invRes, returnRes, memoRes] = await Promise.all([
+                    fetch(`${DIRECTUS_URL}/items/collection_invoices?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,invoice_id,amount`, { headers, cache: "no-store" }),
+                    fetch(`${DIRECTUS_URL}/items/sales_invoice_sales_return?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,invoice_no,amount`, { headers, cache: "no-store" }),
+                    fetch(`${DIRECTUS_URL}/items/collection_memos?filter[collection_id][_in]=${collectionIds.join(",")}&limit=-1&fields=collection_id,memo_id,amount`, { headers, cache: "no-store" })
+                ]);
 
-                    const salesInvoiceMap = new Map<number, number>();
-                    if (invoiceIds.length > 0) {
-                        const siRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&limit=-1&fields=invoice_id,net_amount,total_amount,gross_amount,remaining_balance`, { headers, cache: "no-store" });
-                        if (siRes.ok) {
-                            const siData = (await siRes.json()).data || [];
-                            siData.forEach((si: { invoice_id: number; net_amount?: number; total_amount?: number; gross_amount?: number; remaining_balance?: number }) => {
-                                const val = Number(si.net_amount ?? si.total_amount ?? si.gross_amount ?? 0) || 0;
-                                salesInvoiceMap.set(si.invoice_id, val);
-                            });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let invData: any[] = [];
+                if (invRes.ok) invData = (await invRes.json()).data || [];
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let returnData: any[] = [];
+                if (returnRes && returnRes.ok) returnData = (await returnRes.json()).data || [];
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let memoData: any[] = [];
+                if (memoRes && memoRes.ok) memoData = (await memoRes.json()).data || [];
+
+                const invoiceIdsFromInvoices = invData.map((inv: { invoice_id?: number }) => Number(inv.invoice_id)).filter(Boolean);
+                const invoiceIdsFromReturns = returnData.map((ret: { invoice_no?: number }) => Number(ret.invoice_no)).filter(Boolean);
+                const invoiceIds = [...new Set([...invoiceIdsFromInvoices, ...invoiceIdsFromReturns])];
+
+                const salesInvoiceMap = new Map<number, number>();
+                if (invoiceIds.length > 0) {
+                    const siUrl = `${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${invoiceIds.join(",")}&limit=-1&fields=invoice_id,gross_amount,total_amount,net_amount`;
+                    const siRes = await fetch(siUrl, { headers, cache: "no-store" });
+                    if (siRes.ok) {
+                        const siData = (await siRes.json()).data || [];
+                        siData.forEach((si: { invoice_id?: number; gross_amount?: number; total_amount?: number; net_amount?: number }) => {
+                            const key = Number(si.invoice_id);
+                            const val = Number(si.net_amount ?? si.total_amount ?? si.gross_amount ?? 0) || 0;
+                            if (key) salesInvoiceMap.set(key, val);
+                        });
+                    }
+                }
+
+                invData.forEach((inv: { collection_id: number; invoice_id?: number; amount?: number }) => {
+                    const amt = Math.abs(Number(inv.amount) || 0);
+                    const collId = Number(inv.collection_id);
+                    if (collId) {
+                        allocatedInvoicesMap.set(collId, (allocatedInvoicesMap.get(collId) || 0) + amt);
+
+                        if (inv.invoice_id) {
+                            if (!pouchUniqueInvoicesMap.has(collId)) {
+                                pouchUniqueInvoicesMap.set(collId, new Set<number>());
+                            }
+                            pouchUniqueInvoicesMap.get(collId)!.add(Number(inv.invoice_id));
                         }
                     }
+                });
 
-                    invData.forEach((inv: { collection_id: number; invoice_id?: number; amount?: number }) => {
-                        const amt = Math.abs(Number(inv.amount) || 0);
-                        allocatedInvoicesMap.set(inv.collection_id, (allocatedInvoicesMap.get(inv.collection_id) || 0) + amt);
+                returnData.forEach((ret: { collection_id: number; invoice_no?: number; amount?: number }) => {
+                    const amt = Math.abs(Number(ret.amount) || 0);
+                    const collId = Number(ret.collection_id);
+                    if (collId) {
+                        allocatedInvoicesMap.set(collId, (allocatedInvoicesMap.get(collId) || 0) + amt);
 
-                        if (inv.invoice_id && salesInvoiceMap.has(inv.invoice_id)) {
-                            const invVal = salesInvoiceMap.get(inv.invoice_id) || 0;
-                            // Add unique invoice value to pouch total invoice amount
-                            invoiceAmountMap.set(inv.collection_id, (invoiceAmountMap.get(inv.collection_id) || 0) + invVal);
+                        if (ret.invoice_no) {
+                            if (!pouchUniqueInvoicesMap.has(collId)) {
+                                pouchUniqueInvoicesMap.set(collId, new Set<number>());
+                            }
+                            pouchUniqueInvoicesMap.get(collId)!.add(Number(ret.invoice_no));
                         }
+                    }
+                });
+
+                memoData.forEach((mem: { collection_id: number; memo_id?: number; amount?: number }) => {
+                    const amt = Math.abs(Number(mem.amount) || 0);
+                    const collId = Number(mem.collection_id);
+                    if (collId) {
+                        allocatedInvoicesMap.set(collId, (allocatedInvoicesMap.get(collId) || 0) + amt);
+                    }
+                });
+
+                pouchUniqueInvoicesMap.forEach((invoiceIdSet, collectionId) => {
+                    let totalInvGross = 0;
+                    invoiceIdSet.forEach(invId => {
+                        totalInvGross += salesInvoiceMap.get(Number(invId)) || 0;
                     });
-                }
+                    invoiceAmountMap.set(collectionId, totalInvGross);
+                });
             } catch (err) {
-                console.warn("Failed to fetch collection_invoices for queue:", err);
+                console.warn("Failed to fetch collection allocations for queue:", err);
             }
         }
         
@@ -143,7 +197,10 @@ export async function GET(request: Request) {
                     const detData = (await detRes.json()).data || [];
                     detData.forEach((det: { collection_id: number; amount?: number }) => {
                         const amt = Math.abs(Number(det.amount) || 0);
-                        pouchDetailsMap.set(det.collection_id, (pouchDetailsMap.get(det.collection_id) || 0) + amt);
+                        const collId = Number(det.collection_id);
+                        if (collId) {
+                            pouchDetailsMap.set(collId, (pouchDetailsMap.get(collId) || 0) + amt);
+                        }
                     });
                 }
             } catch (err) {
@@ -159,7 +216,9 @@ export async function GET(request: Request) {
             const totalLiquidPool = Math.max(rawPouchAmount, detailsTotal);
 
             const appliedAmount = allocatedInvoicesMap.get(item.id) || 0;
-            const invoiceAmount = invoiceAmountMap.get(item.id) || appliedAmount;
+            const hasUniqueInvoices = pouchUniqueInvoicesMap.has(item.id);
+            const computedInvAmt = invoiceAmountMap.get(item.id);
+            const invoiceAmount = hasUniqueInvoices ? (computedInvAmt || 0) : appliedAmount;
             
             // Unallocated funds remaining in the liquid pouch pool
             const unallocatedPouch = Math.round((totalLiquidPool - appliedAmount) * 100) / 100;

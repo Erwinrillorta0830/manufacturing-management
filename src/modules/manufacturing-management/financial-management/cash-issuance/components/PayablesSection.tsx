@@ -169,7 +169,7 @@ export function PayablesSection({
                                             size="icon" 
                                             variant="ghost" 
                                             onClick={() => handleRemovePayable(i)}
-                                            disabled={payables.length <= 1 || disabled}
+                                            disabled={disabled}
                                             className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive rounded-sm disabled:opacity-50"
                                         >
                                             <Trash2 className="w-3.5 h-3.5"/>

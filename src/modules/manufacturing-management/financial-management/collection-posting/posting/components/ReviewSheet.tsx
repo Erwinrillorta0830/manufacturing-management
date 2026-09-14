@@ -78,6 +78,8 @@ export interface TreasuryPouch {
     encoderName?: string;
     encoderId?: string | number;
     remarks?: string;
+    isPosted?: boolean | number | string | Buffer | { type?: string; data?: number[] };
+    status?: string;
     cashBuckets?: CashBucket[];
     allocations?: PouchAllocation[];
 }
@@ -143,7 +145,7 @@ export function ReviewSheet({
                 typeLabel = `METHOD_${b.paymentMethodId}`;
             }
 
-            const isCredit = b.balanceTypeId === 1;
+            const isCredit = b.balanceTypeId === 1 && typeLabel !== "EWT";
 
             if (isCredit) {
                 physical -= amt;
@@ -177,13 +179,12 @@ export function ReviewSheet({
 
             const typeStr = String(a.allocationType || "PAYMENT").toUpperCase();
 
-            // Separate pure credits/taxes from expected physical collections
+            // Separate pure credits/returns (CM, DM, Return) from expected remittance collections (Cash, Checks, EWT/Tax)
             const isCreditOrReturn = typeStr.includes("MEMO") || typeStr.includes("CM") || typeStr.includes("DM") || typeStr.includes("RETURN") || typeStr.includes("RTN");
-            const isTax = typeStr.includes("EWT") || typeStr.includes("TAX");
 
             if (isCreditOrReturn) {
                 totalCredits += amt;
-            } else if (!isTax) {
+            } else {
                 expectedPhysicalCash += amt;
             }
 
@@ -250,8 +251,16 @@ export function ReviewSheet({
         };
     }, [pouch]);
 
+    const isAlreadyPosted = Boolean(
+        pouch?.isPosted === true ||
+        pouch?.isPosted === 1 ||
+        pouch?.isPosted === "1" ||
+        (Buffer.isBuffer(pouch?.isPosted) && (pouch.isPosted as unknown as number[])[0] === 1) ||
+        (typeof pouch?.isPosted === "object" && pouch?.isPosted !== null && "data" in pouch.isPosted && (pouch.isPosted as { data?: number[] }).data?.[0] === 1) ||
+        pouch?.status === "POSTED"
+    );
     const hasAllocations = (pouch?.allocations?.length ?? 0) > 0;
-    const canPost = !isPosting && hasAllocations && reviewMath.unallocatedInvoices.length === 0 && !reviewMath.isOverage;
+    const canPost = !isPosting && !isAlreadyPosted && hasAllocations && reviewMath.unallocatedInvoices.length === 0 && !reviewMath.isOverage;
 
     return (
         <Sheet open={isOpen} onOpenChange={onOpenChange}>
@@ -283,8 +292,16 @@ export function ReviewSheet({
                                 <div>
                                     <h2 className="text-3xl font-black font-mono text-primary flex items-center gap-3">
                                         {pouch.docNo}
-                                        {reviewMath.isShortage && <Badge variant="destructive" className="bg-red-600 text-xs tracking-widest px-2.5 py-1 uppercase shadow-sm"><ShieldAlert size={14} className="mr-1.5"/> AUDIT PENDING</Badge>}
-                                        {!reviewMath.isShortage && !reviewMath.isOverage && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs tracking-widest px-2.5 py-1 uppercase shadow-sm"><CheckCircle2 size={14} className="mr-1.5"/> BALANCED</Badge>}
+                                        {isAlreadyPosted ? (
+                                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs tracking-widest px-2.5 py-1 uppercase shadow-sm">
+                                                <CheckCircle2 size={14} className="mr-1.5"/> POSTED &amp; LOCKED
+                                            </Badge>
+                                        ) : (
+                                            <>
+                                                {reviewMath.isShortage && <Badge variant="destructive" className="bg-red-600 text-xs tracking-widest px-2.5 py-1 uppercase shadow-sm"><ShieldAlert size={14} className="mr-1.5"/> AUDIT PENDING</Badge>}
+                                                {!reviewMath.isShortage && !reviewMath.isOverage && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs tracking-widest px-2.5 py-1 uppercase shadow-sm"><CheckCircle2 size={14} className="mr-1.5"/> BALANCED</Badge>}
+                                            </>
+                                        )}
                                     </h2>
                                 </div>
                                 <div className="text-right">
@@ -412,15 +429,29 @@ export function ReviewSheet({
                                             const typeLabel = b.resolvedType || "ADJUSTMENT";
                                             const isEwtType = typeLabel === "EWT";
                                             const isCredit = !isEwtType && b.balanceTypeId === 1;
+                                            const displayBank = b.bankName && b.bankName.toLowerCase() !== "unknown bank" ? b.bankName : null;
 
                                             return (
                                                 <div key={i} className={`flex justify-between items-center p-3.5 rounded-xl border bg-card shadow-sm transition-all hover:shadow-md ${isCredit ? 'border-red-200' : 'border-border'}`}>
                                                     <div className="flex flex-col">
                                                         <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                                                            {b.referenceNo ? `FORM 2307: ${b.referenceNo}` : (b.referenceNo || typeLabel)}
+                                                            {typeLabel === "CHECK" ? (
+                                                                <>
+                                                                    <span>CHECK #{b.referenceNo || "N/A"}</span>
+                                                                    <span className="text-muted-foreground font-normal">•</span>
+                                                                    {displayBank ? (
+                                                                        <span>{displayBank}</span>
+                                                                    ) : (
+                                                                        <span className="text-muted-foreground font-mono font-normal">—</span>
+                                                                    )}
+                                                                </>
+                                                            ) : b.referenceNo ? `FORM 2307: ${b.referenceNo}` : (b.referenceNo || typeLabel)}
                                                         </span>
                                                         <span className="text-[9px] font-bold text-muted-foreground uppercase mt-0.5 flex flex-wrap gap-2">
                                                             <span className={isCredit ? "text-red-600 font-black" : isEwtType ? "text-emerald-600 font-black" : ""}>Type: {typeLabel}</span>
+                                                            {typeLabel === "CHECK" && b.chequeDate && (
+                                                                <span>• Date: {b.chequeDate.split("T")[0]}</span>
+                                                            )}
                                                         </span>
                                                     </div>
                                                     <span className={`font-mono font-black text-base ${isCredit ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -562,7 +593,19 @@ export function ReviewSheet({
                         </div>
 
                         <div className="bg-card border-t p-6 shrink-0 shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-10 flex flex-col gap-3">
-                            {reviewMath.isOverage && (
+                            {isAlreadyPosted && (
+                                <div
+                                    role="status"
+                                    className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200"
+                                >
+                                    <Lock size={18} className="shrink-0 text-blue-600" />
+                                    <div className="min-w-0 flex-1 text-xs font-semibold">
+                                        <p className="font-black uppercase tracking-widest text-blue-800">RECORD POSTED &amp; LOCKED IN GENERAL LEDGER</p>
+                                        <p className="mt-0.5 text-[11px]">This collection pouch has been successfully posted to General Ledger and is read-only.</p>
+                                    </div>
+                                </div>
+                            )}
+                            {reviewMath.isOverage && !isAlreadyPosted && (
                                 <div
                                     role="alert"
                                     className="flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-orange-900 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-200"
@@ -576,7 +619,7 @@ export function ReviewSheet({
                                     </div>
                                 </div>
                             )}
-                            {reviewMath.unallocatedInvoices.length > 0 && (
+                            {reviewMath.unallocatedInvoices.length > 0 && !isAlreadyPosted && (
                                 <div
                                     role="alert"
                                     className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
@@ -603,11 +646,11 @@ export function ReviewSheet({
                             )}
                             <Button
                                 onClick={() => { setConfirmInput(""); setShowConfirmModal(true); }}
-                                disabled={!canPost}
-                                className={`w-full h-14 font-black uppercase tracking-widest text-sm shadow-xl transition-all active:scale-[0.99] ${reviewMath.isShortage ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-primary'}`}
+                                disabled={!canPost || isAlreadyPosted}
+                                className={`w-full h-14 font-black uppercase tracking-widest text-sm shadow-xl transition-all active:scale-[0.99] ${isAlreadyPosted ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-80' : reviewMath.isShortage ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-primary'}`}
                             >
                                 {isPosting ? <Loader2 size={20} className="animate-spin mr-2" /> : <Lock size={20} className="mr-2" />}
-                                Commit & Post to General Ledger
+                                {isAlreadyPosted ? "POSTED & LOCKED IN GL" : "Commit & Post to General Ledger"}
                             </Button>
                         </div>
                     </>
