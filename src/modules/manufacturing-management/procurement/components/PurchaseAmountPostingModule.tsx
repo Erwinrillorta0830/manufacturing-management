@@ -198,7 +198,7 @@ export default function PurchaseAmountPostingModule({
                     </WorkflowStep>
 
                     <WorkflowStep number={5} title="Landed Cost Allocation Preview" state={stepState(rateReady && ruleReady, canPost)} lockedMessage="Complete the currency, allocation rule, and expense validation before reviewing the final preview.">
-                        <LineItemsPostingTable calculationResult={calculationResult} onExecutePosting={() => void handlePost()} posting={posting} canPost={canPost} disabledReason={postDisabledReason} />
+                        <LineItemsPostingTable calculationResult={calculationResult} currencyCode={currencyCode} onExecutePosting={() => void handlePost()} posting={posting} canPost={canPost} disabledReason={postDisabledReason} />
                     </WorkflowStep>
                 </div>
             ) : pageMode === "edit" ? (

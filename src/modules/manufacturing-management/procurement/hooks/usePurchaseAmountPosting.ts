@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ExpenseTypeOption,
     POLineItem,
@@ -95,6 +95,57 @@ function supplierName(order: PurchaseOrderOption): string {
 function finiteNumber(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mapPurchaseOrderLineItems(
+    rawItems: Array<Record<string, unknown>>,
+    persistedCurrencyCode: string
+): POLineItem[] {
+    return rawItems.map(item => {
+        const prodObj = typeof item.product_id === "object" && item.product_id !== null
+            ? item.product_id as Record<string, unknown>
+            : null;
+        const categoryType = item.category_type;
+        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING" && categoryType !== "FINISHED_GOODS") {
+            throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
+        }
+
+        const weightBreakdown = resolveProductWeightBreakdown(prodObj, {
+            requireComplete: categoryType === "PACKAGING"
+        });
+        const persistedLineGrossWeight = Number(item.line_gross_weight_kg);
+        const receivedQuantity = Number(item.received_quantity || 0);
+        const lineGrossWeightKg = Number.isFinite(persistedLineGrossWeight)
+            ? persistedLineGrossWeight
+            : weightBreakdown.grossWeightKg * receivedQuantity;
+        const baseUnitCostPhp = Number(item.base_unit_cost_php);
+        const unitPriceForeign = Number(item.unit_price_foreign);
+        if (!Number.isFinite(baseUnitCostPhp) || baseUnitCostPhp < 0) {
+            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid PHP base unit cost.`);
+        }
+        if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(unitPriceForeign) || unitPriceForeign < 0)) {
+            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid ${persistedCurrencyCode} invoice unit price.`);
+        }
+
+        return {
+            ...item,
+            product_name: (prodObj?.product_name as string) || `Product #${item.product_id}`,
+            category_type: categoryType,
+            gross_weight: Number(item.gross_weight) || weightBreakdown.grossWeightKg,
+            net_weight: weightBreakdown.netWeight,
+            outer_carton_weight: weightBreakdown.outerCartonWeight,
+            pallet_weight: weightBreakdown.palletWeight,
+            unit_gross_weight_kg: weightBreakdown.grossWeightKg,
+            unit_net_weight_kg: weightBreakdown.netWeightKg,
+            unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
+            unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
+            line_gross_weight_kg: lineGrossWeightKg,
+            unit_price: baseUnitCostPhp,
+            unit_price_foreign: Number.isFinite(unitPriceForeign) ? unitPriceForeign : baseUnitCostPhp,
+            base_unit_cost_php: baseUnitCostPhp,
+            accepted_quantity: Number(item.accepted_quantity ?? item.received_quantity) || 0
+        } as POLineItem;
+    });
 }
 
 function normalizeLandingRows(orders: PurchaseOrderOption[]): PurchaseAmountLandingRow[] {
@@ -269,51 +320,7 @@ export function usePurchaseAmountPosting(
                 setExpenseTypes(Array.isArray(data.expenseTypes) ? data.expenseTypes : []);
 
                 if (data.lineItems) {
-                    setLineItems(data.lineItems.map(item => {
-                        const prodObj = typeof item.product_id === "object" && item.product_id !== null
-                            ? item.product_id as Record<string, unknown>
-                            : null;
-                        const categoryType = item.category_type;
-                        if (categoryType !== "RAW_MATERIAL" && categoryType !== "PACKAGING" && categoryType !== "FINISHED_GOODS") {
-                            throw new Error(`Product ${prodObj?.product_id || item.product_id} has no valid RAW_MATERIAL, PACKAGING, or FINISHED_GOODS Category_Type.`);
-                        }
-
-                        const weightBreakdown = resolveProductWeightBreakdown(prodObj, {
-                            requireComplete: categoryType === "PACKAGING"
-                        });
-                        const persistedLineGrossWeight = Number(item.line_gross_weight_kg);
-                        const receivedQuantity = Number(item.received_quantity || 0);
-                        const lineGrossWeightKg = Number.isFinite(persistedLineGrossWeight)
-                            ? persistedLineGrossWeight
-                            : weightBreakdown.grossWeightKg * receivedQuantity;
-                        const baseUnitCostPhp = Number(item.base_unit_cost_php);
-                        const unitPriceForeign = Number(item.unit_price_foreign);
-                        if (!Number.isFinite(baseUnitCostPhp) || baseUnitCostPhp < 0) {
-                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid PHP base unit cost.`);
-                        }
-                        if (persistedCurrencyCode !== "PHP" && (!Number.isFinite(unitPriceForeign) || unitPriceForeign < 0)) {
-                            throw new Error(`Purchase-order line ${item.purchase_order_product_id} has no valid ${persistedCurrencyCode} invoice unit price.`);
-                        }
-
-                        return {
-                            ...item,
-                            product_name: (prodObj?.product_name as string) || `Product #${item.product_id}`,
-                            category_type: categoryType,
-                            gross_weight: Number(item.gross_weight) || weightBreakdown.grossWeightKg,
-                            net_weight: weightBreakdown.netWeight,
-                            outer_carton_weight: weightBreakdown.outerCartonWeight,
-                            pallet_weight: weightBreakdown.palletWeight,
-                            unit_gross_weight_kg: weightBreakdown.grossWeightKg,
-                            unit_net_weight_kg: weightBreakdown.netWeightKg,
-                            unit_outer_carton_weight_kg: weightBreakdown.outerCartonWeightKg,
-                            unit_pallet_weight_kg: weightBreakdown.palletWeightKg,
-                            line_gross_weight_kg: lineGrossWeightKg,
-                            unit_price: baseUnitCostPhp,
-                            unit_price_foreign: Number.isFinite(unitPriceForeign) ? unitPriceForeign : baseUnitCostPhp,
-                            base_unit_cost_php: baseUnitCostPhp,
-                            accepted_quantity: Number(item.accepted_quantity ?? item.received_quantity) || 0
-                        } as POLineItem;
-                    }));
+                    setLineItems(mapPurchaseOrderLineItems(data.lineItems, persistedCurrencyCode));
                 }
 
                 const canonicalExpenses = Array.isArray(data.landedCost?.expenses) && data.landedCost.expenses.length > 0
@@ -351,6 +358,55 @@ export function usePurchaseAmountPosting(
             active = false;
         };
     }, [selectedShipment]);
+
+    // Re-fetch the persisted PO line price/discount values so the preview always
+    // reflects upstream changes without a page refresh. User-entered landed
+    // expenses, allocation rule, and manual exchange rate are preserved.
+    const refreshLineItems = useCallback(async () => {
+        const poId = purchaseOrderId(selectedShipment);
+        if (!poId || posting) return;
+        try {
+            const raw = await fetchPurchaseAmountDetails(poId) as PurchaseAmountDetails;
+            const persistedCurrencyCode = String(raw.purchaseOrder?.currency_code || currencyCode || "PHP").trim().toUpperCase();
+            if (raw.lineItems) {
+                setLineItems(mapPurchaseOrderLineItems(raw.lineItems, persistedCurrencyCode));
+            }
+            setCurrencyCode(persistedCurrencyCode);
+        } catch (error) {
+            console.warn("[Manufacturing] Purchase-amount line revalidation failed.", error);
+        }
+    }, [currencyCode, posting, selectedShipment]);
+
+    useEffect(() => {
+        if (!selectedShipment || posting) return;
+        let timeout: number | undefined;
+        const schedule = () => {
+            if (timeout) window.clearTimeout(timeout);
+            timeout = window.setTimeout(() => {
+                void refreshLineItems();
+            }, 300);
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === "visible") schedule();
+        };
+        window.addEventListener("focus", schedule);
+        document.addEventListener("visibilitychange", handleVisibility);
+        return () => {
+            if (timeout) window.clearTimeout(timeout);
+            window.removeEventListener("focus", schedule);
+            document.removeEventListener("visibilitychange", handleVisibility);
+        };
+    }, [posting, refreshLineItems, selectedShipment]);
+
+    const revalidatedKeyRef = useRef<string | null>(null);
+    useEffect(() => {
+        const poId = purchaseOrderId(selectedShipment);
+        if (!poId || !allocationRule || posting) return;
+        const key = `${poId}:${allocationRule}`;
+        if (revalidatedKeyRef.current === key) return;
+        revalidatedKeyRef.current = key;
+        void refreshLineItems();
+    }, [allocationRule, posting, refreshLineItems, selectedShipment]);
 
     const validExpenseTypeIds = useMemo(() => new Set(expenseTypes.map(type => type.id)), [expenseTypes]);
 

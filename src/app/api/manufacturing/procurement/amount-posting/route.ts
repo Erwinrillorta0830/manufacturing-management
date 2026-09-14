@@ -14,6 +14,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { isPurchaseOrderPosted } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 function weightedAverage(
     rows: Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>,
@@ -64,7 +65,14 @@ function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedC
             line_gross_weight_kg: line.lineGrossWeightKg,
             allocated_expense_php: allocatedExpense,
             final_landed_unit_cost: finalLandedUnitCost,
-            total_amount: finalLandedUnitCost * line.quantity
+            total_amount: finalLandedUnitCost * line.quantity,
+            uom: line.uom,
+            currency_code: snapshot.currencyCode,
+            list_price: line.unitPriceTransaction,
+            discount_percent: line.discountPercent,
+            discount_amount: line.discountAmountTransaction,
+            net_amount: line.netAmountTransaction,
+            total_landed_cost: Number((finalLandedUnitCost * line.quantity).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE))
         };
     });
 }

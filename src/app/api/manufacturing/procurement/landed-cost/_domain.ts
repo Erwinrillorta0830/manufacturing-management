@@ -21,6 +21,11 @@ import {
     normalizeProcurementMoney,
     PROCUREMENT_MONEY_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
+import {
+    getActiveExpenseTypeOptions,
+    listExpenseTypeRecords,
+    type ExpenseTypeRecord,
+} from "@/app/api/manufacturing/expense-types/_domain";
 
 export const COMPUTATION_COLLECTION = "purchase_order_landed_cost_computations";
 export const ATTACHMENT_COLLECTION = "purchase_order_landed_cost_attachments";
@@ -83,6 +88,10 @@ interface PurchaseOrderLine extends DirectusRecord {
     ordered_quantity?: number | string | null;
     unit_price?: number | string | null;
     unit_price_foreign?: number | string | null;
+    discount_percent?: number | string | null;
+    discount_amount_foreign?: number | string | null;
+    discounted_amount?: number | string | null;
+    discount_type?: number | string | null;
 }
 
 interface ProductRecord extends DirectusRecord {
@@ -93,6 +102,7 @@ interface ProductRecord extends DirectusRecord {
     cbm_height?: number | string | null;
     cbm_width?: number | string | null;
     cbm_length?: number | string | null;
+    unit_of_measurement?: unknown;
 }
 
 export interface LandedCostInputLine {
@@ -107,6 +117,18 @@ export interface LandedCostInputLine {
     volume: number;
     receivingRows: ReceivingRecord[];
     product: ProductRecord;
+    /** Ordered quantity on the purchase-order line, retained for the amount-posting preview. */
+    orderedQuantity: number;
+    /** Unit price in the purchase-order currency (foreign invoice price for imports, PHP for local). */
+    unitPriceTransaction: number;
+    /** Item discount rate from the purchase-order line. */
+    discountPercent: number;
+    /** Discount amount in the purchase-order currency (fixed line discount, or percent applied to the accepted quantity). */
+    discountAmountTransaction: number;
+    /** Net amount in the purchase-order currency: accepted qty × transaction unit price − discount. */
+    netAmountTransaction: number;
+    /** Product base unit (e.g. BAG, PKG, KG). */
+    uom: string;
 }
 
 export interface LandedCostInputSnapshot {
@@ -174,6 +196,40 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function roundMoney(value: number): number {
     return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+}
+
+function resolveUnitShortcut(product: ProductRecord): string {
+    const uom = product.unit_of_measurement;
+    if (uom && typeof uom === "object") {
+        const record = uom as DirectusRecord;
+        const label = String(record.unit_shortcut || record.unit_name || "").trim();
+        return label || "PCS";
+    }
+    const label = String(uom ?? "").trim();
+    return label && Number.isNaN(Number(label)) ? label : "PCS";
+}
+
+export interface PurchaseOrderPriceTrail {
+    discountPercent: number;
+    discountAmountTransaction: number;
+    netAmountTransaction: number;
+}
+
+export function computePurchaseOrderPriceTrail(input: {
+    quantity: number;
+    unitPriceTransaction: number;
+    discountPercent?: unknown;
+    discountAmountForeign?: unknown;
+}): PurchaseOrderPriceTrail {
+    const discountPercent = asNumber(input.discountPercent);
+    const fixedDiscount = asNumber(input.discountAmountForeign);
+    const discountAmountTransaction = roundMoney(
+        fixedDiscount > 0
+            ? fixedDiscount
+            : input.quantity * input.unitPriceTransaction * discountPercent / 100
+    );
+    const netAmountTransaction = roundMoney(Math.max(0, input.quantity * input.unitPriceTransaction - discountAmountTransaction));
+    return { discountPercent, discountAmountTransaction, netAmountTransaction };
 }
 
 export interface LandedCostCurrencyContract {
@@ -303,13 +359,11 @@ interface OverheadTypeRecord extends DirectusRecord {
     id?: number;
     overhead_name?: string | null;
     coa_id?: unknown;
+    is_active?: boolean | number | string | null;
 }
 
 async function loadOverheadTypeMap(): Promise<Map<number, OverheadTypeRecord>> {
-    const rows = await listRows(
-        "overhead_types",
-        "fields=id,overhead_name,coa_id&sort=overhead_name&limit=-1"
-    ) as OverheadTypeRecord[];
+    const rows = await listExpenseTypeRecords() as ExpenseTypeRecord[];
     return new Map(
         rows
             .map(row => [asPositiveId(row.id), row] as const)
@@ -318,16 +372,12 @@ async function loadOverheadTypeMap(): Promise<Map<number, OverheadTypeRecord>> {
 }
 
 export async function getLandedCostExpenseTypes(): Promise<LandedCostExpenseTypeOption[]> {
-    const overheadTypes = await loadOverheadTypeMap();
-    return [...overheadTypes.entries()]
-        .filter(([, row]) => Boolean(asPositiveId(row.coa_id)))
-        .map(([id, row]) => ({ id, label: String(row.overhead_name || "").trim() }))
-        .filter(option => option.label.length > 0)
-        .sort((left, right) => left.label.localeCompare(right.label));
+    return getActiveExpenseTypeOptions();
 }
 
 async function resolveExpenseInputs(expenses: LandedCostExpenseInput[]): Promise<LandedCostExpenseInput[]> {
-    const overheadTypes = await loadOverheadTypeMap();
+    const expenseTypes = await getActiveExpenseTypeOptions();
+    const expenseTypeMap = new Map(expenseTypes.map(option => [option.id, option]));
     const resolved: LandedCostExpenseInput[] = [];
 
     for (const expense of expenses) {
@@ -361,21 +411,12 @@ async function resolveExpenseInputs(expenses: LandedCostExpenseInput[]): Promise
             );
         }
 
-        const overhead = overheadTypes.get(overheadId);
-        if (!overhead) {
-            throw new LandedCostDomainError(
-                400,
-                "LANDED_COST_EXPENSE_TYPE_INVALID",
-                "The selected operational expense type is no longer available.",
-                { overheadId }
-            );
-        }
-        const chartOfAccountId = asPositiveId(overhead.coa_id);
-        if (!chartOfAccountId) {
+        const expenseType = expenseTypeMap.get(overheadId);
+        if (!expenseType) {
             throw new LandedCostDomainError(
                 409,
-                "LANDED_COST_EXPENSE_TYPE_UNMAPPED",
-                `Operational expense type ${String(overhead.overhead_name || overheadId)} has no configured GL account mapping.`,
+                "LANDED_COST_EXPENSE_TYPE_INVALID",
+                "The selected operational expense type is inactive, unmapped, or no longer available.",
                 { overheadId }
             );
         }
@@ -383,8 +424,8 @@ async function resolveExpenseInputs(expenses: LandedCostExpenseInput[]): Promise
         resolved.push({
             ...expense,
             overhead_id: overheadId,
-            chart_of_account_id: chartOfAccountId,
-            expense_type: String(overhead.overhead_name || "").trim(),
+            chart_of_account_id: expenseType.coaId,
+            expense_type: expenseType.label,
             amount_php: Number(normalizeProcurementMoney(amount))
         });
     }
@@ -443,7 +484,7 @@ export async function loadLandedCostSnapshot(
     const purchaseOrder = await directusJson<DirectusRecord>(`/items/purchase_order/${purchaseOrderId}?fields=*`);
     const lineRows = await listRows(
         "purchase_order_products",
-        `filter[purchase_order_id][_eq]=${purchaseOrderId}&fields=*,product_id.*&limit=-1`
+        `filter[purchase_order_id][_eq]=${purchaseOrderId}&fields=*,product_id.*,product_id.unit_of_measurement.*&limit=-1`
     ) as PurchaseOrderLine[];
     const receivingRows = await listRows(
         "purchase_order_receiving",
@@ -469,7 +510,7 @@ export async function loadLandedCostSnapshot(
     if (productIds.length > 0) {
         const fallbackProducts = await listRows(
             "products",
-            `filter[product_id][_in]=${productIds.join(",")}&fields=*&limit=-1`
+            `filter[product_id][_in]=${productIds.join(",")}&fields=*,unit_of_measurement.*&limit=-1`
         ) as ProductRecord[];
         for (const product of fallbackProducts) {
             if (product.product_id) {
@@ -502,6 +543,13 @@ export async function loadLandedCostSnapshot(
         if (quantity <= 0) continue;
         const transactionUnitPrice = resolveTransactionUnitPrice(line, currency);
         const baseUnitCostPhp = resolveBaseUnitCostPhp(line, currency);
+        const orderedQuantity = asNumber(line.ordered_quantity);
+        const priceTrail = computePurchaseOrderPriceTrail({
+            quantity,
+            unitPriceTransaction: transactionUnitPrice,
+            discountPercent: line.discount_percent,
+            discountAmountForeign: line.discount_amount_foreign
+        });
         lines.push({
             key,
             productId,
@@ -513,7 +561,13 @@ export async function loadLandedCostSnapshot(
             lineGrossWeightKg: weight.grossWeightKg * quantity,
             volume: asNumber(product.cbm_height) * asNumber(product.cbm_width) * asNumber(product.cbm_length),
             receivingRows: lineReceipts,
-            product
+            product,
+            orderedQuantity,
+            unitPriceTransaction: transactionUnitPrice,
+            discountPercent: priceTrail.discountPercent,
+            discountAmountTransaction: priceTrail.discountAmountTransaction,
+            netAmountTransaction: priceTrail.netAmountTransaction,
+            uom: resolveUnitShortcut(product)
         });
     }
 
