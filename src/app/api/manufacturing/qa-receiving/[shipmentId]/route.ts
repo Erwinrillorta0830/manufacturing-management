@@ -8,6 +8,7 @@ import {
 } from "../../purchase-orders/_auth";
 import { fetchQuarantineDisposition, QuarantineDispositionError, type QuarantineDisposition } from "../_quarantine-disposition";
 import { ProductCategoryTypeValidationError } from "../../procurement/_category-type";
+import { fetchQaReceiptOptions, QaReceiptSelectionError } from "../_receipt-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,7 +71,22 @@ export async function GET(
             replacementDisposition = disposition;
         }
 
-        const lineItems = await fetchShipmentLineItems(shipmentId, { requireCompletePackagingWeight: false });
+        const requestedReceiptKey = new URL(request.url).searchParams.get("receiptKey");
+        const receiptSelection = await fetchQaReceiptOptions(
+            shipmentId,
+            Number(shipment.workflow_revision || 0),
+            requestedReceiptKey
+        );
+        const lineItems = await fetchShipmentLineItems(shipmentId, {
+            requireCompletePackagingWeight: false,
+            receiptSelection: receiptSelection.selectedReceipt
+                ? {
+                    key: receiptSelection.selectedReceipt.key,
+                    receivingHeaderId: receiptSelection.selectedReceipt.receivingHeaderId,
+                    receiptNumber: receiptSelection.selectedReceipt.receiptNumber
+                }
+                : undefined
+        });
         if (lineItems.length === 0) {
             throw new QaReceivingDetailError(409, "This purchase order has no receiving lines available for inspection.");
         }
@@ -79,7 +95,9 @@ export async function GET(
             data: {
                 shipment,
                 lineItems,
-                replacementDisposition
+                replacementDisposition,
+                receiptOptions: receiptSelection.receiptOptions,
+                selectedReceipt: receiptSelection.selectedReceipt
             }
         });
     } catch (error) {
@@ -89,6 +107,8 @@ export async function GET(
                 ? error.status
                 : error instanceof QuarantineDispositionError
                     ? error.statusCode
+                    : error instanceof QaReceiptSelectionError
+                        ? error.statusCode
                     : error instanceof ProductCategoryTypeValidationError
                         ? error.status
                         : 500;

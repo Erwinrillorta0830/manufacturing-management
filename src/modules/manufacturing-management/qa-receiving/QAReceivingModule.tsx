@@ -69,6 +69,9 @@ export default function QAReceivingModule({
         replacementDisposition,
         receivingTicketNumber,
         handleReceiptNumberChange,
+        receiptOptions,
+        selectedReceipt,
+        handleReceiptSelection,
         receiptDate,
         handleReceiptDateChange,
         supplierDocumentTypes,
@@ -175,6 +178,9 @@ export default function QAReceivingModule({
                 loadStorageLotBatches={loadStorageLotBatches}
                 receivingTicketNumber={receivingTicketNumber}
                 onReceiptNumberChange={handleReceiptNumberChange}
+                receiptOptions={receiptOptions}
+                selectedReceipt={selectedReceipt}
+                onReceiptSelection={handleReceiptSelection}
                 receiptDate={receiptDate}
                 onReceiptDateChange={handleReceiptDateChange}
                 supplierDocumentTypes={supplierDocumentTypes}

@@ -15,6 +15,7 @@ import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-
 import { movementMmLotId } from "../../services/mm-lots.service";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
+import type { QaReceiptSelection } from "../../qa-receiving/_receipt-options";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
     fetchCurrentPurchaseOrderRejectionStages,
@@ -284,6 +285,13 @@ export interface ExtendedShipmentLineItem {
     over_delivery_quantity?: number;
     latest_receipt?: LatestReceivingSnapshot | null;
     warehouse_receipt?: WarehouseReceivingSnapshot | null;
+    current_receipt_header_id?: number | null;
+    current_receipt_number?: string | null;
+    current_receipt_date?: string | null;
+    current_receipt_quantity?: number | null;
+    current_receipt_accepted_quantity?: number | null;
+    current_receipt_rejected_quantity?: number | null;
+    current_receipt_error?: string | null;
     rejection_reason?: string;
     qa_status?: string;
     base_unit_cost_php?: number | string;
@@ -401,6 +409,33 @@ function relationId(value: unknown, key: string): number | null {
         : value;
     const parsed = Number(raw);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizedReceiptNumber(value: unknown, lineId: number): string {
+    const receiptNumber = String(value || "").trim();
+    const suffix = `-${lineId}`;
+    return receiptNumber.endsWith(suffix)
+        ? receiptNumber.slice(0, -suffix.length)
+        : receiptNumber;
+}
+
+function matchesReceiptSelection(
+    row: DirectusReceivingRecord,
+    lineId: number,
+    selection: QaReceiptSelection
+): boolean {
+    if (selection.receivingHeaderId !== null) {
+        return relationId(row.receiving_header_id, "id") === selection.receivingHeaderId;
+    }
+    return normalizedReceiptNumber(row.receipt_no, lineId) === selection.receiptNumber;
+}
+
+function warehouseReceiptIdentity(row: DirectusReceivingRecord): string {
+    const headerId = relationId(row.receiving_header_id, "id");
+    if (headerId) return `header:${headerId}`;
+    const receiptNumber = String(row.receipt_no || "").trim();
+    if (receiptNumber) return `receipt:${receiptNumber}`;
+    return `row:${receivingRecordId(row.purchase_order_product_id)}`;
 }
 
 interface ExtendedShipment extends Partial<DirectusShipment> {
@@ -839,7 +874,10 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
 
 export async function fetchShipmentLineItems(
     shipmentId: number,
-    options: { requireCompletePackagingWeight?: boolean } = {}
+    options: {
+        requireCompletePackagingWeight?: boolean;
+        receiptSelection?: QaReceiptSelection;
+    } = {}
 ): Promise<ExtendedShipmentLineItem[]> {
     try {
         // Fetch the header first so force-closed orders can expose zero remaining intake.
@@ -879,11 +917,11 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
@@ -1010,13 +1048,36 @@ export async function fetchShipmentLineItems(
                 Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
             );
             const lineId = Number(pop.purchase_order_product_id);
-            const warehouseRowsForLine = receivingData.filter(row =>
+            const activeWarehouseRowsForLine = receivingData.filter(row =>
                 isUnpostedWarehouseReceiving(row)
                 && resolvePurchaseOrderLineId(row, popData) === lineId
             );
+            const warehouseReceiptIdentities = new Set(activeWarehouseRowsForLine.map(warehouseReceiptIdentity));
+            const hasAmbiguousWarehouseReceipt = warehouseReceiptIdentities.size > 1;
+            const selectedWarehouseRowsForLine = options.receiptSelection
+                ? activeWarehouseRowsForLine.filter(row => matchesReceiptSelection(row, lineId, options.receiptSelection!))
+                : activeWarehouseRowsForLine;
+            const currentWarehouseRows = hasAmbiguousWarehouseReceipt ? [] : activeWarehouseRowsForLine;
+            const warehouseRowsForLine = hasAmbiguousWarehouseReceipt ? [] : selectedWarehouseRowsForLine;
+            const currentWarehouseRow = currentWarehouseRows[0];
+            const currentWarehouseHeader = currentWarehouseRow && typeof currentWarehouseRow.receiving_header_id === "object"
+                ? currentWarehouseRow.receiving_header_id
+                : null;
             const warehouseRow = warehouseRowsForLine[0];
             const warehouseHeader = warehouseRow && typeof warehouseRow.receiving_header_id === "object"
                 ? warehouseRow.receiving_header_id
+                : null;
+            const currentReceiptQuantity = currentWarehouseRows.length > 0
+                ? currentWarehouseRows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0)
+                : null;
+            const currentReceiptRejectedQuantity = currentWarehouseRows.length > 0
+                ? currentWarehouseRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0)
+                : null;
+            const currentReceiptAcceptedQuantity = currentReceiptQuantity === null || currentReceiptRejectedQuantity === null
+                ? null
+                : Math.max(0, currentReceiptQuantity - currentReceiptRejectedQuantity);
+            const currentReceiptError = hasAmbiguousWarehouseReceipt
+                ? "Multiple active Warehouse Receiving handoffs exist for this purchase-order line. Resolve the active handoff before starting QA."
                 : null;
             const warehouseReceipt: WarehouseReceivingSnapshot | null = warehouseRowsForLine.length > 0
                 ? {
@@ -1031,8 +1092,16 @@ export async function fetchShipmentLineItems(
                     received_quantity: warehouseRowsForLine.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0)
                 }
                 : null;
-            const latestReceipt = originalReceivingData
-                .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)
+            const receiptRowsForLine = options.receiptSelection
+                ? receivingData.filter(row =>
+                    row.is_replacement !== true
+                    && Number(row.is_replacement) !== 1
+                    && !preQaRfidReceivingIds.has(receivingRecordId(row.purchase_order_product_id))
+                    && resolvePurchaseOrderLineId(row, popData) === lineId
+                    && matchesReceiptSelection(row, lineId, options.receiptSelection!)
+                )
+                : originalReceivingData.filter(row => resolvePurchaseOrderLineId(row, popData) === lineId);
+            const latestReceipt = receiptRowsForLine
                 .sort((left, right) => {
                     const rightDate = Date.parse(String(right.received_date || "")) || 0;
                     const leftDate = Date.parse(String(left.received_date || "")) || 0;
@@ -1130,10 +1199,23 @@ export async function fetchShipmentLineItems(
                  previously_accepted_quantity: previouslyAcceptedQuantity,
                  remaining_quantity: remainingQuantity,
                  remaining_accepted_quantity: remainingAcceptedQuantity,
-                 is_over_received: latestSnapshot?.is_over_received || false,
-                 over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
-                 latest_receipt: latestSnapshot,
+                is_over_received: latestSnapshot?.is_over_received || false,
+                over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
+                latest_receipt: latestSnapshot,
                 warehouse_receipt: warehouseReceipt,
+                current_receipt_header_id: currentWarehouseRow ? relationId(currentWarehouseRow.receiving_header_id, "id") : null,
+                current_receipt_number: currentWarehouseRows.length > 0
+                    ? String(currentWarehouseHeader?.receiving_ticket_no || currentWarehouseRow?.receipt_no || "")
+                    : null,
+                current_receipt_date: currentWarehouseHeader?.receipt_date
+                    ? String(currentWarehouseHeader.receipt_date).slice(0, 10)
+                    : currentWarehouseRow?.receipt_date
+                        ? String(currentWarehouseRow.receipt_date).slice(0, 10)
+                        : null,
+                current_receipt_quantity: currentReceiptQuantity,
+                current_receipt_accepted_quantity: currentReceiptAcceptedQuantity,
+                current_receipt_rejected_quantity: currentReceiptRejectedQuantity,
+                current_receipt_error: currentReceiptError,
                 rejection_reason: latestSnapshot?.rejection_reason || "",
                 qa_status: latestReceipt ? latestReceipt.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;
