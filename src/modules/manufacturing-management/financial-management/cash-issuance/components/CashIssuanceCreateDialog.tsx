@@ -1132,9 +1132,6 @@ export function CashIssuanceCreateDialog({
                                             <TableCell className="text-xs font-black text-primary uppercase">
                                                 <div className="flex flex-col gap-1">
                                                     {po.receiptNo}
-                                                    {po.type === 'CWO' && <Badge variant="outline"
-                                                        className="w-fit text-[8px] bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800">Cash
-                                                        With Order</Badge>}
                                                 </div>
                                             </TableCell>
                                             <TableCell onClick={(e: React.MouseEvent) => e.stopPropagation()}>
