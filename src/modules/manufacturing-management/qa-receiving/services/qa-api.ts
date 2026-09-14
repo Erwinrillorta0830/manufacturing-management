@@ -90,7 +90,8 @@ export async function fetchStorageLots(
         productId: String(productId),
         branchId: String(branchId)
     });
-    if (disposition === "rejected") params.set("disposition", "rejected");
+    params.set("disposition", disposition);
+    if (disposition === "rejected") params.set("sourceBranchId", String(branchId));
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
@@ -108,7 +109,8 @@ export async function fetchStorageLotBatches(
     branchId: number,
     lotId: number,
     signal?: AbortSignal,
-    disposition: "accepted" | "rejected" = "accepted"
+    disposition: "accepted" | "rejected" = "accepted",
+    sourceBranchId?: number
 ): Promise<StorageLotBatch[]> {
     const params = new URLSearchParams({
         action: "batches",
@@ -116,7 +118,11 @@ export async function fetchStorageLotBatches(
         branchId: String(branchId),
         lotId: String(lotId)
     });
-    if (disposition === "rejected") params.set("disposition", "rejected");
+    params.set("disposition", disposition);
+    if (disposition === "rejected") {
+        if (sourceBranchId !== undefined) params.set("sourceBranchId", String(sourceBranchId));
+        params.set("targetBranchId", String(branchId));
+    }
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || "Failed to load storage-lot batches");

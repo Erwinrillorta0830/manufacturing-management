@@ -607,7 +607,11 @@ export async function POST(request: Request) {
                 // the existing capacity-override workflow available, but reject
                 // status, scope, UOM, and invalid-capacity mismatches.
                 if (!eligibility.eligible && eligibility.reason !== "FULL") {
-                    throw new ReceivingPreviewError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not an eligible target for this product.`, 409);
+                    throw new ReceivingPreviewError(
+                        `Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not an eligible target for this product.`,
+                        409,
+                        eligibility.reason === "UOM" ? RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH : undefined
+                    );
                 }
                 const typeSet = productTypesByLot.get(allocation.storageLotId) || new Set<number>();
                 typeSet.add(productAllocation.productTypeId);
