@@ -36,6 +36,9 @@ export interface PurchaseOrderListQuery {
     limit?: number;
     search?: string;
     status?: string;
+    supplierId?: number;
+    inventoryStatus?: number;
+    paymentStatus?: number;
     startDate?: string;
     endDate?: string;
     sort?: "date_encoded" | "purchase_order_no" | "reference" | "total_amount" | "inventory_status";

@@ -181,6 +181,9 @@ export const purchaseOrderListQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(25),
     search: z.string().trim().max(100).default(""),
     status: purchaseOrderListStatusSchema.optional(),
+    supplierId: positiveId.optional(),
+    inventoryStatus: positiveId.optional(),
+    paymentStatus: positiveId.optional(),
     queue: z.enum(["receiving"]).optional(),
     includeReceived: z.enum(["true", "false"]).default("false").transform(value => value === "true"),
     startDate: dateOnly.optional(),
@@ -201,6 +204,13 @@ export const purchaseOrderListQuerySchema = z.object({
             code: "custom",
             path: ["status"],
             message: "Receiving queue status must be For Pickup, Receiving (QA), Partially Received, or Received."
+        });
+    }
+    if (query.startDate && query.endDate && query.startDate > query.endDate) {
+        context.addIssue({
+            code: "custom",
+            path: ["endDate"],
+            message: "The end date must be on or after the start date."
         });
     }
 });
