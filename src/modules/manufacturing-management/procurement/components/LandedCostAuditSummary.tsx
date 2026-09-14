@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, CircleHelp, Loader2, ShieldCheck } from "lucide-react";
 import { fetchLandedCostAudit } from "../services/procurement-api";
 import type { LandedCostAuditResponse } from "../types";
+import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 interface LandedCostAuditSummaryProps {
     purchaseOrderId: number;
@@ -13,7 +14,7 @@ interface LandedCostAuditSummaryProps {
 }
 
 function formatPhp(value: number): string {
-    return `₱${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `₱${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}`;
 }
 
 function auditStatusLabel(status: LandedCostAuditResponse["auditStatus"]): string {
@@ -128,7 +129,7 @@ export default function LandedCostAuditSummary({
                         <div className="rounded-lg border bg-muted/20 p-3">
                             <div className="text-[10px] font-bold uppercase text-muted-foreground">Currency contract</div>
                             <div className={`mt-1 text-sm font-black ${audit.allocation.currency.matches ? "text-emerald-600" : "text-red-600"}`}>
-                                {audit.allocation.currency.currencyCode} @ {audit.allocation.currency.exchangeRate.toFixed(4)}
+                                {audit.allocation.currency.currencyCode} @ {audit.allocation.currency.exchangeRate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}
                             </div>
                             <div className="text-[10px] text-muted-foreground">
                                 {audit.allocation.currency.matches ? "Foreign invoice prices reconcile to PHP base costs." : "Currency or exchange-rate reconciliation required."}

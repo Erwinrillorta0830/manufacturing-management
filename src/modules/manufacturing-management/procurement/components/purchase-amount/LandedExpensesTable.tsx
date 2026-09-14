@@ -89,10 +89,10 @@ export default function LandedExpensesTable({
                                 <td className="p-3">
                                     <input
                                         type="number"
-                                        step="0.01"
+                                        step="0.0001"
                                         value={exp.amount || ""}
                                         onChange={(e) => onUpdateExpenseRow(exp.id, "amount", Number(e.target.value))}
-                                        placeholder="0.00"
+                                        placeholder="0.0000"
                                         disabled={disabled}
                                         className="h-8 w-44 px-2 rounded border bg-background text-xs font-bold"
                                     />

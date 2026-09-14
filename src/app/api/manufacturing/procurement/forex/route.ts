@@ -6,6 +6,7 @@ import {
     getActiveForexRates,
     getForexRateHistory
 } from "./_rates";
+import { DecimalValue, EXCHANGE_RATE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export async function GET() {
     try {
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
         if (!Number.isFinite(numNewRate) || numNewRate <= 0) {
             return NextResponse.json({ error: "new_rate must be a positive valid number" }, { status: 400 });
         }
+        const normalizedNewRate = DecimalValue.from(new_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
 
         if (!effective_date || typeof effective_date !== "string") {
             return NextResponse.json({ error: "effective_date is required" }, { status: 400 });
@@ -76,7 +78,9 @@ export async function POST(request: Request) {
         const pad = (n: number) => n.toString().padStart(2, "0");
         const phTimeStr = `${phDate.getFullYear()}-${pad(phDate.getMonth() + 1)}-${pad(phDate.getDate())} ${pad(phDate.getHours())}:${pad(phDate.getMinutes())}:${pad(phDate.getSeconds())}`;
 
-        const previous_rate = existingConfig ? existingConfig.exchange_rate : numNewRate;
+        const previous_rate = existingConfig
+            ? DecimalValue.from(existingConfig.exchange_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE)
+            : normalizedNewRate;
         const targetForexId = forex_id || (existingConfig ? existingConfig.forex_id : undefined);
 
         // Attempt to persist to Directus collections
@@ -89,7 +93,7 @@ export async function POST(request: Request) {
                 const patchRes = await procurementDirectusFetch(`/items/forex_configurations/${existingConfig.forex_id}`, {
                     method: "PATCH",
                     body: JSON.stringify({
-                        exchange_rate: numNewRate,
+                        exchange_rate: normalizedNewRate,
                         effective_date,
                         updated_at: phTimeStr
                     })
@@ -109,7 +113,7 @@ export async function POST(request: Request) {
                         currency_code: currency_code.toUpperCase(),
                         currency_name: `${currency_code.toUpperCase()} Currency`,
                         symbol: currency_code.toUpperCase() === "EUR" ? "€" : currency_code.toUpperCase() === "JPY" ? "¥" : "$",
-                        exchange_rate: numNewRate,
+                        exchange_rate: normalizedNewRate,
                         effective_date,
                         is_active: 1
                     })
@@ -134,7 +138,7 @@ export async function POST(request: Request) {
                     forex_id: finalForexId,
                     currency_code: currency_code.toUpperCase(),
                     previous_rate,
-                    new_rate: numNewRate,
+                    new_rate: normalizedNewRate,
                     effective_date,
                     changed_by_user_id: resolvedUserId,
                     change_reason: change_reason.trim(),

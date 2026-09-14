@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { useWarehouseReceiving } from "./hooks/useWarehouseReceiving";
 
 function formatAmount(value: number, currency: string) {
-    return new Intl.NumberFormat("en-PH", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
+    return new Intl.NumberFormat("en-PH", { style: "currency", currency, minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value || 0);
 }
 
 function statusClass(status: string) {

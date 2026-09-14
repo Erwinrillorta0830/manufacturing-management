@@ -1,5 +1,6 @@
 import React from "react";
 import { ChevronDown, ChevronUp, Loader2, Tag, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { FamilyGroup } from "../hooks/useRawMaterialsData";
 import { RawMaterialItem, WeightUnitOption, BranchGroupedBatches, SelectOption } from "../types/raw-materials.types";
 import { BatchLocationsTree } from "./BatchLocationsTree";
@@ -229,7 +230,7 @@ export function RawMaterialsTable({
 
                                         {/* 6. Standard Landed Unit Cost */}
                                         <td className="p-3 text-right font-mono text-xs font-black text-foreground bg-emerald-500/5">
-                                            ₱{m.cost_per_unit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            ₱{m.cost_per_unit.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}
                                         </td>
 
                                         {/* 7. Actions */}

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { jsPDF } from "jspdf";
 import type { PurchaseOrderPrintableSnapshot } from "./types";
+import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 type PdfDocument = InstanceType<typeof jsPDF>;
 
@@ -41,13 +42,14 @@ function money(value: number, currency: string, doc: PdfDocument): string {
     const normalizedCurrency = (currency || "PHP").toUpperCase();
     const numericValue = Number.isFinite(value) ? value : 0;
     if (normalizedCurrency === "PHP") {
-        const amount = new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numericValue);
+        const amount = new Intl.NumberFormat("en-PH", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE }).format(numericValue);
         return `${supportsPesoGlyph(doc) ? "₱" : "PHP "}${amount}`;
     }
     return new Intl.NumberFormat("en-PH", {
         style: "currency",
         currency: normalizedCurrency,
-        maximumFractionDigits: 2
+        minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE,
+        maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE
     }).format(numericValue);
 }
 
@@ -313,7 +315,7 @@ function drawRemarksAndTotals(doc: PdfDocument, data: PurchaseOrderPrintableSnap
         [`TOTAL NET (${po.currencyCode}):`, money(displayNet, po.currencyCode, doc), true]
     ];
     if (po.currencyCode !== "PHP") {
-        totalRows.push([`PHP Value (@ ${po.exchangeRate.toFixed(4)}):`, money(po.totalAmount, "PHP", doc)]);
+        totalRows.push([`PHP Value (@ ${po.exchangeRate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}):`, money(po.totalAmount, "PHP", doc)]);
     }
     const totalsAvailableWidth = totalsWidth - 6;
     const totalsLabelWidth = totalsAvailableWidth * 0.56;
@@ -431,7 +433,7 @@ async function renderPoDocument(doc: PdfDocument, data: PurchaseOrderPrintableSn
     const orderRows: Array<[string, string]> = [
         ["External Ref", po.reference],
         ["Plant Branch", po.branch],
-        ["Currency / FX", `${po.currencyCode} @ ${po.exchangeRate.toFixed(4)}`],
+        ["Currency / FX", `${po.currencyCode} @ ${po.exchangeRate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}`],
         ["Price Control Source", po.priceType],
         ["Status", `${po.inventoryStatus} / ${po.paymentStatus}`]
     ];

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { GitCompareArrows } from "lucide-react";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import type { IncomingShipment, ShipmentLineItem } from "../../procurement/types";
 import type { PurchaseOrderApprovalDetail, PurchaseOrderApprovalHistory, PurchaseOrderApprovalReferenceLabel } from "../../purchase-order/types";
 import { parsePurchaseOrderRevisionSnapshot, type RevisionSnapshotRecord } from "../../purchase-order/revision-snapshot";
@@ -121,7 +122,8 @@ function money(value: unknown, currency: string): string {
     return new Intl.NumberFormat("en-PH", {
         style: "currency",
         currency,
-        maximumFractionDigits: 2
+        minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE,
+        maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE
     }).format(parsed);
 }
 

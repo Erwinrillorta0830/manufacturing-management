@@ -1,6 +1,7 @@
 "use client";
 
 import { HybridCalculationResult } from "./types";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 interface ForexSubPoolHeaderProps {
     currencyCode: string;
@@ -11,7 +12,7 @@ interface ForexSubPoolHeaderProps {
 }
 
 function formatPhp(value: number): string {
-    return `PHP ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `PHP ${value.toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}`;
 }
 
 export default function ForexSubPoolHeader({
@@ -32,14 +33,14 @@ export default function ForexSubPoolHeader({
                 </span>
                 {isLocal ? (
                     <div className="h-9 px-3 rounded-md border text-xs font-bold bg-muted/40 flex items-center font-mono" aria-label="Locked exchange rate">
-                        1.0000 PHP/PHP
+                        1.000000 PHP/PHP
                     </div>
                 ) : (
                     <input
                         type="number"
                         min="0.000001"
                         step="0.000001"
-                        value={Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : ""}
+                        value={Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate.toFixed(6) : ""}
                         onChange={event => onExchangeRateChange?.(event.target.value ? Number(event.target.value) : 0)}
                         disabled={disabled || !onExchangeRateChange}
                         aria-label="Forex exchange rate"

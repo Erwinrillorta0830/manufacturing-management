@@ -21,9 +21,9 @@ import {
     type PurchaseOrderRejectionStage
 } from "../../purchase-orders/_rejection-guard";
 import {
-    CURRENCY_DECIMAL_SCALE,
     DecimalValue,
     EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
@@ -430,19 +430,19 @@ function mapPurchaseOrder(
         : normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
     const totalPhp = normalizeLegacyDecimal(
         po.total_amount ?? po.gross_amount,
-        "0.00",
-        CURRENCY_DECIMAL_SCALE,
+        "0.0000",
+        PROCUREMENT_MONEY_DECIMAL_SCALE,
         `${poLabel}.total_amount`
     );
     const storedForeignCurrency = normalizeLegacyDecimalOrNull(
         po.total_foreign_currency,
-        CURRENCY_DECIMAL_SCALE,
+        PROCUREMENT_MONEY_DECIMAL_SCALE,
         `${poLabel}.total_foreign_currency`
     );
     const foreignCurrency = storedForeignCurrency
         || (DecimalValue.from(rate).compare(0) > 0
-            ? DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE)
-            : "0.00");
+            ? DecimalValue.from(totalPhp).divideRounded(rate, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+            : "0.0000");
     const storedSupplierId = supplierId(po.supplier_name);
     const supplier = storedSupplierId ? suppliers.get(storedSupplierId) || storedSupplierId : null;
     const branchId = resolvePurchaseOrderBranchId(po);
@@ -1145,13 +1145,13 @@ export async function fetchShipmentLineItems(
                  allocated_expense_php: normalizeLegacyDecimal(
                      allocation?.allocatedExpense || 0,
                      "0.0000",
-                     UNIT_PRICE_DECIMAL_SCALE,
+                     PROCUREMENT_MONEY_DECIMAL_SCALE,
                      `purchase_order_products/${pop.purchase_order_product_id}.allocated_expense_php`
                  ),
                 final_landed_unit_cost: normalizeLegacyDecimal(
                     finalLandedUnitCost,
                     "0.0000",
-                    UNIT_PRICE_DECIMAL_SCALE,
+                    PROCUREMENT_MONEY_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.final_landed_unit_cost`
                 ),
                 batch_no: latestReceipt ? latestReceipt.batch_no || "" : "",
@@ -1232,7 +1232,9 @@ export async function createIncomingShipment(
             withholdingPercent: Number(item.withholding_percent || 0)
         })), 1);
         const totalPhp = calculatedTotals.netPhp;
-        const totalForeignCurrency = DecimalValue.from(totalPhp).divideRounded(exchangeRate, 2).toFixed(2);
+        const totalForeignCurrency = DecimalValue.from(totalPhp)
+            .divideRounded(exchangeRate, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
 
         const poPayload = {
             purchase_order_no: `PO-${extendedData.reference_number || Date.now()}`,
@@ -1356,8 +1358,8 @@ export async function updateIncomingShipmentStatus(
                         method: "PATCH",
                         headers,
                         body: JSON.stringify({
-                            cost_per_unit: finalLandedUnitCost,
-                            estimated_unit_cost: finalLandedUnitCost,
+                            cost_per_unit: DecimalValue.from(finalLandedUnitCost).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                            estimated_unit_cost: DecimalValue.from(finalLandedUnitCost).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
                             ...productUpdateAuditFields(userId)
                         })
                     }).catch(err => console.error("Error updating product cost on status change:", err));
@@ -1423,9 +1425,9 @@ export async function receiveIncomingShipment(
                 lot_id: item.lot_id,
                 expiry_date: item.expiry_date || null,
                 received_quantity: item.received_quantity,
-                unit_price: item.unit_price,
-                discounted_amount: 0,
-                total_amount: item.total_amount,
+                unit_price: DecimalValue.from(item.unit_price).toFixed(UNIT_PRICE_DECIMAL_SCALE),
+                discounted_amount: DecimalValue.from(0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                total_amount: DecimalValue.from(item.total_amount).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
                 branch_id: branchId,
                 receipt_no: `REC-${shipmentId}-${Date.now()}`,
                 received_date: new Date().toISOString(),
@@ -1433,8 +1435,8 @@ export async function receiveIncomingShipment(
                 qa_status: item.qa_status || "Passed",
                 quantity_rejected: item.quantity_rejected || 0,
                 rejection_reason: item.rejection_reason || null,
-                allocated_expense_php: 0,
-                final_landed_unit_cost: item.unit_price
+                allocated_expense_php: DecimalValue.from(0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                final_landed_unit_cost: DecimalValue.from(item.unit_price).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
             };
 
             const porRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, {
