@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Supplier, RawMaterial, LinkedProduct, SupplierCatalogUpdatePayload } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, Search, Trash2, X, AlertCircle, Loader2, CheckCircle2, Globe, Save } from "lucide-react";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 import { normalizeProductRelationId } from "../product-relation";
 import { isSupplierEligibleProductType } from "../supplier-product-eligibility";
 
@@ -469,7 +470,7 @@ export default function SupplierCatalogMatrixModal({
                                                         <td className="px-3 py-2 text-[10px] font-semibold text-primary">{uomName || "—"}</td>
                                                         <td className="px-3 py-2 text-right font-mono text-[10px] text-foreground">
                                                             {(material.cost_per_unit ?? 0) > 0
-                                                                ? `₱${Number(material.cost_per_unit).toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                                                                ? `₱${Number(material.cost_per_unit).toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}`
                                                                 : "—"}
                                                         </td>
                                                     </tr>

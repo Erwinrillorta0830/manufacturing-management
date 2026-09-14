@@ -23,7 +23,11 @@ export class PurchaseOrderFxRateError extends Error {
 export async function resolvePurchaseOrderFxRate(currencyCode: string): Promise<PurchaseOrderFxRate> {
     const normalizedCurrency = currencyCode.toUpperCase();
     if (normalizedCurrency === "PHP") {
-        return { currencyCode: "PHP", exchangeRate: "1", effectiveDate: null };
+        return {
+            currencyCode: "PHP",
+            exchangeRate: DecimalValue.from(1).toFixed(EXCHANGE_RATE_DECIMAL_SCALE),
+            effectiveDate: null
+        };
     }
     if (normalizedCurrency !== "USD") {
         throw new PurchaseOrderFxRateError("Purchase orders support PHP and USD currencies only.", 400, "UNSUPPORTED_CURRENCY");

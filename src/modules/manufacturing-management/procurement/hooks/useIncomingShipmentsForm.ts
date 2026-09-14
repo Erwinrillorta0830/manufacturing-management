@@ -8,7 +8,12 @@ import {
     FxRateStatus
 } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../types";
-import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import {
+    DecimalValue,
+    isNonNegativeDecimal,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 import { calculatePercentageDiscount } from "../discount-calculation";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 import { resolveProductParentId } from "../product-relation";
@@ -88,7 +93,7 @@ export function useIncomingShipmentsForm({
         fxRateController.current?.abort();
 
         if (currencyCode === "PHP") {
-            setShipmentForm(previous => ({ ...previous, exchange_rate: "1" }));
+            setShipmentForm(previous => ({ ...previous, exchange_rate: "1.000000" }));
             setFxRateError(null);
             setFxRateStatus("ready");
             return;
@@ -143,7 +148,7 @@ export function useIncomingShipmentsForm({
     }, []);
 
     const handleCurrencyChange = useCallback((currencyCode: "PHP" | "USD") => {
-        setShipmentForm(previous => ({ ...previous, currency_code: currencyCode, exchange_rate: currencyCode === "PHP" ? "1" : "" }));
+        setShipmentForm(previous => ({ ...previous, currency_code: currencyCode, exchange_rate: currencyCode === "PHP" ? "1.000000" : "" }));
         if (currencyCode === "USD") {
             void loadCurrentFxRate("USD");
         } else {
@@ -240,7 +245,7 @@ export function useIncomingShipmentsForm({
                 delivery_terms: deliveryTerms,
                 payment_mode: prev.payment_mode ?? defaultPaymentModeId,
                 currency_code: "PHP",
-                exchange_rate: "1"
+                exchange_rate: "1.000000"
             }));
             fxRateController.current?.abort();
             setFxRateStatus("ready");
@@ -268,7 +273,7 @@ export function useIncomingShipmentsForm({
             supplier_id: String(activeShipment.supplier_id && typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id.id : activeShipment.supplier_id || ""),
             date_received: dateReceived,
             total_foreign_currency: String(activeShipment.total_foreign_currency),
-            exchange_rate: String(activeShipment.exchange_rate),
+            exchange_rate: activeShipment.exchange_rate == null ? "" : DecimalValue.from(activeShipment.exchange_rate).toFixed(6),
             total_php_value: String(activeShipment.total_php_value),
             status: "Ordered",
             branch_id: activeShipment.branch_id || 182,
@@ -467,7 +472,7 @@ export function useIncomingShipmentsForm({
                     nextLine.discount_percent || 0
                 ).discountAmount;
             } catch {
-                nextLine.discount_amount = "0.00";
+                nextLine.discount_amount = "0.0000";
             }
         }
         copy[index] = nextLine;
@@ -648,7 +653,9 @@ export function useIncomingShipmentsForm({
                     const pricePhp = Number(resolved.pricePhp);
                     const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
                     const transactionPrice = Number.isFinite(pricePhp) && pricePhp > 0
-                        ? shipmentForm.currency_code === "USD" ? pricePhp / exchangeRate : pricePhp
+                        ? shipmentForm.currency_code === "USD"
+                            ? DecimalValue.from(pricePhp).divideRounded(exchangeRate, UNIT_PRICE_DECIMAL_SCALE).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                            : DecimalValue.from(pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
                         : null;
                     const nextLine = transactionPrice === null
                         ? line
@@ -747,9 +754,9 @@ export function useIncomingShipmentsForm({
 
                     const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
                     const transactionPrice = shipmentForm.currency_code === "USD"
-                        ? cost / exchangeRate
-                        : cost;
-                    return { ...line, base_unit_cost_php: String(transactionPrice) };
+                        ? DecimalValue.from(cost).divideRounded(exchangeRate, UNIT_PRICE_DECIMAL_SCALE).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                        : DecimalValue.from(cost).toFixed(UNIT_PRICE_DECIMAL_SCALE);
+                    return { ...line, base_unit_cost_php: transactionPrice };
                 }));
             })
             .catch(e => {
@@ -826,16 +833,16 @@ export function useIncomingShipmentsForm({
     const totalPhpValue = React.useMemo(() => {
         return linesForm.reduce((acc, curr) => {
             return acc.add(DecimalValue.from(curr.quantity_ordered || 0).multiply(curr.base_unit_cost_php || 0));
-        }, DecimalValue.from(0)).toFixed(2);
+        }, DecimalValue.from(0)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     }, [linesForm]);
 
     const totalUsdValue = React.useMemo(() => {
         try {
             const rate = DecimalValue.from(shipmentForm.exchange_rate || 0);
-            if (rate.compare(0) <= 0) return "0.00";
-            return DecimalValue.from(totalPhpValue).divideRounded(rate, 2).toFixed(2);
+            if (rate.compare(0) <= 0) return "0.0000";
+            return DecimalValue.from(totalPhpValue).divideRounded(rate, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
         } catch {
-            return "0.00";
+            return "0.0000";
         }
     }, [totalPhpValue, shipmentForm.exchange_rate]);
 
@@ -849,28 +856,28 @@ export function useIncomingShipmentsForm({
             );
             const grossForeign = discountCalculation.grossAmount;
             const discountForeign = line.discount_mode === "Fixed Amount"
-                ? DecimalValue.from(line.discount_amount || 0).toFixed(2)
+                ? DecimalValue.from(line.discount_amount || 0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
                 : discountCalculation.discountAmount;
-            const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
+            const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
             return {
-                grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(2),
-                discountForeign: DecimalValue.from(summary.discountForeign).add(discountForeign).toFixed(2),
-                grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(2),
-                discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(2),
-                vatPhp: "0.00",
-                withholdingPhp: "0.00",
-                netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(2),
-                netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(2)
+                grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                discountForeign: DecimalValue.from(summary.discountForeign).add(discountForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                vatPhp: "0.0000",
+                withholdingPhp: "0.0000",
+                netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
             };
         }, {
-            grossForeign: "0.00",
-            discountForeign: "0.00",
-            grossPhp: "0.00",
-            discountPhp: "0.00",
-            vatPhp: "0.00",
-            withholdingPhp: "0.00",
-            netPhp: "0.00",
-            netForeign: "0.00"
+            grossForeign: "0.0000",
+            discountForeign: "0.0000",
+            grossPhp: "0.0000",
+            discountPhp: "0.0000",
+            vatPhp: "0.0000",
+            withholdingPhp: "0.0000",
+            netPhp: "0.0000",
+            netForeign: "0.0000"
         });
     }, [linesForm, shipmentForm.exchange_rate]);
 

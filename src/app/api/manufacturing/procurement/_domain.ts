@@ -1,3 +1,5 @@
+import { DecimalValue, PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+
 export const INVENTORY_STATUS = {
     REQUESTED: 1,
     APPROVED: 3,
@@ -184,7 +186,7 @@ export function canonicalBatchNumber(batchNo?: unknown, legacyLotNumber?: unknow
 }
 
 function roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 export function calculatePurchaseLineAmounts(quantity: number, unitPrice: number, discountPercent = 0) {
@@ -195,10 +197,21 @@ export function calculatePurchaseLineAmounts(quantity: number, unitPrice: number
         throw new Error("Quantity and unit price cannot be negative, and discount percent must be between 0 and 100.");
     }
 
-    const grossAmount = roundMoney(quantity * unitPrice);
-    const discountedAmount = roundMoney(grossAmount * discountPercent / 100);
-    const netAmount = roundMoney(grossAmount - discountedAmount);
-    const discountedPrice = quantity > 0 ? roundMoney(netAmount / quantity) : roundMoney(unitPrice);
+    const grossAmount = Number(DecimalValue.from(quantity).multiply(unitPrice).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+    const discountedAmount = Number(
+        DecimalValue.from(grossAmount)
+            .multiply(discountPercent)
+            .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
+    const netAmount = Number(
+        DecimalValue.from(grossAmount)
+            .subtract(discountedAmount)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
+    const discountedPrice = quantity > 0
+        ? Number(DecimalValue.from(netAmount).divideRounded(quantity, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE))
+        : roundMoney(unitPrice);
     return { grossAmount, discountedAmount, netAmount, discountedPrice };
 }
 

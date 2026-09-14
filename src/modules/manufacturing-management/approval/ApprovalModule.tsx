@@ -22,6 +22,7 @@ import type { IncomingShipment, Supplier } from "../procurement/types";
 import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison";
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../procurement/discount-calculation";
+import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../decimal";
 
 type QueueTab = "For Approval" | "Approved" | "Rejected";
 
@@ -32,7 +33,7 @@ const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3; ac
 ];
 
 function money(value: unknown, currency = "PHP") {
-    return new Intl.NumberFormat("en-PH", { style: "currency", currency, maximumFractionDigits: 2 }).format(Number(value || 0));
+    return new Intl.NumberFormat("en-PH", { style: "currency", currency, minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE }).format(Number(value || 0));
 }
 
 function dateTime(value?: string | null) {
@@ -352,7 +353,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                             <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
                             <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
-                            <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.currency_code === "PHP" ? "1.0000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(4) : "Unavailable"}</div></div>
+                            <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.currency_code === "PHP" ? "1.000000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE) : "Unavailable"}</div></div>
                             <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
                         </div>
 

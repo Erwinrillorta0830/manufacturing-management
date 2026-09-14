@@ -2,6 +2,14 @@ export type DecimalInput = string | number | bigint | DecimalValue;
 
 export const CURRENCY_DECIMAL_TOTAL_DIGITS = 65;
 export const CURRENCY_DECIMAL_SCALE = 2;
+/**
+ * Monetary precision for the manufacturing procurement and inbound flows.
+ *
+ * Keep the legacy currency scale above for unrelated modules that still use
+ * two-place presentation. PO, receiving, and landed-cost code should use
+ * this explicit contract instead of relying on the legacy default.
+ */
+export const PROCUREMENT_MONEY_DECIMAL_SCALE = 4;
 export const UNIT_PRICE_DECIMAL_SCALE = 4;
 export const EXCHANGE_RATE_DECIMAL_SCALE = 6;
 
@@ -177,4 +185,16 @@ export function isNonNegativeDecimal(value: DecimalInput): boolean {
 
 export function sumDecimals(values: readonly DecimalInput[], decimalPlaces = 2): string {
     return values.reduce<DecimalValue>((total, value) => total.add(value), DecimalValue.from(0)).toFixed(decimalPlaces);
+}
+
+export function normalizeProcurementMoney(value: DecimalInput): string {
+    return DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+}
+
+export function formatProcurementMoney(value: DecimalInput): string {
+    return formatDecimal(value, PROCUREMENT_MONEY_DECIMAL_SCALE);
+}
+
+export function sumProcurementMoney(values: readonly DecimalInput[]): string {
+    return sumDecimals(values, PROCUREMENT_MONEY_DECIMAL_SCALE);
 }

@@ -36,6 +36,7 @@ import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../
 import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
 import { resolveBaseUnitCostPhp, resolveLandedCostCurrency } from "../landed-cost/_domain";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
+import { normalizeProcurementMoney } from "@/modules/manufacturing-management/decimal";
 import {
     allocationCapacityKey,
     capacityAuditsEqual,
@@ -954,10 +955,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
                 const receiptPayload = {
                     purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: null,
-                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCostPhp,
-                    discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
-                    total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
-                    final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
+                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received,
+                    unit_price: normalizeProcurementMoney(line.baseUnitCostPhp),
+                    discounted_amount: normalizeProcurementMoney(String(line.poLine.discounted_amount ?? 0)),
+                    discount_type: line.poLine.discount_type || null,
+                    total_amount: normalizeProcurementMoney(String(line.poLine.net_amount ?? line.poLine.total_amount ?? 0)),
+                    allocated_expense_php: normalizeProcurementMoney(allocation.allocatedExpense),
+                    final_landed_unit_cost: normalizeProcurementMoney(allocation.finalLandedUnitCost), branch_id: branchId,
                     receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
                     receipt_type: supplierDocumentTypeId,

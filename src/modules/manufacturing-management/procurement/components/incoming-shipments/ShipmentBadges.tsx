@@ -1,7 +1,7 @@
 import React from "react";
 import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, X, PackageCheck } from "lucide-react";
 import {
-    CURRENCY_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
     formatDecimal
 } from "@/modules/manufacturing-management/decimal";
 import {
@@ -10,7 +10,7 @@ import {
     isInventoryStatusId
 } from "@/app/api/manufacturing/procurement/_domain";
 
-export function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = CURRENCY_DECIMAL_SCALE) {
+export function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = PROCUREMENT_MONEY_DECIMAL_SCALE) {
     const symbol = currency === "USD" ? "$" : currency === "PHP" ? "₱" : `${currency} `;
     try {
         return `${symbol}${formatDecimal(value ?? 0, decimalPlaces)}`;
@@ -21,9 +21,9 @@ export function formatMoney(value: number | string | null | undefined, currency 
 
 export function formatAmount(value: number | string | null | undefined) {
     try {
-        return formatDecimal(value ?? 0);
+        return formatDecimal(value ?? 0, PROCUREMENT_MONEY_DECIMAL_SCALE);
     } catch {
-        return "0.00";
+        return formatDecimal(0, PROCUREMENT_MONEY_DECIMAL_SCALE);
     }
 }
 

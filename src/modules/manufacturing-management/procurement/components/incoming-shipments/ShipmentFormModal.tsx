@@ -13,6 +13,7 @@ import { CreatableSelect } from "@/modules/manufacturing-management/finished-goo
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
 import { calculatePercentageDiscount } from "../../discount-calculation";
+import { DecimalValue, EXCHANGE_RATE_DECIMAL_SCALE, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export interface UOMOption {
     product_id: number;
@@ -260,7 +261,9 @@ export function ShipmentFormModal({
 
     const currencyCode = shipmentForm.currency_code || "PHP";
     const exchangeRate = Number(shipmentForm.exchange_rate || 1);
-    const exchangeRateLabel = shipmentForm.exchange_rate === "" ? "Pending" : `₱${exchangeRate}`;
+    const exchangeRateLabel = shipmentForm.exchange_rate === ""
+        ? "Pending"
+        : `₱${DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}`;
 
     return (
         <div className={isPage ? "w-full min-h-full" : "fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-md sm:p-4"}>
@@ -415,7 +418,7 @@ export function ShipmentFormModal({
                                     </div>
                                     <input
                                         type="number"
-                                        step="0.0001"
+                                        step="0.000001"
                                         readOnly={canonicalDrafting ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId) : !isOverridden || !isFinanceManager}
                                         aria-readonly={canonicalDrafting && shipmentForm.currency_code === "USD" ? true : undefined}
                                         value={String(shipmentForm.exchange_rate)}
@@ -721,9 +724,9 @@ export function ShipmentFormModal({
                                                                         finalSelected.base_unit_cost_php = "";
                                                                     }
                                                                     if (canonicalDrafting && shipmentForm.currency_code === "USD" && finalSelected.base_unit_cost_php) {
-                                                                        finalSelected.base_unit_cost_php = String(
-                                                                            Number(finalSelected.base_unit_cost_php) / (Number(shipmentForm.exchange_rate) || 1)
-                                                                        );
+                                                                        finalSelected.base_unit_cost_php = DecimalValue.from(finalSelected.base_unit_cost_php)
+                                                                            .divideRounded(Number(shipmentForm.exchange_rate) || 1, UNIT_PRICE_DECIMAL_SCALE)
+                                                                            .toFixed(UNIT_PRICE_DECIMAL_SCALE);
                                                                     }
 
                                                                     (finalSelected as ManifestLineFormItem).discount_type_id = "";
@@ -845,7 +848,7 @@ export function ShipmentFormModal({
                                                                 step="0.0001"
                                                                 placeholder={canonicalDrafting
                                                                     ? priceControlStatus === "warning" ? "Enter manually" : "Waiting for matrix"
-                                                                    : "19.00"}
+                                                                    : "19.0000"}
                                                                 value={line.base_unit_cost_php}
                                                                 onChange={e => handleLineFormChange(idx, "base_unit_cost_php", e.target.value)}
                                                                 onKeyDown={(e) => {

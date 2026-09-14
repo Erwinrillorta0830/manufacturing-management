@@ -422,9 +422,9 @@ export function ShipmentDetailView({
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate (PHP/USD)</span>
                             <span className="text-xs font-extrabold text-foreground">
                                 {activeShipment.currency_code === "PHP"
-                                    ? "1.0000"
+                                    ? "1.000000"
                                     : Number(activeShipment.exchange_rate) > 0
-                                        ? Number(activeShipment.exchange_rate).toFixed(4)
+                                        ? Number(activeShipment.exchange_rate).toFixed(6)
                                         : "Unavailable"}
                             </span>
                         </div>
