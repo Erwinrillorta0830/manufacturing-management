@@ -138,7 +138,7 @@ export function RawProductSelector({
             onValueChange={handleValueChange}
             placeholder={materialType ? "Select product..." : "Select type first..."}
             disabled={disabled || !materialType}
-            className="h-8 text-xs font-semibold w-full bg-background"
+            className="h-8 w-full min-w-0 overflow-hidden text-ellipsis text-xs font-semibold bg-background"
         />
     );
 }
