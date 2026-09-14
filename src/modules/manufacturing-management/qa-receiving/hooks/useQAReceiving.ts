@@ -158,7 +158,15 @@ async function loadStorageLotLookup(
     signal?: AbortSignal
 ): Promise<StorageLotLookupResult> {
     if (!branchId || branchId <= 0) {
-        return { lots: [], state: { status: "loaded", error: null } };
+        return {
+            lots: [],
+            state: {
+                status: "error",
+                error: disposition === "rejected"
+                    ? "A receiving branch is required before rejected storage lots can be loaded."
+                    : "A receiving branch is required before storage lots can be loaded."
+            }
+        };
     }
 
     try {
@@ -502,14 +510,15 @@ export function useQAReceiving({
         lotBranchId?: number,
         disposition: "accepted" | "rejected" = "accepted"
     ): Promise<StorageLotBatch[]> => {
-        const branchId = lotBranchId || Number(selectedBranchId);
-        if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new Error("A receiving branch is required before loading lot batches.");
-        const cacheKey = `${productId}:${branchId}:${lotId}:${disposition}`;
+        const targetBranchId = lotBranchId || Number(selectedBranchId || selectedShipment?.branch_id);
+        const sourceBranchId = Number(selectedBranchId || selectedShipment?.branch_id);
+        if (!Number.isSafeInteger(targetBranchId) || targetBranchId <= 0) throw new Error("A receiving branch is required before loading lot batches.");
+        const cacheKey = `${productId}:${sourceBranchId}:${targetBranchId}:${lotId}:${disposition}`;
         const cached = storageLotBatchCache.current[cacheKey];
         if (cached) return cached;
         const pending = storageLotBatchRequestCache.current[cacheKey];
         if (pending) return pending;
-        const request = fetchStorageLotBatches(productId, branchId, lotId, undefined, disposition)
+        const request = fetchStorageLotBatches(productId, targetBranchId, lotId, undefined, disposition, sourceBranchId)
             .then(batches => {
                 storageLotBatchCache.current[cacheKey] = batches;
                 return batches;
@@ -519,7 +528,7 @@ export function useQAReceiving({
             });
         storageLotBatchRequestCache.current[cacheKey] = request;
         return request;
-    }, [selectedBranchId]);
+    }, [selectedBranchId, selectedShipment]);
 
     const handleSelectShipment = useCallback(async (
         shipment: Shipment,
@@ -715,7 +724,7 @@ export function useQAReceiving({
                 const [accepted, rejected] = await Promise.all([
                     loadStorageLotLookup(productId, Number(normalizedPurchaseOrderBranchId), "accepted", controller.signal),
                     badStockBranchId > 0
-                        ? loadStorageLotLookup(productId, badStockBranchId, "rejected", controller.signal)
+                        ? loadStorageLotLookup(productId, Number(normalizedPurchaseOrderBranchId), "rejected", controller.signal)
                         : Promise.resolve({ lots: [], state: { status: "loaded", error: null } } satisfies StorageLotLookupResult)
                 ]);
                 return { productId, accepted, rejected };
@@ -728,7 +737,7 @@ export function useQAReceiving({
                     }
                     if (result.rejected.state.status === "error") {
                         console.error(result.rejected.state.error);
-                        toast.error(`Failed to load quarantine storage lots for product ${result.productId}.`);
+                        toast.error(`Failed to load Bad Order storage lots for product ${result.productId}.`);
                     }
                 }
                 setStorageLotsByProductId(Object.fromEntries(results.map(({ productId, accepted }) => [productId, accepted.lots])));
@@ -784,9 +793,7 @@ export function useQAReceiving({
 
         const receivingBranchId = Number(selectedBranchId || selectedShipment.branch_id);
         const receivingBranch = branches.find(branch => Number(branch.id) === receivingBranchId);
-        const branchId = disposition === "accepted"
-            ? receivingBranchId
-            : configuredBadStockBranchId(receivingBranch);
+        const branchId = receivingBranchId;
         const setLookupState = disposition === "accepted"
             ? setStorageLotLookupStateByProductId
             : setRejectedStorageLotLookupStateByProductId;
@@ -807,6 +814,17 @@ export function useQAReceiving({
             }));
             return;
         }
+        if (disposition === "rejected" && configuredBadStockBranchId(receivingBranch) <= 0) {
+            setLots(previous => ({ ...previous, [productId]: [] }));
+            setLookupState(previous => ({
+                ...previous,
+                [productId]: {
+                    status: "error",
+                    error: "No active Bad Order / quarantine branch is configured for the receiving branch."
+                }
+            }));
+            return;
+        }
 
         setLots(previous => ({ ...previous, [productId]: [] }));
         setLookupState(previous => ({
@@ -814,11 +832,11 @@ export function useQAReceiving({
             [productId]: { status: "loading", error: null }
         }));
 
-        const result = await loadStorageLotLookup(productId, branchId, disposition);
+        const result = await loadStorageLotLookup(productId, receivingBranchId, disposition);
         setLots(previous => ({ ...previous, [productId]: result.lots }));
         setLookupState(previous => ({ ...previous, [productId]: result.state }));
         if (result.state.status === "error") {
-            toast.error(`Failed to load ${disposition === "accepted" ? "compatible" : "quarantine"} storage lots for product ${productId}.`);
+            toast.error(`Failed to load ${disposition === "accepted" ? "compatible" : "Bad Order"} storage lots for product ${productId}.`);
         }
     }, [branches, selectedBranchId, selectedShipment]);
 

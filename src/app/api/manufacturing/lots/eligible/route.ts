@@ -6,7 +6,7 @@ import {
     mmInventoryLotId,
     mmLotId,
     resolveProductUnitId,
-    unitId,
+    lotUnitId,
     MmLotError
 } from "../../services/mm-lots.service";
 
@@ -54,12 +54,12 @@ export async function GET(request: Request) {
 
         const expectedUnitId = await resolveProductUnitId(productId);
         const [lots, branch, unit] = await Promise.all([
-            loadMmLots({ branchId, onlyActive: true }),
+            loadMmLots({ branchId, unitId: expectedUnitId, onlyActive: true }),
             readOptionalRow<BranchRow>(`/items/branches/${branchId}?fields=id,branch_name,branch_code`, "branch"),
             readOptionalRow<UnitRow>(`/items/units/${expectedUnitId}?fields=unit_id,unit_name,unit_shortcut`, "unit")
         ]);
 
-        const eligibleLots = lots.filter((lot) => unitId(lot.unit_id) === expectedUnitId);
+        const eligibleLots = lots.filter((lot) => lotUnitId(lot) === expectedUnitId);
         const lotIds = eligibleLots
             .map((lot) => mmLotId(lot.lot_id))
             .filter((lotId): lotId is number => Boolean(lotId));

@@ -8,7 +8,7 @@ import {
     loadMmLots,
     loadMovementRowsForMmLots,
     MmLotError,
-    unitId,
+    lotUnitId,
     type MmLotRecord
 } from "../../services/mm-lots.service";
 import {
@@ -18,6 +18,7 @@ import {
 } from "../../purchase-orders/_auth";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
 import { evaluateStorageLotEligibility } from "../../qa-receiving/_lot-eligibility";
+import { RECEIVING_ERROR_CODES } from "../../qa-receiving/_receiving-errors";
 
 interface DirectusLotLog {
     id: number;
@@ -59,6 +60,17 @@ interface AllocationProductContext {
     categoryType: PurchaseOrderCategoryType;
     productFamilyIds: number[];
     uomId: number;
+}
+
+type StorageLotDisposition = "accepted" | "rejected";
+
+interface DirectusBranchForLotLookup {
+    id?: unknown;
+    branch_name?: unknown;
+    branch_code?: unknown;
+    isActive?: unknown;
+    isBadStock?: unknown;
+    bad_stock_branch_id?: unknown;
 }
 
 function relationNumber(value: unknown, keys: string[]): number | null {
@@ -111,16 +123,114 @@ function dateOnly(value: unknown): string | null {
     return text ? text.slice(0, 10) : null;
 }
 
+function enabled(value: unknown): boolean {
+    return value === true
+        || value === 1
+        || String(value ?? "").trim().toUpperCase() === "TRUE"
+        || String(value ?? "").trim() === "1";
+}
+
+async function loadBranchForLotLookup(branchId: number): Promise<DirectusBranchForLotLookup> {
+    const response = await fetch(
+        `${DIRECTUS_URL}/items/branches/${branchId}?fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id`,
+        { headers, cache: "no-store" }
+    );
+    if (!response.ok) {
+        throw new MmLotError(
+            response.status === 404
+                ? "The receiving branch does not exist."
+                : "Failed to load the receiving branch configuration.",
+            response.status === 404 ? 404 : 503,
+            "MM_LOT_LOOKUP_FAILED"
+        );
+    }
+    const body = await response.json().catch(() => null) as { data?: DirectusBranchForLotLookup } | null;
+    if (!body?.data || typeof body.data !== "object") {
+        throw new MmLotError("The receiving branch configuration is invalid.", 503, "MM_LOT_LOOKUP_FAILED");
+    }
+    return body.data;
+}
+
+async function resolveLotLookupTargetBranch(options: {
+    disposition: StorageLotDisposition;
+    sourceBranchId: number | null;
+    requestedTargetBranchId: number | null;
+}): Promise<number> {
+    if (options.disposition === "accepted") {
+        if (!options.requestedTargetBranchId) {
+            throw new MmLotError("A target branch is required for accepted storage-lot lookups.", 400, "MM_LOT_INVALID");
+        }
+        return options.requestedTargetBranchId;
+    }
+    if (!options.sourceBranchId) {
+        throw new MmLotError(
+            "sourceBranchId is required for rejected storage-lot lookups.",
+            400,
+            "MM_LOT_INVALID"
+        );
+    }
+
+    const sourceBranch = await loadBranchForLotLookup(options.sourceBranchId);
+    const badStockBranchId = relationNumber(sourceBranch.bad_stock_branch_id, ["id", "branch_id"]);
+    if (!badStockBranchId) {
+        throw new MmLotError(
+            "No active Bad Order / quarantine branch is configured for the receiving branch.",
+            409,
+            "MM_LOT_INVALID"
+        );
+    }
+
+    const badStockBranch = await loadBranchForLotLookup(badStockBranchId);
+    if (!enabled(badStockBranch.isActive) || !enabled(badStockBranch.isBadStock)) {
+        throw new MmLotError(
+            "No active Bad Order / quarantine branch is configured for the receiving branch.",
+            409,
+            "MM_LOT_INVALID"
+        );
+    }
+    if (options.requestedTargetBranchId !== null && options.requestedTargetBranchId !== badStockBranchId) {
+        throw new MmLotError(
+            "The rejected storage-lot branch must be the configured Bad Order branch.",
+            409,
+            "MM_LOT_INVALID"
+        );
+    }
+    return badStockBranchId;
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const branchId = searchParams.get("branchId");
         const productId = searchParams.get("productId");
         const action = searchParams.get("action");
+        const dispositionParam = searchParams.get("disposition") || "accepted";
+        const sourceBranchIdParam = searchParams.get("sourceBranchId");
+        const targetBranchIdParam = searchParams.get("targetBranchId");
         const parsedProductId = productId === null ? null : Number(productId);
+        const disposition: StorageLotDisposition | null = dispositionParam === "accepted" || dispositionParam === "rejected"
+            ? dispositionParam
+            : null;
 
         if (productId !== null && (parsedProductId === null || !Number.isSafeInteger(parsedProductId) || parsedProductId <= 0)) {
             return NextResponse.json({ error: "productId must be a positive integer." }, { status: 400 });
+        }
+        if (!disposition) {
+            return NextResponse.json({ error: "disposition must be accepted or rejected." }, { status: 400 });
+        }
+        const parsedSourceBranchId = sourceBranchIdParam === null ? null : Number(sourceBranchIdParam);
+        const sourceBranchIdIsValid = parsedSourceBranchId !== null
+            && Number.isSafeInteger(parsedSourceBranchId)
+            && parsedSourceBranchId > 0;
+        if (sourceBranchIdParam !== null && !sourceBranchIdIsValid) {
+            return NextResponse.json({ error: "sourceBranchId must be a positive integer." }, { status: 400 });
+        }
+        const requestedTargetBranchId = targetBranchIdParam === null ? null : Number(targetBranchIdParam);
+        const targetBranchIdIsValid = requestedTargetBranchId !== null
+            && Number.isSafeInteger(requestedTargetBranchId)
+            && requestedTargetBranchId > 0;
+        if (targetBranchIdParam !== null && !targetBranchIdIsValid) {
+            return NextResponse.json({ error: "targetBranchId must be a positive integer." }, { status: 400 });
         }
 
         if (parsedProductId === null || action !== null) {
@@ -153,6 +263,16 @@ export async function GET(request: Request) {
             if (!Number.isSafeInteger(parsedBranchId) || parsedBranchId <= 0) {
                 return NextResponse.json({ error: "branchId is required for lot and batch lookups." }, { status: 400 });
             }
+            const targetBranchId = await resolveLotLookupTargetBranch({
+                disposition,
+                sourceBranchId: parsedSourceBranchId,
+                requestedTargetBranchId: disposition === "accepted"
+                    ? requestedTargetBranchId || parsedBranchId
+                    : requestedTargetBranchId
+            });
+            if (action === "batches" && disposition === "rejected" && requestedTargetBranchId !== null && targetBranchId !== parsedBranchId) {
+                return NextResponse.json({ error: "The selected storage lot must belong to the configured Bad Order branch." }, { status: 409 });
+            }
             const product = await loadAllocationProduct(parsedProductId);
             let requestedLotId: number | undefined;
             if (action === "batches") {
@@ -164,8 +284,12 @@ export async function GET(request: Request) {
             }
 
             const lots = await loadMmLots({
-                branchId: parsedBranchId,
+                branchId: targetBranchId,
                 ids: requestedLotId ? [requestedLotId] : undefined,
+                // Filter the normal selector at the Directus query boundary;
+                // the eligibility predicate below remains the authoritative
+                // guard for product scope, legacy aliases, and batches.
+                unitId: action === "lots" ? product.uomId : undefined,
                 onlyActive: true
             });
             const lotIds = lots.map(lot => lotNumber(lot.lot_id)).filter((id): id is number => id !== null);
@@ -181,7 +305,10 @@ export async function GET(request: Request) {
                 const lotId = lotNumber(lot.lot_id) as number;
                 const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
                 if (!eligibility.eligible) {
-                    return NextResponse.json({ error: "The selected storage lot is not compatible with this product." }, { status: 409 });
+                    return NextResponse.json({
+                        error: "The selected storage lot is not compatible with this product.",
+                        ...(eligibility.reason === "UOM" ? { code: RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH } : {})
+                    }, { status: 409 });
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
                 for (const movement of movementRows.filter(row =>
@@ -205,13 +332,15 @@ export async function GET(request: Request) {
                 if (!lotId) return [];
                 const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
                 if (!eligibility.eligible) return [];
-                const uomId = unitId(lot.unit_id);
+                const uomId = lotUnitId(lot);
                 const lotProductTypeId = relationNumber(lot.product_type_id, ["product_type_id", "type_id", "id"])
                     || relationNumber(lot.product_type, ["product_type_id", "type_id", "id"]);
                 return [{
                     ...lot,
                     mm_lot_id: lotId,
-                    branch_id: parsedBranchId,
+                    branch_id: targetBranchId,
+                    allocation_disposition: disposition,
+                    allocation_branch_id: targetBranchId,
                     inventory_type_id: null,
                     unit_id: uomId,
                     product_type_id: lotProductTypeId || product.productTypeId,

@@ -19,6 +19,8 @@ export interface MmLotRecord extends Record<string, unknown> {
     lot_name?: string | null;
     branch_id?: number | Record<string, unknown> | null;
     unit_id?: number | Record<string, unknown> | null;
+    /** Legacy/imported lot rows may expose the UOM under this alias. */
+    uom_id?: number | Record<string, unknown> | null;
     product_type_id?: number | Record<string, unknown> | null;
     product_type?: number | Record<string, unknown> | null;
     product_family_id?: number | Record<string, unknown> | null;
@@ -66,6 +68,15 @@ export function mmInventoryLotId(value: unknown): number | null {
 
 export function unitId(value: unknown): number | null {
     return relationId(value, ["unit_id", "id"]);
+}
+
+/**
+ * Resolve the storage-lot UOM from both the canonical field and the legacy
+ * alias used by older/imported lot records. Missing or invalid UOMs resolve to
+ * null so compatibility checks fail closed.
+ */
+export function lotUnitId(lot: MmLotRecord): number | null {
+    return unitId(lot.unit_id) || relationId(lot.uom_id, ["uom_id", "unit_id", "id"]);
 }
 
 export function mmBranchId(value: unknown): number | null {
@@ -145,6 +156,7 @@ export async function resolveProductUnitId(productId: number): Promise<number> {
 export async function loadMmLots(options: {
     ids?: number[];
     branchId?: number;
+    unitId?: number;
     onlyActive?: boolean;
 } = {}): Promise<MmLotRecord[]> {
     const params = new URLSearchParams({
@@ -155,6 +167,7 @@ export async function loadMmLots(options: {
     const ids = [...new Set((options.ids || []).filter(id => Number.isSafeInteger(id) && id > 0))];
     if (ids.length > 0) params.set("filter[lot_id][_in]", ids.join(","));
     if (options.branchId !== undefined) params.set("filter[branch_id][_eq]", String(options.branchId));
+    if (options.unitId !== undefined) params.set("filter[unit_id][_eq]", String(options.unitId));
     // Empty/Vacant are valid occupancy states for an active storage target.
     // Shelf/bay occupancy is not stored on mm_lots, so it must not remove a
     // lot from the receiving selector.
@@ -201,7 +214,7 @@ export async function findMmLotByName(options: {
     });
     return lots.find(lot =>
         String(lot.lot_name || "").trim() === options.lotName.trim()
-        && (options.unitId === undefined || unitId(lot.unit_id) === options.unitId)
+        && (options.unitId === undefined || lotUnitId(lot) === options.unitId)
     ) || null;
 }
 
@@ -261,7 +274,7 @@ export async function resolveOrCreateMmLot(payload: {
     const lots = await loadMmLots({ branchId: payload.branchId, onlyActive: false });
     const exact = lots.find(lot =>
         String(lot.lot_name || "").trim() === payload.lotName.trim()
-        && unitId(lot.unit_id) === payload.unitId
+        && lotUnitId(lot) === payload.unitId
     );
     if (exact) return exact;
 
@@ -273,7 +286,7 @@ export async function resolveOrCreateMmLot(payload: {
     const collisionSafeName = `${baseName}${suffix}`;
     const collisionSafeLot = lots.find(lot =>
         String(lot.lot_name || "").trim() === collisionSafeName
-        && unitId(lot.unit_id) === payload.unitId
+        && lotUnitId(lot) === payload.unitId
     );
     return collisionSafeLot || createMmLot({ ...payload, lotName: collisionSafeName });
 }
@@ -307,7 +320,7 @@ export async function loadEligibleFinishedGoodsLot(options: {
         throw new MmLotError("The selected storage lot belongs to another branch.", 422, "MM_LOT_BRANCH_MISMATCH");
     }
     const expectedUnitId = await resolveProductUnitId(options.productId);
-    if (unitId(lot.unit_id) !== expectedUnitId) {
+    if (lotUnitId(lot) !== expectedUnitId) {
         throw new MmLotError("The selected storage lot UOM does not match the finished good.", 422, "MM_LOT_UOM_MISMATCH");
     }
     return lot;

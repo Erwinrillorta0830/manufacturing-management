@@ -12,6 +12,25 @@ import ForceReceivedDialog from "./ForceReceivedDialog";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { configuredBadStockBranchId } from "../services/qa-api";
 
+function relationNumber(value: unknown, keys: string[]): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of keys) {
+            const nested = relationNumber(record[key], keys);
+            if (nested !== null) return nested;
+        }
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function storageLotUnitId(lot: StorageLot): number | null {
+    return relationNumber(lot.unit_id, ["unit_id", "id"])
+        || relationNumber(lot.uom_id, ["uom_id", "unit_id", "id"]);
+}
+
 interface ShipmentInspectionFormProps {
     selectedShipment: Shipment;
     readOnly: boolean;
@@ -68,6 +87,7 @@ interface SearchableStorageLotSelectProps {
     value: string | number;
     disabled?: boolean;
     storageLots: StorageLot[];
+    productUnitId: number | null;
     id?: string;
     ariaLabel?: string;
     onChange: (value: string) => void;
@@ -77,6 +97,7 @@ function SearchableStorageLotSelect({
     value,
     disabled,
     storageLots,
+    productUnitId,
     id,
     ariaLabel,
     onChange
@@ -84,7 +105,11 @@ function SearchableStorageLotSelect({
     const options = React.useMemo(() => {
         const seenLotIds = new Set<string>();
         return storageLots
-            .filter(lot => lot.is_selectable !== false || String(lot.lot_id) === String(value))
+            .filter(lot => {
+                const isCurrent = String(lot.lot_id) === String(value);
+                const isUomCompatible = productUnitId !== null && storageLotUnitId(lot) === productUnitId;
+                return (lot.is_selectable !== false || isCurrent) && (isUomCompatible || isCurrent);
+            })
             .filter(lot => {
                 const lotId = String(lot.lot_id);
                 if (seenLotIds.has(lotId)) return false;
@@ -96,6 +121,7 @@ function SearchableStorageLotSelect({
                 const lotName = String(lot.lot_name || lot.lot_code || `Lot ${lotId}`);
                 const available = lot.availableQuantity ?? lot.max_batch_capacity;
                 const isCurrent = lotId === String(value);
+                const isUomMismatch = productUnitId === null || storageLotUnitId(lot) !== productUnitId;
                 const isFull = typeof lot.availableQuantity === "number" && lot.availableQuantity <= 0;
                 const availabilityLabel = lot.capacity_status === "UNCONFIGURED"
                     ? "capacity not configured"
@@ -105,11 +131,11 @@ function SearchableStorageLotSelect({
 
                 return {
                     value: lotId,
-                    label: `${lotName} (${availabilityLabel})`,
-                    disabled: isFull && !isCurrent
+                    label: `${lotName} (${isUomMismatch ? "UOM mismatch - replace" : availabilityLabel})`,
+                    disabled: isUomMismatch || (isFull && !isCurrent)
                 };
             });
-    }, [storageLots, value]);
+    }, [productUnitId, storageLots, value]);
 
     return (
         <div data-testid="storage-lot-picker" aria-label={ariaLabel} className="relative min-w-0 flex-1 overflow-visible">
@@ -200,6 +226,7 @@ interface LotAllocationGroup {
 interface LotAllocationEditorProps {
     lineId: number;
     productId: number;
+    productUnitId: number | null;
     isPackaging: boolean;
     disposition: AllocationDisposition;
     allocations: ReceivingLotAllocationInput[];
@@ -215,6 +242,7 @@ interface LotAllocationEditorProps {
 function LotAllocationEditor({
     lineId,
     productId,
+    productUnitId,
     isPackaging,
     disposition,
     allocations,
@@ -233,7 +261,9 @@ function LotAllocationEditor({
 
     const loadBatches = React.useCallback((lotId: number) => {
         if (batchOptionsByLot[lotId]) return;
-        const lotBranchId = storageLots.find(lot => String(lot.lot_id) === String(lotId))?.branch_id || undefined;
+        const lot = storageLots.find(candidate => String(candidate.lot_id) === String(lotId));
+        if (!lot || productUnitId === null || storageLotUnitId(lot) !== productUnitId) return;
+        const lotBranchId = lot.branch_id || undefined;
         void loadStorageLotBatches(productId, lotId, lotBranchId || undefined, disposition)
             .then(batches => setBatchOptionsByLot(previous => ({ ...previous, [lotId]: batches })))
             .catch(error => {
@@ -241,7 +271,7 @@ function LotAllocationEditor({
                     setBatchOptionsByLot(previous => ({ ...previous, [lotId]: [] }));
                 }
             });
-    }, [batchOptionsByLot, disposition, loadStorageLotBatches, productId, storageLots]);
+    }, [batchOptionsByLot, disposition, loadStorageLotBatches, productId, productUnitId, storageLots]);
 
     React.useEffect(() => {
         for (const allocation of allocations) {
@@ -346,6 +376,7 @@ function LotAllocationEditor({
     const canAddLot = !readOnly
         && !hasUnassignedGroup
         && storageLots.some(lot => {
+            if (productUnitId === null || storageLotUnitId(lot) !== productUnitId) return false;
             const availableQuantity = lot.availableQuantity;
             const hasCapacity = availableQuantity === null
                 || availableQuantity === undefined
@@ -402,6 +433,9 @@ function LotAllocationEditor({
                 </div>
             ) : groups.map(group => {
                 const selectedLot = effectiveStorageLots.find(lot => String(lot.lot_id) === group.storageLotId);
+                const selectedLotUomId = selectedLot ? storageLotUnitId(selectedLot) : null;
+                const selectedLotUomMismatch = selectedLot !== undefined
+                    && (productUnitId === null || selectedLotUomId !== productUnitId);
                 const groupTotal = group.allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
                 const lotIncomingTotal = [...allocations, ...otherAllocations]
                     .filter(allocation => String(allocation.storageLotId) === group.storageLotId)
@@ -421,6 +455,7 @@ function LotAllocationEditor({
                                             value={group.storageLotId}
                                             disabled={readOnly}
                                             storageLots={getStorageLotsForGroup(group)}
+                                            productUnitId={productUnitId}
                                             id={`receiving-${lineId}-${disposition}-${group.groupId.replace(/[^a-zA-Z0-9_-]/g, "-")}-storage-lot`}
                                             ariaLabel={tone.label + " storage lot"}
                                             onChange={value => changeLot(group, value)}
@@ -442,7 +477,7 @@ function LotAllocationEditor({
                                         <button
                                             type="button"
                                             onClick={() => addBatch(group)}
-                                            disabled={!group.storageLotId}
+                                            disabled={!group.storageLotId || selectedLotUomMismatch}
                                             className={"h-8 px-2.5 rounded-lg border bg-background text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-muted disabled:opacity-50 " + tone.text + " " + tone.border}
                                             aria-label={"Add batch to " + tone.label.toLowerCase() + " lot group"}
                                         >
@@ -455,6 +490,11 @@ function LotAllocationEditor({
                                 <div className="mt-1 text-[9px] font-semibold text-muted-foreground">
                                     {selectedLot.lot_name} · {selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "capacity unavailable"} unit(s) available before this receipt.
                                 </div>
+                            )}
+                            {selectedLotUomMismatch && (
+                                <p className="mt-1 text-[9px] font-bold text-red-700" role="alert">
+                                    Storage lot {selectedLot?.lot_name || group.storageLotId} does not match this product&apos;s UOM. Select a compatible lot before adding batches.
+                                </p>
                             )}
                         </div>
                         <div className="overflow-x-auto">
@@ -953,7 +993,7 @@ export default function ShipmentInspectionForm({
                                 aria-label="Receipt Number"
                                 aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
                                 aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
-                                className={`h-10 rounded-xl bg-background pl-9 pr-3 text-xs font-semibold ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""}`}
+                                className={`h-10 rounded-xl bg-background !pl-10 pr-3 text-xs font-semibold ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""}`}
                                 popoverClassName="z-[100] min-w-[320px] max-w-[calc(100vw-2rem)] p-0"
                             />
                         )}
@@ -1106,6 +1146,7 @@ export default function ShipmentInspectionForm({
 
                         const prod = line.product_id;
                         const productId = Number(prod.product_id);
+                        const productUnitId = relationNumber(prod.unit_of_measurement, ["unit_id", "uom_id", "id"]);
                         const lineStorageLots = storageLotsByProductId[productId] || [];
                         const lineRejectedStorageLots = rejectedStorageLotsByProductId[productId] || [];
                         const lineStorageLotLookup = storageLotLookupStateByProductId[productId] || { status: "loading" as const, error: null };
@@ -1404,6 +1445,7 @@ export default function ShipmentInspectionForm({
                                             <LotAllocationEditor
                                                 lineId={line.line_id}
                                                 productId={Number(prod.product_id)}
+                                                productUnitId={productUnitId}
                                                 isPackaging={row.isPackaging}
                                                 disposition="accepted"
                                                 allocations={row.acceptedLotAllocations}
@@ -1426,12 +1468,12 @@ export default function ShipmentInspectionForm({
                                                 </div>
                                         {lineRejectedStorageLotLookup.status === "loading" && (
                                             <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
-                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active quarantine storage lots...
+                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active Bad Order storage lots...
                                             </p>
                                         )}
                                         {lineRejectedStorageLotLookup.status === "error" && (
                                             <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
-                                                <span>Unable to load quarantine storage lots. This is a lookup failure, not an empty lot list.</span>
+                                                <span>{lineRejectedStorageLotLookup.error || "Unable to load Bad Order storage lots. This is a lookup failure, not an empty lot list."}</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => onRetryStorageLots(productId, "rejected")}
@@ -1444,13 +1486,14 @@ export default function ShipmentInspectionForm({
                                         {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
                                             <p className="text-[9px] font-semibold text-amber-700" role="alert">
                                                 {hasConfiguredBadOrderBranch
-                                                    ? "No compatible quarantine / Bad Order storage lots are available. A lot must match this product's UOM and be active on the configured Bad Order branch."
+                                                    ? "No compatible storage lots are available on the configured Bad Order branch. Standard Empty / Vacant lots are valid targets; the lot category flag is not required. Lots must match this product's UOM and product scope and have available capacity."
                                                     : "The receiving branch has no active Bad Order / quarantine branch configured, so rejected quantity cannot be mapped to storage lots."}
                                             </p>
                                         )}
                                                 <LotAllocationEditor
                                                     lineId={line.line_id}
                                                     productId={productId}
+                                                    productUnitId={productUnitId}
                                                     isPackaging={row.isPackaging}
                                                     disposition="rejected"
                                                     allocations={row.rejectedLotAllocations}

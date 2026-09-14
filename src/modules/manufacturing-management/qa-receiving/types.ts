@@ -24,6 +24,8 @@ export interface StorageLot {
     mm_lot_id?: number | null;
     legacy_lot_id?: number | null;
     branch_id?: number | null;
+    allocation_disposition?: "accepted" | "rejected";
+    allocation_branch_id?: number | null;
     status?: "ACTIVE" | "CLOSED" | "INACTIVE" | string | null;
     capacity_status?: "CONFIGURED" | "UNCONFIGURED" | string;
     mapping_status?: "MAPPED" | "UNMAPPED" | string;
@@ -34,6 +36,7 @@ export interface StorageLot {
     product_type_id?: number | null;
     product_category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     unit_id?: number | null;
+    uom_id?: number | Record<string, unknown> | null;
     max_batch_capacity: number | null;
     occupiedQuantity?: number;
     availableQuantity?: number | null;
