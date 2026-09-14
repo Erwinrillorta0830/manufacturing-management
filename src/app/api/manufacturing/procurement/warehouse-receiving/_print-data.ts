@@ -1,4 +1,5 @@
 import { procurementDirectusFetch } from "../_directus";
+import { INVENTORY_STATUS } from "../_domain";
 
 type DirectusRecord = Record<string, unknown>;
 
@@ -133,7 +134,7 @@ async function directusRows(path: string, message: string): Promise<DirectusReco
 }
 
 async function loadPurchaseOrder(purchaseOrderId: number): Promise<DirectusRecord> {
-    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,currency_code,total_amount,total_foreign_currency`);
+    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,currency_code,total_amount,total_foreign_currency`);
     if (result.response.status === 404) throw new WarehouseReceivingPrintDataError("Purchase order not found.", 404);
     if (!result.response.ok) throw new WarehouseReceivingPrintDataError("Unable to load the purchase order.");
     const order = bodyData(result.body);
@@ -237,6 +238,9 @@ export async function loadWarehouseReceivingPrintableData(input: {
         relatedName(order.supplier_name, "suppliers", "supplier_name", "Supplier"),
         relatedName(header.branch_id ?? order.branch_id, "branches", "branch_name", "Branch")
     ]);
+    if (Number(order.inventory_status) !== INVENTORY_STATUS.WAREHOUSE_RECEIVING) {
+        throw new WarehouseReceivingPrintDataError("Only an active Warehouse Receiving order can be printed.", 409);
+    }
     const productsById = new Map(products.map(product => [productId(product) || 0, product]));
     const previousByLine = new Map<number, number>();
     const currentByLine = new Map<number, number>();
