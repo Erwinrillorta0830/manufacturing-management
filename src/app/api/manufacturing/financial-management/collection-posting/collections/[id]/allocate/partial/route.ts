@@ -68,19 +68,46 @@ export async function POST(
         ])];
 
         const invoiceCustomerMap = new Map<number, string>();
+        const invoiceOpenBalanceMap = new Map<number, { customerCode: string; netAmount: number; invoiceNo: string }>();
         if (targetInvoiceIds.length > 0) {
             try {
-                const siRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${targetInvoiceIds.join(",")}&fields=invoice_id,customer_code&limit=-1`, { headers, cache: "no-store" });
+                const siRes = await fetch(`${DIRECTUS_URL}/items/sales_invoice?filter[invoice_id][_in]=${targetInvoiceIds.join(",")}&fields=invoice_id,invoice_no,customer_code,net_amount,total_amount,gross_amount&limit=-1`, { headers, cache: "no-store" });
                 if (siRes.ok) {
                     const siData = (await siRes.json()).data || [];
-                    siData.forEach((s: { invoice_id?: number; customer_code?: string }) => {
-                        if (s.invoice_id && s.customer_code) {
-                            invoiceCustomerMap.set(Number(s.invoice_id), s.customer_code);
+                    siData.forEach((s: { invoice_id?: number; invoice_no?: string; customer_code?: string; net_amount?: number; total_amount?: number; gross_amount?: number }) => {
+                        if (s.invoice_id) {
+                            const invId = Number(s.invoice_id);
+                            if (s.customer_code) invoiceCustomerMap.set(invId, s.customer_code);
+                            const netVal = Number(s.net_amount ?? s.total_amount ?? s.gross_amount ?? 0);
+                            invoiceOpenBalanceMap.set(invId, {
+                                customerCode: s.customer_code || "",
+                                netAmount: netVal,
+                                invoiceNo: s.invoice_no || `INV-DIR-${s.invoice_id}`
+                            });
                         }
                     });
                 }
             } catch (err) {
                 console.warn("Failed to fetch sales_invoice customer_codes for allocation:", err);
+            }
+        }
+
+        // Backend Guard: Ensure no single invoice allocation exceeds its net_amount
+        const appliedPerInvoice = new Map<number, number>();
+        allocations.forEach((a: { invoiceId?: number; amountApplied?: number }) => {
+            if (a.invoiceId && a.amountApplied && a.amountApplied > 0) {
+                const invId = Number(a.invoiceId);
+                appliedPerInvoice.set(invId, (appliedPerInvoice.get(invId) || 0) + Number(a.amountApplied));
+            }
+        });
+
+        for (const [invId, totalApplied] of appliedPerInvoice.entries()) {
+            const invInfo = invoiceOpenBalanceMap.get(invId);
+            if (invInfo && invInfo.netAmount > 0 && totalApplied - invInfo.netAmount > 0.01) {
+                return NextResponse.json(
+                    { error: `The allocation for ${invInfo.invoiceNo} exceeds its remaining balance.` },
+                    { status: 400 }
+                );
             }
         }
 

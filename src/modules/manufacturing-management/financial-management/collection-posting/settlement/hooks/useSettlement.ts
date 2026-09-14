@@ -650,7 +650,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
             return false;
         }
 
-        const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations);
+        const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations, wallet);
         if (overAllocatedInvoice) {
             toast.error(`The allocation for ${overAllocatedInvoice.invoiceNo} exceeds its remaining balance.`);
             return false;
@@ -690,6 +690,18 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
 
             if (newAdjustments.some(adjustment => !adjustment.findingId)) {
                 throw new Error("Cannot save: An adjustment is missing a valid Finding Type.");
+            }
+
+            // Guard: Check if any invoice allocation exceeds remaining open balance
+            for (const inv of cartInvoices) {
+                const totalApplied = allocations
+                    .filter(a => a.invoiceId === inv.id)
+                    .reduce((sum, a) => sum + (a.amountApplied || 0), 0);
+                const openBalance = getInvoiceRequiredBalance(inv);
+                if (totalApplied - openBalance > 0.01) {
+                    const invoiceNo = inv.invoiceNo || `INV-DIR-${inv.id}`;
+                    throw new Error(`The allocation for ${invoiceNo} exceeds its remaining balance.`);
+                }
             }
 
             const persistentAllocations: { invoiceId: number; amountApplied: number; allocationType: string; sourceTempId: string; }[] = [];
@@ -759,7 +771,7 @@ export function useSettlement(pouchId: string | number, activeInvoiceId: number 
                 return false;
             }
 
-            const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations);
+            const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations, wallet);
             if (overAllocatedInvoice) {
                 toast.error(`The allocation for ${overAllocatedInvoice.invoiceNo} exceeds its remaining balance.`);
                 return false;

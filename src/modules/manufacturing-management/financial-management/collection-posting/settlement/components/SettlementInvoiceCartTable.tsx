@@ -38,7 +38,7 @@ export interface SettlementInvoiceCartTableProps {
 }
 
 export default function SettlementInvoiceCartTable({
-                                                       isPosted, cartInvoices, allocations, combinedSources,
+                                                       isPosted, cartInvoices, allocations, wallet, combinedSources,
                                                        cartTotalBalance, cartTotalAppliedSession, activeInvoiceId, setActiveInvoiceId,
                                                        removeFromCart, handleInvoiceDiscrepancy, handleAutoCalculateEWT, getInvoiceApplied
                                                    }: SettlementInvoiceCartTableProps) {
@@ -56,17 +56,16 @@ export default function SettlementInvoiceCartTable({
         return [...cartInvoices].sort((a, b) => {
             const aVal = a[cartSortField];
             const bVal = b[cartSortField];
-            if (aVal == null && bVal == null) return 0;
-            if (aVal == null) return 1;
-            if (bVal == null) return -1;
-            const modifier = cartSortDir === "asc" ? 1 : -1;
-            return aVal > bVal ? modifier : -modifier;
+            if (aVal === undefined || bVal === undefined) return 0;
+            if (aVal < bVal) return cartSortDir === "asc" ? -1 : 1;
+            if (aVal > bVal) return cartSortDir === "asc" ? 1 : -1;
+            return 0;
         });
     }, [cartInvoices, cartSortField, cartSortDir]);
 
     const filteredCartInvoices = useMemo(() => {
-        if (!cartSearchQuery) return sortedCartInvoices;
-        const q = cartSearchQuery.toLowerCase().trim();
+        if (!cartSearchQuery.trim()) return sortedCartInvoices;
+        const q = cartSearchQuery.toLowerCase();
         return sortedCartInvoices.filter(inv =>
             inv.invoiceNo.toLowerCase().includes(q) ||
             inv.customerName.toLowerCase().includes(q)
@@ -75,7 +74,7 @@ export default function SettlementInvoiceCartTable({
 
     const cartBalanceTotals = getCartBalanceTotals(cartInvoices, allocations);
     const underAllocatedInvoice = findUnderAllocatedInvoice(cartInvoices, allocations);
-    const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations);
+    const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations, wallet);
     const isCartUnbalanced = Boolean(underAllocatedInvoice || overAllocatedInvoice)
         || Math.abs(cartBalanceTotals.difference) > SETTLEMENT_BALANCE_TOLERANCE;
     const cartValidationMessage = underAllocatedInvoice

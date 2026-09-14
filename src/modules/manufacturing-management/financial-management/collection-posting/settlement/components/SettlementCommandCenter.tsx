@@ -386,7 +386,7 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
     const cartTotalBalance = cartBalanceTotals.required;
     const cartTotalAppliedSession = cartBalanceTotals.applied;
     const underAllocatedInvoice = findUnderAllocatedInvoice(cartInvoices, allocations);
-    const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations);
+    const overAllocatedInvoice = findOverAllocatedInvoice(cartInvoices, allocations, wallet);
     const isCartBalanced = !underAllocatedInvoice
         && !overAllocatedInvoice
         && Math.abs(cartBalanceTotals.difference) <= SETTLEMENT_BALANCE_TOLERANCE;
@@ -466,10 +466,13 @@ export default function SettlementCommandCenter({ id, onClose, onChanged, autoAd
         const appliedSession = getInvoiceApplied(inv.id);
         const remaining = getInvoiceRequiredBalance(inv);
         const discrepancy = remaining - appliedSession;
-        if (discrepancy <= 0.01) return toast.error(`Cannot accept a variance adjustment. Variance: ₱${discrepancy.toFixed(2)}`);
-        setAdjAmount(Math.abs(discrepancy).toFixed(2));
-        setAdjBalanceType(2);
-        setAdjRemarks(`Variance for ${inv.invoiceNo}`);
+        const absDiscrepancy = Math.abs(discrepancy);
+        if (absDiscrepancy <= 0.01) return toast.error(`No variance adjustment needed for ${inv.invoiceNo}. Balance is settled.`);
+        
+        const isOverage = discrepancy < -0.01;
+        setAdjAmount(absDiscrepancy.toFixed(2));
+        setAdjBalanceType(isOverage ? 1 : 2);
+        setAdjRemarks(`${isOverage ? "Overage" : "Shortage"} variance for ${inv.invoiceNo}`);
         setAdjCoaId(""); setAdjFindingId(""); setAdjInvoiceId(inv.id); setAdjOpen(true);
     };
 

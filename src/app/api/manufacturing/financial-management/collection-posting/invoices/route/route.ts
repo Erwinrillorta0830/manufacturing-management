@@ -85,6 +85,28 @@ export async function GET(request: Request) {
             }
         }
 
+        // Fetch customer names from Directus customer collection to prioritize customer_name
+        const customerCodes = [...new Set(rawInvoices.map((inv: { customer_code?: string }) => inv.customer_code).filter((c): c is string => typeof c === "string" && c.trim().length > 0))];
+        const customerNameMap = new Map<string, string>();
+        if (customerCodes.length > 0) {
+            try {
+                const escCodes = customerCodes.map(c => encodeURIComponent(c)).join(",");
+                const custRes = await fetch(`${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${escCodes}&limit=-1&fields=customer_code,customer_name`, { headers, cache: "no-store" });
+                if (custRes.ok) {
+                    const custData = (await custRes.json()).data || [];
+                    custData.forEach((c: { customer_code?: string; customer_name?: string }) => {
+                        if (c.customer_code && c.customer_name) {
+                            customerNameMap.set(c.customer_code, c.customer_name);
+                        }
+                    });
+                } else {
+                    console.warn(`Directus customer lookup returned status ${custRes.status}`);
+                }
+            } catch (err) {
+                console.error("Error resolving customer names for route invoices:", err);
+            }
+        }
+
         const mappedInvoices = rawInvoices.map((inv: {
             invoice_id: number | string;
             invoice_no: string;
@@ -97,12 +119,13 @@ export async function GET(request: Request) {
             payment_status: string;
         }) => {
             const safeInvId = Number(inv.invoice_id);
+            const resolvedCustomerName = (inv.customer_code ? customerNameMap.get(inv.customer_code) : undefined) || inv.customer_name || "Deleted Customer";
             return {
                 id: inv.invoice_id,
                 invoiceId: inv.invoice_id,
                 invoiceNo: inv.invoice_no,
                 customerCode: inv.customer_code,
-                customerName: inv.customer_name || "Deleted Customer",
+                customerName: resolvedCustomerName,
                 originalAmount: Number(inv.net_amount) || 0,
                 remainingBalance: inv.remaining_balance !== undefined ? Number(inv.remaining_balance) : (Number(inv.net_amount) || 0),
                 transactionDate: inv.invoice_date,

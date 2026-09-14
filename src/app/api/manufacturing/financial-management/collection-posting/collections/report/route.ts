@@ -110,6 +110,8 @@ export async function GET(request: Request) {
                             customerMap.set(c.customer_code, c.customer_name);
                         }
                     });
+                } else {
+                    console.warn(`Directus customer lookup returned status ${custRes.status}`);
                 }
             } catch (err) {
                 console.error("Failed to fetch customer names for collection report:", err);
