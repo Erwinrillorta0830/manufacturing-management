@@ -1,4 +1,4 @@
-import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType } from "../types";
+import { Shipment, ShipmentLineItem, Branch, StorageLot, StorageLotBatch, QaSpecification, ReceivingCommitPayload, ReceivingCommitResult, ReceivingPreview, QuarantineDisposition, QuarantineStock, ForceReceivedResult, SupplierDocumentType, QaReceiptOption } from "../types";
 import {
     isReceivingErrorCode,
     type ReceivingErrorCode
@@ -90,7 +90,8 @@ export async function fetchStorageLots(
         productId: String(productId),
         branchId: String(branchId)
     });
-    if (disposition === "rejected") params.set("disposition", "rejected");
+    params.set("disposition", disposition);
+    if (disposition === "rejected") params.set("sourceBranchId", String(branchId));
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
@@ -108,7 +109,8 @@ export async function fetchStorageLotBatches(
     branchId: number,
     lotId: number,
     signal?: AbortSignal,
-    disposition: "accepted" | "rejected" = "accepted"
+    disposition: "accepted" | "rejected" = "accepted",
+    sourceBranchId?: number
 ): Promise<StorageLotBatch[]> {
     const params = new URLSearchParams({
         action: "batches",
@@ -116,7 +118,11 @@ export async function fetchStorageLotBatches(
         branchId: String(branchId),
         lotId: String(lotId)
     });
-    if (disposition === "rejected") params.set("disposition", "rejected");
+    params.set("disposition", disposition);
+    if (disposition === "rejected") {
+        if (sourceBranchId !== undefined) params.set("sourceBranchId", String(sourceBranchId));
+        params.set("targetBranchId", String(branchId));
+    }
     const res = await fetch(`/api/manufacturing/qa-receiving?${params.toString()}`, { signal });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || "Failed to load storage-lot batches");
@@ -133,14 +139,18 @@ export async function fetchShipmentDetails(shipmentId: number, signal?: AbortSig
 export async function fetchQaReceivingDetail(
     shipmentId: number,
     replacementDispositionId?: number,
+    receiptKey?: string,
     signal?: AbortSignal
 ): Promise<{
     shipment: Shipment;
     lineItems: ShipmentLineItem[];
     replacementDisposition: QuarantineDisposition | null;
+    receiptOptions: QaReceiptOption[];
+    selectedReceipt: QaReceiptOption | null;
 }> {
     const params = new URLSearchParams();
     if (replacementDispositionId) params.set("replacementDispositionId", String(replacementDispositionId));
+    if (receiptKey) params.set("receiptKey", receiptKey);
     const query = params.toString();
     const res = await fetch(`/api/manufacturing/qa-receiving/${encodeURIComponent(String(shipmentId))}${query ? `?${query}` : ""}`, { signal });
     const body = await res.json().catch(() => ({}));
@@ -152,7 +162,9 @@ export async function fetchQaReceivingDetail(
     return {
         shipment: data.shipment as Shipment,
         lineItems: data.lineItems as ShipmentLineItem[],
-        replacementDisposition: data.replacementDisposition || null
+        replacementDisposition: data.replacementDisposition || null,
+        receiptOptions: Array.isArray(data.receiptOptions) ? data.receiptOptions as QaReceiptOption[] : [],
+        selectedReceipt: data.selectedReceipt || null
     };
 }
 
@@ -169,6 +181,7 @@ export async function fetchProductQaSpecifications(productId: number, signal?: A
 export async function previewReceivingQa(payload: {
     shipmentId: number;
     replacementDispositionId?: number | null;
+    receivingHeaderId?: number | null;
     receiptNumber: string;
     receiptDate: string;
     supplierDocumentTypeId: number | null;

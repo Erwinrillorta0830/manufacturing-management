@@ -24,6 +24,8 @@ export interface StorageLot {
     mm_lot_id?: number | null;
     legacy_lot_id?: number | null;
     branch_id?: number | null;
+    allocation_disposition?: "accepted" | "rejected";
+    allocation_branch_id?: number | null;
     status?: "ACTIVE" | "CLOSED" | "INACTIVE" | string | null;
     capacity_status?: "CONFIGURED" | "UNCONFIGURED" | string;
     mapping_status?: "MAPPED" | "UNMAPPED" | string;
@@ -34,6 +36,7 @@ export interface StorageLot {
     product_type_id?: number | null;
     product_category_type?: "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
     unit_id?: number | null;
+    uom_id?: number | Record<string, unknown> | null;
     max_batch_capacity: number | null;
     occupiedQuantity?: number;
     availableQuantity?: number | null;
@@ -82,6 +85,18 @@ export interface Shipment {
     forceReceivedBy?: number | null;
     forceReceivedByName?: string | null;
     forceReceivedReason?: string | null;
+}
+
+export interface QaReceiptOption {
+    key: string;
+    receiptNumber: string;
+    receiptDate: string | null;
+    receiptType: string | null;
+    postingStatus: string;
+    workflowRevision: number;
+    receivingHeaderId: number | null;
+    isCurrent: boolean;
+    readOnly: boolean;
 }
 
 export interface Product {
@@ -153,6 +168,13 @@ export interface ShipmentLineItem {
         receipt_type?: string | null;
         received_quantity: number;
     } | null;
+    current_receipt_header_id?: number | null;
+    current_receipt_number?: string | null;
+    current_receipt_date?: string | null;
+    current_receipt_quantity?: number | null;
+    current_receipt_accepted_quantity?: number | null;
+    current_receipt_rejected_quantity?: number | null;
+    current_receipt_error?: string | null;
     base_unit_cost_php: number;
     lot_number?: string;
     batch_no?: string;
@@ -207,6 +229,9 @@ export interface ReceivingQaEvaluation {
     lineId: number;
     previouslyReceivedQuantity: number;
     previouslyAcceptedQuantity: number;
+    currentReceiptQuantity: number;
+    currentReceiptAcceptedQuantity: number;
+    currentReceiptRejectedQuantity: number;
     remainingQuantity: number;
     remainingAcceptedQuantity: number;
     overDeliveryQuantity: number;
@@ -242,6 +267,7 @@ export interface ReceivingCommitPayload {
     workflowRevision: number;
     shipmentId: number;
     replacementDispositionId?: number | null;
+    receivingHeaderId?: number | null;
     receiptNumber: string;
     receiptDate: string;
     supplierDocumentTypeId: number | null;

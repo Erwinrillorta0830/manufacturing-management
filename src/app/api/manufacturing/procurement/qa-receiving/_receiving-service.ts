@@ -25,6 +25,7 @@ import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-rece
 import { sumMovementQuantitiesByStorageLot } from "../../qa-receiving/_movement-stock";
 import {
     loadMmLots,
+    lotUnitId,
     resolveOrCreateMmInventoryLot,
     loadMovementRowsForMmLots,
     MmLotError
@@ -772,9 +773,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required inventory branch.`, 409);
                 }
-                const lotUomId = relationValueId(lot.unit_id, ["unit_id", "id"]);
+                const lotUomId = lotUnitId(lot);
                 if (lotUomId !== productUomId) {
-                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`, 409);
+                    throw new ReceivingError(
+                        `Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`,
+                        409,
+                        RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                    );
                 }
                 const parentProductId = relationValueId(product.parent_id, ["product_id", "id"]);
                 if (!isStorageLotProductCompatible(lot, {
@@ -921,8 +926,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             for (const lotId of allocationLotIds) {
                 const lot = freshLots.find(row => Number(row.lot_id) === lotId);
                 if (!lot) throw new ReceivingError(`Storage lot ${lotId} no longer exists.`, 409);
-                if (relationValueId(lot.unit_id, ["unit_id", "id"]) !== uomByLot.get(lotId)) {
-                    throw new ReceivingError(`Storage lot ${lotId} UOM changed while receiving was being prepared.`, 409);
+                if (lotUnitId(lot) !== uomByLot.get(lotId)) {
+                    throw new ReceivingError(
+                        `Storage lot ${lotId} UOM changed while receiving was being prepared.`,
+                        409,
+                        RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                    );
                 }
                 const capacityInspection = inspectLotCapacity(lot.max_batch_capacity);
                 if (capacityInspection.status === "INVALID") {
