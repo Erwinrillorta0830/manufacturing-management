@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+    downloadWarehouseReceivingSummary,
     fetchWarehouseReceivingOrder,
     fetchWarehouseReceivingQueue,
     postWarehouseReceiving
@@ -44,6 +45,7 @@ export function useWarehouseReceiving() {
     const [error, setError] = useState<string | null>(null);
     const [detailError, setDetailError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState<WarehouseReceivingCommand["action"] | null>(null);
+    const [printing, setPrinting] = useState(false);
     const queueController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
 
@@ -114,8 +116,11 @@ export function useWarehouseReceiving() {
         receivedQuantity: Math.max(0, Number(quantities[line.lineId] || 0))
     })) || [], [quantities, selectedOrder]);
 
-    const post = useCallback(async (action: WarehouseReceivingCommand["action"]) => {
-        if (!selectedOrder) return;
+    const post = useCallback(async (
+        action: WarehouseReceivingCommand["action"],
+        options: { silent?: boolean } = {}
+    ): Promise<WarehouseReceivingOrder | null> => {
+        if (!selectedOrder) return null;
         setSubmitting(action);
         try {
             const hasOverReceiving = selectedOrder.lines.some(line => {
@@ -148,14 +153,36 @@ export function useWarehouseReceiving() {
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
                 setReceiptType(result.draft?.receiptType || receiptType);
                 await loadQueue(page, filters);
-                toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
+                if (!options.silent) {
+                    toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
+                }
             }
+            return result;
         } catch (caught) {
             toast.error(caught instanceof Error ? caught.message : "Warehouse Receiving request failed.");
+            return null;
         } finally {
             setSubmitting(null);
         }
     }, [commandLines, filters, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
+
+    const printSummary = useCallback(async () => {
+        if (!selectedOrder?.draft || submitting !== null || printing) return;
+        setPrinting(true);
+        try {
+            const saved = await post("save_draft", { silent: true });
+            if (!saved?.draft?.id) return;
+            await downloadWarehouseReceivingSummary({
+                purchaseOrderId: saved.id,
+                receivingHeaderId: saved.draft.id
+            });
+            toast.success("Warehouse receiving summary downloaded.");
+        } catch (caught) {
+            toast.error(caught instanceof Error ? caught.message : "Unable to generate the warehouse receiving summary.");
+        } finally {
+            setPrinting(false);
+        }
+    }, [post, printing, selectedOrder, submitting]);
 
     const totalPages = Math.max(1, Math.ceil(total / 25));
     const selectedLines: WarehouseReceivingLine[] = selectedOrder?.lines || [];
@@ -182,6 +209,7 @@ export function useWarehouseReceiving() {
         error,
         detailError,
         submitting,
+        printing,
         setSearch,
         setSupplierId,
         setDateFrom,
@@ -199,6 +227,7 @@ export function useWarehouseReceiving() {
         start: () => post("start"),
         saveDraft: () => post("save_draft"),
         submitToQa: () => post("submit_to_qa"),
+        printSummary,
         retryQueue: () => loadQueue(page, filters),
         clearSelection: () => {
             detailController.current?.abort();

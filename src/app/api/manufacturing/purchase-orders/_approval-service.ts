@@ -468,8 +468,8 @@ async function submitPurchaseOrderApprovalUnlocked(
         approval_allow_self_approval: 1
     };
     if (command.action === "approve") {
-        update.approver_id = null;
-        update.date_approved = null;
+        update.approver_id = actor.userId;
+        update.date_approved = now;
         update.lead_time_receiving = null;
         update.finance_id = actor.userId;
         update.date_financed = now;
