@@ -64,6 +64,9 @@ export interface ReceivingPreviewLineResult {
     lineId: number;
     previouslyReceivedQuantity: number;
     previouslyAcceptedQuantity: number;
+    currentReceiptQuantity: number;
+    currentReceiptAcceptedQuantity: number;
+    currentReceiptRejectedQuantity: number;
     remainingQuantity: number;
     remainingAcceptedQuantity: number;
     overDeliveryQuantity: number;

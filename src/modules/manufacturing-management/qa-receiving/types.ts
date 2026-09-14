@@ -84,6 +84,18 @@ export interface Shipment {
     forceReceivedReason?: string | null;
 }
 
+export interface QaReceiptOption {
+    key: string;
+    receiptNumber: string;
+    receiptDate: string | null;
+    receiptType: string | null;
+    postingStatus: string;
+    workflowRevision: number;
+    receivingHeaderId: number | null;
+    isCurrent: boolean;
+    readOnly: boolean;
+}
+
 export interface Product {
     product_id: number;
     product_name: string;
@@ -153,6 +165,13 @@ export interface ShipmentLineItem {
         receipt_type?: string | null;
         received_quantity: number;
     } | null;
+    current_receipt_header_id?: number | null;
+    current_receipt_number?: string | null;
+    current_receipt_date?: string | null;
+    current_receipt_quantity?: number | null;
+    current_receipt_accepted_quantity?: number | null;
+    current_receipt_rejected_quantity?: number | null;
+    current_receipt_error?: string | null;
     base_unit_cost_php: number;
     lot_number?: string;
     batch_no?: string;
@@ -207,6 +226,9 @@ export interface ReceivingQaEvaluation {
     lineId: number;
     previouslyReceivedQuantity: number;
     previouslyAcceptedQuantity: number;
+    currentReceiptQuantity: number;
+    currentReceiptAcceptedQuantity: number;
+    currentReceiptRejectedQuantity: number;
     remainingQuantity: number;
     remainingAcceptedQuantity: number;
     overDeliveryQuantity: number;
@@ -242,6 +264,7 @@ export interface ReceivingCommitPayload {
     workflowRevision: number;
     shipmentId: number;
     replacementDispositionId?: number | null;
+    receivingHeaderId?: number | null;
     receiptNumber: string;
     receiptDate: string;
     supplierDocumentTypeId: number | null;

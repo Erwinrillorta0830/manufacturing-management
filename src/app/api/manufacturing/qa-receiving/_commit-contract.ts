@@ -98,6 +98,7 @@ const receiptDate = z.string()
 const receivingRequestSchema = z.object({
     shipmentId: z.number().int().positive(),
     replacementDispositionId: z.number().int().positive().nullable().optional(),
+    receivingHeaderId: z.number().int().positive().nullable().optional(),
     receiptNumber,
     receiptDate,
     supplierDocumentNumber: serverOwnedNumber,

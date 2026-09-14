@@ -59,6 +59,7 @@ import {
     type ReceivingErrorDetails,
     type ReceivingDependencyDetails
 } from "../_receiving-errors";
+import { assertEditableQaReceiptSelection, QaReceiptSelectionError } from "../_receipt-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -291,7 +292,7 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        const { shipmentId, replacementDispositionId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
+        const { shipmentId, replacementDispositionId, receivingHeaderId, receiptNumber, receiptDate, supplierDocumentTypeId, processOverDelivery, destinationBranchId, lines } = parsed.data;
         const replacementContext: { disposition: QuarantineDisposition; targetLineId: number } | null = replacementDispositionId
             ? await validateReplacementContext({
                 dispositionId: replacementDispositionId,
@@ -375,6 +376,24 @@ export async function POST(request: Request) {
         const statusId = positiveInteger(header.inventory_status, "transaction_status_id") || Number(header.inventory_status);
         if (!replacementFlow && !RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(eligible => eligible === statusId)) {
             throw new ReceivingPreviewError("The purchase order must be moved to QA (Receiving) before it can be received.", 409);
+        }
+        if (receivingHeaderId && replacementFlow) {
+            throw new ReceivingPreviewError("A replacement receipt cannot use an existing Warehouse Receiving receipt.", 409);
+        }
+        if (receivingHeaderId) {
+            try {
+                await assertEditableQaReceiptSelection({
+                    purchaseOrderId: shipmentId,
+                    workflowRevision: Number(header.workflow_revision || 0),
+                    receivingHeaderId,
+                    receiptNumber
+                });
+            } catch (error) {
+                if (error instanceof QaReceiptSelectionError) {
+                    throw new ReceivingPreviewError(error.message, error.statusCode);
+                }
+                throw error;
+            }
         }
         if (!enabled(destinationBranch.isActive) || enabled(destinationBranch.isBadStock)) {
             throw new ReceivingPreviewError("Select an active standard branch as the receiving destination.");
@@ -637,6 +656,9 @@ export async function POST(request: Request) {
                     line,
                     result: {
                         lineId: line.lineId,
+                        currentReceiptQuantity: 0,
+                        currentReceiptAcceptedQuantity: 0,
+                        currentReceiptRejectedQuantity: 0,
                         disposition: enteredDisposition,
                         receivedQuantity: 0,
                         acceptedQuantity: 0,
@@ -773,6 +795,9 @@ export async function POST(request: Request) {
                 ...result,
                 previouslyReceivedQuantity: previouslyReceivedByLine.get(line.lineId)?.received || 0,
                 previouslyAcceptedQuantity: previouslyReceivedByLine.get(line.lineId)?.accepted || 0,
+                currentReceiptQuantity: result.receivedQuantity,
+                currentReceiptAcceptedQuantity: result.acceptedQuantity,
+                currentReceiptRejectedQuantity: result.rejectedQuantity,
                 ...evaluateOverDelivery(result.receivedQuantity, remainingByLine.get(line.lineId) || 0),
                 remainingAcceptedQuantity: remainingAcceptedByLine.get(line.lineId) || 0,
                 routes: result.receivedQuantity === 0
