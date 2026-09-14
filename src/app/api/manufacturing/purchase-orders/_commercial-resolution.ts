@@ -2,7 +2,8 @@ import { DecimalValue } from "@/modules/manufacturing-management/decimal";
 import { procurementDirectusFetch } from "../procurement/_directus";
 import {
     PurchaseOrderPriceTypeError,
-    resolvePurchaseOrderPriceType
+    resolvePurchaseOrderPriceType,
+    type PurchaseOrderMissingPriceDetail
 } from "./_price-type";
 
 export type PurchaseOrderDiscountSource = "supplier" | "manual" | "none";
@@ -10,6 +11,8 @@ export type PurchaseOrderDiscountSource = "supplier" | "manual" | "none";
 export interface PurchaseOrderCommercialLine {
     productId: number;
     parentProductId: number | null;
+    unitId: number | null;
+    unitLabel: string | null;
     pricePhp: string | null;
     priceSourceProductId: number | null;
     discountTypeId: number | null;
@@ -22,6 +25,7 @@ export interface PurchaseOrderCommercialResolution {
     priceTypeId: number;
     priceTypeName: string;
     missingPriceProductIds: number[];
+    missingPriceDetails: PurchaseOrderMissingPriceDetail[];
     lines: PurchaseOrderCommercialLine[];
 }
 
@@ -187,6 +191,7 @@ export async function resolvePurchaseOrderCommercialTerms(
 
     const lines = uniqueProductIds.map(productId => {
         const parentProductId = relationId(productsById.get(productId)?.parent_id, ["product_id", "id"]);
+        const unit = priceResolution.unitsByProductId[productId] || { unitId: null, unitLabel: null };
         const supplierRow = supplierRowsByProductId.has(productId)
             ? supplierRowsByProductId.get(productId)
             : parentProductId
@@ -196,6 +201,8 @@ export async function resolvePurchaseOrderCommercialTerms(
         return {
             productId,
             parentProductId,
+            unitId: unit.unitId,
+            unitLabel: unit.unitLabel,
             pricePhp: priceResolution.pricesByProductId[productId] || null,
             priceSourceProductId: priceResolution.priceSourceProductIds[productId] || null,
             discountTypeId: discount?.id || null,
@@ -209,6 +216,7 @@ export async function resolvePurchaseOrderCommercialTerms(
         priceTypeId: priceResolution.priceTypeId,
         priceTypeName: priceResolution.priceTypeName,
         missingPriceProductIds: priceResolution.missingProductIds,
+        missingPriceDetails: priceResolution.missingPriceDetails,
         lines
     };
 }

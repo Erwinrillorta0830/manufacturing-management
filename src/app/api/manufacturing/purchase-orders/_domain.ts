@@ -15,7 +15,14 @@ export function countPurchaseOrderRevisionCycles(history: ReadonlyArray<{ action
 export const QA_PARAMETER_TYPES = ["Numeric", "Boolean", "Text"] as const;
 export type QaParameterType = typeof QA_PARAMETER_TYPES[number];
 
-import { compareDecimals, DecimalValue, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import {
+    compareDecimals,
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
+    UNIT_PRICE_DECIMAL_SCALE,
+    type DecimalInput
+} from "@/modules/manufacturing-management/decimal";
 import { calculatePercentageDiscount } from "@/modules/manufacturing-management/procurement/discount-calculation";
 
 export type CurrencyCode = string;
@@ -34,7 +41,7 @@ export interface MoneySummary {
 }
 
 export function roundCurrency(value: DecimalInput): string {
-    return DecimalValue.from(value).toFixed(2);
+    return DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
 }
 
 export interface PurchaseOrderMoneyLine {
@@ -83,19 +90,22 @@ export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchang
             grossForeign
         });
     }
-    const discountedSubtotalForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
+    const discountedSubtotalForeign = DecimalValue.from(grossForeign)
+        .subtract(discountForeign)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     const vatForeign = DecimalValue.from(discountedSubtotalForeign)
         .multiply(line.vatPercent)
-        .divideRounded(100, 2)
-        .toFixed(2);
+        .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     const withholdingForeign = DecimalValue.from(discountedSubtotalForeign)
         .multiply(line.withholdingPercent)
-        .divideRounded(100, 2)
-        .toFixed(2);
+        .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     const netForeign = DecimalValue.from(discountedSubtotalForeign)
         .add(vatForeign)
         .subtract(withholdingForeign)
-        .toFixed(2);
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+    const normalizedExchangeRate = DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
     return {
         discountMode,
         grossForeign,
@@ -103,11 +113,11 @@ export function calculatePurchaseOrderLine(line: PurchaseOrderMoneyLine, exchang
         vatForeign,
         withholdingForeign,
         netForeign,
-        grossPhp: DecimalValue.from(grossForeign).multiply(exchangeRate).toFixed(2),
-        discountPhp: DecimalValue.from(discountForeign).multiply(exchangeRate).toFixed(2),
-        vatPhp: DecimalValue.from(vatForeign).multiply(exchangeRate).toFixed(2),
-        withholdingPhp: DecimalValue.from(withholdingForeign).multiply(exchangeRate).toFixed(2),
-        netPhp: DecimalValue.from(netForeign).multiply(exchangeRate).toFixed(2)
+        grossPhp: DecimalValue.from(grossForeign).multiply(normalizedExchangeRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+        discountPhp: DecimalValue.from(discountForeign).multiply(normalizedExchangeRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+        vatPhp: DecimalValue.from(vatForeign).multiply(normalizedExchangeRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+        withholdingPhp: DecimalValue.from(withholdingForeign).multiply(normalizedExchangeRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+        netPhp: DecimalValue.from(netForeign).multiply(normalizedExchangeRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
     };
 }
 
@@ -128,7 +138,7 @@ export function calculatePurchaseOrderTotals(lines: readonly PurchaseOrderMoneyL
     const sum = (field: keyof typeof calculatedLines[number]) => calculatedLines.reduce(
         (total, line) => total.add(line[field]),
         DecimalValue.from(0)
-    ).toFixed(2);
+    ).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     return {
         lines: calculatedLines,
         grossPhp: sum("grossPhp"),
@@ -162,9 +172,13 @@ export function buildPurchaseOrderProductPayload(
         throw new Error("Purchase-order quantity must be a positive whole number.");
     }
     const unitPricePhp = input.baseUnitPricePhp === undefined
-        ? DecimalValue.from(input.unitPrice).multiply(input.exchangeRate).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+        ? DecimalValue.from(input.unitPrice)
+            .multiply(DecimalValue.from(input.exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE))
+            .toFixed(UNIT_PRICE_DECIMAL_SCALE)
         : DecimalValue.from(input.baseUnitPricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE);
-    const discountedSubtotalPhp = DecimalValue.from(amount.grossPhp).subtract(amount.discountPhp).toFixed(2);
+    const discountedSubtotalPhp = DecimalValue.from(amount.grossPhp)
+        .subtract(amount.discountPhp)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
 
     return {
         purchase_order_id: input.purchaseOrderId,
@@ -176,7 +190,9 @@ export function buildPurchaseOrderProductPayload(
         discount_type: input.discountType ?? null,
         discount_mode: "Percentage",
         gross_amount: amount.grossPhp,
-        discounted_price: DecimalValue.from(discountedSubtotalPhp).divideRounded(quantity, 2).toFixed(2),
+        discounted_price: DecimalValue.from(discountedSubtotalPhp)
+            .divideRounded(quantity, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
         discounted_amount: amount.discountPhp,
         vat_amount: amount.vatPhp,
         withholding_amount: amount.withholdingPhp,

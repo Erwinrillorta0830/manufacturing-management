@@ -28,6 +28,12 @@ import {
 } from "../supplier-country";
 import { isLandedCostPostingEligible } from "../landed-cost-eligibility";
 import { calculatePercentageDiscount } from "../discount-calculation";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 type ShipmentAllocationRule = "" | "Value" | "Weight" | "Volume" | "Hybrid";
 
@@ -141,7 +147,9 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 .then(res => res.json())
                 .then(data => {
                     const usdConfig = data?.activeRates?.find((r: { currency_code: string; exchange_rate: number }) => r.currency_code === "USD");
-                    const activeRate = usdConfig?.exchange_rate ? String(usdConfig.exchange_rate) : "58.00";
+                    const activeRate = usdConfig?.exchange_rate
+                        ? DecimalValue.from(usdConfig.exchange_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE)
+                        : "58.000000";
                     setShipmentForm(prev => ({
                         ...prev,
                         exchange_rate: prev.exchange_rate || activeRate,
@@ -151,7 +159,7 @@ export function useProcurement(defaultTab: string = "suppliers") {
                 .catch(() => {
                     setShipmentForm(prev => ({
                         ...prev,
-                        exchange_rate: prev.exchange_rate || "58.00",
+                        exchange_rate: prev.exchange_rate || "58.000000",
                         reference_number: prev.reference_number || `PO-${year}-${randomCode}`
                     }));
                 });
@@ -587,14 +595,14 @@ export function useProcurement(defaultTab: string = "suppliers") {
                         ? "PACKAGING"
                         : "FINISHED_GOODS",
                 quantity_ordered: parseFloat(l.quantity_ordered),
-                base_unit_cost_php: parseFloat(l.base_unit_cost_php),
+                base_unit_cost_php: normalizeProcurementMoney(l.base_unit_cost_php),
                 discount_type: l.discount_type_id ? Number(l.discount_type_id) : null,
                 discount_mode: "Percentage",
-                discount_amount: Number(calculatePercentageDiscount(
+                discount_amount: calculatePercentageDiscount(
                     l.quantity_ordered,
                     l.base_unit_cost_php,
                     Number(l.discount_percent || 0)
-                ).discountAmount),
+                ).discountAmount,
                 discount_percent: Number(l.discount_percent || 0),
                 vat_percent: Number(l.vat_percent || 0),
                 withholding_percent: Number(l.withholding_percent || 0),
@@ -608,17 +616,17 @@ export function useProcurement(defaultTab: string = "suppliers") {
                     curr.base_unit_cost_php,
                     curr.discount_percent
                 );
-                const gross = Number(calculation.grossAmount);
-                const discount = Number(calculation.discountAmount);
-                return acc + gross - discount;
-            }, 0);
-            const rate = rateVal;
+                return acc.add(calculation.netAmount);
+            }, DecimalValue.from(0)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+            const rate = DecimalValue.from(rateVal).toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
 
             const shipmentPayload = {
                 reference_number: shipmentForm.reference_number,
                 supplier_id: parseInt(shipmentForm.supplier_id),
                 exchange_rate: rate,
-                total_foreign_currency: totalPhp / rate,
+                total_foreign_currency: DecimalValue.from(totalPhp)
+                    .divideRounded(rate, PROCUREMENT_MONEY_DECIMAL_SCALE)
+                    .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
                 total_php_value: totalPhp,
                 status: shipmentForm.status,
                 date_received: shipmentForm.date_received,

@@ -36,6 +36,9 @@ export interface PurchaseOrderListQuery {
     limit?: number;
     search?: string;
     status?: string;
+    supplierId?: number;
+    inventoryStatus?: number;
+    paymentStatus?: number;
     startDate?: string;
     endDate?: string;
     sort?: "date_encoded" | "purchase_order_no" | "reference" | "total_amount" | "inventory_status";
@@ -68,9 +71,25 @@ export interface PurchaseOrderCatalog {
 
 export type PurchaseOrderDiscountSource = "supplier" | "manual" | "none";
 
+export type PurchaseOrderMissingPriceReason =
+    | "MATRIX_ROW_MISSING"
+    | "MATRIX_ROW_NOT_APPROVED"
+    | "MATRIX_PRICE_INVALID";
+
+export interface PurchaseOrderMissingPriceDetail {
+    productId: number;
+    unitId: number | null;
+    unitLabel: string | null;
+    priceTypeId: number;
+    priceTypeName: string;
+    reason: PurchaseOrderMissingPriceReason;
+}
+
 export interface PurchaseOrderCommercialResolutionLine {
     productId: number;
     parentProductId: number | null;
+    unitId: number | null;
+    unitLabel: string | null;
     pricePhp: string | null;
     priceSourceProductId: number | null;
     discountTypeId: number | null;
@@ -83,6 +102,7 @@ export interface PurchaseOrderCommercialResolution {
     priceTypeId: number;
     priceTypeName: string;
     missingPriceProductIds: number[];
+    missingPriceDetails: PurchaseOrderMissingPriceDetail[];
     lines: PurchaseOrderCommercialResolutionLine[];
 }
 

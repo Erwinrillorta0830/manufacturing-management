@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+    downloadWarehouseReceivingSummary,
     fetchWarehouseReceivingOrder,
     fetchWarehouseReceivingQueue,
     postWarehouseReceiving
@@ -11,7 +12,8 @@ import type {
     WarehouseReceiptType,
     WarehouseReceivingCommand,
     WarehouseReceivingLine,
-    WarehouseReceivingOrder
+    WarehouseReceivingOrder,
+    WarehouseReceivingQueueResponse
 } from "../types";
 
 function today() {
@@ -31,6 +33,11 @@ export function useWarehouseReceiving() {
     const [receiptDate, setReceiptDate] = useState(today);
     const [receiptType, setReceiptType] = useState<WarehouseReceiptType>("full");
     const [search, setSearch] = useState("");
+    const [supplierId, setSupplierId] = useState("");
+    const [dateFrom, setDateFrom] = useState("");
+    const [dateTo, setDateTo] = useState("");
+    const [status, setStatus] = useState("ALL");
+    const [supplierOptions, setSupplierOptions] = useState<WarehouseReceivingQueueResponse["supplierOptions"]>([]);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -38,21 +45,25 @@ export function useWarehouseReceiving() {
     const [error, setError] = useState<string | null>(null);
     const [detailError, setDetailError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState<WarehouseReceivingCommand["action"] | null>(null);
+    const [printing, setPrinting] = useState(false);
     const queueController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
 
-    const loadQueue = useCallback(async (requestedPage = page, requestedSearch = search) => {
+    const filters = useMemo(() => ({ search, supplierId, dateFrom, dateTo, status }), [dateFrom, dateTo, search, status, supplierId]);
+
+    const loadQueue = useCallback(async (requestedPage: number, requestedFilters: typeof filters) => {
         queueController.current?.abort();
         const controller = new AbortController();
         queueController.current = controller;
         setLoading(true);
         setError(null);
         try {
-            const result = await fetchWarehouseReceivingQueue({ search: requestedSearch, page: requestedPage }, controller.signal);
+            const result = await fetchWarehouseReceivingQueue({ ...requestedFilters, page: requestedPage }, controller.signal);
             if (controller.signal.aborted) return;
             setOrders(result.items);
             setPage(result.page);
             setTotal(result.total);
+            setSupplierOptions(result.supplierOptions || []);
         } catch (caught) {
             if (controller.signal.aborted || (caught as Error).name === "AbortError") return;
             const message = caught instanceof Error ? caught.message : "Unable to load Warehouse Receiving.";
@@ -60,12 +71,12 @@ export function useWarehouseReceiving() {
         } finally {
             if (!controller.signal.aborted) setLoading(false);
         }
-    }, [page, search]);
+    }, []);
 
     useEffect(() => {
-        const timer = window.setTimeout(() => void loadQueue(1, search), 200);
+        const timer = window.setTimeout(() => void loadQueue(1, filters), 200);
         return () => window.clearTimeout(timer);
-    }, [loadQueue, search]);
+    }, [filters, loadQueue]);
 
     useEffect(() => () => {
         queueController.current?.abort();
@@ -105,10 +116,20 @@ export function useWarehouseReceiving() {
         receivedQuantity: Math.max(0, Number(quantities[line.lineId] || 0))
     })) || [], [quantities, selectedOrder]);
 
-    const post = useCallback(async (action: WarehouseReceivingCommand["action"]) => {
-        if (!selectedOrder) return;
+    const post = useCallback(async (
+        action: WarehouseReceivingCommand["action"],
+        options: { silent?: boolean } = {}
+    ): Promise<WarehouseReceivingOrder | null> => {
+        if (!selectedOrder) return null;
         setSubmitting(action);
         try {
+            const hasOverReceiving = selectedOrder.lines.some(line => {
+                const entered = Math.max(0, Number(quantities[line.lineId] || 0));
+                return entered > line.allowableQuantity + 1e-9;
+            });
+            if (hasOverReceiving && action !== "start") {
+                toast.warning("Over-receiving quantities will be recorded and flagged for review.");
+            }
             const result = await postWarehouseReceiving({
                 action,
                 purchaseOrderId: selectedOrder.id,
@@ -124,22 +145,44 @@ export function useWarehouseReceiving() {
                 toast.success(`${result.poNumber} was sent to QA Receiving.`);
                 setSelectedOrder(null);
                 setQuantities({});
-                await loadQueue(1, search);
+                await loadQueue(1, filters);
             } else {
                 setSelectedOrder(result);
                 setQuantities(Object.fromEntries(result.lines.map(line => [line.lineId, String(line.currentReceivedQuantity || "")])));
                 setReceiptNumber(result.draft?.receiptNumber || receiptNumber);
                 setReceiptDate(result.draft?.receiptDate || receiptDate);
                 setReceiptType(result.draft?.receiptType || receiptType);
-                await loadQueue(page, search);
-                toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
+                await loadQueue(page, filters);
+                if (!options.silent) {
+                    toast.success(action === "start" ? "Warehouse receiving started." : "Warehouse receiving draft saved.");
+                }
             }
+            return result;
         } catch (caught) {
             toast.error(caught instanceof Error ? caught.message : "Warehouse Receiving request failed.");
+            return null;
         } finally {
             setSubmitting(null);
         }
-    }, [commandLines, loadQueue, page, receiptDate, receiptNumber, receiptType, search, selectedOrder]);
+    }, [commandLines, filters, loadQueue, page, quantities, receiptDate, receiptNumber, receiptType, selectedOrder]);
+
+    const printSummary = useCallback(async () => {
+        if (!selectedOrder?.draft || submitting !== null || printing) return;
+        setPrinting(true);
+        try {
+            const saved = await post("save_draft", { silent: true });
+            if (!saved?.draft?.id) return;
+            await downloadWarehouseReceivingSummary({
+                purchaseOrderId: saved.id,
+                receivingHeaderId: saved.draft.id
+            });
+            toast.success("Warehouse receiving summary downloaded.");
+        } catch (caught) {
+            toast.error(caught instanceof Error ? caught.message : "Unable to generate the warehouse receiving summary.");
+        } finally {
+            setPrinting(false);
+        }
+    }, [post, printing, selectedOrder, submitting]);
 
     const totalPages = Math.max(1, Math.ceil(total / 25));
     const selectedLines: WarehouseReceivingLine[] = selectedOrder?.lines || [];
@@ -153,6 +196,11 @@ export function useWarehouseReceiving() {
         receiptDate,
         receiptType,
         search,
+        supplierId,
+        dateFrom,
+        dateTo,
+        status,
+        supplierOptions,
         page,
         total,
         totalPages,
@@ -161,10 +209,15 @@ export function useWarehouseReceiving() {
         error,
         detailError,
         submitting,
+        printing,
         setSearch,
+        setSupplierId,
+        setDateFrom,
+        setDateTo,
+        setStatus,
         setPage: (nextPage: number) => {
             setPage(nextPage);
-            void loadQueue(nextPage, search);
+            void loadQueue(nextPage, filters);
         },
         selectOrder,
         updateQuantity,
@@ -174,7 +227,8 @@ export function useWarehouseReceiving() {
         start: () => post("start"),
         saveDraft: () => post("save_draft"),
         submitToQa: () => post("submit_to_qa"),
-        retryQueue: () => loadQueue(page, search),
+        printSummary,
+        retryQueue: () => loadQueue(page, filters),
         clearSelection: () => {
             detailController.current?.abort();
             setSelectedOrder(null);

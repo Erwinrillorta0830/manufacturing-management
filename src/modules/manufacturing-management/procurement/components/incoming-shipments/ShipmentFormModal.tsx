@@ -13,6 +13,16 @@ import { CreatableSelect } from "@/modules/manufacturing-management/finished-goo
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
 import { calculatePercentageDiscount } from "../../discount-calculation";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
+import {
+    convertPhpUnitPriceToTransactionCurrency,
+    tryNormalizePurchaseOrderUnitPrice
+} from "../../price-precision";
+import type { PurchaseOrderMissingPriceDetail } from "../../../purchase-order/types";
 
 export interface UOMOption {
     product_id: number;
@@ -47,7 +57,7 @@ export interface ShipmentFormModalProps {
     handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
     supplierRawMaterials: RawMaterial[];
-    priceControlCostsMap: Record<number, number>;
+    priceControlCostsMap: Record<number, string>;
     discountTypes?: Array<{ id: number; discount_type: string; total_percent: number | string }>;
     productPerSupplierMap?: Record<number, { discount_type_id?: number; total_percent?: number }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
@@ -64,6 +74,7 @@ export interface ShipmentFormModalProps {
         priceTypeId: number | null;
         priceTypeName: string | null;
         message: string | null;
+        missingPriceDetails: PurchaseOrderMissingPriceDetail[];
     };
     hasSubmitted: boolean;
     draftSummary: {
@@ -93,6 +104,24 @@ function cloneLine(line: ManifestLineFormItem): ManifestLineFormItem {
         ...line,
         uom_options: line.uom_options ? [...line.uom_options] : line.uom_options
     };
+}
+
+function ResponsiveCellLabel({ children }: { children: React.ReactNode }) {
+    return (
+        <span className="mb-1 block text-[9px] font-extrabold uppercase tracking-wider text-muted-foreground xl:hidden">
+            {children}
+        </span>
+    );
+}
+
+function hasConfiguredPrice(value: string | undefined): value is string {
+    if (!value) return false;
+
+    try {
+        return DecimalValue.from(value).compare(0) > 0;
+    } catch {
+        return false;
+    }
 }
 
 export function ShipmentFormModal({
@@ -137,6 +166,8 @@ export function ShipmentFormModal({
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
     const isPage = presentation === "page";
+    const missingPriceDetails = priceTypeResolution?.missingPriceDetails ?? [];
+    const missingPriceLabels = [...new Set(missingPriceDetails.map(detail => detail.unitLabel || `UOM #${detail.unitId ?? "?"}`))];
 
     const deliveryTermsOptions = React.useMemo(() => {
         const options: Array<{ value: string; label: string }> = [...PURCHASE_ORDER_DELIVERY_TERMS];
@@ -200,6 +231,7 @@ export function ShipmentFormModal({
                             product_name: "",
                             product_code: "",
                             selected_uom: "",
+                            price_source: "none",
                             uom_options: [],
                             quantity_ordered: "",
                             base_unit_cost_php: "",
@@ -260,7 +292,9 @@ export function ShipmentFormModal({
 
     const currencyCode = shipmentForm.currency_code || "PHP";
     const exchangeRate = Number(shipmentForm.exchange_rate || 1);
-    const exchangeRateLabel = shipmentForm.exchange_rate === "" ? "Pending" : `₱${exchangeRate}`;
+    const exchangeRateLabel = shipmentForm.exchange_rate === ""
+        ? "Pending"
+        : `₱${DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}`;
 
     return (
         <div className={isPage ? "w-full min-h-full" : "fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-2 backdrop-blur-md sm:p-4"}>
@@ -415,7 +449,7 @@ export function ShipmentFormModal({
                                     </div>
                                     <input
                                         type="number"
-                                        step="0.0001"
+                                        step="0.000001"
                                         readOnly={canonicalDrafting ? shipmentForm.currency_code === "PHP" || shipmentForm.currency_code === "USD" || Boolean(editingShipmentId) : !isOverridden || !isFinanceManager}
                                         aria-readonly={canonicalDrafting && shipmentForm.currency_code === "USD" ? true : undefined}
                                         value={String(shipmentForm.exchange_rate)}
@@ -548,7 +582,9 @@ export function ShipmentFormModal({
                             )}
                             {canonicalDrafting && priceControlStatus === "warning" && (
                                 <p className="text-[10px] font-medium text-amber-700" role="alert">
-                                    {priceTypeResolution?.message || "One or more products require a manually entered price because no matrix value is configured."}
+                                    {missingPriceLabels.length > 0
+                                        ? `Price Control is not configured for ${missingPriceLabels.join(", ")}. Configure the exact matrix value or enter a positive manual price per line.`
+                                        : priceTypeResolution?.message || "One or more products require a manually entered price because no matrix value is configured."}
                                 </p>
                             )}
                             {canonicalDrafting && priceControlStatus === "error" && (
@@ -591,62 +627,65 @@ export function ShipmentFormModal({
                                     <p className="text-[11px] text-amber-600/90 font-medium max-w-md mx-auto">Please select a supplier vendor above to unlock the product catalog and spreadsheet grid.</p>
                                 </div>
                             ) : (
-                                <div className="border rounded-xl shadow-sm bg-card min-w-0 h-[320px] min-h-[220px] max-h-[45dvh] overflow-auto overscroll-contain">
-                                    <table className="w-full text-left text-xs border-collapse font-sans min-w-[1100px]">
+                                <div className="border rounded-xl shadow-sm bg-card min-w-0 min-h-[220px] overflow-hidden">
+                                    <table className="block w-full min-w-0 text-left text-xs border-collapse font-sans xl:table xl:table-fixed">
                                         {/* Table Column Headers */}
-                                        <thead className="bg-muted/60 border-b select-none text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
+                                        <thead className="hidden bg-muted/60 border-b select-none text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider xl:table-header-group">
                                             <tr>
-                                                <th className="p-2 border-r text-center w-10">#</th>
-                                                <th className="p-2 border-r min-w-[110px]">Type <span className="text-red-500">*</span></th>
-                                                <th className="p-2 border-r min-w-[260px]">Product Name <span className="text-red-500">*</span></th>
-                                                <th className="p-2 border-r min-w-[160px]">Packaging / UOM</th>
-                                                <th className="p-2 border-r text-right min-w-[110px]">Qty <span className="text-red-500">*</span></th>
-                                                <th className="p-2 border-r text-right min-w-[120px]">Price ({currencyCode}) <span className="text-red-500">*</span></th>
-                                                <th className="p-2 border-r text-right min-w-[130px]">Gross ({currencyCode})</th>
-                                                <th className="p-2 border-r min-w-[140px]">Discount Type</th>
-                                                <th className="p-2 border-r text-right min-w-[120px]">Discount Value</th>
-                                                <th className="p-2 border-r text-right min-w-[130px]">Net ({currencyCode})</th>
-                                                <th className="p-2 text-center min-w-[100px]">Actions</th>
+                                                <th className="w-auto break-words p-1 border-r text-center xl:w-[3%]">#</th>
+                                                <th className="w-auto break-words p-1 border-r xl:w-[8%]">Type <span className="text-red-500">*</span></th>
+                                                <th className="w-auto break-words p-1 border-r xl:w-[18%]">Product Name <span className="text-red-500">*</span></th>
+                                                <th className="w-auto break-words p-1 border-r xl:w-[9%]">Packaging / UOM</th>
+                                                <th className="w-auto break-words p-1 border-r text-right xl:w-[7%]">Qty <span className="text-red-500">*</span></th>
+                                                <th className="w-auto break-words p-1 border-r text-right xl:w-[8%]">Price ({currencyCode}) <span className="text-red-500">*</span></th>
+                                                <th className="w-auto break-words p-1 border-r text-right xl:w-[9%]">Gross ({currencyCode})</th>
+                                                <th className="w-auto break-words p-1 border-r xl:w-[11%]">Discount Type</th>
+                                                <th className="w-auto break-words p-1 border-r text-right xl:w-[8%]">Discount Value</th>
+                                                <th className="w-auto break-words p-1 border-r text-right xl:w-[9%]">Net ({currencyCode})</th>
+                                                <th className="w-auto break-words p-1 text-center xl:w-[10%]">Actions</th>
                                             </tr>
                                         </thead>
 
                                         {/* Table Row Cells */}
-                                        <tbody className="divide-y divide-border/60">
+                                        <tbody className="block space-y-2 xl:table-row-group xl:space-y-0 xl:divide-y xl:divide-border/60">
                                             {linesForm.map((line, idx) => {
                                                 const lineErrors = getLineErrors(line);
-                                                const qty = Number(line.quantity_ordered || 0);
-                                                const unitPrice = Number(line.base_unit_cost_php || 0);
-                                                const grossForeign = qty * unitPrice;
                                                 const discountMode = line.discount_mode || "Percentage";
                                                 const isHistoricalFixedDiscount = discountMode === "Fixed Amount";
+                                                const normalizedUnitPrice = tryNormalizePurchaseOrderUnitPrice(line.base_unit_cost_php);
                                                 const calculatedDiscount = calculatePercentageDiscount(
                                                     line.quantity_ordered || 0,
-                                                    line.base_unit_cost_php || 0,
+                                                    normalizedUnitPrice || 0,
                                                     line.discount_percent || 0
                                                 );
+                                                const grossForeign = calculatedDiscount.grossAmount;
                                                 const discount = isHistoricalFixedDiscount
-                                                    ? Number(line.discount_amount || 0)
-                                                    : Number(calculatedDiscount.discountAmount);
-                                                const subtotal = grossForeign - discount;
+                                                    ? tryNormalizePurchaseOrderUnitPrice(line.discount_amount || 0) || "0.0000"
+                                                    : calculatedDiscount.discountAmount;
+                                                const subtotal = DecimalValue.from(grossForeign)
+                                                    .subtract(discount)
+                                                    .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
                                                  const materialType = line.material_type || "";
                                                  const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
                                                  const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
                                                  const isFocusedRowEdit = !canonicalDrafting && activeRowEdit?.index === idx;
 
                                                 return (
-                                                    <tr 
+                                                    <tr
                                                         key={idx} 
-                                                        className={`hover:bg-muted/30 transition-colors group ${
+                                                        className={`grid grid-cols-2 overflow-hidden rounded-xl border border-border/60 bg-card transition-colors group hover:bg-muted/30 xl:table-row xl:rounded-none xl:border-0 xl:bg-transparent ${
                                                             hasSubmitted && lineErrors.length > 0 ? "bg-red-500/5" : ""
                                                         } ${isFocusedRowEdit ? "bg-primary/5" : ""}`}
                                                     >
                                                         {/* Row Index */}
-                                                        <td className="p-2 border-r text-center font-mono text-[10px] font-bold text-muted-foreground bg-muted/20">
-                                                            {idx + 1}
+                                                        <td className="col-span-2 flex min-w-0 items-center justify-between overflow-hidden border-b bg-muted/20 p-2 text-left font-mono text-[10px] font-bold text-muted-foreground xl:table-cell xl:border-b-0 xl:border-r xl:text-center">
+                                                            <span className="xl:hidden">Line {idx + 1}</span>
+                                                            <span className="hidden xl:inline">{idx + 1}</span>
                                                         </td>
 
                                                         {/* Material Type Selector */}
-                                                        <td className="p-2 border-r align-middle">
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Type <span className="text-red-500">*</span></ResponsiveCellLabel>
                                                             <select
                                                                 aria-label={`Type for purchase order line ${idx + 1}`}
                                                                 data-index={idx}
@@ -670,7 +709,7 @@ export function ShipmentFormModal({
                                                                     });
                                                                 }}
                                                                 disabled={!isRowEditing}
-                                                                className="w-full rounded-md border bg-background px-2 py-1 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary"
+                                                                className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] font-semibold outline-none focus:ring-1 focus:ring-primary"
                                                             >
                                                                 <option value="">Select Type...</option>
                                                                 {SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS.map(option => (
@@ -682,7 +721,8 @@ export function ShipmentFormModal({
                                                         </td>
 
                                                         {/* Product Name Selector */}
-                                                        <td className="p-1.5 border-r align-middle">
+                                                        <td className="col-span-2 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Product Name <span className="text-red-500">*</span></ResponsiveCellLabel>
                                                             <RawProductSelector
                                                                 id={`search-input-${idx}`}
                                                                 autoFocus={idx === linesForm.length - 1 && linesForm.length > 1}
@@ -713,17 +753,24 @@ export function ShipmentFormModal({
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
                                                                     
-                                                                    const finalSelected = { ...selected };
+                                                                    const finalSelected: ManifestLineFormItem = {
+                                                                        ...selected,
+                                                                        quantity_ordered: line.quantity_ordered,
+                                                                        price_source: "none"
+                                                                    };
                                                                     const priceControlCost = priceControlCostsMap[Number(selected.product_id)];
-                                                                    if (!canonicalDrafting && priceControlCost !== undefined && priceControlCost > 0) {
-                                                                        finalSelected.base_unit_cost_php = String(priceControlCost);
+                                                                    if (!canonicalDrafting && hasConfiguredPrice(priceControlCost)) {
+                                                                        finalSelected.base_unit_cost_php = priceControlCost;
                                                                     } else if (canonicalDrafting) {
                                                                         finalSelected.base_unit_cost_php = "";
                                                                     }
+                                                                    finalSelected.price_source = hasConfiguredPrice(priceControlCost) ? "matrix" : "none";
                                                                     if (canonicalDrafting && shipmentForm.currency_code === "USD" && finalSelected.base_unit_cost_php) {
-                                                                        finalSelected.base_unit_cost_php = String(
-                                                                            Number(finalSelected.base_unit_cost_php) / (Number(shipmentForm.exchange_rate) || 1)
-                                                                        );
+                                                                        finalSelected.base_unit_cost_php = convertPhpUnitPriceToTransactionCurrency(
+                                                                            finalSelected.base_unit_cost_php,
+                                                                            "USD",
+                                                                            shipmentForm.exchange_rate
+                                                                        ) || "";
                                                                     }
 
                                                                     (finalSelected as ManifestLineFormItem).discount_type_id = "";
@@ -761,7 +808,8 @@ export function ShipmentFormModal({
                                                         </td>
 
                                                         {/* Packaging / UOM Options */}
-                                                        <td className="p-1.5 border-r align-middle">
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Packaging / UOM</ResponsiveCellLabel>
                                                             {line.uom_options && line.uom_options.length > 0 ? (
                                                                 <select
                                                                     value={line.product_id}
@@ -771,23 +819,29 @@ export function ShipmentFormModal({
                                                                         if (isDuplicate) return;
                                                                         const opt = line.uom_options?.find((o: UOMOption) => String(o.product_id) === String(selectedId));
                                                                         if (opt) {
-                                                                            let costVal: number | undefined = opt.cost_per_unit;
                                                                             const priceControlCost = priceControlCostsMap[Number(selectedId)];
-                                                                            if (priceControlCost !== undefined && priceControlCost > 0) {
-                                                                                costVal = priceControlCost;
-                                                                            } else if (canonicalDrafting) {
-                                                                                costVal = undefined;
-                                                                            }
-                                                                            if (costVal !== undefined && canonicalDrafting && shipmentForm.currency_code === "USD") {
-                                                                                costVal /= Number(shipmentForm.exchange_rate) || 1;
-                                                                            }
+                                                                            const baseUnitPrice = hasConfiguredPrice(priceControlCost)
+                                                                                ? priceControlCost
+                                                                                : canonicalDrafting
+                                                                                    ? null
+                                                                                    : tryNormalizePurchaseOrderUnitPrice(opt.cost_per_unit);
+                                                                            const transactionUnitPrice = baseUnitPrice === null
+                                                                                ? ""
+                                                                                : canonicalDrafting
+                                                                                    ? convertPhpUnitPriceToTransactionCurrency(
+                                                                                        baseUnitPrice,
+                                                                                        shipmentForm.currency_code === "USD" ? "USD" : "PHP",
+                                                                                        shipmentForm.exchange_rate
+                                                                                    ) || ""
+                                                                                    : baseUnitPrice;
                                                                             handleLineFormChange(idx, {
                                                                                 product_id: String(selectedId),
                                                                                 parent_product_id: opt.parent_product_id
                                                                                     ? String(opt.parent_product_id)
                                                                                     : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
-                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal),
+                                                                                base_unit_cost_php: transactionUnitPrice,
+                                                                                price_source: hasConfiguredPrice(priceControlCost) ? "matrix" : "none",
                                                                                 discount_type_id: "",
                                                                                 discount_source: "none",
                                                                                 discount_mode: "Percentage",
@@ -797,7 +851,7 @@ export function ShipmentFormModal({
                                                                         }
                                                                     }}
                                                                     disabled={!isRowEditing}
-                                                                    className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground"
+                                                                    className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] outline-none focus:ring-1 focus:ring-primary font-semibold text-foreground"
                                                                 >
                                                                     {line.uom_options.map((o: UOMOption) => (
                                                                         <option key={o.product_id} value={o.product_id}>
@@ -806,15 +860,16 @@ export function ShipmentFormModal({
                                                                     ))}
                                                                 </select>
                                                             ) : (
-                                                                <span className="text-[11px] font-bold text-muted-foreground px-2">
+                                                                <span className="block min-w-0 break-words px-1 text-[10px] font-bold text-muted-foreground">
                                                                     {line.selected_uom || "PCS"}
                                                                 </span>
                                                             )}
                                                         </td>
 
                                                         {/* Qty Ordered */}
-                                                        <td className="p-1.5 border-r align-middle">
-                                                            <input
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Qty <span className="text-red-500">*</span></ResponsiveCellLabel>
+                                                                                                                               <input
                                                                 id={`qty-input-${idx}`}
                                                                 type="number"
                                                                 required
@@ -832,12 +887,14 @@ export function ShipmentFormModal({
                                                                     }
                                                                 }}
                                                                 disabled={!isRowEditing}
-                                                                className="w-full text-right rounded-md border bg-background px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
+                                                                aria-label={`Quantity for purchase order line ${idx + 1}`}
+                                                                className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                         </td>
 
                                                         {/* Unit Price */}
-                                                        <td className="p-1.5 border-r align-middle">
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Price ({currencyCode}) <span className="text-red-500">*</span></ResponsiveCellLabel>
                                                             <input
                                                                 id={`cost-input-${idx}`}
                                                                 type="number"
@@ -845,7 +902,7 @@ export function ShipmentFormModal({
                                                                 step="0.0001"
                                                                 placeholder={canonicalDrafting
                                                                     ? priceControlStatus === "warning" ? "Enter manually" : "Waiting for matrix"
-                                                                    : "19.00"}
+                                                                    : "19.0000"}
                                                                 value={line.base_unit_cost_php}
                                                                 onChange={e => handleLineFormChange(idx, "base_unit_cost_php", e.target.value)}
                                                                 onKeyDown={(e) => {
@@ -860,25 +917,38 @@ export function ShipmentFormModal({
                                                                     }
                                                                 }}
                                                                 disabled={!isRowEditing}
-                                                                readOnly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0}
-                                                                aria-readonly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? true : undefined}
-                                                                className={`w-full text-right rounded-md border px-2 py-1 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? "bg-muted text-muted-foreground" : "bg-background"}`}
-                                                            />
-                                                        </td>
+                                                                readOnly={canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)])}
+                                                                aria-readonly={canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? true : undefined}
+                                                                aria-label={`Price for purchase order line ${idx + 1}`}
+                                                                min="0"
+                                                                onBlur={event => {
+                                                                    const normalized = tryNormalizePurchaseOrderUnitPrice(event.currentTarget.value);
+                                                                    if (normalized !== null && normalized !== line.base_unit_cost_php) {
+                                                                        handleLineFormChange(idx, "base_unit_cost_php", normalized);
+                                                                    }
+                                                                }}
+                                                                                                                               className={`w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? "bg-muted text-muted-foreground" : "bg-background"}`}
+                                                                                                                           />
+                                                                                                                            {hasSubmitted && lineErrors.filter(error => error.includes("Unit Price") || error.includes("Price Control")).map(error => (
+                                                                                                                                <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
+                                                                                                                            ))}
+                                                                                                                       </td>
 
                                                         {/* Calculated Gross */}
-                                                        <td className="p-2 border-r text-right font-mono font-extrabold text-foreground align-middle bg-muted/10">
-                                                            {formatMoney(grossForeign, currencyCode)}
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r bg-muted/10 p-1.5 text-right font-mono font-extrabold text-foreground align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Gross ({currencyCode})</ResponsiveCellLabel>
+                                                            <span className="block min-w-0 break-words">{formatMoney(grossForeign, currencyCode)}</span>
                                                         </td>
 
                                                         {/* Discount Type and Preset */}
-                                                        <td className="p-1.5 border-r align-middle">
-                                                            <div className="space-y-1">
+                                                        <td className="col-span-2 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Discount Type</ResponsiveCellLabel>
+                                                            <div className="min-w-0 space-y-1">
                                                                 <select
                                                                     aria-label={`Discount Type for purchase order line ${idx + 1}`}
                                                                     value={isHistoricalFixedDiscount ? "Fixed Amount" : "Percentage"}
                                                                     disabled
-                                                                    className="w-full rounded-md border bg-muted px-2 py-1 text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                                                                    className="w-full min-w-0 rounded-md border bg-muted px-1.5 py-1 text-[10px] font-medium outline-none disabled:cursor-not-allowed disabled:opacity-70"
                                                                 >
                                                                     <option value="Percentage">Percentage</option>
                                                                     {isHistoricalFixedDiscount && <option value="Fixed Amount">Legacy Fixed Amount</option>}
@@ -898,7 +968,7 @@ export function ShipmentFormModal({
                                                                             discount_percent: selectedDt ? String(selectedDt.total_percent) : (dtId === "" ? "0" : line.discount_percent || "0")
                                                                         });
                                                                     }}
-                                                                    className="w-full rounded-md border bg-background px-2 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    className="w-full min-w-0 rounded-md border bg-background px-1.5 py-1 text-[10px] font-medium outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     <option value="">No Discount (0%)</option>
                                                                      {discountTypes?.map(dt => {
@@ -914,23 +984,24 @@ export function ShipmentFormModal({
                                                                      })}
                                                                  </select>
                                                              </div>
-                                                         </td>
+                                                        </td>
 
                                                         {/* Discount Value */}
-                                                        <td className="p-1.5 border-r align-middle">
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Discount Value</ResponsiveCellLabel>
                                                             <output
                                                                 aria-label={`Discount Amount for purchase order line ${idx + 1}`}
-                                                                className="block w-full rounded-md border bg-muted px-2 py-1 text-right text-xs font-mono font-medium text-foreground"
+                                                                className="block w-full min-w-0 break-words rounded-md border bg-muted px-1.5 py-1 text-right text-[10px] font-mono font-medium text-foreground"
                                                             >
                                                                 {formatMoney(discount, currencyCode)}
                                                             </output>
                                                             {!isHistoricalFixedDiscount && (
-                                                                <p className="mt-1 text-right text-[9px] text-muted-foreground">
+                                                                    <p className="mt-1 break-words text-right text-[9px] text-muted-foreground">
                                                                     {Number(line.discount_percent || 0).toFixed(2)}% of gross
                                                                 </p>
                                                             )}
                                                             {isHistoricalFixedDiscount && (
-                                                                <p className="mt-1 text-left text-[9px] font-semibold leading-tight text-amber-600">
+                                                                <p className="mt-1 break-words text-left text-[9px] font-semibold leading-tight text-amber-600">
                                                                     Legacy fixed discount. Select a percentage preset to convert it before saving.
                                                                 </p>
                                                             )}
@@ -940,12 +1011,14 @@ export function ShipmentFormModal({
                                                         </td>
 
                                                         {/* Net Subtotal */}
-                                                        <td className="p-2 border-r text-right font-mono font-black text-primary align-middle bg-primary/5">
-                                                            {formatMoney(subtotal, currencyCode)}
+                                                        <td className="col-span-1 min-w-0 overflow-hidden border-r bg-primary/5 p-1.5 text-right font-mono font-black text-primary align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Net ({currencyCode})</ResponsiveCellLabel>
+                                                            <span className="block min-w-0 break-words">{formatMoney(subtotal, currencyCode)}</span>
                                                         </td>
 
                                                         {canonicalDrafting && (
-                                                            <td className="p-1.5 text-center align-middle min-w-[100px]">
+                                                            <td className="col-span-2 min-w-0 p-1.5 text-center align-middle xl:table-cell">
+                                                                <ResponsiveCellLabel>Actions</ResponsiveCellLabel>
                                                                 {linesForm.length > 1 && (
                                                                     <button
                                                                         type="button"
@@ -963,8 +1036,9 @@ export function ShipmentFormModal({
                                                         {!canonicalDrafting && (
                                                             <>
                                                         {/* Actions */}
-                                                        <td className="p-1.5 text-center align-middle min-w-[180px]">
-                                                            <div className="flex flex-wrap items-center justify-center gap-1">
+                                                        <td className="col-span-2 min-w-0 p-1.5 text-center align-middle xl:table-cell">
+                                                            <ResponsiveCellLabel>Actions</ResponsiveCellLabel>
+                                                            <div className="flex min-w-0 flex-wrap items-center justify-center gap-1">
                                                                 {isRowEditing ? (
                                                                     <>
                                                                         <button
@@ -1027,7 +1101,7 @@ export function ShipmentFormModal({
                                         </tbody>
 
                                         {/* Spreadsheet Totals Summary Row */}
-                                        <tfoot className="bg-muted/40 font-mono font-extrabold text-xs border-t-2 border-primary/20 divide-y">
+                                        <tfoot className="hidden bg-muted/40 font-mono font-extrabold text-xs border-t-2 border-primary/20 divide-y xl:table-footer-group">
                                             <tr>
                                                 <td colSpan={4} className="p-2.5 border-r text-left text-muted-foreground uppercase text-[10px] tracking-wider font-sans font-bold">
                                                     Excel Summary Totals ({linesForm.length} Line Items)
@@ -1051,6 +1125,36 @@ export function ShipmentFormModal({
                                             </tr>
                                         </tfoot>
                                     </table>
+                                    <div className="grid grid-cols-2 gap-2 border-t-2 border-primary/20 bg-muted/40 p-2 xl:hidden">
+                                        <div className="col-span-2 min-w-0 rounded-lg border bg-background p-2">
+                                            <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Excel Summary Totals</span>
+                                            <span className="block text-[10px] text-muted-foreground">{linesForm.length} {linesForm.length === 1 ? "Line Item" : "Line Items"}</span>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg border bg-background p-2">
+                                            <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Total Qty</span>
+                                            <span className="block break-words text-right text-xs font-mono font-extrabold text-foreground">
+                                                {linesForm.reduce((sum, l) => sum + Number(l.quantity_ordered || 0), 0).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg border bg-background p-2">
+                                            <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Gross ({currencyCode})</span>
+                                            <span className="block break-words text-right text-xs font-mono font-extrabold text-foreground">
+                                                {formatMoney(draftSummary.grossForeign, currencyCode)}
+                                            </span>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg border bg-background p-2">
+                                            <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Discount ({currencyCode})</span>
+                                            <span className="block break-words text-right text-xs font-mono font-extrabold text-foreground">
+                                                {formatMoney(draftSummary.discountForeign, currencyCode)}
+                                            </span>
+                                        </div>
+                                        <div className="min-w-0 rounded-lg border bg-background p-2">
+                                            <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Net ({currencyCode})</span>
+                                            <span className="block break-words text-right text-xs font-mono font-black text-primary">
+                                                {formatMoney(draftSummary.netForeign, currencyCode)}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>

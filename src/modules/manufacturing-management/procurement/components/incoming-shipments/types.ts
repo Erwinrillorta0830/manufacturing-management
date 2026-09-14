@@ -1,5 +1,6 @@
 import React from "react";
 import { IncomingShipment, ShipmentLineItem, Supplier, RawMaterial, LinkedProduct, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../../types";
+import type { PurchaseOrderListQuery } from "../../../purchase-order/types";
 import type { PurchaseOrderDiscountSource } from "../../../purchase-order/types";
 import { normalizeProductRelationId } from "../../product-relation";
 
@@ -70,6 +71,7 @@ export interface ManifestLineFormItem {
     product_name?: string;
     product_code?: string;
     selected_uom?: string;
+    price_source?: "matrix" | "manual" | "none";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     uom_options?: any[];
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";
@@ -135,7 +137,7 @@ export interface IncomingShipmentsProps {
     serverList?: {
         total: number;
         totalPages: number;
-        onQueryChange: (query: { page: number; limit: number; search: string; status?: string }) => void;
+        onQueryChange: (query: PurchaseOrderListQuery) => void;
     };
     canonicalDrafting?: boolean;
     jobOrders?: Array<{ job_order_id: number; job_order_no?: string }>;

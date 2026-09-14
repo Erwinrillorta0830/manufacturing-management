@@ -1,5 +1,11 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getLatestForexConfig } from "@/app/api/manufacturing/forex/forex-helper";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export interface ImportPOLineItem {
     id?: number;
@@ -77,26 +83,32 @@ export async function fetchImportPOs(supplierId?: number): Promise<ImportPurchas
  */
 export async function createImportPO(input: Partial<ImportPurchaseOrderRecord>): Promise<ImportPurchaseOrderRecord> {
     const activeForex = await getLatestForexConfig();
-    const forexRate = Number(input.forex_rate) > 0 ? Number(input.forex_rate) : activeForex.exchange_rate;
+    const rawForexRate = Number(input.forex_rate) > 0 ? (input.forex_rate ?? activeForex.exchange_rate) : activeForex.exchange_rate;
+    const forexRate = Number(DecimalValue.from(rawForexRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE));
 
     const items = input.items || [];
-    let totalForeign = 0;
+    let totalForeign = DecimalValue.from(0);
     const processedItems = items.map((item) => {
         const qty = Number(item.quantity_ordered) || 0;
-        const priceUsd = Number(item.foreign_unit_price) || 0;
-        const totalUsd = qty * priceUsd;
-        totalForeign += totalUsd;
-        const estLandedPhp = priceUsd * forexRate * 1.12; // 12% est tariff & freight allowance
+        const priceUsd = Number(normalizeProcurementMoney(item.foreign_unit_price || 0));
+        const totalUsd = Number(
+            DecimalValue.from(qty).multiply(priceUsd).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+        );
+        totalForeign = totalForeign.add(totalUsd);
+        const estLandedPhp = Number(
+            DecimalValue.from(priceUsd).multiply(forexRate).multiply("1.12").toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+        ); // 12% est tariff & freight allowance
         return {
             ...item,
             quantity_ordered: qty,
             foreign_unit_price: priceUsd,
             total_foreign_price: totalUsd,
-            estimated_landed_cost_php: Number(estLandedPhp.toFixed(2))
+            estimated_landed_cost_php: estLandedPhp
         };
     });
 
-    const totalLocal = totalForeign * forexRate;
+    const totalForeignAmount = Number(totalForeign.toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+    const totalLocal = Number(totalForeign.multiply(forexRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
     const poNumber = input.import_po_number || `PO-IMP-${Date.now().toString().slice(-6)}`;
 
     const payload = {
@@ -107,8 +119,8 @@ export async function createImportPO(input: Partial<ImportPurchaseOrderRecord>):
         purchase_currency: input.purchase_currency || "USD",
         forex_rate: forexRate,
         status: input.status || "Draft",
-        total_foreign_amount: Number(totalForeign.toFixed(2)),
-        total_local_amount: Number(totalLocal.toFixed(2)),
+        total_foreign_amount: totalForeignAmount,
+        total_local_amount: totalLocal,
         remarks: input.remarks || null,
         created_by: input.created_by ? Number(input.created_by) : null
     };

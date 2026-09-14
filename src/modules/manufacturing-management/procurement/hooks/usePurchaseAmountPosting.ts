@@ -21,6 +21,12 @@ import {
 import { resolveProductWeightBreakdown } from "../packaging-weight";
 import { calculateLandedCost } from "../landed-cost-calculation";
 import type { LandedCostAllocationRule } from "../types";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "../../decimal";
 
 const ALLOCATION_RULES = ["Quantity", "Value", "Weight", "Volume", "Hybrid"] as const;
 
@@ -70,7 +76,7 @@ function positiveNumber(value: unknown): number | null {
 }
 
 function roundPhp(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 function purchaseOrderId(order: PurchaseOrderOption | null | undefined): number | null {
@@ -356,7 +362,10 @@ export function usePurchaseAmountPosting(
     }), [landedExpenses, validExpenseTypeIds]);
 
     const calculationResult = useMemo<HybridCalculationResult>(() => {
-        const totalLandedFee = landedExpenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+        const totalLandedFee = Number(landedExpenses.reduce(
+            (sum, expense) => sum.add(Number(expense.amount) || 0),
+            DecimalValue.from(0)
+        ).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
         const effectiveBaseUnitCost = (item: POLineItem): number => {
             if (isForeignPO) {
                 const invoiceUnitPrice = Number(item.unit_price_foreign);
@@ -420,7 +429,7 @@ export function usePurchaseAmountPosting(
         const calculated = calculateLandedCost(calculationInputs, totalLandedFee, allocationRule);
         const subPool = (category: POLineItem["category_type"]) => calculated.lines
             .filter(line => line.category_type === category)
-            .reduce((sum, line) => sum + line.allocatedExpense, 0);
+            .reduce((sum, line) => sum.add(line.allocatedExpense), DecimalValue.from(0));
 
         return {
             lineCalculations: lineItems.map(item => {
@@ -436,9 +445,9 @@ export function usePurchaseAmountPosting(
                     final_landed_unit_cost: result?.finalLandedUnitCost || basePhp
                 };
             }),
-            rmSubPool: allocationRule === "Hybrid" ? calculated.rmFeePool : subPool("RAW_MATERIAL"),
-            pkgSubPool: allocationRule === "Hybrid" ? calculated.pkgFeePool : subPool("PACKAGING"),
-            fgSubPool: allocationRule === "Hybrid" ? calculated.fgFeePool : subPool("FINISHED_GOODS"),
+            rmSubPool: allocationRule === "Hybrid" ? calculated.rmFeePool : Number(subPool("RAW_MATERIAL").toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)),
+            pkgSubPool: allocationRule === "Hybrid" ? calculated.pkgFeePool : Number(subPool("PACKAGING").toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)),
+            fgSubPool: allocationRule === "Hybrid" ? calculated.fgFeePool : Number(subPool("FINISHED_GOODS").toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)),
             totalLandedFee: calculated.totalLandedFee,
             roundingVariance: calculated.roundingVariance,
             hasMissingWeight: false,
@@ -516,13 +525,15 @@ export function usePurchaseAmountPosting(
             const payload = {
                 purchase_order_id: poId,
                 is_foreign: isForeignPO,
-                exchange_rate: isForeignPO ? exchangeRate : 1.0,
+                exchange_rate: isForeignPO
+                    ? DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE)
+                    : "1.000000",
                 allocation_rule: allocationRule,
                 expenses: landedExpenses
                     .filter(expense => Number(expense.amount) > 0)
                     .map(expense => ({
                         overhead_id: expense.overhead_id,
-                        amount_php: Number(expense.amount)
+                        amount_php: normalizeProcurementMoney(expense.amount)
                     })),
                 line_items: calculationResult.lineCalculations.map(calc => ({
                     purchase_order_product_id: calc.purchase_order_product_id,
@@ -540,8 +551,8 @@ export function usePurchaseAmountPosting(
                     vat_amount: calc.vat_amount,
                     withholding_amount: calc.withholding_amount,
                     total_amount: calc.total_amount,
-                    allocated_expense_php: calc.allocated_expense_php,
-                    final_landed_unit_cost: calc.final_landed_unit_cost
+                    allocated_expense_php: normalizeProcurementMoney(calc.allocated_expense_php || 0),
+                    final_landed_unit_cost: normalizeProcurementMoney(calc.final_landed_unit_cost || 0)
                 }))
             };
 

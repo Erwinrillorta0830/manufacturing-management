@@ -15,6 +15,12 @@ import {
     type LandedCostCalculationResult
 } from "@/modules/manufacturing-management/procurement/landed-cost-calculation";
 import { resolvePurchaseOrderLineId } from "../../qa-receiving/_receiving-history";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export const COMPUTATION_COLLECTION = "purchase_order_landed_cost_computations";
 export const ATTACHMENT_COLLECTION = "purchase_order_landed_cost_attachments";
@@ -167,7 +173,7 @@ function asNumber(value: unknown, fallback = 0): number {
 }
 
 function roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 export interface LandedCostCurrencyContract {
@@ -208,7 +214,11 @@ export function resolveLandedCostCurrency(
             { purchaseOrderId: asPositiveId(purchaseOrder.purchase_order_id || purchaseOrder.id), currencyCode }
         );
     }
-    return { currencyCode, isForeign: true, exchangeRate };
+    return {
+        currencyCode,
+        isForeign: true,
+        exchangeRate: Number(DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE))
+    };
 }
 
 export function resolveTransactionUnitPrice(
@@ -234,7 +244,12 @@ export function resolveBaseUnitCostPhp(
     currency: LandedCostCurrencyContract
 ): number {
     const transactionUnitPrice = resolveTransactionUnitPrice(line, currency);
-    return roundMoney(currency.isForeign ? transactionUnitPrice * currency.exchangeRate : transactionUnitPrice);
+    return Number(
+        (currency.isForeign
+            ? DecimalValue.from(transactionUnitPrice).multiply(currency.exchangeRate)
+            : DecimalValue.from(transactionUnitPrice)
+        ).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
 }
 
 function isAllocationRule(value: unknown): value is AllocationRule {
@@ -370,7 +385,7 @@ async function resolveExpenseInputs(expenses: LandedCostExpenseInput[]): Promise
             overhead_id: overheadId,
             chart_of_account_id: chartOfAccountId,
             expense_type: String(overhead.overhead_name || "").trim(),
-            amount_php: amount
+            amount_php: Number(normalizeProcurementMoney(amount))
         });
     }
 
@@ -681,7 +696,7 @@ export async function getComputationExpenses(computationId: number): Promise<Lan
                 const overheadId = asPositiveId(row.overhead_id);
                 return overheadId ? String(overheadTypes.get(overheadId)?.overhead_name || "") : "";
             })(),
-        amount_php: Math.max(0, asNumber(row.amount_php))
+        amount_php: Number(normalizeProcurementMoney(Math.max(0, asNumber(row.amount_php))))
     }));
 }
 
@@ -825,7 +840,7 @@ export async function getLandedCostAudit(purchaseOrderId: number) {
                 currencyConsistent,
                 currencyReason: currencyConsistent
                     ? null
-                    : `Persisted PHP base cost ${line.baseUnitCostPhp.toFixed(2)} does not match the authoritative ${currencyContract.currencyCode} price converted at ${currencyContract.exchangeRate}.`
+                    : `Persisted PHP base cost ${line.baseUnitCostPhp.toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)} does not match the authoritative ${currencyContract.currencyCode} price converted at ${currencyContract.exchangeRate}.`
             };
         } catch (error) {
             return {
@@ -1060,7 +1075,7 @@ export async function saveLandedCostDraft(input: {
                 overhead_id: expense.overhead_id || null,
                 chart_of_account_id: expense.chart_of_account_id || null,
                 expense_type: expense.expense_type || "",
-                amount_php: amount
+                amount_php: normalizeProcurementMoney(amount)
             })
         });
     }
@@ -1171,15 +1186,15 @@ export async function finalizeLandedCost(input: {
         status: "FINALIZING",
         finalization_key: finalizationKey,
         exchange_rate: snapshot.exchangeRate,
-        total_shipment_value: calculation.totalShipmentValue,
-        total_landed_fee: calculation.totalLandedFee,
+        total_shipment_value: normalizeProcurementMoney(calculation.totalShipmentValue),
+        total_landed_fee: normalizeProcurementMoney(calculation.totalLandedFee),
         rm_value_share: calculation.rmValueShare,
         pkg_value_share: calculation.pkgValueShare,
-        rm_fee_pool: calculation.rmFeePool,
-        pkg_fee_pool: calculation.pkgFeePool,
+        rm_fee_pool: normalizeProcurementMoney(calculation.rmFeePool),
+        pkg_fee_pool: normalizeProcurementMoney(calculation.pkgFeePool),
         fg_value_share: calculation.fgValueShare,
-        fg_fee_pool: calculation.fgFeePool,
-        rounding_variance: calculation.roundingVariance,
+        fg_fee_pool: normalizeProcurementMoney(calculation.fgFeePool),
+        rounding_variance: normalizeProcurementMoney(calculation.roundingVariance),
         rounding_recipient_line_id: calculation.roundingRecipientKey,
         failure_reason: null
     });
@@ -1206,16 +1221,16 @@ export async function finalizeLandedCost(input: {
                 product_id: source.productId,
                 category_type: source.categoryType,
                 received_quantity: line.quantity,
-                base_unit_cost_php: line.baseUnitCostPhp,
-                commercial_value: line.commercialValue,
+                base_unit_cost_php: normalizeProcurementMoney(line.baseUnitCostPhp),
+                commercial_value: normalizeProcurementMoney(line.commercialValue),
                 value_share: line.valueShare,
-                category_fee_pool: line.categoryFeePool,
+                category_fee_pool: normalizeProcurementMoney(line.categoryFeePool),
                 line_gross_weight_kg: line.lineGrossWeightKg,
                 weight_share: line.weightShare,
-                allocated_fee: line.allocatedExpense,
-                rounding_variance: line.roundingVariance,
-                added_unit_cost: line.addedUnitCost,
-                final_landed_unit_cost: line.finalLandedUnitCost,
+                allocated_fee: normalizeProcurementMoney(line.allocatedExpense),
+                rounding_variance: normalizeProcurementMoney(line.roundingVariance),
+                added_unit_cost: normalizeProcurementMoney(line.addedUnitCost),
+                final_landed_unit_cost: normalizeProcurementMoney(line.finalLandedUnitCost),
                 is_rounding_recipient: line.key === calculation.roundingRecipientKey
             });
             const allocationId = asPositiveId(allocation.id);
@@ -1250,8 +1265,8 @@ export async function finalizeLandedCost(input: {
                 estimated_unit_cost: product.estimated_unit_cost
             });
             await patchRow("products", productId, {
-                cost_per_unit: afterCost,
-                estimated_unit_cost: afterCost,
+                cost_per_unit: normalizeProcurementMoney(afterCost),
+                estimated_unit_cost: normalizeProcurementMoney(afterCost),
                 ...productUpdateAuditFields(input.actorId)
             });
             rollback.push(() => patchRow("products", productId, {
@@ -1265,9 +1280,9 @@ export async function finalizeLandedCost(input: {
                 purchase_order_product_id: calculation.lines.find(line => snapshot.lines.find(source => source.key === line.key)?.productId === productId)?.key,
                 product_id: productId,
                 quantity: total.quantity,
-                unit_cost_before: beforeCost,
-                unit_cost_after: afterCost,
-                valuation_delta: roundMoney((afterCost - beforeCost) * total.quantity),
+                unit_cost_before: normalizeProcurementMoney(beforeCost),
+                unit_cost_after: normalizeProcurementMoney(afterCost),
+                valuation_delta: normalizeProcurementMoney(roundMoney((afterCost - beforeCost) * total.quantity)),
                 posting_key: `${finalizationKey}-PRODUCT-${productId}`,
                 posted_by: input.actorId || null
             });
@@ -1289,8 +1304,8 @@ export async function finalizeLandedCost(input: {
                     is_posted_amounts: receiving.is_posted_amounts
                 });
                 await patchRow("purchase_order_receiving", receivingId, {
-                    allocated_expense_php: line.addedUnitCost,
-                    final_landed_unit_cost: line.finalLandedUnitCost,
+                    allocated_expense_php: normalizeProcurementMoney(line.addedUnitCost),
+                    final_landed_unit_cost: normalizeProcurementMoney(line.finalLandedUnitCost),
                     is_posted_amounts: 1
                 });
                 rollback.push(() => patchRow("purchase_order_receiving", receivingId, receivingBefore.get(receivingId) || {}).then(() => undefined));
@@ -1323,7 +1338,7 @@ export async function finalizeLandedCost(input: {
             const importRow = await createRow("purchase_order_import", {
                 purchase_order_id: input.purchaseOrderId,
                 chart_of_account_id: expense.chart_of_account_id || null,
-                amount: expense.amount_php,
+                amount: normalizeProcurementMoney(expense.amount_php),
                 allocation_method: allocationRule === "Hybrid" ? "hybrid" : allocationRule.toLowerCase()
             });
             const importId = asPositiveId(importRow.id || importRow.po_import_id);
@@ -1338,8 +1353,8 @@ export async function finalizeLandedCost(input: {
                 const allocation = await createRow("purchase_order_receiving_import_allocation", {
                     po_import_id: createdImportIds[0],
                     purchase_order_product_id: line.key,
-                    allocated_amount: line.allocatedExpense,
-                    variance_adjustment: line.roundingVariance
+                    allocated_amount: normalizeProcurementMoney(line.allocatedExpense),
+                    variance_adjustment: normalizeProcurementMoney(line.roundingVariance)
                 });
                 const allocationId = asPositiveId(allocation.id);
                 if (allocationId) {
@@ -1363,7 +1378,7 @@ export async function finalizeLandedCost(input: {
                 purchase_order_id: input.purchaseOrderId,
                 overhead_id: expense.overhead_id,
                 expense_type: expense.expense_type || "",
-                amount_php: expense.amount_php,
+                amount_php: normalizeProcurementMoney(expense.amount_php),
                 allocation_method: allocationRule === "Hybrid" ? "Hybrid" : `By ${allocationRule}`,
                 created_by: input.actorId || null
             });
@@ -1381,8 +1396,8 @@ export async function finalizeLandedCost(input: {
                 purchase_order_id: input.purchaseOrderId,
                 entry_no: `LCV-${new Date().getUTCFullYear()}-${computation.id}`,
                 status: "POSTED",
-                total_debit: Math.abs(calculation.roundingVariance),
-                total_credit: Math.abs(calculation.roundingVariance),
+                total_debit: normalizeProcurementMoney(Math.abs(calculation.roundingVariance)),
+                total_credit: normalizeProcurementMoney(Math.abs(calculation.roundingVariance)),
                 posting_date: new Date().toISOString().slice(0, 10),
                 posted_by: input.actorId || null
             });
@@ -1396,16 +1411,16 @@ export async function finalizeLandedCost(input: {
                         entry_id: entryId,
                         account_id: positive ? settings.inventoryAccountId : settings.varianceAccountId,
                         line_code: positive ? "INVENTORY" : "ROUNDING_VARIANCE",
-                        debit: positive ? Math.abs(calculation.roundingVariance) : 0,
-                        credit: positive ? 0 : Math.abs(calculation.roundingVariance),
+                        debit: normalizeProcurementMoney(positive ? Math.abs(calculation.roundingVariance) : 0),
+                        credit: normalizeProcurementMoney(positive ? 0 : Math.abs(calculation.roundingVariance)),
                         remarks: `Landed-cost rounding residual for PO ${input.purchaseOrderId}.`
                     },
                     {
                         entry_id: entryId,
                         account_id: positive ? settings.varianceAccountId : settings.inventoryAccountId,
                         line_code: positive ? "ROUNDING_VARIANCE" : "INVENTORY",
-                        debit: positive ? 0 : Math.abs(calculation.roundingVariance),
-                        credit: positive ? Math.abs(calculation.roundingVariance) : 0,
+                        debit: normalizeProcurementMoney(positive ? 0 : Math.abs(calculation.roundingVariance)),
+                        credit: normalizeProcurementMoney(positive ? Math.abs(calculation.roundingVariance) : 0),
                         remarks: `Landed-cost rounding residual for PO ${input.purchaseOrderId}.`
                     }
                 ];

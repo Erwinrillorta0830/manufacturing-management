@@ -117,15 +117,30 @@ export function ShipmentDetailView({
                         </Link>
                     )}
                     {/* Header Details */}
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b pb-5">
-                        <div className="space-y-1.5">
-                            <div className="flex items-center gap-2">
-                                <h2 className="text-base font-extrabold text-foreground leading-tight">{canonicalDrafting ? `Purchase Order: ${activeShipment.purchase_order_no || activeShipment.reference_number}` : `Cargo Invoice / BL: ${activeShipment.reference_number}`}</h2>
-                                {getStatusBadge(effectiveStatus)}
+                    <div className="w-full border-b pb-5">
+                        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                    <h2 className="min-w-0 break-words text-base font-extrabold text-foreground leading-tight">{canonicalDrafting ? `Purchase Order: ${activeShipment.purchase_order_no || activeShipment.reference_number}` : `Cargo Invoice / BL: ${activeShipment.reference_number}`}</h2>
+                                    {getStatusBadge(effectiveStatus)}
+                                </div>
                             </div>
-                            <p className="text-xs text-muted-foreground">
+                            {canonicalDrafting && onPrintPurchaseOrder && (
+                                <button
+                                    type="button"
+                                    onClick={onPrintPurchaseOrder}
+                                    disabled={printLoading}
+                                    className="inline-flex h-9 shrink-0 self-start items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {printLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                                    {printLoading ? "Preparing..." : "Print PO"}
+                                </button>
+                            )}
+                        </div>
+                        <div className="mt-1.5 space-y-1.5">
+                            <p className="break-words text-xs text-muted-foreground">
                                 Supplier Source:{" "}
-                                <strong className="text-foreground font-semibold inline-flex items-center gap-1.5">
+                                <strong className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-foreground font-semibold">
                                     {(() => {
                                         const supId = typeof activeShipment.supplier_id === "object" && activeShipment.supplier_id !== null
                                             ? (activeShipment.supplier_id as { id: number }).id
@@ -145,7 +160,7 @@ export function ShipmentDetailView({
                                                         <Building2 className="h-2.5 w-2.5" /> Local
                                                     </span>
                                                 )}
-                                                <span>{matchedSupplier.supplier_name}</span>
+                                                <span className="min-w-0 break-words">{matchedSupplier.supplier_name}</span>
                                             </>
                                         );
                                     })()}
@@ -389,17 +404,6 @@ export function ShipmentDetailView({
 
                             </div>
                         </div>
-                        {canonicalDrafting && onPrintPurchaseOrder && (
-                            <button
-                                type="button"
-                                onClick={onPrintPurchaseOrder}
-                                disabled={printLoading}
-                                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                {printLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                                {printLoading ? "Preparing..." : "Print PO"}
-                            </button>
-                        )}
                     </div>
 
                     {/* Totals Summary */}
@@ -422,9 +426,9 @@ export function ShipmentDetailView({
                             <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Exchange Rate (PHP/USD)</span>
                             <span className="text-xs font-extrabold text-foreground">
                                 {activeShipment.currency_code === "PHP"
-                                    ? "1.0000"
+                                    ? "1.000000"
                                     : Number(activeShipment.exchange_rate) > 0
-                                        ? Number(activeShipment.exchange_rate).toFixed(4)
+                                        ? Number(activeShipment.exchange_rate).toFixed(6)
                                         : "Unavailable"}
                             </span>
                         </div>

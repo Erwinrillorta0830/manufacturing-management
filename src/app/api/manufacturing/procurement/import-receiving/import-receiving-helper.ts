@@ -1,5 +1,11 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getLatestForexConfig } from "@/app/api/manufacturing/forex/forex-helper";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export interface ImportReceivingLineItem {
     id?: number;
@@ -74,33 +80,51 @@ export async function fetchImportReceivings(importPoId?: number): Promise<Import
  */
 export async function createImportReceiving(input: Partial<ImportReceivingRecord>): Promise<ImportReceivingRecord> {
     const activeForex = await getLatestForexConfig();
-    const clearingRate = Number(input.clearing_forex_rate) > 0 ? Number(input.clearing_forex_rate) : activeForex.exchange_rate;
+    const rawClearingRate = Number(input.clearing_forex_rate) > 0 ? (input.clearing_forex_rate ?? activeForex.exchange_rate) : activeForex.exchange_rate;
+    const clearingRate = Number(DecimalValue.from(rawClearingRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE));
 
-    const freight = Number(input.freight_charges_php) || 0;
-    const duty = Number(input.customs_duty_php) || 0;
-    const brokerage = Number(input.brokerage_charges_php) || 0;
-    const other = Number(input.other_landed_costs_php) || 0;
-    const totalAdditionalLandedPhp = freight + duty + brokerage + other;
+    const freight = Number(normalizeProcurementMoney(input.freight_charges_php || 0));
+    const duty = Number(normalizeProcurementMoney(input.customs_duty_php || 0));
+    const brokerage = Number(normalizeProcurementMoney(input.brokerage_charges_php || 0));
+    const other = Number(normalizeProcurementMoney(input.other_landed_costs_php || 0));
+    const totalAdditionalLandedPhp = Number(
+        DecimalValue.from(freight)
+            .add(duty)
+            .add(brokerage)
+            .add(other)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
 
     const items = input.items || [];
-    let totalItemsForeignBasePhp = 0;
+    let totalItemsForeignBasePhp = DecimalValue.from(0);
 
     items.forEach(item => {
         const qtyAcc = Number(item.quantity_accepted || item.quantity_received) || 0;
-        const priceUsd = Number(item.foreign_unit_price) || 0;
-        totalItemsForeignBasePhp += (qtyAcc * priceUsd * clearingRate);
+        const priceUsd = Number(normalizeProcurementMoney(item.foreign_unit_price || 0));
+        totalItemsForeignBasePhp = totalItemsForeignBasePhp.add(
+            DecimalValue.from(qtyAcc).multiply(priceUsd).multiply(clearingRate)
+        );
     });
+    const totalItemsForeignBasePhpNumber = Number(totalItemsForeignBasePhp.toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 
     const processedItems = items.map(item => {
         const qtyAcc = Number(item.quantity_accepted || item.quantity_received) || 0;
-        const priceUsd = Number(item.foreign_unit_price) || 0;
-        const itemBasePhpTotal = qtyAcc * priceUsd * clearingRate;
+        const priceUsd = Number(normalizeProcurementMoney(item.foreign_unit_price || 0));
+        const itemBasePhpTotal = Number(
+            DecimalValue.from(qtyAcc).multiply(priceUsd).multiply(clearingRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+        );
 
         // Allocate additional landed cost proportionally by value
-        const valueRatio = totalItemsForeignBasePhp > 0 ? (itemBasePhpTotal / totalItemsForeignBasePhp) : (1 / (items.length || 1));
-        const itemAllocatedAddonPhp = totalAdditionalLandedPhp * valueRatio;
-        const totalItemLandedPhp = itemBasePhpTotal + itemAllocatedAddonPhp;
-        const landedCostPerUnit = qtyAcc > 0 ? (totalItemLandedPhp / qtyAcc) : (priceUsd * clearingRate);
+        const valueRatio = totalItemsForeignBasePhpNumber > 0 ? (itemBasePhpTotal / totalItemsForeignBasePhpNumber) : (1 / (items.length || 1));
+        const itemAllocatedAddonPhp = Number(
+            DecimalValue.from(totalAdditionalLandedPhp).multiply(valueRatio).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+        );
+        const totalItemLandedPhp = Number(
+            DecimalValue.from(itemBasePhpTotal).add(itemAllocatedAddonPhp).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+        );
+        const landedCostPerUnit = qtyAcc > 0
+            ? Number(DecimalValue.from(totalItemLandedPhp).divideRounded(qtyAcc, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE))
+            : Number(DecimalValue.from(priceUsd).multiply(clearingRate).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 
         return {
             ...item,
@@ -108,11 +132,13 @@ export async function createImportReceiving(input: Partial<ImportReceivingRecord
             quantity_accepted: qtyAcc,
             quantity_rejected: Number(item.quantity_rejected) || 0,
             foreign_unit_price: priceUsd,
-            calculated_landed_cost_unit_php: Number(landedCostPerUnit.toFixed(2))
+            calculated_landed_cost_unit_php: landedCostPerUnit
         };
     });
 
-    const overallTotalLandedPhp = totalItemsForeignBasePhp + totalAdditionalLandedPhp;
+    const overallTotalLandedPhp = Number(
+        totalItemsForeignBasePhp.add(totalAdditionalLandedPhp).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
     const recNumber = input.receiving_number || `REC-IMP-${Date.now().toString().slice(-6)}`;
 
     const payload = {
@@ -125,7 +151,7 @@ export async function createImportReceiving(input: Partial<ImportReceivingRecord
         customs_duty_php: duty,
         brokerage_charges_php: brokerage,
         other_landed_costs_php: other,
-        total_landed_cost_php: Number(overallTotalLandedPhp.toFixed(2)),
+        total_landed_cost_php: overallTotalLandedPhp,
         status: input.status || "Received",
         created_by: input.created_by ? Number(input.created_by) : null
     };
@@ -168,7 +194,7 @@ export async function createImportReceiving(input: Partial<ImportReceivingRecord
                             stock_type: "Raw Materials",
                             transaction_type_id: 1, // Purchase / Import Receipt
                             reference_number: recNumber,
-                            notes: `Import cargo receipt via BL #${payload.bill_of_lading_number || "N/A"} @ Forex ₱${clearingRate.toFixed(2)}`
+                            notes: `Import cargo receipt via BL #${payload.bill_of_lading_number || "N/A"} @ Forex ₱${clearingRate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}`
                         })
                     }).catch(movErr => console.error("Error posting import inventory movement:", movErr));
                 }));

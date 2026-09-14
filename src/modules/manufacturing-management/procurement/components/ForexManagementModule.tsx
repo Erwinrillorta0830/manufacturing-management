@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ForexConfig, ForexRateHistory } from "@/app/api/manufacturing/procurement/forex/_rates";
+import { DecimalValue, EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export default function ForexManagementModule() {
     const [activeRates, setActiveRates] = useState<ForexConfig[]>([]);
@@ -84,7 +85,7 @@ export default function ForexManagementModule() {
 
     const handleOpenUpdateModal = (config: ForexConfig) => {
         setSelectedConfig(config);
-        setNewRate(config.exchange_rate.toString());
+        setNewRate(DecimalValue.from(config.exchange_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE));
         setEffectiveDate(new Date().toISOString().split("T")[0]);
         setChangeReason("");
         setReasonError(null);
@@ -109,7 +110,7 @@ export default function ForexManagementModule() {
             const data = await res.json();
             
             if (data && data.rates && typeof data.rates.PHP === "number") {
-                const cloudPhpRate = Number(data.rates.PHP).toFixed(4);
+                const cloudPhpRate = Number(data.rates.PHP).toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
                 setNewRate(cloudPhpRate);
                 setIsCloudSourcedRate(true);
                 if (!changeReason.trim()) {
@@ -166,7 +167,7 @@ export default function ForexManagementModule() {
                 throw new Error(data.error || "Failed to update FOREX rate");
             }
 
-            toast.success(`Exchange rate for ${selectedConfig.currency_code} updated to ₱${parsedRate.toFixed(4)}`);
+            toast.success(`Exchange rate for ${selectedConfig.currency_code} updated to ₱${parsedRate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}`);
             if (data.activeRates) setActiveRates(data.activeRates);
             if (data.rateHistory) setRateHistory(data.rateHistory);
             handleCloseUpdateModal();
@@ -422,7 +423,7 @@ export default function ForexManagementModule() {
                                     <div className="pt-2">
                                         <div className="flex items-baseline gap-1.5">
                                             <span className="text-3xl font-black text-foreground font-mono tracking-tight">
-                                                ₱{config.exchange_rate.toFixed(4)}
+                                                ₱{config.exchange_rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)}
                                             </span>
                                             <span className="text-xs text-muted-foreground font-medium">
                                                 PHP per 1 {config.currency_code}
@@ -539,10 +540,10 @@ export default function ForexManagementModule() {
 
                             <div>
                                 <span className="text-xs text-muted-foreground block font-medium">
-                                    {convertAmount} {convertCurrency} @ ₱{activeRateForSelectedCurrency.toFixed(4)}
+                                    {convertAmount} {convertCurrency} @ ₱{activeRateForSelectedCurrency.toFixed(6)}
                                 </span>
                                 <span className="text-2xl font-black text-foreground font-mono tracking-tight block">
-                                    ₱{convertedBasePhp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    ₱{convertedBasePhp.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}
                                 </span>
                             </div>
 
@@ -556,7 +557,7 @@ export default function ForexManagementModule() {
                                     Simulated FX Rate
                                 </span>
                                 <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-muted">
-                                    ₱{simulatedRate.toFixed(4)}
+                                    ₱{simulatedRate.toFixed(6)}
                                 </span>
                             </div>
 
@@ -565,14 +566,14 @@ export default function ForexManagementModule() {
                                     Simulated PHP Value
                                 </span>
                                 <span className="text-2xl font-black text-foreground font-mono tracking-tight block">
-                                    ₱{simulatedPhpTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    ₱{simulatedPhpTotal.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}
                                 </span>
                             </div>
 
                             <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t">
                                 <span className="text-[10px] text-muted-foreground">Projected Impact:</span>
                                 <span className={`font-mono text-xs ${simulatedCostDifference > 0 ? "text-red-500 font-extrabold" : simulatedCostDifference < 0 ? "text-emerald-500 font-extrabold" : "text-muted-foreground"}`}>
-                                    {simulatedCostDifference > 0 ? `+₱${simulatedCostDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `₱${simulatedCostDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                    {simulatedCostDifference > 0 ? `+₱${simulatedCostDifference.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}` : `₱${simulatedCostDifference.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}`}
                                 </span>
                             </div>
                         </div>
@@ -677,10 +678,10 @@ export default function ForexManagementModule() {
                                                 </span>
                                             </td>
                                             <td className="p-3 font-mono text-muted-foreground">
-                                                ₱{log.previous_rate.toFixed(4)}
+                                                ₱{log.previous_rate.toFixed(6)}
                                             </td>
                                             <td className="p-3 font-mono font-bold text-foreground">
-                                                ₱{log.new_rate.toFixed(4)}
+                                                ₱{log.new_rate.toFixed(6)}
                                             </td>
                                             <td className="p-3 font-mono whitespace-nowrap">
                                                 {diff === 0 ? (
@@ -688,12 +689,12 @@ export default function ForexManagementModule() {
                                                 ) : diff > 0 ? (
                                                     <span className="inline-flex items-center gap-0.5 text-amber-500 font-extrabold">
                                                         <TrendingUp className="h-3 w-3" />
-                                                        +{percent.toFixed(2)}% (+₱{diff.toFixed(2)})
+                                                        +{percent.toFixed(2)}% (+₱{diff.toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)})
                                                     </span>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-0.5 text-emerald-500 font-extrabold">
                                                         <TrendingDown className="h-3 w-3" />
-                                                        {percent.toFixed(2)}% (₱{diff.toFixed(2)})
+                                                        {percent.toFixed(2)}% (₱{diff.toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)})
                                                     </span>
                                                 )}
                                             </td>
@@ -787,7 +788,7 @@ export default function ForexManagementModule() {
                             <div className="p-3 border rounded-lg bg-muted/10 flex justify-between items-center text-xs">
                                 <span className="text-muted-foreground font-medium">Current Standard Rate</span>
                                 <span className="font-mono font-bold text-foreground">
-                                    ₱{selectedConfig.exchange_rate.toFixed(4)} PHP
+                                    ₱{selectedConfig.exchange_rate.toFixed(EXCHANGE_RATE_DECIMAL_SCALE)} PHP
                                 </span>
                             </div>
 
@@ -816,8 +817,8 @@ export default function ForexManagementModule() {
                                     <span className="absolute left-3 top-2 text-xs text-muted-foreground font-semibold">₱</span>
                                     <input
                                         type="number"
-                                        step="0.0001"
-                                        min="0.0001"
+                                        step="0.000001"
+                                        min="0.000001"
                                         required
                                         value={newRate}
                                         onChange={(e) => {
@@ -827,7 +828,7 @@ export default function ForexManagementModule() {
                                                 setChangeReason("");
                                             }
                                         }}
-                                        placeholder="58.5000"
+                                        placeholder="58.500000"
                                         className="w-full bg-background border rounded-lg pl-7 pr-3 py-2 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-primary"
                                     />
                                 </div>

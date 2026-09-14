@@ -10,6 +10,11 @@ import {
     resolveProductCategoryTypes,
     type PurchaseOrderCategoryType
 } from "../_category-type";
+import {
+    DecimalValue,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export interface POLineItemForPosting {
     purchase_order_product_id: number;
@@ -78,7 +83,7 @@ export interface ProductCostCommit {
 }
 
 function roundMoney(val: number): number {
-    return Math.round((val + Number.EPSILON) * 100) / 100;
+    return Number(DecimalValue.from(val).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 function relationId(value: unknown, key: string): number {
@@ -266,7 +271,8 @@ export async function persistProductCostUpdates(
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
-                    ...snapshot,
+                    cost_per_unit: snapshot.cost_per_unit == null ? null : normalizeProcurementMoney(String(snapshot.cost_per_unit)),
+                    estimated_unit_cost: snapshot.estimated_unit_cost == null ? null : normalizeProcurementMoney(String(snapshot.estimated_unit_cost)),
                     ...productUpdateAuditFields(userId)
                 })
             }).catch(() => null);
@@ -300,8 +306,8 @@ export async function persistProductCostUpdates(
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
-                    cost_per_unit: update.cost_per_unit,
-                    estimated_unit_cost: update.estimated_unit_cost,
+                    cost_per_unit: normalizeProcurementMoney(update.cost_per_unit),
+                    estimated_unit_cost: normalizeProcurementMoney(update.estimated_unit_cost),
                     ...productUpdateAuditFields(userId)
                 })
             });
@@ -328,7 +334,10 @@ export function calculateHybridAllocationEngine(
     exchangeRate: number = 1.0
 ): HybridAllocationEngineOutput {
     void exchangeRate;
-    const totalLandedFee = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const totalLandedFee = Number(expenses.reduce(
+        (sum, expense) => sum.add(Number(expense.amount) || 0),
+        DecimalValue.from(0)
+    ).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 
     for (const item of lineItems) {
         if (item.category_type !== "RAW_MATERIAL" && item.category_type !== "PACKAGING" && item.category_type !== "FINISHED_GOODS") {

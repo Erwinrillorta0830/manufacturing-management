@@ -8,15 +8,25 @@ import {
     FxRateStatus
 } from "../components/incoming-shipments/types";
 import { IncomingShipment, RawMaterial, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode, PurchaseOrderPriceTypeRule } from "../types";
-import { DecimalValue, isNonNegativeDecimal, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import {
+    DecimalValue,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 import { calculatePercentageDiscount } from "../discount-calculation";
+import {
+    convertPhpUnitPriceToTransactionCurrency,
+    tryNormalizePurchaseOrderUnitPrice
+} from "../price-precision";
 import { isSupplierForeign as isSupplierForeignRecord } from "../services/supplier.service";
 import { resolveProductParentId } from "../product-relation";
 import {
     fetchPurchaseOrderFxRate,
     resolvePurchaseOrderCommercialTerms
 } from "../../purchase-order/services/purchase-order-api";
-import type { PurchaseOrderCommercialResolution } from "../../purchase-order/types";
+import type {
+    PurchaseOrderCommercialResolution,
+    PurchaseOrderMissingPriceDetail
+} from "../../purchase-order/types";
 import {
     defaultPurchaseOrderPaymentModeId,
     resolveSupplierPaymentTermId
@@ -44,6 +54,12 @@ export interface UseIncomingShipmentsFormProps {
         payment_description?: string | null;
     }>;
     paymentModes?: PurchaseOrderPaymentMode[];
+}
+
+function hasPositiveUnitPrice(value: unknown): boolean {
+    const normalized = tryNormalizePurchaseOrderUnitPrice(value);
+    if (normalized === null) return false;
+    return DecimalValue.from(normalized).compare(0) > 0;
 }
 
 export function useIncomingShipmentsForm({
@@ -88,7 +104,7 @@ export function useIncomingShipmentsForm({
         fxRateController.current?.abort();
 
         if (currencyCode === "PHP") {
-            setShipmentForm(previous => ({ ...previous, exchange_rate: "1" }));
+            setShipmentForm(previous => ({ ...previous, exchange_rate: "1.000000" }));
             setFxRateError(null);
             setFxRateStatus("ready");
             return;
@@ -143,7 +159,7 @@ export function useIncomingShipmentsForm({
     }, []);
 
     const handleCurrencyChange = useCallback((currencyCode: "PHP" | "USD") => {
-        setShipmentForm(previous => ({ ...previous, currency_code: currencyCode, exchange_rate: currencyCode === "PHP" ? "1" : "" }));
+        setShipmentForm(previous => ({ ...previous, currency_code: currencyCode, exchange_rate: currencyCode === "PHP" ? "1.000000" : "" }));
         if (currencyCode === "USD") {
             void loadCurrentFxRate("USD");
         } else {
@@ -190,6 +206,7 @@ export function useIncomingShipmentsForm({
                 product_name: "",
                 product_code: "",
                 selected_uom: "",
+                price_source: "none",
                 uom_options: [],
                 quantity_ordered: "",
                 base_unit_cost_php: "",
@@ -240,7 +257,7 @@ export function useIncomingShipmentsForm({
                 delivery_terms: deliveryTerms,
                 payment_mode: prev.payment_mode ?? defaultPaymentModeId,
                 currency_code: "PHP",
-                exchange_rate: "1"
+                exchange_rate: "1.000000"
             }));
             fxRateController.current?.abort();
             setFxRateStatus("ready");
@@ -268,7 +285,7 @@ export function useIncomingShipmentsForm({
             supplier_id: String(activeShipment.supplier_id && typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id.id : activeShipment.supplier_id || ""),
             date_received: dateReceived,
             total_foreign_currency: String(activeShipment.total_foreign_currency),
-            exchange_rate: String(activeShipment.exchange_rate),
+            exchange_rate: activeShipment.exchange_rate == null ? "" : DecimalValue.from(activeShipment.exchange_rate).toFixed(6),
             total_php_value: String(activeShipment.total_php_value),
             status: "Ordered",
             branch_id: activeShipment.branch_id || 182,
@@ -301,6 +318,9 @@ export function useIncomingShipmentsForm({
             const transactionUnitPrice = currencyCode === "PHP"
                 ? l.base_unit_cost_php
                 : l.unit_price_foreign;
+            const normalizedTransactionUnitPrice = transactionUnitPrice == null
+                ? null
+                : tryNormalizePurchaseOrderUnitPrice(transactionUnitPrice);
 
             return {
                 product_id: productId,
@@ -308,9 +328,10 @@ export function useIncomingShipmentsForm({
                 product_name: typeof l.product_id === "object" ? l.product_id.product_name : "",
                 product_code: typeof l.product_id === "object" ? l.product_id.product_code || "" : "",
                 quantity_ordered: String(l.quantity_ordered || 0),
-                base_unit_cost_php: transactionUnitPrice == null ? "" : String(transactionUnitPrice),
+                base_unit_cost_php: normalizedTransactionUnitPrice || "",
                 parent_product_id: String(resolveProductParentId(selectedRawMaterial) || ""),
                 selected_uom: l.product_id && typeof l.product_id === "object" && l.product_id.unit_of_measurement ? l.product_id.unit_of_measurement.unit_shortcut : "PCS",
+                price_source: hasPositiveUnitPrice(normalizedTransactionUnitPrice) ? "manual" : "none",
                 uom_options: [],
                 purchase_intent: (l as ShipmentLineItem & { purchase_intent?: "MRP_Demand" | "Buffer_Stock" }).purchase_intent || "Buffer_Stock",
                 job_order_id: String((l as ShipmentLineItem & { job_order_id?: number }).job_order_id || ""),
@@ -361,6 +382,7 @@ export function useIncomingShipmentsForm({
         const errors: string[] = [];
         const quantity = Number(line.quantity_ordered);
         const unitPrice = line.base_unit_cost_php;
+        const normalizedUnitPrice = tryNormalizePurchaseOrderUnitPrice(unitPrice);
         const discountMode = line.discount_mode || "Percentage";
         const discount = Number(line.discount_percent || 0);
         const selectedMaterial = rawMaterials.find(material =>
@@ -376,14 +398,24 @@ export function useIncomingShipmentsForm({
             errors.push("Product Name must match the selected Type");
         }
         if (!Number.isFinite(quantity) || quantity <= 0) errors.push("Qty Ordered must be greater than zero");
-        if (!isNonNegativeDecimal(unitPrice)) {
-            errors.push(`Unit Price must be a non-negative decimal with at most ${UNIT_PRICE_DECIMAL_SCALE} decimal places`);
+        if (normalizedUnitPrice === null) {
+            if (canonicalDrafting && priceControlMissingProductIds.includes(Number(line.product_id))) {
+                const missingPrice = commercialResolution?.missingPriceDetails.find(detail => detail.productId === Number(line.product_id));
+                const unitLabel = missingPrice?.unitLabel || line.selected_uom || "the selected UOM";
+                errors.push(`Price Control is not configured for ${unitLabel}; configure the matrix or enter a positive manual unit price`);
+            } else {
+                errors.push("Unit Price must be a valid non-negative decimal");
+            }
+        } else if (DecimalValue.from(normalizedUnitPrice).compare(0) < 0) {
+            errors.push("Unit Price must be a valid non-negative decimal");
         } else if (
             canonicalDrafting &&
             priceControlMissingProductIds.includes(Number(line.product_id)) &&
-            DecimalValue.from(unitPrice).compare(0) <= 0
+            DecimalValue.from(normalizedUnitPrice).compare(0) <= 0
         ) {
-            errors.push("Unit Price must be greater than zero when Price Control is not configured");
+            const missingPrice = commercialResolution?.missingPriceDetails.find(detail => detail.productId === Number(line.product_id));
+            const unitLabel = missingPrice?.unitLabel || line.selected_uom || "the selected UOM";
+            errors.push(`Price Control is not configured for ${unitLabel}; configure the matrix or enter a positive manual unit price`);
         }
         if (discountMode === "Fixed Amount") {
             errors.push("Legacy fixed discounts must be converted to Percentage before saving");
@@ -393,7 +425,7 @@ export function useIncomingShipmentsForm({
             errors.push("Discount % must be between 0 and 100");
         }
         return errors;
-    }, [canonicalDrafting, priceControlMissingProductIds, rawMaterials]);
+    }, [canonicalDrafting, commercialResolution, priceControlMissingProductIds, rawMaterials]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -443,7 +475,7 @@ export function useIncomingShipmentsForm({
     const handleAddLineForm = () => {
         setLinesForm([...linesForm, {
             parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
-            purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_type_id: "", discount_source: "none", discount_amount: "0", discount_percent: "0"
+            purchase_intent: "Buffer_Stock", job_order_id: "", discount_mode: "Percentage", discount_type_id: "", discount_source: "none", discount_amount: "0", discount_percent: "0", price_source: "none"
         }]);
     };
 
@@ -459,6 +491,13 @@ export function useIncomingShipmentsForm({
         const nextLine = (typeof fieldOrObject === "object" && fieldOrObject !== null
             ? { ...currentLine, ...fieldOrObject }
             : { ...currentLine, [fieldOrObject]: value }) as ManifestLineFormItem;
+        if (
+            typeof fieldOrObject === "string" &&
+            fieldOrObject === "base_unit_cost_php" &&
+            nextLine.price_source !== "matrix"
+        ) {
+            nextLine.price_source = hasPositiveUnitPrice(value) ? "manual" : "none";
+        }
         if (nextLine.discount_mode !== "Fixed Amount") {
             try {
                 nextLine.discount_amount = calculatePercentageDiscount(
@@ -467,7 +506,7 @@ export function useIncomingShipmentsForm({
                     nextLine.discount_percent || 0
                 ).discountAmount;
             } catch {
-                nextLine.discount_amount = "0.00";
+                nextLine.discount_amount = "0.0000";
             }
         }
         copy[index] = nextLine;
@@ -574,7 +613,7 @@ export function useIncomingShipmentsForm({
         return () => controller.abort();
     }, [canonicalDrafting, editingShipmentId, selectedProductIdsKey, shipmentForm.supplier_id, rawMaterials, setLinesForm]);
 
-    const [priceControlCostsMap, setPriceControlCostsMap] = useState<Record<number, number>>({});
+    const [priceControlCostsMap, setPriceControlCostsMap] = useState<Record<number, string>>({});
 
     const selectedProductIdsForCommercialKey = React.useMemo(() => {
         const ids = new Set<number>();
@@ -619,13 +658,15 @@ export function useIncomingShipmentsForm({
         resolvePurchaseOrderCommercialTerms(Number(shipmentForm.supplier_id), productIds, controller.signal)
             .then(resolution => {
                 if (controller.signal.aborted) return;
-                const prices: Record<number, number> = {};
+                const prices: Record<number, string> = {};
                 const supplierDiscounts: Record<number, { discount_type_id?: number; total_percent?: number }> = {};
                 const linesByProductId = new Map(resolution.lines.map(line => [line.productId, line]));
 
                 resolution.lines.forEach(line => {
-                    const price = Number(line.pricePhp);
-                    if (Number.isFinite(price) && price > 0) prices[line.productId] = price;
+                    const normalizedPrice = tryNormalizePurchaseOrderUnitPrice(line.pricePhp);
+                    if (normalizedPrice !== null && DecimalValue.from(normalizedPrice).compare(0) > 0) {
+                        prices[line.productId] = normalizedPrice;
+                    }
                     supplierDiscounts[line.productId] = {
                         discount_type_id: line.discountTypeId || undefined,
                         total_percent: Number(line.discountPercent) || 0
@@ -645,14 +686,23 @@ export function useIncomingShipmentsForm({
                     const resolved = linesByProductId.get(Number(line.product_id));
                     if (!resolved) return line;
 
-                    const pricePhp = Number(resolved.pricePhp);
-                    const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
-                    const transactionPrice = Number.isFinite(pricePhp) && pricePhp > 0
-                        ? shipmentForm.currency_code === "USD" ? pricePhp / exchangeRate : pricePhp
+                    const normalizedPricePhp = tryNormalizePurchaseOrderUnitPrice(resolved.pricePhp);
+                    const hasMatrixPrice = normalizedPricePhp !== null && DecimalValue.from(normalizedPricePhp).compare(0) > 0;
+                    const transactionPrice = hasMatrixPrice
+                        ? convertPhpUnitPriceToTransactionCurrency(
+                            normalizedPricePhp,
+                            shipmentForm.currency_code === "USD" ? "USD" : "PHP",
+                            shipmentForm.exchange_rate
+                        )
                         : null;
-                    const nextLine = transactionPrice === null
-                        ? line
-                        : { ...line, base_unit_cost_php: String(transactionPrice) };
+                    const keepManualPrice = !hasMatrixPrice &&
+                        line.price_source !== "matrix" &&
+                        hasPositiveUnitPrice(line.base_unit_cost_php);
+                    const nextLine = hasMatrixPrice
+                        ? { ...line, base_unit_cost_php: transactionPrice || "", price_source: "matrix" as const }
+                        : keepManualPrice
+                            ? { ...line, base_unit_cost_php: tryNormalizePurchaseOrderUnitPrice(line.base_unit_cost_php) || "", price_source: "manual" as const }
+                            : { ...line, base_unit_cost_php: "", price_source: "none" as const };
                     if (line.discount_source === "manual") return nextLine;
                     if (resolved.discountTypeId) {
                         return {
@@ -723,19 +773,24 @@ export function useIncomingShipmentsForm({
             })
             .then((data) => {
                 const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
-                const map: Record<number, number> = {};
+                const map: Record<number, string> = {};
                 rows.forEach((item: { product_id?: number | string | null; cost_per_unit?: number | string | null }) => {
                     const productId = Number(item.product_id);
-                    const cost = Number(item.cost_per_unit);
-                    if (Number.isSafeInteger(productId) && productId > 0 && Number.isFinite(cost) && cost > 0) {
-                        map[productId] = cost;
+                    const normalizedCost = tryNormalizePurchaseOrderUnitPrice(item.cost_per_unit);
+                    if (
+                        Number.isSafeInteger(productId) &&
+                        productId > 0 &&
+                        normalizedCost !== null &&
+                        DecimalValue.from(normalizedCost).compare(0) > 0
+                    ) {
+                        map[productId] = normalizedCost;
                     }
                 });
 
                 const missingProductIds = linesFormRef.current
                     .filter(line => line.product_id)
                     .map(line => Number(line.product_id))
-                    .filter(productId => !Number.isFinite(map[productId]) || map[productId] <= 0);
+                    .filter(productId => !map[productId]);
                 setPriceControlCostsMap(map);
                 setPriceControlMissingProductIds(missingProductIds);
                 setPriceControlStatus(missingProductIds.length > 0 ? "warning" : "ready");
@@ -743,13 +798,16 @@ export function useIncomingShipmentsForm({
                 setLinesForm(prev => prev.map(line => {
                     if (!line.product_id) return line;
                     const cost = map[Number(line.product_id)];
-                    if (!Number.isFinite(cost) || cost <= 0) return line;
+                    if (!cost) return line;
 
-                    const exchangeRate = Number(shipmentForm.exchange_rate) || 1;
-                    const transactionPrice = shipmentForm.currency_code === "USD"
-                        ? cost / exchangeRate
-                        : cost;
-                    return { ...line, base_unit_cost_php: String(transactionPrice) };
+                    const transactionPrice = convertPhpUnitPriceToTransactionCurrency(
+                        cost,
+                        shipmentForm.currency_code === "USD" ? "USD" : "PHP",
+                        shipmentForm.exchange_rate
+                    );
+                    return transactionPrice === null
+                        ? { ...line, base_unit_cost_php: "", price_source: "none" as const }
+                        : { ...line, base_unit_cost_php: transactionPrice, price_source: "matrix" as const };
                 }));
             })
             .catch(e => {
@@ -767,7 +825,7 @@ export function useIncomingShipmentsForm({
 
     const priceTypeResolution = React.useMemo(() => {
         if (!canonicalDrafting) {
-            return { status: "idle" as const, priceTypeId: null, priceTypeName: null, message: null };
+            return { status: "idle" as const, priceTypeId: null, priceTypeName: null, message: null, missingPriceDetails: [] as PurchaseOrderMissingPriceDetail[] };
         }
         if (commercialResolution) {
             return {
@@ -775,15 +833,17 @@ export function useIncomingShipmentsForm({
                 priceTypeId: commercialResolution.priceTypeId,
                 priceTypeName: commercialResolution.priceTypeName,
                 message: priceControlMissingProductIds.length > 0
-                    ? "One or more products do not have a configured matrix price."
-                    : null
+                    ? "One or more selected UOMs do not have a configured matrix price."
+                    : null,
+                missingPriceDetails: commercialResolution.missingPriceDetails
             };
         }
         return {
             status: priceControlStatus === "error" ? "error" as const : priceControlStatus === "loading" ? "loading" as const : "pending" as const,
             priceTypeId: null,
             priceTypeName: null,
-            message: priceControlError
+            message: priceControlError,
+            missingPriceDetails: [] as PurchaseOrderMissingPriceDetail[]
         };
     }, [canonicalDrafting, commercialResolution, priceControlError, priceControlMissingProductIds.length, priceControlStatus]);
 
@@ -826,16 +886,16 @@ export function useIncomingShipmentsForm({
     const totalPhpValue = React.useMemo(() => {
         return linesForm.reduce((acc, curr) => {
             return acc.add(DecimalValue.from(curr.quantity_ordered || 0).multiply(curr.base_unit_cost_php || 0));
-        }, DecimalValue.from(0)).toFixed(2);
+        }, DecimalValue.from(0)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     }, [linesForm]);
 
     const totalUsdValue = React.useMemo(() => {
         try {
             const rate = DecimalValue.from(shipmentForm.exchange_rate || 0);
-            if (rate.compare(0) <= 0) return "0.00";
-            return DecimalValue.from(totalPhpValue).divideRounded(rate, 2).toFixed(2);
+            if (rate.compare(0) <= 0) return "0.0000";
+            return DecimalValue.from(totalPhpValue).divideRounded(rate, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
         } catch {
-            return "0.00";
+            return "0.0000";
         }
     }, [totalPhpValue, shipmentForm.exchange_rate]);
 
@@ -849,28 +909,28 @@ export function useIncomingShipmentsForm({
             );
             const grossForeign = discountCalculation.grossAmount;
             const discountForeign = line.discount_mode === "Fixed Amount"
-                ? DecimalValue.from(line.discount_amount || 0).toFixed(2)
+                ? DecimalValue.from(line.discount_amount || 0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
                 : discountCalculation.discountAmount;
-            const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(2);
+            const netForeign = DecimalValue.from(grossForeign).subtract(discountForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
             return {
-                grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(2),
-                discountForeign: DecimalValue.from(summary.discountForeign).add(discountForeign).toFixed(2),
-                grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(2),
-                discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(2),
-                vatPhp: "0.00",
-                withholdingPhp: "0.00",
-                netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(2),
-                netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(2)
+                grossForeign: DecimalValue.from(summary.grossForeign).add(grossForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                discountForeign: DecimalValue.from(summary.discountForeign).add(discountForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                grossPhp: DecimalValue.from(summary.grossPhp).add(DecimalValue.from(grossForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                discountPhp: DecimalValue.from(summary.discountPhp).add(DecimalValue.from(discountForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                vatPhp: "0.0000",
+                withholdingPhp: "0.0000",
+                netPhp: DecimalValue.from(summary.netPhp).add(DecimalValue.from(netForeign).multiply(exchangeRate)).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                netForeign: DecimalValue.from(summary.netForeign).add(netForeign).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
             };
         }, {
-            grossForeign: "0.00",
-            discountForeign: "0.00",
-            grossPhp: "0.00",
-            discountPhp: "0.00",
-            vatPhp: "0.00",
-            withholdingPhp: "0.00",
-            netPhp: "0.00",
-            netForeign: "0.00"
+            grossForeign: "0.0000",
+            discountForeign: "0.0000",
+            grossPhp: "0.0000",
+            discountPhp: "0.0000",
+            vatPhp: "0.0000",
+            withholdingPhp: "0.0000",
+            netPhp: "0.0000",
+            netForeign: "0.0000"
         });
     }, [linesForm, shipmentForm.exchange_rate]);
 

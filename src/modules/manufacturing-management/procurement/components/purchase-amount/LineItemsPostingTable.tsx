@@ -2,6 +2,7 @@
 
 import { Calculator, Lock } from "lucide-react";
 import { HybridCalculationResult } from "./types";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 interface LineItemsPostingTableProps {
     calculationResult: HybridCalculationResult;
@@ -11,7 +12,7 @@ interface LineItemsPostingTableProps {
     disabledReason?: string;
 }
 
-function formatPhp(value: number, fractionDigits = 2): string {
+function formatPhp(value: number, fractionDigits = PROCUREMENT_MONEY_DECIMAL_SCALE): string {
     return `PHP ${Number(value || 0).toLocaleString("en-US", {
         minimumFractionDigits: fractionDigits,
         maximumFractionDigits: fractionDigits

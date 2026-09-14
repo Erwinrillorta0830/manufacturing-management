@@ -12,7 +12,14 @@ import type { z } from "zod";
 import type { purchaseOrderCreateSchema } from "./_schemas";
 import { assertMrpProductJobOrderPairs } from "./_mrp-validation";
 import { PurchaseOrderFxRateError, resolvePurchaseOrderFxRate } from "./_fx-rate";
-import { compareDecimals, DecimalValue, normalizeDecimal, UNIT_PRICE_DECIMAL_SCALE, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import {
+    compareDecimals,
+    DecimalValue,
+    normalizeDecimal,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
+    UNIT_PRICE_DECIMAL_SCALE,
+    type DecimalInput
+} from "@/modules/manufacturing-management/decimal";
 import { normalizeProductRelationId } from "@/modules/manufacturing-management/procurement/product-relation";
 import { validatePurchaseOrderPaymentMode } from "./_payment-modes";
 import { PurchaseOrderPaymentModeError } from "./_payment-modes";
@@ -33,7 +40,7 @@ import {
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
 
 type PurchaseOrderDraft = z.infer<typeof purchaseOrderCreateSchema>;
-const PURCHASE_ORDER_FOREIGN_PRICE_SCALE = 12;
+const PURCHASE_ORDER_FOREIGN_PRICE_SCALE = UNIT_PRICE_DECIMAL_SCALE;
 
 export class PurchaseOrderDraftError extends Error {
     constructor(message: string, public readonly status = 400, public readonly details?: unknown) {
@@ -83,8 +90,8 @@ function approvalRule(row: Record<string, unknown>): PurchaseOrderApprovalRule {
     return {
         ruleId: Number(row.rule_id),
         priority: Number(row.priority || 0),
-        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0)),
-        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php)),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0), PROCUREMENT_MONEY_DECIMAL_SCALE),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php), PROCUREMENT_MONEY_DECIMAL_SCALE),
         currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
         importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
         productCategoryId: row.product_category_id == null
@@ -157,7 +164,12 @@ async function applyCommercialTerms(
                         : DecimalValue.from(terms.pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
                     : line.unitPrice;
 
-                if (terms.pricePhp) baseUnitPricePhpByProductId.set(line.productId, terms.pricePhp);
+                if (terms.pricePhp) {
+                    baseUnitPricePhpByProductId.set(
+                        line.productId,
+                        DecimalValue.from(terms.pricePhp).toFixed(UNIT_PRICE_DECIMAL_SCALE)
+                    );
+                }
 
                 if (line.discountSource === "manual") {
                     if (line.discountType === null) {
@@ -428,7 +440,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         const effectiveOrder = appliedCommercialTerms.order;
         assertEnteredPricesForMissingPriceControl(
             effectiveOrder.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
-            resolvedCommercial.missingPriceProductIds
+            resolvedCommercial.missingPriceProductIds,
+            resolvedCommercial.missingPriceDetails
         );
         order = effectiveOrder;
         baseUnitPricePhpByProductId = appliedCommercialTerms.baseUnitPricePhpByProductId;
