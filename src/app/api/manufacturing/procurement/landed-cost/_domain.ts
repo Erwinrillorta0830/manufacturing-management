@@ -80,6 +80,12 @@ interface ReceivingRecord extends DirectusRecord {
     allocated_expense_php?: number | string | null;
     final_landed_unit_cost?: number | string | null;
     is_posted_amounts?: number | boolean | null;
+    /** Invoice/receipt price snapshot in PHP, captured when QA committed the receipt. */
+    unit_price?: number | string | null;
+    discounted_amount?: number | string | null;
+    discount_type?: number | string | null;
+    received_date?: string | null;
+    created_at?: string | null;
 }
 
 interface PurchaseOrderLine extends DirectusRecord {
@@ -129,6 +135,10 @@ export interface LandedCostInputLine {
     netAmountTransaction: number;
     /** Product base unit (e.g. BAG, PKG, KG). */
     uom: string;
+    /** Whether the resolved price came from the purchase-order line or the receipt/invoice fallback. */
+    priceSource: "PO" | "INVOICE";
+    /** Timestamp of the pricing record used for this line, when the schema provides one. */
+    pricedAt: string | null;
 }
 
 export interface LandedCostInputSnapshot {
@@ -230,6 +240,105 @@ export function computePurchaseOrderPriceTrail(input: {
     );
     const netAmountTransaction = roundMoney(Math.max(0, input.quantity * input.unitPriceTransaction - discountAmountTransaction));
     return { discountPercent, discountAmountTransaction, netAmountTransaction };
+}
+
+export type LandedCostPriceSource = "PO" | "INVOICE";
+
+export interface LandedCostLinePricing {
+    transactionUnitPrice: number;
+    baseUnitCostPhp: number;
+    priceSource: LandedCostPriceSource;
+    pricedAt: string | null;
+}
+
+function receiptTimestamp(row: ReceivingRecord): number {
+    for (const value of [row.received_date, row.created_at]) {
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Date.parse(value);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return 0;
+}
+
+function receiptDateText(row: ReceivingRecord): string | null {
+    for (const value of [row.received_date, row.created_at]) {
+        if (typeof value === "string" && value.trim()) return value;
+    }
+    return null;
+}
+
+/**
+ * Purchase-order lines are authoritative for base cost and discount. When the PO
+ * line has no usable price, fall back to the latest committed receipt/invoice
+ * snapshot (`purchase_order_receiving.unit_price`) so the preview never shows a
+ * silently stale or missing price.
+ */
+export function resolveLandedCostLinePricing(input: {
+    purchaseOrderLine: Pick<PurchaseOrderLine, "purchase_order_product_id" | "unit_price" | "unit_price_foreign"> & { updated_at?: unknown };
+    receipts: ReceivingRecord[];
+    currency: LandedCostCurrencyContract;
+}): LandedCostLinePricing {
+    const { purchaseOrderLine, receipts, currency } = input;
+    const poPriceField = currency.isForeign ? purchaseOrderLine.unit_price_foreign : purchaseOrderLine.unit_price;
+    const hasPoPrice = hasNumericValue(poPriceField) && Number(poPriceField) >= 0;
+    if (hasPoPrice) {
+        return {
+            transactionUnitPrice: resolveTransactionUnitPrice(purchaseOrderLine, currency),
+            baseUnitCostPhp: resolveBaseUnitCostPhp(purchaseOrderLine, currency),
+            priceSource: "PO",
+            pricedAt: typeof purchaseOrderLine.updated_at === "string" ? purchaseOrderLine.updated_at : null
+        };
+    }
+
+    const invoiceReceipt = [...receipts]
+        .filter(row => hasNumericValue(row.unit_price) && Number(row.unit_price) >= 0)
+        .sort((a, b) => receiptTimestamp(b) - receiptTimestamp(a))[0];
+    if (invoiceReceipt) {
+        const invoiceBasePhp = Number(invoiceReceipt.unit_price);
+        return {
+            transactionUnitPrice: roundMoney(
+                currency.isForeign && currency.exchangeRate > 0
+                    ? invoiceBasePhp / currency.exchangeRate
+                    : invoiceBasePhp
+            ),
+            baseUnitCostPhp: roundMoney(invoiceBasePhp),
+            priceSource: "INVOICE",
+            pricedAt: receiptDateText(invoiceReceipt)
+        };
+    }
+
+    // Preserve the existing validation contract when neither source has a price.
+    return {
+        transactionUnitPrice: resolveTransactionUnitPrice(purchaseOrderLine, currency),
+        baseUnitCostPhp: resolveBaseUnitCostPhp(purchaseOrderLine, currency),
+        priceSource: "PO",
+        pricedAt: null
+    };
+}
+
+export interface LandedCostPricingFingerprintLine {
+    key: number;
+    listPrice: number;
+    discountPercent: number;
+    discountAmount: number;
+    quantity: number;
+    priceSource: string;
+}
+
+export function buildPricingFingerprint(lines: LandedCostPricingFingerprintLine[]): string {
+    return lines
+        .slice()
+        .sort((a, b) => a.key - b.key)
+        .map(line => [
+            line.key,
+            Number(line.listPrice || 0).toFixed(4),
+            Number(line.discountPercent || 0).toFixed(4),
+            Number(line.discountAmount || 0).toFixed(4),
+            Number(line.quantity || 0).toFixed(6),
+            line.priceSource
+        ].join(":"))
+        .join("|");
 }
 
 export interface LandedCostCurrencyContract {
@@ -541,8 +650,9 @@ export async function loadLandedCostSnapshot(
         const lineReceipts = activeReceivingRows.filter(row => resolvePurchaseOrderLineId(row, lineRows) === key);
         const quantity = lineReceipts.reduce((sum, row) => Math.max(0, sum + asNumber(row.received_quantity) - asNumber(row.quantity_rejected)), 0);
         if (quantity <= 0) continue;
-        const transactionUnitPrice = resolveTransactionUnitPrice(line, currency);
-        const baseUnitCostPhp = resolveBaseUnitCostPhp(line, currency);
+        const pricing = resolveLandedCostLinePricing({ purchaseOrderLine: line, receipts: lineReceipts, currency });
+        const transactionUnitPrice = pricing.transactionUnitPrice;
+        const baseUnitCostPhp = pricing.baseUnitCostPhp;
         const orderedQuantity = asNumber(line.ordered_quantity);
         const priceTrail = computePurchaseOrderPriceTrail({
             quantity,
@@ -567,7 +677,9 @@ export async function loadLandedCostSnapshot(
             discountPercent: priceTrail.discountPercent,
             discountAmountTransaction: priceTrail.discountAmountTransaction,
             netAmountTransaction: priceTrail.netAmountTransaction,
-            uom: resolveUnitShortcut(product)
+            uom: resolveUnitShortcut(product),
+            priceSource: pricing.priceSource,
+            pricedAt: pricing.pricedAt
         });
     }
 

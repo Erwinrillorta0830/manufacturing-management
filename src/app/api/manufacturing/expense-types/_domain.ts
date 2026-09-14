@@ -238,14 +238,14 @@ export async function getEligibleExpenseAccounts(): Promise<ExpenseTypeChartAcco
         .filter((row): row is ExpenseTypeChartAccount => row !== null);
 }
 
-function expenseTypeFromRecord(record: ExpenseTypeRecord): ExpenseType {
+function expenseTypeFromRecord(record: ExpenseTypeRecord, accountMap?: Map<number, ExpenseTypeChartAccount>): ExpenseType {
     const id = asPositiveId(record.id);
     if (!id) throw new ExpenseTypeDomainError(502, "INVALID_EXPENSE_TYPE_RECORD", "Directus returned an expense type without a valid ID.");
 
     const coaId = relationId(record.coa_id);
     const coaRecord = isRecord(record.coa_id) ? record.coa_id : null;
     const accountTypeRecord = coaRecord && isRecord(coaRecord.account_type) ? coaRecord.account_type : null;
-    const coa = coaRecord && coaId
+    const relationCoa = coaRecord && coaId
         ? {
             coaId,
             glCode: typeof coaRecord.gl_code === "string" ? coaRecord.gl_code : null,
@@ -253,6 +253,12 @@ function expenseTypeFromRecord(record: ExpenseTypeRecord): ExpenseType {
             accountTypeName: String(accountTypeRecord?.account_name || ""),
         }
         : null;
+    const coa = relationCoa || (coaId ? accountMap?.get(coaId) || {
+        coaId,
+        glCode: null,
+        accountTitle: `Account #${coaId}`,
+        accountTypeName: "Unavailable or inactive",
+    } : null);
 
     return {
         id,
@@ -279,11 +285,12 @@ export async function listExpenseTypes(options: {
     status?: "all" | "active" | "inactive";
 } = {}): Promise<ExpenseType[]> {
     const rows = await listExpenseTypeRecords();
+    const accountMap = new Map((await getEligibleExpenseAccounts()).map(account => [account.coaId, account]));
     const query = normalizeExpenseTypeName(options.query).toLocaleLowerCase();
     const status = options.status || (options.includeInactive ? "all" : "active");
 
     return rows
-        .map(expenseTypeFromRecord)
+        .map(row => expenseTypeFromRecord(row, accountMap))
         .filter(row => {
             if (query && !`${row.name} ${row.description || ""}`.toLocaleLowerCase().includes(query)) return false;
             if (status === "active" && !row.isActive) return false;
@@ -369,7 +376,7 @@ export async function createExpenseType(input: ExpenseTypeInput, actorId: number
     const coaId = asPositiveId(input.coaId);
     if (!coaId) throw new ExpenseTypeDomainError(400, "EXPENSE_TYPE_COA_REQUIRED", "A GL account is required for every Expense Type.");
     await assertUniqueName(name);
-    await assertEligibleCoa(coaId);
+    const account = await assertEligibleCoa(coaId);
 
     const row = await createDirectusExpenseType({
         overhead_name: name,
@@ -380,7 +387,7 @@ export async function createExpenseType(input: ExpenseTypeInput, actorId: number
         created_by: actorId,
         created_at: new Date().toISOString(),
     });
-    return expenseTypeFromRecord(row);
+    return { ...expenseTypeFromRecord(row, new Map([[account.coaId, account]])), chartOfAccount: account };
 }
 
 export async function updateExpenseType(id: number, input: ExpenseTypeInput, actorId: number): Promise<ExpenseType> {
@@ -394,9 +401,12 @@ export async function updateExpenseType(id: number, input: ExpenseTypeInput, act
     const isActive = input.isActive === undefined ? isExpenseTypeActive(current.is_active) : parseBoolean(input.isActive, false);
 
     await assertUniqueName(name, id);
+    let account: ExpenseTypeChartAccount | null = null;
     if (isActive) {
         if (!requestedCoaId) throw new ExpenseTypeDomainError(400, "EXPENSE_TYPE_COA_REQUIRED", "An active Expense Type must have a GL account.");
-        await assertEligibleCoa(requestedCoaId);
+        account = await assertEligibleCoa(requestedCoaId);
+    } else if (requestedCoaId) {
+        account = await getEligibleExpenseAccounts().then(accounts => accounts.find(candidate => candidate.coaId === requestedCoaId) || null);
     }
 
     const body = await directusJson<{ data?: ExpenseTypeRecord }>(`/items/overhead_types/${encodeURIComponent(String(id))}`, {
@@ -413,7 +423,10 @@ export async function updateExpenseType(id: number, input: ExpenseTypeInput, act
     });
     const row = unwrapData<ExpenseTypeRecord>(body);
     if (!isRecord(row)) throw new ExpenseTypeDomainError(502, "EXPENSE_TYPE_UPDATE_EMPTY", "Directus did not return the updated Expense Type.");
-    return expenseTypeFromRecord(row as ExpenseTypeRecord);
+    return {
+        ...expenseTypeFromRecord(row as ExpenseTypeRecord, account ? new Map([[account.coaId, account]]) : undefined),
+        chartOfAccount: account || null,
+    };
 }
 
 export async function createLegacyOverheadType(input: {

@@ -21,7 +21,7 @@ type ExpenseTypeFormProps = {
 };
 
 function formatDate(value: string | null): string {
-    if (!value) return "—";
+    if (!value) return "N/A";
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
@@ -40,7 +40,7 @@ function ExpenseTypeForm({ initialData, accounts, loadingAccounts, saving, onCan
 
     const accountOptions = React.useMemo(() => accounts.map(account => ({
         value: String(account.coaId),
-        label: `${account.glCode ? `[${account.glCode}] ` : ""}${account.accountTitle} · ${account.accountTypeName}`,
+        label: `${account.glCode ? `[${account.glCode}] ` : ""}${account.accountTitle} | ${account.accountTypeName}`,
     })), [accounts]);
 
     const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -280,7 +280,7 @@ export default function ExpenseTypeRegistrationModule() {
                                             <div className="font-medium">{accountLabel(type)}</div>
                                             {type.chartOfAccount && <div className="text-[11px] text-muted-foreground">{type.chartOfAccount.accountTypeName}</div>}
                                         </td>
-                                        <td className="max-w-[280px] px-4 py-3 text-xs text-muted-foreground">{type.description || "—"}</td>
+                                        <td className="max-w-[280px] px-4 py-3 text-xs text-muted-foreground">{type.description || "N/A"}</td>
                                         <td className="px-4 py-3">
                                             {type.isActive ? (
                                                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Active</span>

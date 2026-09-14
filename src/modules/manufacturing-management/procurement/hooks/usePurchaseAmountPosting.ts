@@ -47,6 +47,8 @@ interface PurchaseAmountDetails {
     importExpenses?: PurchaseAmountExpenseRecord[];
     expenseTypes?: ExpenseTypeOption[];
     exchangeRate?: number | string | null;
+    pricingFingerprint?: string;
+    pricingAsOf?: string;
     landedCost?: {
         computation?: {
             allocation_rule?: string | null;
@@ -95,6 +97,14 @@ function supplierName(order: PurchaseOrderOption): string {
 function finiteNumber(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pricingFieldsChanged(previous: POLineItem, next: POLineItem): boolean {
+    return Number(previous.list_price ?? 0) !== Number(next.list_price ?? 0)
+        || Number(previous.discount_percent ?? 0) !== Number(next.discount_percent ?? 0)
+        || Number(previous.discount_amount ?? 0) !== Number(next.discount_amount ?? 0)
+        || Number(previous.base_unit_cost_php ?? 0) !== Number(next.base_unit_cost_php ?? 0)
+        || String(previous.price_source ?? "PO") !== String(next.price_source ?? "PO");
 }
 
 function mapPurchaseOrderLineItems(
@@ -200,6 +210,21 @@ export function usePurchaseAmountPosting(
     const [lineItems, setLineItems] = useState<POLineItem[]>([]);
     const [landedExpenses, setLandedExpenses] = useState<LandedExpenseRow[]>([emptyExpenseRow()]);
     const [allocationRule, setAllocationRule] = useState<LandedCostAllocationRule | "">("");
+    const [syncing, setSyncing] = useState(false);
+    const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+    const [changedLineIds, setChangedLineIds] = useState<number[]>([]);
+
+    const pricingFingerprintRef = useRef<string | null>(null);
+    const lineItemsRef = useRef<POLineItem[]>([]);
+    const changedLinesTimeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        lineItemsRef.current = lineItems;
+    }, [lineItems]);
+
+    useEffect(() => () => {
+        if (changedLinesTimeoutRef.current) window.clearTimeout(changedLinesTimeoutRef.current);
+    }, []);
 
     const [fetchedOrders, setFetchedOrders] = useState<PurchaseOrderOption[]>([]);
     const [internalSelected, setInternalSelected] = useState<PurchaseOrderOption | null>(null);
@@ -282,6 +307,9 @@ export function usePurchaseAmountPosting(
             setAllocationRule("");
             setCurrencyCode("PHP");
             setExchangeRate(1);
+            pricingFingerprintRef.current = null;
+            setLastSyncedAt(null);
+            setChangedLineIds([]);
             return;
         }
 
@@ -321,6 +349,9 @@ export function usePurchaseAmountPosting(
 
                 if (data.lineItems) {
                     setLineItems(mapPurchaseOrderLineItems(data.lineItems, persistedCurrencyCode));
+                    pricingFingerprintRef.current = data.pricingFingerprint ?? null;
+                    setLastSyncedAt(data.pricingAsOf || new Date().toISOString());
+                    setChangedLineIds([]);
                 }
 
                 const canonicalExpenses = Array.isArray(data.landedCost?.expenses) && data.landedCost.expenses.length > 0
@@ -362,18 +393,42 @@ export function usePurchaseAmountPosting(
     // Re-fetch the persisted PO line price/discount values so the preview always
     // reflects upstream changes without a page refresh. User-entered landed
     // expenses, allocation rule, and manual exchange rate are preserved.
-    const refreshLineItems = useCallback(async () => {
+    const refreshLineItems = useCallback(async (): Promise<{ changed: boolean }> => {
         const poId = purchaseOrderId(selectedShipment);
-        if (!poId || posting) return;
+        if (!poId || posting) return { changed: false };
+        setSyncing(true);
         try {
             const raw = await fetchPurchaseAmountDetails(poId) as PurchaseAmountDetails;
             const persistedCurrencyCode = String(raw.purchaseOrder?.currency_code || currencyCode || "PHP").trim().toUpperCase();
+            const incomingFingerprint = raw.pricingFingerprint ?? null;
+            const fingerprintChanged = incomingFingerprint !== null && incomingFingerprint !== pricingFingerprintRef.current;
             if (raw.lineItems) {
-                setLineItems(mapPurchaseOrderLineItems(raw.lineItems, persistedCurrencyCode));
+                const mapped = mapPurchaseOrderLineItems(raw.lineItems, persistedCurrencyCode);
+                const previousById = new Map(lineItemsRef.current.map(item => [item.purchase_order_product_id, item]));
+                const changedIds = fingerprintChanged
+                    ? mapped
+                        .filter(item => {
+                            const previous = previousById.get(item.purchase_order_product_id);
+                            return !previous || pricingFieldsChanged(previous, item);
+                        })
+                        .map(item => item.purchase_order_product_id)
+                    : [];
+                setLineItems(mapped);
+                if (changedIds.length > 0) {
+                    setChangedLineIds(changedIds);
+                    if (changedLinesTimeoutRef.current) window.clearTimeout(changedLinesTimeoutRef.current);
+                    changedLinesTimeoutRef.current = window.setTimeout(() => setChangedLineIds([]), 6000);
+                }
             }
+            if (incomingFingerprint !== null) pricingFingerprintRef.current = incomingFingerprint;
             setCurrencyCode(persistedCurrencyCode);
+            setLastSyncedAt(raw.pricingAsOf || new Date().toISOString());
+            return { changed: fingerprintChanged };
         } catch (error) {
             console.warn("[Manufacturing] Purchase-amount line revalidation failed.", error);
+            return { changed: false };
+        } finally {
+            setSyncing(false);
         }
     }, [currencyCode, posting, selectedShipment]);
 
@@ -571,6 +626,12 @@ export function usePurchaseAmountPosting(
             return false;
         }
 
+        const { changed } = await refreshLineItems();
+        if (changed) {
+            setErrorMessage("Purchase-order or invoice prices changed. Review the refreshed preview and post again.");
+            return false;
+        }
+
         setPosting(true);
         setErrorMessage(null);
         setSuccessMessage(null);
@@ -652,6 +713,10 @@ export function usePurchaseAmountPosting(
         canPost,
         postDisabledReason,
         calculationResult,
+        syncing,
+        lastSyncedAt,
+        changedLineIds,
+        refreshLineItems,
         handleAddExpenseRow,
         handleRemoveExpenseRow,
         handleUpdateExpenseRow,

@@ -1,8 +1,9 @@
 "use client";
 
-import { Calculator, Lock } from "lucide-react";
+import { Calculator, Lock, RefreshCw } from "lucide-react";
 import { HybridCalculationResult } from "./types";
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface LineItemsPostingTableProps {
@@ -12,6 +13,10 @@ interface LineItemsPostingTableProps {
     canPost: boolean;
     disabledReason?: string;
     currencyCode?: string;
+    onRefreshPrices?: () => void;
+    syncing?: boolean;
+    lastSyncedAt?: string | null;
+    changedLineIds?: number[];
 }
 
 function formatAmount(value: number, fractionDigits = PROCUREMENT_MONEY_DECIMAL_SCALE): string {
@@ -25,23 +30,48 @@ function formatQuantity(value: number): string {
     return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
 
+function formatSyncTime(value?: string | null): string | null {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export default function LineItemsPostingTable({
     calculationResult,
     onExecutePosting,
     posting,
     canPost,
     disabledReason,
-    currencyCode
+    currencyCode,
+    onRefreshPrices,
+    syncing = false,
+    lastSyncedAt,
+    changedLineIds = []
 }: LineItemsPostingTableProps) {
     const priceCurrency = (currencyCode || calculationResult.lineCalculations[0]?.currency_code || "PHP").toUpperCase();
+    const syncedLabel = formatSyncTime(lastSyncedAt);
 
     return (
         <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <Calculator className="h-4 w-4" />
                     Landed Cost Allocation Preview
                 </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                    {syncedLabel && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Last synced {syncedLabel}
+                        </span>
+                    )}
+                    {onRefreshPrices && (
+                        <Button type="button" size="sm" variant="outline" onClick={onRefreshPrices} disabled={syncing}>
+                            <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+                            {syncing ? "Syncing..." : "Refresh prices"}
+                        </Button>
+                    )}
+                </div>
             </div>
 
             <div className="border rounded-xl overflow-x-auto bg-background">
@@ -81,11 +111,21 @@ export default function LineItemsPostingTable({
                             const netAmount = Number(line.net_amount ?? Math.max(0, receivedQuantity * listPrice - discountAmount));
                             const allocatedAdjustment = Number(line.allocated_expense_php || 0);
                             const finalLandedUnitCost = Number(line.final_landed_unit_cost || 0);
-                            const totalLandedCost = Number(line.total_landed_cost ?? finalLandedUnitCost * receivedQuantity);
+                            // Recomputed from the live preview calculation so landed-fee edits
+                            // update every row immediately (audit view keeps the persisted value).
+                            const totalLandedCost = finalLandedUnitCost * receivedQuantity;
+                            const isUpdated = changedLineIds.includes(line.purchase_order_product_id);
 
                             return (
-                                <tr key={line.purchase_order_product_id} className="hover:bg-muted/30">
-                                    <td className="p-3 font-semibold">{name}</td>
+                                <tr key={line.purchase_order_product_id} className={cn("hover:bg-muted/30", isUpdated && "bg-warning/5")}>
+                                    <td className="p-3 font-semibold">
+                                        {name}
+                                        {isUpdated && (
+                                            <span className="ml-2 inline-flex items-center rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-warning">
+                                                updated
+                                            </span>
+                                        )}
+                                    </td>
                                     <td className="p-3">
                                         <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${categoryClass}`}>
                                             {categoryLabel}
@@ -93,7 +133,12 @@ export default function LineItemsPostingTable({
                                     </td>
                                     <td className="p-3 text-center font-mono text-muted-foreground">{line.uom || "—"}</td>
                                     <td className="p-3 text-right font-mono font-bold tabular-nums">{formatQuantity(receivedQuantity)}</td>
-                                    <td className="p-3 text-right font-mono tabular-nums">{formatAmount(listPrice)}</td>
+                                    <td className="p-3 text-right font-mono tabular-nums">
+                                        {formatAmount(listPrice)}
+                                        <span className="ml-1.5 text-[9px] font-bold uppercase text-muted-foreground" title={line.priced_at || undefined}>
+                                            {line.price_source || "PO"}
+                                        </span>
+                                    </td>
                                     <td className="p-3 text-right font-mono tabular-nums">
                                         {hasDiscount ? `${discountPercent.toFixed(2)}% (${formatAmount(discountAmount)})` : "—"}
                                     </td>
