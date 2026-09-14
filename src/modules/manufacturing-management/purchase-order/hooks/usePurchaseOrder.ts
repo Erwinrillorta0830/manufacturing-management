@@ -11,7 +11,8 @@ import type {
 } from "../types";
 import {
     fetchLinkedProducts,
-    fetchRawMaterialCatalog
+    fetchRawMaterialCatalog,
+    fetchSuppliers
 } from "../../procurement/services/procurement-api";
 import {
     createPurchaseOrder,
@@ -87,7 +88,12 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
     const [shipmentForm, setShipmentForm] = useState<ShipmentFormState>(blankForm);
     const [shipmentLinesForm, setShipmentLinesForm] = useState<ManifestLineFormItem[]>([blankLine()]);
     const [listMeta, setListMeta] = useState<PurchaseOrderListMeta>({ page: 1, limit: 5, total: 0, totalPages: 1 });
-    const lastQuery = useRef<PurchaseOrderListQuery>({ page: 1, limit: 5 });
+    const lastQuery = useRef<PurchaseOrderListQuery>({
+        page: 1,
+        limit: 5,
+        sort: "date_encoded",
+        direction: "desc"
+    });
     const listController = useRef<AbortController | null>(null);
     const detailController = useRef<AbortController | null>(null);
     const catalogLoad = useRef<Promise<void> | null>(null);
@@ -167,6 +173,14 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
         }
     }, []);
 
+    const loadQueueSuppliers = useCallback(async () => {
+        try {
+            setSuppliers(await fetchSuppliers("all"));
+        } catch (error) {
+            console.error("Failed to load purchase-order supplier filters:", error);
+        }
+    }, []);
+
     const loadDetail = useCallback(async (id: number = shipmentId || 0) => {
         if (!id) {
             setDetailError("The purchase-order ID is invalid.");
@@ -202,12 +216,13 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
             void loadDetail().catch(() => undefined);
         } else if (!isCreateMode) {
             void loadShipments();
+            void loadQueueSuppliers();
         }
         return () => {
             listController.current?.abort();
             detailController.current?.abort();
         };
-    }, [isCreateMode, isDetailMode, loadDetail, loadShipments]);
+    }, [isCreateMode, isDetailMode, loadDetail, loadQueueSuppliers, loadShipments]);
 
     useEffect(() => {
         if (isDetailMode || isCreateMode) {

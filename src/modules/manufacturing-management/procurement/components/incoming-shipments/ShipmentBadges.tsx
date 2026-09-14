@@ -5,9 +5,15 @@ import {
     formatDecimal
 } from "@/modules/manufacturing-management/decimal";
 import {
+    INVENTORY_STATUS,
+    INVENTORY_STATUS_LABELS,
+    LEGACY_DISPATCH_STATUS_ID,
+    PAYMENT_STATUS,
+    PAYMENT_STATUS_LABELS,
     inventoryStatusToPurchaseOrderStatus,
     inventoryStatusToShipmentStatus,
-    isInventoryStatusId
+    isInventoryStatusId,
+    paymentStatusLabel
 } from "@/app/api/manufacturing/procurement/_domain";
 
 export function formatMoney(value: number | string | null | undefined, currency = "PHP", decimalPlaces = PROCUREMENT_MONEY_DECIMAL_SCALE) {
@@ -58,6 +64,77 @@ export function displayShipmentStatus(
     }
     return s.status || "Ordered";
 }
+
+function statusPill(label: string, className: string, ariaLabel: string) {
+    return (
+        <span
+            aria-label={ariaLabel}
+            className={`inline-flex max-w-full items-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider ${className}`}
+        >
+            {label}
+        </span>
+    );
+}
+
+export function inventoryStatusLabel(value: unknown): string {
+    const status = Number(value);
+    if (status === LEGACY_DISPATCH_STATUS_ID) return INVENTORY_STATUS_LABELS[INVENTORY_STATUS.FOR_PICKUP];
+    return isInventoryStatusId(status) ? INVENTORY_STATUS_LABELS[status] : "Unknown";
+}
+
+export function getInventoryStatusBadge(value: unknown) {
+    const status = Number(value);
+    const label = inventoryStatusLabel(value);
+    const className = status === INVENTORY_STATUS.RECEIVED
+        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
+        : status === INVENTORY_STATUS.APPROVED
+            ? "border-teal-500/20 bg-teal-500/10 text-teal-600"
+            : status === INVENTORY_STATUS.FOR_PICKUP || status === LEGACY_DISPATCH_STATUS_ID
+                ? "border-indigo-500/20 bg-indigo-500/10 text-indigo-600"
+                : status === INVENTORY_STATUS.WAREHOUSE_RECEIVING
+                    ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-700"
+                    : status === INVENTORY_STATUS.PARTIALLY_RECEIVED
+                        ? "border-blue-500/20 bg-blue-500/10 text-blue-600"
+                        : status === INVENTORY_STATUS.REJECTED
+                            ? "border-red-500/20 bg-red-500/10 text-red-600"
+                            : status === INVENTORY_STATUS.CANCELLED
+                                ? "border-border bg-muted text-muted-foreground"
+                                : status === INVENTORY_STATUS.AWAITING_PAYMENT
+                                    ? "border-purple-500/20 bg-purple-500/10 text-purple-600"
+                                    : status === INVENTORY_STATUS.REQUESTED
+                                        ? "border-amber-500/20 bg-amber-500/10 text-amber-600"
+                                        : "border-border bg-muted text-muted-foreground";
+    return statusPill(label, className, `Inventory Status: ${label}`);
+}
+
+export function getPaymentStatusBadge(value: unknown) {
+    const status = Number(value);
+    const label = paymentStatusLabel(value);
+    const className = status === PAYMENT_STATUS.PAID
+        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600"
+        : status === PAYMENT_STATUS.PARTIALLY_PAID
+            ? "border-blue-500/20 bg-blue-500/10 text-blue-600"
+            : status === PAYMENT_STATUS.AWAITING_PAYMENT
+                ? "border-amber-500/20 bg-amber-500/10 text-amber-600"
+                : status === PAYMENT_STATUS.OVERDUE
+                    ? "border-red-500/20 bg-red-500/10 text-red-600"
+                    : status === PAYMENT_STATUS.CANCELLED
+                        ? "border-border bg-muted text-muted-foreground"
+                        : status === PAYMENT_STATUS.PROCESSING
+                            ? "border-purple-500/20 bg-purple-500/10 text-purple-600"
+                            : "border-slate-500/20 bg-slate-500/10 text-slate-600";
+    return statusPill(label, className, `Payment Status: ${label}`);
+}
+
+export const INVENTORY_STATUS_FILTER_OPTIONS = [
+    { value: "", label: "All Inventory Statuses" },
+    ...Object.entries(INVENTORY_STATUS_LABELS).map(([value, label]) => ({ value, label }))
+];
+
+export const PAYMENT_STATUS_FILTER_OPTIONS = [
+    { value: "", label: "All Payment Statuses" },
+    ...Object.entries(PAYMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))
+];
 
 export function getStatusBadge(status: string) {
     switch (status) {

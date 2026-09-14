@@ -690,6 +690,14 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
             ]
         });
     }
+    if (query.supplierId) clauses.push({ supplier_name: { _eq: query.supplierId } });
+    if (query.inventoryStatus) {
+        const inventoryStatusIds = query.inventoryStatus === INVENTORY_STATUS.FOR_PICKUP
+            ? [INVENTORY_STATUS.FOR_PICKUP, 12]
+            : [query.inventoryStatus];
+        clauses.push({ inventory_status: { _in: inventoryStatusIds } });
+    }
+    if (query.paymentStatus) clauses.push({ payment_status: { _eq: query.paymentStatus } });
     if (query.queue === "receiving" && !query.status && !query.approvalStage) {
         clauses.push({
             inventory_status: {
