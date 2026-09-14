@@ -55,7 +55,7 @@ export const exportCollectionReportToExcel = (
             Date: check.date || pouch.date,
             "Pouch Doc No": check.docNo || pouch.docNo,
             Status: pouch.isPosted ? "POSTED" : "DRAFT",
-            Bank: check.bankName,
+            Bank: check.bankName && check.bankName.toLowerCase() !== "unknown bank" ? check.bankName : "—",
             "Check No": check.checkNo,
             "Check Date": check.chequeDate || "N/A",
             Customer: displayCustomer(check.customerName),

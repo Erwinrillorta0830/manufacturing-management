@@ -10,13 +10,26 @@ if (DIRECTUS_STATIC_TOKEN) {
     headers["Authorization"] = `Bearer ${DIRECTUS_STATIC_TOKEN}`;
 }
 
+function parseBitBoolean(val: unknown): boolean {
+    if (val === true || val === 1 || val === "1" || val === "true") return true;
+    if (val === false || val === 0 || val === "0" || val === "false" || val === null || val === undefined) return false;
+    if (Buffer.isBuffer(val)) return val[0] === 1;
+    if (typeof val === "object" && val !== null) {
+        const obj = val as { type?: string; data?: number[] };
+        if (obj.type === "Buffer" && Array.isArray(obj.data) && obj.data.length > 0) {
+            return obj.data[0] === 1;
+        }
+    }
+    return Boolean(val);
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const startDate = searchParams.get("startDate");
         const endDate = searchParams.get("endDate");
         
-        let query = "?limit=-1";
+        let query = "?limit=-1&fields=*";
         if (startDate && endDate) {
             query += `&filter[_and][0][collection_date][_gte]=${startDate}&filter[_and][1][collection_date][_lte]=${endDate}`;
         }
@@ -241,7 +254,7 @@ export async function GET(request: Request) {
                         date: pouch.collection_date,
                         chequeDate: d.chequeDate,
                         docNo: d.check_no || "N/A",
-                        bankName: bankObj?.bank_name || "Unknown Bank",
+                        bankName: bankObj?.bank_name || "",
                         checkNo: d.check_no || "N/A",
                         customerName: resolveCustomerName(d.customer_code),
                         amount: amount
@@ -302,7 +315,7 @@ export async function GET(request: Request) {
                 id: pouch.id,
                 docNo: pouch.docNo,
                 date: pouch.collection_date,
-                isPosted: pouch.isPosted === true || pouch.isPosted === 1 || (Buffer.isBuffer(pouch.isPosted) && pouch.isPosted[0] === 1),
+                isPosted: parseBitBoolean(pouch.isPosted ?? pouch.is_posted),
                 totalCash,
                 totalCheck,
                 shortage,
