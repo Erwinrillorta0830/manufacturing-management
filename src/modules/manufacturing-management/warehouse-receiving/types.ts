@@ -1,6 +1,11 @@
 export type WarehouseReceiptType = "full" | "partial";
 
-export type WarehouseReceivingStatus = "Approved" | "Warehouse Receiving" | "Receiving (QA)";
+export type WarehouseReceivingStatus = "Approved" | "Partially Received" | "Warehouse Receiving" | "Receiving (QA)";
+
+export interface WarehouseReceivingSupplierOption {
+    id: number;
+    name: string;
+}
 
 export interface WarehouseReceivingLine {
     lineId: number;
@@ -32,11 +37,16 @@ export interface WarehouseReceivingOrder {
     supplierName: string;
     branch: { id: number; name: string; code: string };
     branchId: number;
+    supplierId: number | null;
     status: WarehouseReceivingStatus;
     inventoryStatus: number;
     workflowRevision: number;
     currencyCode: string;
     totalAmount: number;
+    totalPhpAmount: number;
+    totalForeignAmount: number | null;
+    dateApproved: string | null;
+    remarks: string;
     lines: WarehouseReceivingLine[];
     draft: WarehouseReceivingDraft | null;
 }
@@ -46,6 +56,7 @@ export interface WarehouseReceivingQueueResponse {
     page: number;
     limit: number;
     total: number;
+    supplierOptions: WarehouseReceivingSupplierOption[];
 }
 
 export interface WarehouseReceivingCommand {

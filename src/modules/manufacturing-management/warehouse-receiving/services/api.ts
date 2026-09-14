@@ -22,7 +22,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function fetchWarehouseReceivingQueue(
-    options: { search?: string; page?: number; limit?: number } = {},
+    options: { search?: string; supplierId?: string; dateFrom?: string; dateTo?: string; status?: string; page?: number; limit?: number } = {},
     signal?: AbortSignal
 ): Promise<WarehouseReceivingQueueResponse> {
     const params = new URLSearchParams({
@@ -30,6 +30,10 @@ export function fetchWarehouseReceivingQueue(
         limit: String(options.limit || 25)
     });
     if (options.search?.trim()) params.set("search", options.search.trim());
+    if (options.supplierId?.trim()) params.set("supplierId", options.supplierId.trim());
+    if (options.dateFrom?.trim()) params.set("dateFrom", options.dateFrom.trim());
+    if (options.dateTo?.trim()) params.set("dateTo", options.dateTo.trim());
+    if (options.status?.trim() && options.status !== "ALL") params.set("status", options.status.trim());
     return request<WarehouseReceivingQueueResponse>(`${API_URL}?${params.toString()}`, { signal });
 }
 
