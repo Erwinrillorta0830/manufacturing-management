@@ -21,6 +21,7 @@ import {
     PurchaseOrderMaterialType
 } from "./types";
 import { normalizeProductRelationId, resolveProductParentId } from "../../product-relation";
+import { normalizePurchaseOrderUnitPrice } from "../../price-precision";
 
 export interface RawProductSelectorProps {
     id?: string;
@@ -203,7 +204,7 @@ export function RawProductSelector({
             product_name: parentMaterial.product_name || defaultMaterial.product_name,
             product_code: defaultMaterial.product_code || "",
             selected_uom: defaultMaterial.unit_of_measurement?.unit_shortcut || "PCS",
-            base_unit_cost_php: canonicalDrafting ? "" : String(cost),
+            base_unit_cost_php: canonicalDrafting ? "" : normalizePurchaseOrderUnitPrice(cost),
             uom_options: members.map(member => ({
                 product_id: member.product_id,
                 parent_product_id: resolveProductParentId(member) || member.product_id,

@@ -71,6 +71,7 @@ export interface ManifestLineFormItem {
     product_name?: string;
     product_code?: string;
     selected_uom?: string;
+    price_source?: "matrix" | "manual" | "none";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     uom_options?: any[];
     purchase_intent?: "MRP_Demand" | "Buffer_Stock";

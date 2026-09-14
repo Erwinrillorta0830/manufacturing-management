@@ -26,6 +26,12 @@ import {
 import { resolveProductParentId } from "../../procurement/product-relation";
 import { purchaseOrderMaterialTypeFromProduct } from "../../procurement/components/incoming-shipments/types";
 import { calculatePercentageDiscount } from "../../procurement/discount-calculation";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "../../decimal";
+import { normalizePurchaseOrderUnitPrice } from "../../procurement/price-precision";
 
 const blankLine = (): ManifestLineFormItem => ({
     parent_product_id: "", product_id: "", material_type: "", quantity_ordered: "", base_unit_cost_php: "",
@@ -37,24 +43,63 @@ const blankForm = (): ShipmentFormState => ({
 });
 
 function calculateDraftTotals(lines: PurchaseOrderDraftPayload["lines"], exchangeRate: number) {
-    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
-    return lines.reduce((totals, line) => {
+    const normalizedExchangeRate = DecimalValue.from(exchangeRate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE);
+    const totals = lines.reduce((totals, line) => {
         const discountCalculation = calculatePercentageDiscount(line.quantity, line.unitPrice, line.discountPercent);
-        const grossForeign = round(Number(discountCalculation.grossAmount));
-        const discountForeign = round(Number(discountCalculation.discountAmount));
-        const subtotalForeign = round(grossForeign - discountForeign);
-        const vatForeign = round(subtotalForeign * line.vatPercent / 100);
-        const withholdingForeign = round(subtotalForeign * line.withholdingPercent / 100);
-        const netForeign = round(subtotalForeign + vatForeign - withholdingForeign);
+        const grossForeign = discountCalculation.grossAmount;
+        const discountForeign = discountCalculation.discountAmount;
+        const subtotalForeign = DecimalValue.from(grossForeign)
+            .subtract(discountForeign)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+        const vatForeign = DecimalValue.from(subtotalForeign)
+            .multiply(line.vatPercent)
+            .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+        const withholdingForeign = DecimalValue.from(subtotalForeign)
+            .multiply(line.withholdingPercent)
+            .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+        const netForeign = DecimalValue.from(subtotalForeign)
+            .add(vatForeign)
+            .subtract(withholdingForeign)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
         return {
-            grossPhp: round(totals.grossPhp + grossForeign * exchangeRate),
-            discountPhp: round(totals.discountPhp + discountForeign * exchangeRate),
-            vatPhp: round(totals.vatPhp + vatForeign * exchangeRate),
-            withholdingPhp: round(totals.withholdingPhp + withholdingForeign * exchangeRate),
-            netPhp: round(totals.netPhp + netForeign * exchangeRate),
-            netForeign: round(totals.netForeign + netForeign)
+            grossPhp: DecimalValue.from(totals.grossPhp)
+                .add(DecimalValue.from(grossForeign).multiply(normalizedExchangeRate))
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+            discountPhp: DecimalValue.from(totals.discountPhp)
+                .add(DecimalValue.from(discountForeign).multiply(normalizedExchangeRate))
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+            vatPhp: DecimalValue.from(totals.vatPhp)
+                .add(DecimalValue.from(vatForeign).multiply(normalizedExchangeRate))
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+            withholdingPhp: DecimalValue.from(totals.withholdingPhp)
+                .add(DecimalValue.from(withholdingForeign).multiply(normalizedExchangeRate))
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+            netPhp: DecimalValue.from(totals.netPhp)
+                .add(DecimalValue.from(netForeign).multiply(normalizedExchangeRate))
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+            netForeign: DecimalValue.from(totals.netForeign)
+                .add(netForeign)
+                .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
         };
-    }, { grossPhp: 0, discountPhp: 0, vatPhp: 0, withholdingPhp: 0, netPhp: 0, netForeign: 0 });
+    }, {
+        grossPhp: "0.0000",
+        discountPhp: "0.0000",
+        vatPhp: "0.0000",
+        withholdingPhp: "0.0000",
+        netPhp: "0.0000",
+        netForeign: "0.0000"
+    });
+
+    return {
+        grossPhp: Number(totals.grossPhp),
+        discountPhp: Number(totals.discountPhp),
+        vatPhp: Number(totals.vatPhp),
+        withholdingPhp: Number(totals.withholdingPhp),
+        netPhp: Number(totals.netPhp),
+        netForeign: Number(totals.netForeign)
+    };
 }
 
 export type PurchaseOrderViewMode = "queue" | "detail" | "create";
@@ -339,6 +384,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
             const productId = Number(line.product_id);
             const product = rawMaterials.find(material => Number(material.product_id) === productId);
             const canonicalParentId = resolveProductParentId(product!);
+            const normalizedUnitPrice = normalizePurchaseOrderUnitPrice(line.base_unit_cost_php);
 
             return {
                 productId,
@@ -351,14 +397,14 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
                 purchaseIntent: line.purchase_intent || "Buffer_Stock",
                 jobOrderId: line.purchase_intent === "MRP_Demand" ? Number(line.job_order_id) || null : null,
                 quantity: Number(line.quantity_ordered),
-                unitPrice: Number(line.base_unit_cost_php),
+                unitPrice: Number(normalizedUnitPrice),
                 discountMode: "Percentage",
                 discountType: line.discount_type_id ? Number(line.discount_type_id) : null,
                 discountSource: line.discount_source || "supplier",
                 discountPercent: Number(line.discount_percent) || 0,
                 discountAmount: Number(calculatePercentageDiscount(
                     line.quantity_ordered,
-                    line.base_unit_cost_php,
+                    normalizedUnitPrice,
                     Number(line.discount_percent) || 0
                 ).discountAmount),
                 vatPercent: Number(line.vat_percent) || 0,

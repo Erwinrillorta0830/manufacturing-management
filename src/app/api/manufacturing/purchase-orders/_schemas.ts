@@ -24,7 +24,8 @@ const decimalValue = z.union([z.string().trim().min(1), z.number().finite()]).tr
 }, "Must be a valid decimal value.");
 const nonNegativeMoney = decimalValue
     .refine(value => DecimalValue.from(value).compare(0) >= 0, "Must be a non-negative amount.")
-    .refine(value => isWithinDecimalCapacity(value, PROCUREMENT_MONEY_DECIMAL_SCALE), "Amount exceeds the supported 65-digit currency range.");
+    .refine(value => isWithinDecimalCapacity(value, PROCUREMENT_MONEY_DECIMAL_SCALE), "Amount exceeds the supported 65-digit currency range.")
+    .transform(value => DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 const positiveDecimal = decimalValue.refine(value => DecimalValue.from(value).compare(0) > 0, "Must be greater than zero.");
 const percentage = z.coerce.number().finite().min(0).max(100);
 const discountMode = z.literal("Percentage");

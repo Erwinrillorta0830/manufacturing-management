@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Ban,
@@ -23,6 +23,7 @@ import RevisionSnapshotComparison from "./components/RevisionSnapshotComparison"
 import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purchase-order-print-api";
 import { calculatePercentageDiscount } from "../procurement/discount-calculation";
 import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../decimal";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 type QueueTab = "For Approval" | "Approved" | "Rejected";
 
@@ -209,17 +210,44 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
     } = usePurchaseOrderApproval(stage, { mode, purchaseOrderId });
     const [tab, setTab] = useState<QueueTab>("For Approval");
     const [search, setSearch] = useState("");
+    const [supplierFilter, setSupplierFilter] = useState("");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
     const [pageSize, setPageSize] = useState(10);
     const [printLoading, setPrintLoading] = useState(false);
     const isDetailMode = mode === "detail";
+    const dateRangeError = startDate && endDate && startDate > endDate
+        ? "The end date must be on or after the start date."
+        : null;
+
+    const supplierOptions = useMemo(() => [
+        { value: "", label: "All Suppliers" },
+        ...suppliers
+            .filter(supplier => supplier.supplier_name?.trim())
+            .sort((left, right) => left.supplier_name.localeCompare(right.supplier_name))
+            .map(supplier => ({ value: String(supplier.id), label: supplier.supplier_name.trim() }))
+    ], [suppliers]);
+
+    const buildQueueQuery = useCallback((page: number) => {
+        const parsedSupplierId = Number(supplierFilter);
+        return {
+            page,
+            status: tab,
+            search: search.trim(),
+            limit: pageSize,
+            supplierId: Number.isSafeInteger(parsedSupplierId) && parsedSupplierId > 0 ? parsedSupplierId : undefined,
+            startDate: startDate || undefined,
+            endDate: endDate || undefined
+        };
+    }, [endDate, pageSize, search, startDate, supplierFilter, tab]);
 
     useEffect(() => {
-        if (isDetailMode) return;
+        if (isDetailMode || dateRangeError) return;
         const timeout = window.setTimeout(() => {
-            void load({ page: 1, status: tab, search, limit: pageSize });
+            void load(buildQueueQuery(1));
         }, 250);
         return () => window.clearTimeout(timeout);
-    }, [isDetailMode, load, pageSize, search, tab]);
+    }, [buildQueueQuery, dateRangeError, isDetailMode, load]);
 
     const supplierName = useMemo(
         () => selectedShipment && approvalDetail
@@ -487,9 +515,16 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
         );
     }
 
-    const retryQueue = () => void load({ page: pagination.page, status: tab, search, limit: pageSize });
+    const retryQueue = () => void load(buildQueueQuery(pagination.page));
     const goToQueuePage = (page: number) => {
-        void load({ page, status: tab, search, limit: pageSize });
+        void load(buildQueueQuery(page));
+    };
+    const hasQueueFilters = Boolean(search.trim() || supplierFilter || startDate || endDate);
+    const clearQueueFilters = () => {
+        setSearch("");
+        setSupplierFilter("");
+        setStartDate("");
+        setEndDate("");
     };
 
     return (
@@ -521,16 +556,60 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                             );
                         })}
                     </div>
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <input
-                            value={search}
-                            onChange={event => setSearch(event.target.value)}
-                            placeholder="Search PO, reference, or supplier"
-                            aria-label="Search purchase orders"
-                            className="min-h-10 w-full rounded-md border bg-background pl-9 pr-3 text-xs outline-none focus:ring-2 focus:ring-ring"
-                        />
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(14rem,1fr)_minmax(10rem,0.8fr)_minmax(10rem,0.8fr)_auto] lg:items-end">
+                        <label className="relative block">
+                            <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Search</span>
+                            <Search className="absolute left-3 top-[calc(50%+0.35rem)] h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                                value={search}
+                                onChange={event => setSearch(event.target.value)}
+                                placeholder="Search PO, reference, or supplier"
+                                aria-label="Search purchase orders"
+                                className="min-h-10 w-full rounded-md border bg-background pl-9 pr-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Supplier</span>
+                            <SearchableSelect
+                                options={supplierOptions}
+                                value={supplierFilter}
+                                onValueChange={setSupplierFilter}
+                                placeholder="All Suppliers"
+                                className="h-10 min-w-0 text-xs"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Date from</span>
+                            <input
+                                type="date"
+                                value={startDate}
+                                onChange={event => setStartDate(event.target.value)}
+                                aria-label="Finance approval date from"
+                                className="min-h-10 w-full rounded-md border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Date to</span>
+                            <input
+                                type="date"
+                                value={endDate}
+                                onChange={event => setEndDate(event.target.value)}
+                                aria-label="Finance approval date to"
+                                className="min-h-10 w-full rounded-md border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                            />
+                        </label>
+                        <button
+                            type="button"
+                            onClick={clearQueueFilters}
+                            disabled={!hasQueueFilters}
+                            className="inline-flex min-h-10 items-center justify-center rounded-md border px-3 text-xs font-semibold hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Clear filters
+                        </button>
                     </div>
+                    {dateRangeError && (
+                        <p role="alert" className="text-xs font-semibold text-red-700">{dateRangeError}</p>
+                    )}
                 </div>
 
                 {loading ? (

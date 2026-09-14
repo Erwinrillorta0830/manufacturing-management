@@ -440,7 +440,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         const effectiveOrder = appliedCommercialTerms.order;
         assertEnteredPricesForMissingPriceControl(
             effectiveOrder.lines.map(line => ({ productId: line.productId, unitPrice: line.unitPrice })),
-            resolvedCommercial.missingPriceProductIds
+            resolvedCommercial.missingPriceProductIds,
+            resolvedCommercial.missingPriceDetails
         );
         order = effectiveOrder;
         baseUnitPricePhpByProductId = appliedCommercialTerms.baseUnitPricePhpByProductId;

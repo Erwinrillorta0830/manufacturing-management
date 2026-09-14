@@ -1,12 +1,33 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
-import { DecimalValue } from "@/modules/manufacturing-management/decimal";
+import {
+    DecimalValue,
+    UNIT_PRICE_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 
 export type PurchaseOrderPriceTypeErrorCode =
     | "PRICE_TYPE_NOT_CONFIGURED"
     | "MIXED_PRICE_TYPES"
     | "PRICE_MATRIX_NOT_CONFIGURED"
-    | "PRICE_FALLBACK_REQUIRED"
     | "PRICE_TYPE_LOOKUP_UNAVAILABLE";
+
+export type PurchaseOrderMissingPriceReason =
+    | "MATRIX_ROW_MISSING"
+    | "MATRIX_ROW_NOT_APPROVED"
+    | "MATRIX_PRICE_INVALID";
+
+export interface PurchaseOrderMissingPriceDetail {
+    productId: number;
+    unitId: number | null;
+    unitLabel: string | null;
+    priceTypeId: number;
+    priceTypeName: string;
+    reason: PurchaseOrderMissingPriceReason;
+}
+
+export interface PurchaseOrderProductUnit {
+    unitId: number | null;
+    unitLabel: string | null;
+}
 
 export interface PurchaseOrderPriceTypeRule {
     productTypeId: number;
@@ -22,6 +43,8 @@ export interface ResolvedPurchaseOrderPriceType {
     pricesByProductId: Record<number, string>;
     priceSourceProductIds: Record<number, number>;
     missingProductIds: number[];
+    missingPriceDetails: PurchaseOrderMissingPriceDetail[];
+    unitsByProductId: Record<number, PurchaseOrderProductUnit>;
 }
 
 export class PurchaseOrderPriceTypeError extends Error {
@@ -52,6 +75,7 @@ interface DirectusProductRow {
     product_type?: DirectusRelation;
     parent_id?: DirectusRelation & { product_type?: DirectusRelation };
     parent_product_type?: DirectusRelation;
+    unit_of_measurement?: DirectusRelation;
 }
 
 interface DirectusPriceMatrixRow {
@@ -86,6 +110,15 @@ function relationName(value: DirectusRelation, keys: string[]): string | null {
         if (typeof name === "string" && name.trim()) return name.trim();
     }
     return null;
+}
+
+function productUnit(product: DirectusProductRow): PurchaseOrderProductUnit {
+    const unitId = relationId(product.unit_of_measurement, ["unit_id", "id"]);
+    const unitLabel = relationName(product.unit_of_measurement, ["unit_shortcut", "unit_name", "name"]);
+    return {
+        unitId,
+        unitLabel: unitLabel || (unitId ? `UOM #${unitId}` : null)
+    };
 }
 
 function directusErrorMessage(body: unknown, fallback: string): string {
@@ -176,7 +209,8 @@ function isPositiveDecimal(value: unknown): boolean {
 
 export function assertEnteredPricesForMissingPriceControl(
     lines: readonly { productId: number; unitPrice: unknown }[],
-    missingProductIds: readonly number[]
+    missingProductIds: readonly number[],
+    missingPriceDetails: readonly PurchaseOrderMissingPriceDetail[] = []
 ): void {
     const missingProductIdSet = new Set(missingProductIds);
     const invalidProductIds = lines
@@ -186,10 +220,13 @@ export function assertEnteredPricesForMissingPriceControl(
     if (invalidProductIds.length === 0) return;
 
     throw new PurchaseOrderPriceTypeError(
-        "Enter a positive unit price for each product without a configured Price Control value.",
-        "PRICE_FALLBACK_REQUIRED",
+        "A configured Price Control value is missing for one or more selected product UOMs. Configure the matrix value or enter a positive manual unit price.",
+        "PRICE_MATRIX_NOT_CONFIGURED",
         400,
-        { missingProductIds: [...new Set(invalidProductIds)] }
+        {
+            missingProductIds: [...new Set(invalidProductIds)],
+            missingPriceDetails: missingPriceDetails.filter(detail => invalidProductIds.includes(detail.productId))
+        }
     );
 }
 
@@ -271,8 +308,8 @@ export function resolvePurchaseOrderPriceTypeFromRows(
         const rowPriceTypeId = relationId(row.price_type_id, ["price_type_id", "id"]);
         const price = row.price == null ? "" : String(row.price).trim();
         const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
-        if (rowProductId && rowPriceTypeId === priceTypeId && (!status || status === "approved") && price && Number(price) > 0) {
-            matrixByProductId.set(rowProductId, price);
+        if (rowProductId && rowPriceTypeId === priceTypeId && status === "approved" && isPositiveDecimal(price)) {
+            matrixByProductId.set(rowProductId, DecimalValue.from(price).toFixed(UNIT_PRICE_DECIMAL_SCALE));
             priceSourceProductIds.set(rowProductId, rowProductId);
         }
     }
@@ -280,13 +317,44 @@ export function resolvePurchaseOrderPriceTypeFromRows(
     const missingProductIds = productIds.filter(productId => !matrixByProductId.has(productId));
     const rule = resolutions[0].rule;
     const priceTypeName = rule.priceTypeName || `Price Type #${priceTypeId}`;
+    const missingPriceDetails = missingProductIds.map(productId => {
+        const matchingRows = matrixRows.filter(row =>
+            relationId(row.product_id, ["product_id", "id"]) === productId &&
+            relationId(row.price_type_id, ["price_type_id", "id"]) === priceTypeId
+        );
+        const reason: PurchaseOrderMissingPriceReason = matchingRows.length === 0
+            ? "MATRIX_ROW_MISSING"
+            : matchingRows.some(row => {
+                const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
+                return status !== "approved";
+            })
+                ? "MATRIX_ROW_NOT_APPROVED"
+                : "MATRIX_PRICE_INVALID";
+        return {
+            productId,
+            ...productUnit(productsById.get(productId) || {}),
+            priceTypeId,
+            priceTypeName,
+            reason
+        } satisfies PurchaseOrderMissingPriceDetail;
+    });
+    const unitsByProductId = Object.fromEntries(
+        products
+            .map(product => {
+                const productId = relationId(product.product_id, ["product_id", "id"]);
+                return productId ? [productId, productUnit(product)] as const : null;
+            })
+            .filter((entry): entry is readonly [number, PurchaseOrderProductUnit] => entry !== null)
+    );
     return {
         priceTypeId,
         priceTypeName,
         productTypeIds: [...new Set(resolutions.map(resolution => resolution.productTypeId))],
         pricesByProductId: Object.fromEntries(matrixByProductId.entries()),
         priceSourceProductIds: Object.fromEntries(priceSourceProductIds.entries()),
-        missingProductIds
+        missingProductIds,
+        missingPriceDetails,
+        unitsByProductId
     };
 }
 
@@ -302,7 +370,7 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
     const productFilter = uniqueProductIds.join(",");
     const [selectedProducts, rules] = await Promise.all([
         directusData<DirectusProductRow[]>(
-            `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id&limit=${uniqueProductIds.length}`,
+            `/items/products?filter[product_id][_in]=${productFilter}&fields=product_id,product_type,parent_id,unit_of_measurement,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name&limit=${uniqueProductIds.length}`,
             "Unable to load products for Price Type determination."
         ),
         fetchPurchaseOrderPriceTypeRules()
@@ -341,37 +409,25 @@ export async function resolvePurchaseOrderPriceType(productIds: number[]): Promi
     if (priceTypeIds.length !== 1) {
         return resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, []);
     }
-    const matrixProductIds = [...new Set([...uniqueProductIds, ...parentProductIds])];
+    const matrixProductIds = uniqueProductIds;
     const matrixRows = await directusData<DirectusPriceMatrixRow[]>(
-        `/items/product_per_price_type?filter[product_id][_in]=${matrixProductIds.join(",")}&filter[price_type_id][_eq]=${priceTypeIds[0]}&filter[status][_eq]=approved&fields=product_id,price_type_id,price,status&limit=-1`,
+        `/items/product_per_price_type?filter[product_id][_in]=${matrixProductIds.join(",")}&filter[price_type_id][_eq]=${priceTypeIds[0]}&fields=product_id,price_type_id,price,status&limit=-1`,
         "Unable to load Price Control matrix entries."
     );
     const resolved = resolvePurchaseOrderPriceTypeFromRows(uniqueProductIds, products, rules, matrixRows);
-    const pricesByProductId = { ...resolved.pricesByProductId };
-    const priceSourceProductIds = { ...resolved.priceSourceProductIds };
-    const missingProductIds = uniqueProductIds.filter(productId => {
-        if (pricesByProductId[productId]) return false;
-        const product = selectedProducts.find(row => relationId(row.product_id, ["product_id", "id"]) === productId);
-        const parentId = relationId(product?.parent_id, ["product_id", "id"]);
-        if (parentId && pricesByProductId[parentId]) {
-            pricesByProductId[productId] = pricesByProductId[parentId];
-            priceSourceProductIds[productId] = parentId;
-            return false;
-        }
-        return true;
-    });
-    const withResolvedParents = {
-        ...resolved,
-        pricesByProductId,
-        priceSourceProductIds,
-        missingProductIds
-    };
     if (!resolved.priceTypeName || resolved.priceTypeName.startsWith("Price Type #")) {
         const priceType = await directusData<{ price_type_name?: string }>(
             `/items/price_types/${resolved.priceTypeId}?fields=price_type_id,price_type_name`,
             "Unable to load the resolved Price Type."
         );
-        return { ...withResolvedParents, priceTypeName: priceType.price_type_name || resolved.priceTypeName };
+        return {
+            ...resolved,
+            priceTypeName: priceType.price_type_name || resolved.priceTypeName,
+            missingPriceDetails: resolved.missingPriceDetails.map(detail => ({
+                ...detail,
+                priceTypeName: priceType.price_type_name || detail.priceTypeName
+            }))
+        };
     }
-    return withResolvedParents;
+    return resolved;
 }
