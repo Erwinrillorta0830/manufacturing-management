@@ -13,7 +13,16 @@ import { CreatableSelect } from "@/modules/manufacturing-management/finished-goo
 import { normalizeProductRelationId } from "../../product-relation";
 import { PURCHASE_ORDER_DELIVERY_TERMS } from "../../../purchase-order/commercial-terms";
 import { calculatePercentageDiscount } from "../../discount-calculation";
-import { DecimalValue, EXCHANGE_RATE_DECIMAL_SCALE, UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import {
+    DecimalValue,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
+import {
+    convertPhpUnitPriceToTransactionCurrency,
+    tryNormalizePurchaseOrderUnitPrice
+} from "../../price-precision";
+import type { PurchaseOrderMissingPriceDetail } from "../../../purchase-order/types";
 
 export interface UOMOption {
     product_id: number;
@@ -48,7 +57,7 @@ export interface ShipmentFormModalProps {
     handleLineFormChange: (idx: number, fieldOrObject: string | Record<string, unknown>, value?: unknown) => void;
     getLineErrors: (line: ManifestLineFormItem) => string[];
     supplierRawMaterials: RawMaterial[];
-    priceControlCostsMap: Record<number, number>;
+    priceControlCostsMap: Record<number, string>;
     discountTypes?: Array<{ id: number; discount_type: string; total_percent: number | string }>;
     productPerSupplierMap?: Record<number, { discount_type_id?: number; total_percent?: number }>;
     jobOrders: Array<{ job_order_id: number; job_order_no?: string }>;
@@ -65,6 +74,7 @@ export interface ShipmentFormModalProps {
         priceTypeId: number | null;
         priceTypeName: string | null;
         message: string | null;
+        missingPriceDetails: PurchaseOrderMissingPriceDetail[];
     };
     hasSubmitted: boolean;
     draftSummary: {
@@ -102,6 +112,16 @@ function ResponsiveCellLabel({ children }: { children: React.ReactNode }) {
             {children}
         </span>
     );
+}
+
+function hasConfiguredPrice(value: string | undefined): value is string {
+    if (!value) return false;
+
+    try {
+        return DecimalValue.from(value).compare(0) > 0;
+    } catch {
+        return false;
+    }
 }
 
 export function ShipmentFormModal({
@@ -146,6 +166,8 @@ export function ShipmentFormModal({
     const [activeRowEdit, setActiveRowEdit] = React.useState<ActiveRowEdit | null>(null);
     const [rowEditError, setRowEditError] = React.useState<string | null>(null);
     const isPage = presentation === "page";
+    const missingPriceDetails = priceTypeResolution?.missingPriceDetails ?? [];
+    const missingPriceLabels = [...new Set(missingPriceDetails.map(detail => detail.unitLabel || `UOM #${detail.unitId ?? "?"}`))];
 
     const deliveryTermsOptions = React.useMemo(() => {
         const options: Array<{ value: string; label: string }> = [...PURCHASE_ORDER_DELIVERY_TERMS];
@@ -209,6 +231,7 @@ export function ShipmentFormModal({
                             product_name: "",
                             product_code: "",
                             selected_uom: "",
+                            price_source: "none",
                             uom_options: [],
                             quantity_ordered: "",
                             base_unit_cost_php: "",
@@ -559,7 +582,9 @@ export function ShipmentFormModal({
                             )}
                             {canonicalDrafting && priceControlStatus === "warning" && (
                                 <p className="text-[10px] font-medium text-amber-700" role="alert">
-                                    {priceTypeResolution?.message || "One or more products require a manually entered price because no matrix value is configured."}
+                                    {missingPriceLabels.length > 0
+                                        ? `Price Control is not configured for ${missingPriceLabels.join(", ")}. Configure the exact matrix value or enter a positive manual price per line.`
+                                        : priceTypeResolution?.message || "One or more products require a manually entered price because no matrix value is configured."}
                                 </p>
                             )}
                             {canonicalDrafting && priceControlStatus === "error" && (
@@ -625,20 +650,21 @@ export function ShipmentFormModal({
                                         <tbody className="block space-y-2 xl:table-row-group xl:space-y-0 xl:divide-y xl:divide-border/60">
                                             {linesForm.map((line, idx) => {
                                                 const lineErrors = getLineErrors(line);
-                                                const qty = Number(line.quantity_ordered || 0);
-                                                const unitPrice = Number(line.base_unit_cost_php || 0);
-                                                const grossForeign = qty * unitPrice;
                                                 const discountMode = line.discount_mode || "Percentage";
                                                 const isHistoricalFixedDiscount = discountMode === "Fixed Amount";
+                                                const normalizedUnitPrice = tryNormalizePurchaseOrderUnitPrice(line.base_unit_cost_php);
                                                 const calculatedDiscount = calculatePercentageDiscount(
                                                     line.quantity_ordered || 0,
-                                                    line.base_unit_cost_php || 0,
+                                                    normalizedUnitPrice || 0,
                                                     line.discount_percent || 0
                                                 );
+                                                const grossForeign = calculatedDiscount.grossAmount;
                                                 const discount = isHistoricalFixedDiscount
-                                                    ? Number(line.discount_amount || 0)
-                                                    : Number(calculatedDiscount.discountAmount);
-                                                const subtotal = grossForeign - discount;
+                                                    ? tryNormalizePurchaseOrderUnitPrice(line.discount_amount || 0) || "0.0000"
+                                                    : calculatedDiscount.discountAmount;
+                                                const subtotal = DecimalValue.from(grossForeign)
+                                                    .subtract(discount)
+                                                    .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
                                                  const materialType = line.material_type || "";
                                                  const isRowEditing = canonicalDrafting || activeRowEdit?.index === idx;
                                                  const hasActiveRowEdit = !canonicalDrafting && activeRowEdit !== null;
@@ -727,17 +753,24 @@ export function ShipmentFormModal({
                                                                     const isDuplicate = linesForm.some((l, i) => i !== idx && String(l.product_id) === String(selected.product_id));
                                                                     if (isDuplicate) return;
                                                                     
-                                                                    const finalSelected = { ...selected };
+                                                                    const finalSelected: ManifestLineFormItem = {
+                                                                        ...selected,
+                                                                        quantity_ordered: line.quantity_ordered,
+                                                                        price_source: "none"
+                                                                    };
                                                                     const priceControlCost = priceControlCostsMap[Number(selected.product_id)];
-                                                                    if (!canonicalDrafting && priceControlCost !== undefined && priceControlCost > 0) {
-                                                                        finalSelected.base_unit_cost_php = String(priceControlCost);
+                                                                    if (!canonicalDrafting && hasConfiguredPrice(priceControlCost)) {
+                                                                        finalSelected.base_unit_cost_php = priceControlCost;
                                                                     } else if (canonicalDrafting) {
                                                                         finalSelected.base_unit_cost_php = "";
                                                                     }
+                                                                    finalSelected.price_source = hasConfiguredPrice(priceControlCost) ? "matrix" : "none";
                                                                     if (canonicalDrafting && shipmentForm.currency_code === "USD" && finalSelected.base_unit_cost_php) {
-                                                                        finalSelected.base_unit_cost_php = DecimalValue.from(finalSelected.base_unit_cost_php)
-                                                                            .divideRounded(Number(shipmentForm.exchange_rate) || 1, UNIT_PRICE_DECIMAL_SCALE)
-                                                                            .toFixed(UNIT_PRICE_DECIMAL_SCALE);
+                                                                        finalSelected.base_unit_cost_php = convertPhpUnitPriceToTransactionCurrency(
+                                                                            finalSelected.base_unit_cost_php,
+                                                                            "USD",
+                                                                            shipmentForm.exchange_rate
+                                                                        ) || "";
                                                                     }
 
                                                                     (finalSelected as ManifestLineFormItem).discount_type_id = "";
@@ -786,23 +819,29 @@ export function ShipmentFormModal({
                                                                         if (isDuplicate) return;
                                                                         const opt = line.uom_options?.find((o: UOMOption) => String(o.product_id) === String(selectedId));
                                                                         if (opt) {
-                                                                            let costVal: number | undefined = opt.cost_per_unit;
                                                                             const priceControlCost = priceControlCostsMap[Number(selectedId)];
-                                                                            if (priceControlCost !== undefined && priceControlCost > 0) {
-                                                                                costVal = priceControlCost;
-                                                                            } else if (canonicalDrafting) {
-                                                                                costVal = undefined;
-                                                                            }
-                                                                            if (costVal !== undefined && canonicalDrafting && shipmentForm.currency_code === "USD") {
-                                                                                costVal /= Number(shipmentForm.exchange_rate) || 1;
-                                                                            }
+                                                                            const baseUnitPrice = hasConfiguredPrice(priceControlCost)
+                                                                                ? priceControlCost
+                                                                                : canonicalDrafting
+                                                                                    ? null
+                                                                                    : tryNormalizePurchaseOrderUnitPrice(opt.cost_per_unit);
+                                                                            const transactionUnitPrice = baseUnitPrice === null
+                                                                                ? ""
+                                                                                : canonicalDrafting
+                                                                                    ? convertPhpUnitPriceToTransactionCurrency(
+                                                                                        baseUnitPrice,
+                                                                                        shipmentForm.currency_code === "USD" ? "USD" : "PHP",
+                                                                                        shipmentForm.exchange_rate
+                                                                                    ) || ""
+                                                                                    : baseUnitPrice;
                                                                             handleLineFormChange(idx, {
                                                                                 product_id: String(selectedId),
                                                                                 parent_product_id: opt.parent_product_id
                                                                                     ? String(opt.parent_product_id)
                                                                                     : line.parent_product_id,
                                                                                 selected_uom: opt.unit_shortcut,
-                                                                                base_unit_cost_php: costVal === undefined ? "" : String(costVal),
+                                                                                base_unit_cost_php: transactionUnitPrice,
+                                                                                price_source: hasConfiguredPrice(priceControlCost) ? "matrix" : "none",
                                                                                 discount_type_id: "",
                                                                                 discount_source: "none",
                                                                                 discount_mode: "Percentage",
@@ -830,7 +869,7 @@ export function ShipmentFormModal({
                                                         {/* Qty Ordered */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r p-1.5 align-middle xl:table-cell">
                                                             <ResponsiveCellLabel>Qty <span className="text-red-500">*</span></ResponsiveCellLabel>
-                                                            <input
+                                                                                                                               <input
                                                                 id={`qty-input-${idx}`}
                                                                 type="number"
                                                                 required
@@ -878,12 +917,22 @@ export function ShipmentFormModal({
                                                                     }
                                                                 }}
                                                                 disabled={!isRowEditing}
-                                                                readOnly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0}
-                                                                aria-readonly={canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? true : undefined}
+                                                                readOnly={canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)])}
+                                                                aria-readonly={canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? true : undefined}
                                                                 aria-label={`Price for purchase order line ${idx + 1}`}
-                                                                className={`w-full min-w-0 rounded-md border px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && Number.isFinite(priceControlCostsMap[Number(line.product_id)]) && priceControlCostsMap[Number(line.product_id)] > 0 ? "bg-muted text-muted-foreground" : "bg-background"}`}
-                                                            />
-                                                        </td>
+                                                                min="0"
+                                                                onBlur={event => {
+                                                                    const normalized = tryNormalizePurchaseOrderUnitPrice(event.currentTarget.value);
+                                                                    if (normalized !== null && normalized !== line.base_unit_cost_php) {
+                                                                        handleLineFormChange(idx, "base_unit_cost_php", normalized);
+                                                                    }
+                                                                }}
+                                                                                                                               className={`w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-md border px-1.5 py-1 text-right text-[10px] font-mono font-bold outline-none focus:ring-1 focus:ring-primary ${canonicalDrafting && hasConfiguredPrice(priceControlCostsMap[Number(line.product_id)]) ? "bg-muted text-muted-foreground" : "bg-background"}`}
+                                                                                                                           />
+                                                                                                                            {hasSubmitted && lineErrors.filter(error => error.includes("Unit Price") || error.includes("Price Control")).map(error => (
+                                                                                                                                <p key={error} className="mt-1 text-left text-[9px] font-semibold leading-tight text-red-600">{error}</p>
+                                                                                                                            ))}
+                                                                                                                       </td>
 
                                                         {/* Calculated Gross */}
                                                         <td className="col-span-1 min-w-0 overflow-hidden border-r bg-muted/10 p-1.5 text-right font-mono font-extrabold text-foreground align-middle xl:table-cell">

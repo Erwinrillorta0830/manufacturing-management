@@ -526,7 +526,8 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
                 productId: Number(line.product_id),
                 unitPrice: line.base_unit_cost_php
             })),
-            resolvedPriceType.missingProductIds
+            resolvedPriceType.missingProductIds,
+            resolvedPriceType.missingPriceDetails
         );
     } catch (error) {
         if (error instanceof PurchaseOrderPriceTypeError) {
