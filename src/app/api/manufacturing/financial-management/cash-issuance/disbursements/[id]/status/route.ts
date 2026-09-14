@@ -350,7 +350,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                     }
                 }
 
-                // Removed releasedBy and dateReleased assignments
+                const unreleasedPaymentIds = payments
+                    .filter((p) => !p.released_date || String(p.released_date).trim() === "")
+                    .map((p) => p.id)
+                    .filter(Boolean);
+
+                if (unreleasedPaymentIds.length === 0 && payments.length > 0) {
+                    return NextResponse.json({
+                        message: "All check lines on this voucher are already released.",
+                        detail: "No unreleased check payment lines were found for release.",
+                    }, { status: 400 });
+                }
 
                 // Recalculate parent values dynamically upon payment line processing:
                 // disbursement.paid_amount = sum(disbursement_payments.amount)
@@ -371,9 +381,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                     newStatus = "Partially Released";
                 }
 
-                // Batch-update all related payment rows to bind release audit stamps
-                const paymentIds = payments.map((p) => p.id).filter(Boolean);
-                if (paymentIds.length > 0) {
+                // Batch-update only UNRELEASED payment rows to bind release audit stamps
+                if (unreleasedPaymentIds.length > 0) {
                     try {
                         const batchRes = await fetch(`${DIRECTUS_URL}/items/disbursement_payments`, {
                             method: "PATCH",
@@ -382,9 +391,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                                 "Content-Type": "application/json"
                             },
                             body: JSON.stringify({
-                                keys: paymentIds,
+                                keys: unreleasedPaymentIds,
                                 data: {
-                                    // Removed released_by
                                     released_date: getNowInPhtISO()
                                 }
                             })
@@ -402,11 +410,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                 break;
             }
             case "Posted":
-                if (currentDis.status !== "Released" && currentDis.status !== "Partially Released") {
-                    return NextResponse.json({ message: "Can only post Released or Partially Released disbursements." }, { status: 400 });
+                if (currentDis.status !== "Released") {
+                    return NextResponse.json({ message: "Can only post Released disbursements. Partially released or unreleased vouchers cannot be posted." }, { status: 400 });
                 }
-                if (!isBalanced) {
-                    return NextResponse.json({ message: "Cannot post: Debits do not match Credits. The voucher must be balanced first." }, { status: 400 });
+                if (!isBalanced || totalDebit <= 0 || totalCredit <= 0) {
+                    return NextResponse.json({
+                        message: "Cannot post unbalanced voucher",
+                        detail: `Total Debits (${totalDebit.toFixed(2)}) must equal Total Credits (${totalCredit.toFixed(2)}) and be greater than 0.`
+                    }, { status: 400 });
                 }
                 if (currentDis.approver_id != null && Number(currentDis.approver_id) === currentUserId) {
                     return NextResponse.json({

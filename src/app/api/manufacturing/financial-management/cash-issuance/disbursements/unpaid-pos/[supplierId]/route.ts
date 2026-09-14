@@ -263,7 +263,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             }
         }
 
-        return NextResponse.json(unpaidPos);
+        // Deduplicate output array by uniqueKey to guarantee no duplicate receipt rows are returned
+        const uniqueUnpaidPosMap = new Map<string, (typeof unpaidPos)[number]>();
+        for (const item of unpaidPos) {
+            if (!uniqueUnpaidPosMap.has(item.uniqueKey)) {
+                uniqueUnpaidPosMap.set(item.uniqueKey, item);
+            }
+        }
+
+        return NextResponse.json(Array.from(uniqueUnpaidPosMap.values()));
 
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";

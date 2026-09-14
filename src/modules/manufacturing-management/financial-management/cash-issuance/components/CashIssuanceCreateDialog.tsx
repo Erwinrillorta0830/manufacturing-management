@@ -219,20 +219,28 @@ export function CashIssuanceCreateDialog({
         const refs = new Set<string>();
         payables.forEach((p) => {
             if (p.referenceNo) {
-                // referenceNo is usually `${po.poNo} / ${po.receiptNo}` or contains poNo
                 const parts = p.referenceNo.split(" / ");
                 parts.forEach((part) => refs.add(part.trim().toLowerCase()));
+                refs.add(p.referenceNo.trim().toLowerCase());
             }
         });
         return refs;
     }, [payables]);
 
     const availableUnpaidPos = useMemo(() => {
+        const seenKeys = new Set<string>();
         return unpaidPos.filter((po) => {
+            if (seenKeys.has(po.uniqueKey)) return false;
+            seenKeys.add(po.uniqueKey);
+
             const poNoLower = po.poNo.trim().toLowerCase();
             const receiptNoLower = po.receiptNo ? po.receiptNo.trim().toLowerCase() : "";
             const baseRefLower = `${poNoLower} / ${receiptNoLower}`;
-            return !existingPoReferences.has(poNoLower) && !existingPoReferences.has(baseRefLower);
+            return (
+                !existingPoReferences.has(poNoLower) &&
+                !existingPoReferences.has(receiptNoLower) &&
+                !existingPoReferences.has(baseRefLower)
+            );
         });
     }, [unpaidPos, existingPoReferences]);
 
