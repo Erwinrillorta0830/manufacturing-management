@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ClipboardCheck, Loader2, PackageCheck, RefreshCw, Search, Warehouse } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ClipboardCheck, Loader2, PackageCheck, Printer, RefreshCw, Search, Warehouse } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +70,7 @@ export default function WarehouseReceivingModule() {
         error,
         detailError,
         submitting,
+        printing,
         setSearch,
         setSupplierId,
         setDateFrom,
@@ -84,13 +85,14 @@ export default function WarehouseReceivingModule() {
         start,
         saveDraft,
         submitToQa,
+        printSummary,
         retryQueue,
         clearSelection
     } = useWarehouseReceiving();
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
     const isContinuation = selectedOrder?.status === "Partially Received";
-    const actionBusy = submitting !== null;
+    const actionBusy = submitting !== null || printing;
     const totalEntered = selectedLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0)), 0);
     const overReceivingLines = selectedLines.filter(line => Math.max(0, Number(quantities[line.lineId] || 0)) > line.allowableQuantity + 1e-9);
     const overReceivingQuantity = overReceivingLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0) - line.allowableQuantity), 0);
@@ -124,9 +126,12 @@ export default function WarehouseReceivingModule() {
                             <p className="mt-1 text-sm text-muted-foreground">Start a warehouse receipt for an approved purchase order or continue a partially received order.</p>
                         </div>
                         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-                            <div className="relative xl:col-span-2">
+                            <div className="space-y-1.5 xl:col-span-2">
+                                <Label htmlFor="warehouse-search">Search</Label>
+                                <div className="relative">
                                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search PO, supplier, or remarks..." className="pl-9" aria-label="Search purchase orders" />
+                                <Input id="warehouse-search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search PO, supplier, or remarks..." className="pl-9" aria-label="Search purchase orders" />
+                                </div>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>Supplier</Label>
@@ -289,7 +294,7 @@ export default function WarehouseReceivingModule() {
                             <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className="flex items-center gap-3 text-muted-foreground"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted">3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
                             <Separator />
                             {overReceivingLines.length > 0 && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This receipt contains an over-receipt. Submission is allowed, and the excess will be visible for review.</p>}
-                            {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button><Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
+                            {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
                             <p className="text-center text-xs leading-5 text-muted-foreground">Sending to QA locks this warehouse receipt and makes it available in QA Receiving.</p>
                         </CardContent>
                     </Card>

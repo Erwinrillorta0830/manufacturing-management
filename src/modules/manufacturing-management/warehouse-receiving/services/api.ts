@@ -47,3 +47,32 @@ export function postWarehouseReceiving(command: WarehouseReceivingCommand) {
         body: JSON.stringify(command)
     });
 }
+
+function downloadFileName(contentDisposition: string | null, fallback: string) {
+    const match = contentDisposition?.match(/filename="?([^";]+)"?/i);
+    return match?.[1] || fallback;
+}
+
+export async function downloadWarehouseReceivingSummary(input: {
+    purchaseOrderId: number;
+    receivingHeaderId: number;
+}): Promise<void> {
+    const params = new URLSearchParams({ receivingHeaderId: String(input.receivingHeaderId) });
+    const response = await fetch(`${API_URL}/${encodeURIComponent(String(input.purchaseOrderId))}/print?${params.toString()}`, {
+        cache: "no-store"
+    });
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || !contentType.toLowerCase().includes("application/pdf")) {
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || "Unable to generate the warehouse receiving summary.");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = downloadFileName(response.headers.get("content-disposition"), "warehouse-receiving-summary.pdf");
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+}
