@@ -68,7 +68,6 @@ import {
   API_SalesReturnType,
   PriceTypeOption,
   SalesmanOption,
-  InvoiceLineItem,
   BranchOption,
   LotOption,
 } from "../types/sales-return.types";
@@ -282,7 +281,6 @@ export function UpdateSalesReturnModal({
   }, [prefillRemarks]);
 
   const [details, setDetails] = useState<SalesReturnItem[]>([]);
-  const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([]);
   const [appliedInvoiceId, setAppliedInvoiceId] = useState<number | null>(null);
 
   const [statusCardData, setStatusCardData] =
@@ -477,8 +475,7 @@ export function UpdateSalesReturnModal({
         prevDetails.map((item) => {
           const resolvedPt = priceTypeOptions.find(p => String(p.price_type_id) === String(headerData.priceType) || String(p.price_type_name) === String(headerData.priceType))?.price_type_name || headerData.priceType;
           const key = `price${resolvedPt}` as keyof SalesReturnItem;
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === Number(item.productId));
-          const basePrice = invoiceItem ? Number(invoiceItem.unit_price) : (Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0);
+          const basePrice = Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0;
 
           const newUnitPrice = basePrice;
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
@@ -510,7 +507,7 @@ export function UpdateSalesReturnModal({
         })
       );
     }
-  }, [headerData.priceType, discountOptions, invoiceLineItems, details.length, priceTypeOptions]);
+  }, [headerData.priceType, discountOptions, details.length, priceTypeOptions]);
 
   // Click outside handler for order/invoice dropdowns
   useEffect(() => {
@@ -674,8 +671,7 @@ export function UpdateSalesReturnModal({
           }
           updated[existingIndex] = existing;
         } else {
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === productId);
-          const price = invoiceItem ? Number(invoiceItem.unit_price) : (Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100);
+          const price = Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100;
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : price;
           const gross = Math.round(agPrice * qty * 100) / 100;
           const incomingDiscountType = item.discountType || "";

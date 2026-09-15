@@ -46,8 +46,8 @@ export default function CashIssuanceModule({ initialSubModule = "preparation" }:
         activeType, handleTabChange, refresh,
         create, update, updatePaymentAllocation, changeStatus, actionLoading,
         supplierSearch, setSupplierSearch, startDate, setStartDate, endDate, setEndDate,
-        statusFilter, setStatusFilter, divisionFilter, setDivisionFilter, departmentFilter, setDepartmentFilter, docNoSearch, setDocNoSearch,
-        applyFilters, clearFilters, filterSuppliers, divisions, departments
+        statusFilter, setStatusFilter, departmentFilter, setDepartmentFilter, docNoSearch, setDocNoSearch,
+        applyFilters, clearFilters, filterSuppliers, departments
     } = useCashIssuance(initialStatusFilter);
 
     const [subModule, setSubModule] = useState<CashIssuanceSubModule>(initialSubModule);
