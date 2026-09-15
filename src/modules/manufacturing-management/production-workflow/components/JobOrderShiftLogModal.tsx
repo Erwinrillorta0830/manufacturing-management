@@ -132,8 +132,12 @@ export function JobOrderShiftLogModal({
 
             const reservationRows = data.flatMap((material: any) => {
                 const reservations = Array.isArray(material.reservations) ? material.reservations : [];
-                if (reservations.length > 0) {
-                    return reservations.map((reservation: any) => ({
+                const consumableReservations = reservations.filter((reservation: any) =>
+                    String(reservation.reservation_status || "").toUpperCase() === "WIP"
+                    && Number(reservation.available_stock || 0) > 0
+                );
+                if (consumableReservations.length > 0) {
+                    return consumableReservations.map((reservation: any) => ({
                         ...reservation,
                         product_name: reservation.product_name || material.product_name,
                         product_code: reservation.product_code || material.product_code,
@@ -316,8 +320,13 @@ export function JobOrderShiftLogModal({
             toast.error("Every required material must have an exact WIP reservation before recording production.");
             return;
         }
-        if (shiftMaterials.some((material) => Number(material.actual_qty || 0) <= 0)) {
-            toast.error("Enter an actual consumed quantity for every WIP reservation.");
+        const consumedByMaterial = new Map<number, number>();
+        shiftMaterials.forEach((material) => {
+            const materialId = Number(material.jo_material_id || 0);
+            consumedByMaterial.set(materialId, (consumedByMaterial.get(materialId) || 0) + Number(material.actual_qty || 0));
+        });
+        if (shiftMaterials.some((material) => (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0)) {
+            toast.error("Enter an actual consumed quantity against at least one exact WIP reservation for every material.");
             return;
         }
 
@@ -475,7 +484,14 @@ export function JobOrderShiftLogModal({
         || !m.inventory_lot_id
         || !m.uom_id
         || !String(m.batch_no || "").trim()
-        || Number(m.actual_qty || 0) <= 0
+    );
+    const consumedByMaterial = shiftMaterials.reduce((totals, material) => {
+        const materialId = Number(material.jo_material_id || 0);
+        totals.set(materialId, (totals.get(materialId) || 0) + Number(material.actual_qty || 0));
+        return totals;
+    }, new Map<number, number>());
+    const hasMissingMaterialConsumption = shiftMaterials.length === 0 || shiftMaterials.some((material) =>
+        (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0
     );
     const hasOutput = Number(shiftYieldQty || 0) + Number(rejectedQty || 0) + Number(scrapQty || 0) > 0;
     const isSubmitDisabled = submittingShiftLog
@@ -484,6 +500,7 @@ export function JobOrderShiftLogModal({
         || Boolean(materialsLoadError)
         || hasInsufficiency
         || hasIncompleteMaterialLine
+        || hasMissingMaterialConsumption
         || !hasOutput
         || !sessionKey
         || !productionDate
