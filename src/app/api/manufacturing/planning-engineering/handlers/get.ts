@@ -14,6 +14,7 @@ import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
+import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
@@ -535,14 +536,18 @@ export async function handleGET(request: Request) {
                 }
             }
 
+            function isSubAssemblyProduct(productId: number): boolean {
+                return hasActiveVersionLocal(productId)
+                    || hasAnyVersionLocal(productId)
+                    || hasMfgLotsSet.has(productId);
+            }
+
             // Fetch inventory movements to calculate the true ledger stock
             const stockMap = new Map<number, number>(); // product_id -> sum of passed stock
             const pendingQaMap = new Map<number, number>(); // product_id -> sum of pending QA stock
             const qaHoldMap = new Map<number, number>(); // product_id -> sum of QA hold stock
             const unclassifiedMap = new Map<number, number>();
             let movementStockMap = new Map<string, number>();
-            const movementBatchStockMap = new Map<string, number>();
-            const movementStorageLotStockMap = new Map<string, number>();
             let movements: any[] = [];
 
             if (pIds.length > 0) {
@@ -554,17 +559,6 @@ export async function handleGET(request: Request) {
                     return pIds.includes(productId) && isCompatibleStorageLot(productId, movementMmLotReference(movement));
                 });
                 movementStockMap = sumMovementQuantitiesByStock(movements);
-                movements.forEach((movement: any) => {
-                    const productId = Number(movement.product_id?.product_id || movement.product_id);
-                    const batchNumber = movement.batch_no || "LOT-N/A";
-                    const key = `${productId}:${batchNumber}`;
-                    movementBatchStockMap.set(key, (movementBatchStockMap.get(key) || 0) + Number(movement.quantity || 0));
-                    const storageLotId = movementMmLotReference(movement);
-                    if (storageLotId > 0) {
-                        const storageLotKey = `${productId}:${storageLotId}:${batchNumber}`;
-                        movementStorageLotStockMap.set(storageLotKey, (movementStorageLotStockMap.get(storageLotKey) || 0) + Number(movement.quantity || 0));
-                    }
-                });
 
                 // Aggregate stock maps based on QA Status from batchStatusMap (bypassing inventory_lots)
                 movementStockMap.forEach((qty, key) => {
@@ -647,64 +641,25 @@ export async function handleGET(request: Request) {
                 }
             }
 
-            // Fetch purchase order receiving receipts in batch
-            const receiptsByProduct = new Map<number, any[]>();
-            let validReceiptsAll: any[] = [];
-            if (pIds.length > 0) {
+            // Use the same movement-backed, canonical inventory-lot source as
+            // material staging for raw-material candidates. This includes
+            // stock that came from adjustments/transfers and therefore has no
+            // purchase_order_receiving row.
+            const availableLotsByProduct = new Map<number, Awaited<ReturnType<typeof getAvailableInventoryLots>>>();
+            const rawProductIds = [...new Set(pIds.filter((productId) => !isSubAssemblyProduct(productId)))];
+            await Promise.all(rawProductIds.map(async (productId) => {
                 try {
-                    const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${pIds.join(",")}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0&filter[branch_id][_eq]=${branchId}&sort=expiry_date&limit=-1`;
-                    const receiptsRes = await fetch(receiptsUrl, { headers });
-                    if (receiptsRes.ok) {
-                        validReceiptsAll = (await receiptsRes.json()).data || [];
-                        validReceiptsAll.forEach((r: any) => {
-                            const prodId = Number(r.product_id);
-                            if (!isCompatibleStorageLot(prodId, r.mm_lot_id)) return;
-                            if (!receiptsByProduct.has(prodId)) {
-                                receiptsByProduct.set(prodId, []);
-                            }
-                            receiptsByProduct.get(prodId)!.push(r);
-                        });
-                    }
-                } catch (err) {
-                    console.error("Error fetching purchase order receiving receipts:", err);
+                    availableLotsByProduct.set(
+                        productId,
+                        await getAvailableInventoryLots(productId, branchId, {
+                            movementRows: movements.filter((movement) => Number(movement.product_id || movement.productId || 0) === productId)
+                        })
+                    );
+                } catch (error) {
+                    console.error(`Error loading available inventory lots for product ${productId}:`, error);
+                    availableLotsByProduct.set(productId, []);
                 }
-            }
-
-            // Fetch lot reservations map by product_id & batch_no
-            const lotReservationsMap: Record<string, number> = {};
-            if (pIds.length > 0) {
-                try {
-                    const resFilter = encodeURIComponent(JSON.stringify({
-                        _and: [
-                            { product_id: { _in: pIds } },
-                            { branch_id: { _eq: branchId } },
-                            { jo_material_id: { job_order_id: { status: { _in: [
-                                JOB_ORDER_STATUS.PLANNED,
-                                JOB_ORDER_STATUS.DRAFT,
-                                JOB_ORDER_STATUS.RELEASED,
-                                JOB_ORDER_STATUS.IN_PROGRESS,
-                                JOB_ORDER_STATUS.ONGOING,
-                                JOB_ORDER_STATUS.PROCEED,
-                                JOB_ORDER_STATUS.ON_HOLD
-                            ] } } } }
-                        ]
-                    }));
-                    const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,reserved_quantity&limit=-1`, { headers });
-                    if (resRes.ok) {
-                        const resData = (await resRes.json()).data || [];
-                        resData.forEach((r: any) => {
-                            const prodId = Number(r.product_id);
-                            const batchNo = r.batch_no;
-                            if (prodId && batchNo) {
-                                const key = `${prodId}:${batchNo}`;
-                                lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
-                            }
-                        });
-                    }
-                } catch (err) {
-                    console.error("Error fetching lot reservations:", err);
-                }
-            }
+            }));
 
             const enriched = mData.map((d: any) => {
                 const compProductId = Number(d.product_id?.product_id || d.product_id);
@@ -756,14 +711,7 @@ export async function handleGET(request: Request) {
                     };
                 });
 
-                // Check if sub assembly
-                let isSubAssembly = hasActiveVersionLocal(compProductId);
-                if (!isSubAssembly) {
-                    isSubAssembly = hasAnyVersionLocal(compProductId);
-                }
-                if (!isSubAssembly) {
-                    isSubAssembly = hasMfgLotsSet.has(compProductId);
-                }
+                const isSubAssembly = isSubAssemblyProduct(compProductId);
 
                 let candidateLots: any[] = [];
                 let lotNo: string | null = null;
@@ -827,36 +775,34 @@ export async function handleGET(request: Request) {
                         receiptNo = "MANUFACTURING";
                     }
                 } else {
-                    const validReceipts = receiptsByProduct.get(compProductId) || [];
-                    candidateLots = validReceipts.map((rec: any) => {
-                        const lotNum = rec.lot_no || rec.batch_no || "LOT-N/A";
-                        const receiptMmLotId = mmLotId(rec.mm_lot_id);
-                        const physicalQty = receiptMmLotId
-                            ? movementStorageLotStockMap.get(`${compProductId}:${receiptMmLotId}:${lotNum}`) || 0
-                            : movementBatchStockMap.get(`${compProductId}:${lotNum}`) || 0;
-                        const recId = Number(rec.purchase_order_product_id);
-                        const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
-                        const netAvailable = Math.max(0, physicalQty - alreadyReserved);
-
-                        const normalizedLotNo = String(lotNum || "").trim();
+                    const availableLots = availableLotsByProduct.get(compProductId) || [];
+                    candidateLots = availableLots.map((lot) => {
+                        const lotNum = lot.batchNo || "LOT-N/A";
+                        const normalizedLotNo = String(lotNum).trim();
                         const matchingReservations = matReservations.filter((mr: any) =>
                             String(mr.batch_no || "").trim() === normalizedLotNo
+                            && (!lot.mmLotId || mmLotId(mr.mm_lot_id) === lot.mmLotId)
+                            && (!lot.inventoryLotId || Number(mr.inventory_lot_id?.inventory_lot_id || mr.inventory_lot_id?.id || mr.inventory_lot_id || 0) === lot.inventoryLotId)
                         );
                         const matchedRes = matchingReservations[0];
-                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id) : null;
+                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id || matchedRes.id || 0) || null : null;
                         const reservedQtyForThisLot = matchingReservations.reduce(
                             (total: number, reservation: any) => total + Number(reservation.reserved_quantity || 0),
                             0
                         );
 
                         return {
-                            receipt_id: recId,
-                            receipt_no: rec.receipt_no || "N/A",
+                            receipt_id: lot.purchaseOrderReceivingId,
+                            receipt_no: lot.purchaseOrderReceivingId ? "Receiving" : "Inventory Movement",
+                            source_type: lot.purchaseOrderReceivingId ? "RAW_MATERIAL" : "INVENTORY",
+                            mm_lot_id: lot.mmLotId,
+                            inventory_lot_id: lot.inventoryLotId,
                             lot_no: lotNum,
-                            received_quantity: Number(rec.received_quantity || 0),
-                            physical_quantity: physicalQty,
-                            available: netAvailable,
-                            expiry_date: rec.expiry_date || null,
+                            received_quantity: Number(lot.physicalQuantity ?? lot.available ?? 0),
+                            physical_quantity: Number(lot.physicalQuantity ?? lot.available ?? 0),
+                            available: Number(lot.available || 0),
+                            expiry_date: lot.expiryDate || null,
+                            manufacturing_date: lot.manufacturingDate || null,
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };

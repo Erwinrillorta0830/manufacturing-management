@@ -2,8 +2,9 @@
 import { DIRECTUS_URL, headers } from "./shared";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
-import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { loadMmLots, mmLotId, resolveProductUnitId } from "../../services/mm-lots.service";
+import { fetchMmInventoryMovements, MmInventoryMovementError, type NormalizedMmInventoryMovement } from "../../services/mm-inventory-movements.service";
+import { isExpired, normalizeDirectusStagingMovement } from "../../material-staging/_stock";
+import { loadMmInventoryLots, loadMmLots, mmInventoryLotId, mmLotId, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 const ACTIVE_JOB_ORDER_STATUSES = [
@@ -21,8 +22,52 @@ export interface AvailableInventoryLot {
     inventoryLotId: number | null;
     purchaseOrderReceivingId: number | null;
     available: number;
+    physicalQuantity?: number;
     expiryDate?: string | null;
     manufacturingDate?: string | null;
+}
+
+const RESERVABLE_QA_STATUSES = new Set([
+    "GOOD",
+    "PASSED",
+    "PASS",
+    "APPROVED",
+    "PARTIALLY_ACCEPTED"
+]);
+
+function relationId(value: unknown, keys: string[]): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of keys) {
+            const resolved = relationId(record[key], keys);
+            if (resolved !== null) return resolved;
+        }
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function batchText(value: unknown): string {
+    return String(value ?? "LOT-N/A").trim() || "LOT-N/A";
+}
+
+function batchKey(value: unknown): string {
+    return batchText(value).toLowerCase();
+}
+
+function productIdFrom(value: unknown): number {
+    return relationId(value, ["product_id", "id"]) || 0;
+}
+
+function isReservableQaStatus(value: unknown): boolean {
+    const status = String(value ?? "GOOD")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    return RESERVABLE_QA_STATUSES.has(status || "GOOD");
 }
 
 /**
@@ -32,7 +77,15 @@ export interface AvailableInventoryLot {
  * inventory source. Posted stock adjustments, transfers, and other movement
  * sources must also be reservable when their net movement balance is positive.
  */
-export async function getAvailableInventoryLots(productId: number, branchId: number): Promise<AvailableInventoryLot[]> {
+export interface AvailableInventoryLotOptions {
+    movementRows?: NormalizedMmInventoryMovement[];
+}
+
+export async function getAvailableInventoryLots(
+    productId: number,
+    branchId: number,
+    options: AvailableInventoryLotOptions = {}
+): Promise<AvailableInventoryLot[]> {
     if (!productId || !branchId) {
         throw new Error("Missing required productId or branchId in getAvailableInventoryLots");
     }
@@ -40,20 +93,26 @@ export async function getAvailableInventoryLots(productId: number, branchId: num
     const numericProductId = Number(productId);
     const numericBranchId = Number(branchId);
     const productUnitId = await resolveProductUnitId(numericProductId);
-    const [movements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots] = await Promise.all([
-        fetchMmInventoryMovements({
+    const movementRowsPromise = options.movementRows
+        ? Promise.resolve(options.movementRows)
+        : fetchMmInventoryMovements({
             branch: numericBranchId,
             product: numericProductId
-        }),
+        });
+    const [springMovements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots, directusMovementsRes] = await Promise.all([
+        movementRowsPromise,
         fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${numericProductId}&filter[branch_id][_eq]=${numericBranchId}&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,is_reverted,received_quantity,mm_lot_id,expiry_date,manufacturing_date,created_at&limit=-1`, { headers, cache: "no-store" }),
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${numericProductId}&fields=lot_number,qa_status,job_order_id.product_id&limit=-1`, { headers, cache: "no-store" }),
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(JSON.stringify({
             _and: [
                 { product_id: { _eq: numericProductId } },
+                { branch_id: { _eq: numericBranchId } },
                 { jo_material_id: { job_order_id: { status: { _in: ACTIVE_JOB_ORDER_STATUSES } } } }
             ]
-        }))}&fields=product_id,batch_no,mm_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" }),
-        loadMmLots({ branchId: numericBranchId, unitId: productUnitId })
+        }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" }),
+        loadMmLots({ branchId: numericBranchId, unitId: productUnitId }),
+        loadMmInventoryLots({ branchId: numericBranchId, productId: numericProductId, onlyActive: true }),
+        fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[branch_id][_eq]=${numericBranchId}&filter[product_id][_eq]=${numericProductId}&fields=*&limit=-1`, { headers, cache: "no-store" }).catch(() => null)
     ]);
     const eligibleStorageLotIds = new Set(
         eligibleStorageLots
@@ -64,35 +123,83 @@ export async function getAvailableInventoryLots(productId: number, branchId: num
     const receipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
     const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
     const reservations = reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
+    const directusMovements = directusMovementsRes?.ok
+        ? (((await directusMovementsRes.json()).data || []) as unknown[])
+            .filter((row: unknown): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+            .map(normalizeDirectusStagingMovement)
+        : [];
+    // Spring is the canonical movement ledger used by Lot Management. Directus
+    // is only a fallback for environments where that ledger has no rows; merging
+    // both sources double-counts the same stock movements.
+    const movements = springMovements.length > 0 ? springMovements : directusMovements;
+
+    type InventoryMetadata = {
+        inventoryLotId: number;
+        mmLotId: number | null;
+        batchNo: string;
+        qaStatus: string | null;
+        expiryDate: string | null;
+        manufacturingDate: string | null;
+    };
+    const inventoryById = new Map<number, InventoryMetadata>();
+    const inventoryByMmLotBatch = new Map<string, InventoryMetadata[]>();
+    inventoryLots.forEach((inventoryLot: any) => {
+        const inventoryLotId = mmInventoryLotId(inventoryLot.inventory_lot_id ?? inventoryLot.id);
+        const inventoryProductId = productIdFrom(inventoryLot.product_id);
+        const inventoryBranchId = relationId(inventoryLot.branch_id, ["branch_id", "id"]);
+        if (!inventoryLotId || inventoryProductId !== numericProductId || inventoryBranchId !== numericBranchId) return;
+
+        const metadata: InventoryMetadata = {
+            inventoryLotId,
+            mmLotId: mmLotId(inventoryLot.lot_id),
+            batchNo: batchText(inventoryLot.batch_no),
+            qaStatus: String(inventoryLot.qa_status ?? "").trim() || null,
+            expiryDate: String(inventoryLot.expiry_date ?? "").trim() || null,
+            manufacturingDate: String(inventoryLot.manufacturing_date ?? "").trim() || null
+        };
+        inventoryById.set(inventoryLotId, metadata);
+        if (metadata.mmLotId) {
+            const key = `${metadata.mmLotId}:${batchKey(metadata.batchNo)}`;
+            const sameKeyLots = inventoryByMmLotBatch.get(key) || [];
+            sameKeyLots.push(metadata);
+            inventoryByMmLotBatch.set(key, sameKeyLots);
+        }
+    });
 
     const batchStatusMap = new Map<string, string>();
     const receiptByBatch = new Map<string, number>();
     const receiptMmLotByBatch = new Map<string, number>();
+    const receiptByMmLotBatch = new Map<string, number>();
     const receiptExpiryByBatch = new Map<string, string>();
     const receiptManufacturingByBatch = new Map<string, string>();
 
     receipts.forEach((receipt: any) => {
         const receiptProductId = Number(receipt.product_id?.product_id || receipt.product_id);
         if (receiptProductId !== numericProductId) return;
-        const batchNo = String(receipt.batch_no || receipt.lot_no || "LOT-N/A").trim() || "LOT-N/A";
-        const key = `${receiptProductId}:${batchNo}`;
+        const batchNo = batchText(receipt.batch_no || receipt.lot_no);
+        const normalizedBatch = batchKey(batchNo);
+        const key = `${receiptProductId}:${normalizedBatch}`;
         batchStatusMap.set(key, receipt.qa_status || "Passed");
 
-        const receiptId = Number(receipt.purchase_order_product_id);
-        if (receiptId > 0 && !receiptByBatch.has(batchNo)) receiptByBatch.set(batchNo, receiptId);
-        const receiptMmLotId = mmLotId(receipt.mm_lot_id);
-        if (receiptMmLotId !== null && !receiptMmLotByBatch.has(batchNo)) receiptMmLotByBatch.set(batchNo, receiptMmLotId);
+        const receiptId = relationId(receipt.purchase_order_product_id, ["purchase_order_product_id", "id"]);
+        if (receiptId && !receiptByBatch.has(normalizedBatch)) receiptByBatch.set(normalizedBatch, receiptId);
+        const receiptMmLotId = mmLotId(receipt.mm_lot_id ?? receipt.lot_id);
+        if (receiptMmLotId !== null && !receiptMmLotByBatch.has(normalizedBatch)) receiptMmLotByBatch.set(normalizedBatch, receiptMmLotId);
+        if (receiptId && receiptMmLotId !== null) {
+            const receiptLotKey = `${receiptMmLotId}:${normalizedBatch}`;
+            if (!receiptByMmLotBatch.has(receiptLotKey)) receiptByMmLotBatch.set(receiptLotKey, receiptId);
+        }
         const expiryDate = String(receipt.expiry_date || "").trim();
-        if (expiryDate && !receiptExpiryByBatch.has(batchNo)) receiptExpiryByBatch.set(batchNo, expiryDate);
+        if (expiryDate && !receiptExpiryByBatch.has(normalizedBatch)) receiptExpiryByBatch.set(normalizedBatch, expiryDate);
         const manufacturingDate = String(receipt.manufacturing_date || receipt.created_at || "").trim();
-        if (manufacturingDate && !receiptManufacturingByBatch.has(batchNo)) receiptManufacturingByBatch.set(batchNo, manufacturingDate);
+        if (manufacturingDate && !receiptManufacturingByBatch.has(normalizedBatch)) receiptManufacturingByBatch.set(normalizedBatch, manufacturingDate);
     });
 
     yields.forEach((yieldRow: any) => {
         const yieldProductId = Number(yieldRow.job_order_id?.product_id || numericProductId);
         if (yieldProductId !== numericProductId) return;
-        const batchNo = String(yieldRow.lot_number || "LOT-N/A").trim() || "LOT-N/A";
-        batchStatusMap.set(`${yieldProductId}:${batchNo}`, yieldRow.qa_status || "Pending");
+        const batchNo = batchText(yieldRow.lot_number);
+        batchStatusMap.set(`${yieldProductId}:${batchKey(batchNo)}`, yieldRow.qa_status || "Pending");
     });
 
     const movementBalances = new Map<string, {
@@ -102,49 +209,85 @@ export async function getAvailableInventoryLots(productId: number, branchId: num
         quantity: number;
         expiryDate: string | null;
         manufacturingDate: string | null;
+        qaStatus: string | null;
     }>();
 
     movements.forEach((movement: any) => {
         const movementProductId = Number(movement.product_id?.product_id || movement.product_id || movement.productId);
         if (movementProductId !== numericProductId) return;
 
-        const batchNo = String(movement.batch_no || movement.batchNo || "LOT-N/A").trim() || "LOT-N/A";
+        const movementInventoryLotId = mmInventoryLotId(movement.inventory_lot_id ?? movement.inventoryLotId);
+        const inventoryMetadata = movementInventoryLotId ? inventoryById.get(movementInventoryLotId) : undefined;
         const movementMmLotId = mmLotId(movement.mm_lot_id ?? movement.mmLotId ?? movement.lot_id ?? movement.lotId);
-        const resolvedMmLotId = movementMmLotId || receiptMmLotByBatch.get(batchNo) || null;
-        if (resolvedMmLotId && !eligibleStorageLotIds.has(resolvedMmLotId)) return;
-        const inventoryLotValue = Number(movement.inventory_lot_id ?? movement.inventoryLotId ?? 0);
-        const inventoryLotId = inventoryLotValue > 0 ? inventoryLotValue : null;
-        const key = `${movementMmLotId ?? "NO-MM-LOT"}:${batchNo}`;
+        const movementBatchNo = batchText(movement.batch_no || movement.batchNo);
+        const matchingInventoryLots = movementMmLotId
+            ? inventoryByMmLotBatch.get(`${movementMmLotId}:${batchKey(movementBatchNo)}`) || []
+            : [];
+        const uniqueInventoryMetadata = matchingInventoryLots.length === 1 ? matchingInventoryLots[0] : undefined;
+        const canonicalInventory = inventoryMetadata || uniqueInventoryMetadata;
+        const batchNo = canonicalInventory?.batchNo || movementBatchNo;
+        const inventoryLotId = canonicalInventory?.inventoryLotId || movementInventoryLotId;
+        const resolvedMmLotId = canonicalInventory?.mmLotId
+            || movementMmLotId
+            || receiptMmLotByBatch.get(batchKey(batchNo))
+            || null;
+        if (!resolvedMmLotId || !eligibleStorageLotIds.has(resolvedMmLotId)) return;
+        if (movementInventoryLotId && !canonicalInventory) return;
+        const key = `${resolvedMmLotId}:${inventoryLotId ?? "NO-INVENTORY-LOT"}:${batchKey(batchNo)}`;
         const existing = movementBalances.get(key);
         const quantity = Number(movement.quantity || 0);
+        const expiryDate = canonicalInventory?.expiryDate
+            || String(movement.expiry_date || movement.expiryDate || "").trim()
+            || receiptExpiryByBatch.get(batchKey(batchNo))
+            || null;
+        const manufacturingDate = canonicalInventory?.manufacturingDate
+            || String(movement.manufacturing_date || movement.manufacturingDate || movement.created_at || "").trim()
+            || receiptManufacturingByBatch.get(batchKey(batchNo))
+            || null;
+        const qaStatus = canonicalInventory?.qaStatus || batchStatusMap.get(`${numericProductId}:${batchKey(batchNo)}`) || "GOOD";
 
         if (existing) {
             existing.quantity += quantity;
+            existing.expiryDate = existing.expiryDate || expiryDate;
+            existing.manufacturingDate = existing.manufacturingDate || manufacturingDate;
+            existing.qaStatus = existing.qaStatus || qaStatus;
         } else {
             movementBalances.set(key, {
                 batchNo,
-                mmLotId: movementMmLotId,
+                mmLotId: resolvedMmLotId,
                 inventoryLotId,
                 quantity,
-                expiryDate: String(movement.expiry_date || "").trim() || receiptExpiryByBatch.get(batchNo) || null,
-                manufacturingDate: String(movement.manufacturing_date || movement.created_at || "").trim() || receiptManufacturingByBatch.get(batchNo) || null
+                expiryDate,
+                manufacturingDate,
+                qaStatus
             });
         }
     });
 
     const exactReservations = new Map<string, number>();
+    const inventoryReservations = new Map<string, number>();
+    const mmLotBatchReservations = new Map<string, number>();
     const batchOnlyReservations = new Map<string, number>();
     reservations.forEach((reservation: any) => {
-        const batchNo = String(reservation.batch_no || "LOT-N/A").trim() || "LOT-N/A";
+        const batchNo = batchText(reservation.batch_no);
+        const normalizedBatch = batchKey(batchNo);
         const quantity = Number(reservation.reserved_quantity || 0);
         if (quantity <= 0) return;
 
         const reservationMmLotId = mmLotId(reservation.mm_lot_id);
-        if (reservationMmLotId !== null) {
-            const key = `${reservationMmLotId}:${batchNo}`;
-            exactReservations.set(key, (exactReservations.get(key) || 0) + quantity);
+        const reservationInventoryLotId = mmInventoryLotId(reservation.inventory_lot_id);
+        if (reservationInventoryLotId !== null) {
+            const inventoryKey = `${reservationInventoryLotId}:${normalizedBatch}`;
+            inventoryReservations.set(inventoryKey, (inventoryReservations.get(inventoryKey) || 0) + quantity);
+            if (reservationMmLotId !== null) {
+                const key = `${reservationMmLotId}:${reservationInventoryLotId}:${normalizedBatch}`;
+                exactReservations.set(key, (exactReservations.get(key) || 0) + quantity);
+            }
+        } else if (reservationMmLotId !== null) {
+            const key = `${reservationMmLotId}:${normalizedBatch}`;
+            mmLotBatchReservations.set(key, (mmLotBatchReservations.get(key) || 0) + quantity);
         } else {
-            batchOnlyReservations.set(batchNo, (batchOnlyReservations.get(batchNo) || 0) + quantity);
+            batchOnlyReservations.set(normalizedBatch, (batchOnlyReservations.get(normalizedBatch) || 0) + quantity);
         }
     });
 
@@ -156,22 +299,27 @@ export async function getAvailableInventoryLots(productId: number, branchId: num
         quantity: number;
         expiryDate: string | null;
         manufacturingDate: string | null;
+        qaStatus: string | null;
     }>>();
     movementBalances.forEach((balance, key) => {
         if (balance.quantity <= 0) return;
-        const status = batchStatusMap.get(`${numericProductId}:${balance.batchNo}`) || "Passed";
-        if (status !== "Passed" && status !== "Partially Accepted") return;
+        if (!isReservableQaStatus(balance.qaStatus) || isExpired(balance.expiryDate)) return;
 
-        if (!lotsByBatch.has(balance.batchNo)) lotsByBatch.set(balance.batchNo, []);
-        lotsByBatch.get(balance.batchNo)!.push({ key, ...balance });
+        const normalizedBatch = batchKey(balance.batchNo);
+        if (!lotsByBatch.has(normalizedBatch)) lotsByBatch.set(normalizedBatch, []);
+        lotsByBatch.get(normalizedBatch)!.push({ key, ...balance });
     });
 
     const availableLots: AvailableInventoryLot[] = [];
-    lotsByBatch.forEach((batchLots, batchNo) => {
-        let batchOnlyReserved = batchOnlyReservations.get(batchNo) || 0;
+    lotsByBatch.forEach((batchLots, normalizedBatch) => {
+        let batchOnlyReserved = batchOnlyReservations.get(normalizedBatch) || 0;
 
         batchLots.forEach((lot) => {
-            const exactReserved = exactReservations.get(lot.key) || 0;
+            const exactReserved = lot.inventoryLotId
+                ? exactReservations.get(lot.key)
+                    || inventoryReservations.get(`${lot.inventoryLotId}:${normalizedBatch}`)
+                    || 0
+                : mmLotBatchReservations.get(`${lot.mmLotId}:${normalizedBatch}`) || 0;
             const exactAvailable = Math.max(0, lot.quantity - exactReserved);
             const fallbackReserved = Math.min(batchOnlyReserved, exactAvailable);
             batchOnlyReserved -= fallbackReserved;
@@ -180,10 +328,13 @@ export async function getAvailableInventoryLots(productId: number, branchId: num
 
             availableLots.push({
                 batchNo: lot.batchNo,
-                mmLotId: lot.mmLotId || receiptMmLotByBatch.get(batchNo) || null,
+                mmLotId: lot.mmLotId,
                 inventoryLotId: lot.inventoryLotId,
-                purchaseOrderReceivingId: receiptByBatch.get(batchNo) || null,
+                purchaseOrderReceivingId: lot.mmLotId
+                    ? receiptByMmLotBatch.get(`${lot.mmLotId}:${normalizedBatch}`) || receiptByBatch.get(normalizedBatch) || null
+                    : receiptByBatch.get(normalizedBatch) || null,
                 available,
+                physicalQuantity: lot.quantity,
                 expiryDate: lot.expiryDate,
                 manufacturingDate: lot.manufacturingDate
             });
