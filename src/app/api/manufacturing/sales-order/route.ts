@@ -1271,6 +1271,12 @@ export async function PATCH(request: Request) {
                     throw new ApiError(409, "Sales order cannot move to For Invoicing until every detail line is fully fulfilled.");
                 }
 
+                if (target === "For Consolidation"
+                    && current === "In Production"
+                    && !areSalesOrderDetailsFullyFulfilled(allDetails)) {
+                    throw new ApiError(409, "Sales order cannot move to For Consolidation until every detail line is fully fulfilled.");
+                }
+
                 const isApprovalDecision = (current === "For Approval" || current === "On Hold")
                     && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "On Hold" || target === "Cancelled");
                 if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
