@@ -674,6 +674,7 @@ export default function ProductionWorkflowModule() {
             />
 
             <JobOrderWorkflowActionModal
+                key={workflowAction ?? "closed"}
                 open={workflowAction !== null}
                 onOpenChange={(open) => {
                     if (!open) setWorkflowAction(null);

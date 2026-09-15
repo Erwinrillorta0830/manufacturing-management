@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { AlertTriangle, CheckCircle2, PauseCircle, ShieldAlert, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -71,10 +71,6 @@ export function JobOrderWorkflowActionModal({
     onSubmit
 }: JobOrderWorkflowActionModalProps) {
     const [remarks, setRemarks] = useState("");
-
-    useEffect(() => {
-        if (open) setRemarks("");
-    }, [open, action]);
 
     if (!action) return null;
     const copy = ACTION_COPY[action];
