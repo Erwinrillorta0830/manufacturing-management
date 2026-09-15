@@ -280,7 +280,7 @@ export default function ReconciliationLotAllocationModal({
                         </div>
 
                         {/* Quick Strategy Actions */}
-                        <div className="flex items-center justify-between pt-1">
+                        {/* <div className="flex items-center justify-between pt-1">
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
@@ -302,7 +302,7 @@ export default function ReconciliationLotAllocationModal({
                             <span className="text-[11px] text-muted-foreground font-medium">
                                 Originating Batches: <strong className="text-foreground">{allocations.length}</strong>
                             </span>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* Multi-Lot & Batch List */}

@@ -196,7 +196,7 @@ export function FinishedGoodsHeader({
 
 
 
-                    {/* Revise Specification Button (when version is locked) */}
+                    {/* Revise Specification Button (when version is locked)
                     {isVersionLocked && selectedVersion && onCreateRevision && (
                         <button
                             type="button"
@@ -207,7 +207,7 @@ export function FinishedGoodsHeader({
                             <GitFork className="h-3.5 w-3.5" />
                             Create Revision
                         </button>
-                    )}
+                    )} */}
 
                     {/* Submit for Approval Button (when version is editable draft/revision) */}
                     {!isVersionLocked && selectedVersion && (selectedVersion.status === "Draft" || selectedVersion.status === "Revision" || selectedVersion.status === "Revision Required" || selectedVersion.version_id < 0) && onSubmitForApproval && (
