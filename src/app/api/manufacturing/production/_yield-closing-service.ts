@@ -581,19 +581,21 @@ async function resolveYieldLedger(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(normalizedLedgerId))}`,
             `Yield ledger lookup for ${jobOrder.jobOrderNo}`
         );
-        // The operator may post a different batch than the run that was
-        // auto-selected. Prefer the run that matches the submitted batch.
-        rows = String(row?.lot_number || "").trim() === lotNumber
-            ? [row]
-            : await directusRows<any>(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { job_order_id: { _eq: jobOrder.jobOrderId } },
-                        { lot_number: { _eq: lotNumber } }
-                    ]
-                }))}&limit=-1`,
-                `Yield ledger resolution for ${jobOrder.jobOrderNo}`
+        if (numericRelationId(row?.job_order_id) !== jobOrder.jobOrderId) {
+            throw new YieldCompletionError(
+                409,
+                "YIELD_LEDGER_JOB_ORDER_MISMATCH",
+                `Yield ledger ${normalizedLedgerId} does not belong to ${jobOrder.jobOrderNo}.`
             );
+        }
+        if (String(row?.lot_number || "").trim() !== lotNumber) {
+            throw new YieldCompletionError(
+                409,
+                "YIELD_TRACEABILITY_MISMATCH",
+                "The finished-goods batch must match the batch assigned during the In-Process QA audit."
+            );
+        }
+        rows = [row];
     } else {
         rows = await directusRows<any>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter=${encodeURIComponent(JSON.stringify({
@@ -1107,6 +1109,25 @@ async function completeYieldClosingInternal(
         }
 
         const yieldLedger = await resolveYieldLedger(jobOrder, lotNumber, input.yieldLedgerId);
+        const persistedOutputMmLotId = numericRelationId(yieldLedger.row.mm_lot_id);
+        const persistedOutputManufacturingDate = String(yieldLedger.row.manufacturing_date || "").slice(0, 10);
+        const persistedOutputExpiryDate = String(yieldLedger.row.expiry_date || "").slice(0, 10);
+        if (!persistedOutputMmLotId || !persistedOutputManufacturingDate || !persistedOutputExpiryDate) {
+            throw new YieldCompletionError(
+                409,
+                "IN_PROCESS_QA_TRACEABILITY_REQUIRED",
+                "Complete the Batch & Lot Traceability Log in the In-Process QA audit before closing this yield."
+            );
+        }
+        if (persistedOutputMmLotId !== requestedMmLotId
+            || !sameDate(persistedOutputManufacturingDate, manufacturingDate)
+            || !sameDate(persistedOutputExpiryDate, expirationDate)) {
+            throw new YieldCompletionError(
+                409,
+                "YIELD_TRACEABILITY_MISMATCH",
+                "The finished-goods storage lot and dates must match the values assigned during the In-Process QA audit."
+            );
+        }
         operationKey = `yield-close:${jobOrder.jobOrderId}:${yieldLedger.id}:${jobOrder.productId}:${branchId}:${lotNumber}:${requestedMmLotId}:2`;
 
         const existingMovements = await findExistingFinishedMovements(

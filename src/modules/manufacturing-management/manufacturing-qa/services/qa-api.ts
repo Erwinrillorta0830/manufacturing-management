@@ -544,7 +544,42 @@ export interface FinalQAReleasePayload {
     remarks?: string;
 }
 
-export async function postDailyQAInspection(payload: any): Promise<any> {
+export interface DailyQAOutputMetadata {
+    mmLotId: number;
+    batchNo: string;
+    manufacturingDate: string;
+    expiryDate: string;
+}
+
+export interface DailyQAInspectionEntry {
+    jobOrderId: number;
+    joRouteId: number | null;
+    ledgerId: number;
+    inspectorId: number;
+    moisturePercentage?: string | number | null;
+    acidityPh?: string | number | null;
+    sensoryStatus: "Passed" | "Failed";
+    weightCheckPassed: boolean | number;
+    labStatus: "Pending" | "Passed" | "Failed";
+    actionTaken: "Released" | "Quarantined" | "Scrapped";
+    remarks?: string | null;
+    qaParameters?: Array<{
+        parameter_id: number;
+        test_name?: string;
+        value: string | number | boolean;
+        is_failed: boolean;
+        remarks?: string;
+    }>;
+}
+
+export interface DailyQAInspectionRequest {
+    jobOrderId: number;
+    ledgerId: number;
+    outputMetadata: DailyQAOutputMetadata | null;
+    inspections: DailyQAInspectionEntry[];
+}
+
+export async function postDailyQAInspection(payload: DailyQAInspectionRequest): Promise<any> {
     const res = await fetch("/api/manufacturing/production/daily-qa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

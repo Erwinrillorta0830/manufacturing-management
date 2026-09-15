@@ -93,11 +93,11 @@ export default function ManufacturingQAModule() {
         yieldQty,
         setYieldQty,
         lotNumber,
-        setLotNumber,
         eligibleLots,
         selectedMmLotId,
         setSelectedMmLotId,
         loadingEligibleLots,
+        yieldTraceabilityReady,
         postingBranchMode,
         postingBranchId,
         newPostingBranchName,
@@ -109,9 +109,7 @@ export default function ManufacturingQAModule() {
         handlePostingBranchChange,
         handleCreatePostingBranch,
         manufacturingDate,
-        setManufacturingDate,
         expiryDate,
-        setExpiryDate,
         unitCost,
         setUnitCost,
         yieldMaterialsLoading,
@@ -160,6 +158,18 @@ export default function ManufacturingQAModule() {
         setDailyActionTaken,
         dailyRemarks,
         setDailyRemarks,
+        dailyOutputBatchNo,
+        setDailyOutputBatchNo,
+        dailyOutputMmLotId,
+        setDailyOutputMmLotId,
+        dailyOutputManufacturingDate,
+        setDailyOutputManufacturingDate,
+        dailyOutputExpiryDate,
+        setDailyOutputExpiryDate,
+        dailyOutputEligibleLots,
+        dailyOutputLotsLoading,
+        dailyOutputLotsError,
+        loadDailyOutputLots,
         handleOpenDailyAuditDialog,
         handleSubmitDailyAudit,
         selectedRouteId,
@@ -464,6 +474,23 @@ export default function ManufacturingQAModule() {
                         setDailyActionTaken={setDailyActionTaken}
                         dailyRemarks={dailyRemarks}
                         setDailyRemarks={setDailyRemarks}
+                        dailyOutputBatchNo={dailyOutputBatchNo}
+                        setDailyOutputBatchNo={setDailyOutputBatchNo}
+                        dailyOutputMmLotId={dailyOutputMmLotId}
+                        setDailyOutputMmLotId={setDailyOutputMmLotId}
+                        dailyOutputManufacturingDate={dailyOutputManufacturingDate}
+                        setDailyOutputManufacturingDate={setDailyOutputManufacturingDate}
+                        dailyOutputExpiryDate={dailyOutputExpiryDate}
+                        setDailyOutputExpiryDate={setDailyOutputExpiryDate}
+                        dailyOutputEligibleLots={dailyOutputEligibleLots}
+                        dailyOutputLotsLoading={dailyOutputLotsLoading}
+                        dailyOutputLotsError={dailyOutputLotsError}
+                        onRetryDailyOutputLots={() => {
+                            if (selectedLedgerEntry) {
+                                const jobOrder = jobOrders.find((job) => Number(job.order_id || job.job_order_id || job.id) === Number(selectedLedgerEntry.job_order_id));
+                                void loadDailyOutputLots(selectedLedgerEntry, jobOrder || null);
+                            }
+                        }}
                         handleOpenDailyAuditDialog={handleOpenDailyAuditDialog}
                         handleSubmitDailyAudit={handleSubmitDailyAudit}
                         actionLoading={actionLoading}
@@ -579,15 +606,13 @@ export default function ManufacturingQAModule() {
                 yieldQty={yieldQty}
                 setYieldQty={setYieldQty}
                 lotNumber={lotNumber}
-                setLotNumber={setLotNumber}
                 eligibleLots={eligibleLots}
                 selectedMmLotId={selectedMmLotId}
                 setSelectedMmLotId={setSelectedMmLotId}
                 loadingEligibleLots={loadingEligibleLots}
+                yieldTraceabilityReady={yieldTraceabilityReady}
                 manufacturingDate={manufacturingDate}
-                setManufacturingDate={setManufacturingDate}
                 expiryDate={expiryDate}
-                setExpiryDate={setExpiryDate}
                 unitCost={unitCost}
                 setUnitCost={setUnitCost}
                 yieldMaterialsLoading={yieldMaterialsLoading}

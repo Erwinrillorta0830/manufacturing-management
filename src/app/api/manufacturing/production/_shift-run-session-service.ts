@@ -14,7 +14,6 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import { loadEligibleFinishedGoodsLot, MmLotError } from "../services/mm-lots.service";
 
 const EPSILON = 0.000001;
 
@@ -43,7 +42,12 @@ interface MaterialLine {
     productId: number;
     mmLotId: number;
     inventoryLotId: number;
-    batchNo: string;
+    /**
+     * Deprecated production-session fields are retained only so older clients
+     * can retry an existing session. New sessions receive these values during
+     * In-Process QA instead.
+     */
+    batchNo: string | null;
     uomId: number;
     actualQty: number;
 }
@@ -58,7 +62,8 @@ interface SessionInput {
     goodQty: number;
     rejectedQty: number;
     scrapQty: number;
-    batchNo: string;
+    /** Assigned later by the In-Process QA audit for new sessions. */
+    batchNo: string | null;
     manufacturingDate: string | null;
     expiryDate: string | null;
     targetLotId: number | null;
@@ -204,12 +209,12 @@ function normalizeSessionInput(body: any): SessionInput {
         throw new ProductionSessionError(422, "OUTPUT_REQUIRED", "At least one good, rejected, or scrap unit must be recorded.");
     }
 
-    const batchNo = textValue(body?.batchNo);
-    if (!batchNo || batchNo.length > 100) {
-        throw new ProductionSessionError(422, "OUTPUT_BATCH_REQUIRED", "A finished-good batch or lot number is required.");
+    const batchNo = textValue(body?.batchNo) || null;
+    if (batchNo && batchNo.length > 100) {
+        throw new ProductionSessionError(422, "OUTPUT_BATCH_TOO_LONG", "The finished-good batch or lot number cannot exceed 100 characters.");
     }
 
-    const manufacturingDate = parseDate(body?.manufacturingDate, "Manufacturing date", goodQty > EPSILON);
+    const manufacturingDate = parseDate(body?.manufacturingDate, "Manufacturing date", false);
     const expiryDate = parseDate(body?.expiryDate, "Expiration date", false);
     if (manufacturingDate && expiryDate && expiryDate < manufacturingDate) {
         throw new ProductionSessionError(422, "INVALID_DATE_RANGE", "Expiration date cannot be earlier than the manufacturing date.");
@@ -218,10 +223,6 @@ function normalizeSessionInput(body: any): SessionInput {
     const targetLotId = body?.targetLotId === undefined || body?.targetLotId === null || body?.targetLotId === ""
         ? null
         : requiredInteger(body.targetLotId, "Finished-good storage lot");
-    if (goodQty > EPSILON && !targetLotId) {
-        throw new ProductionSessionError(422, "OUTPUT_LOT_REQUIRED", "Select an existing finished-good storage lot for positive output.");
-    }
-
     const materials: MaterialLine[] = rawMaterials
         .map((raw: any) => {
             const actualQty = requiredNonNegative(raw?.actualQty ?? raw?.actual_qty ?? 0, "Actual material quantity");
@@ -290,7 +291,9 @@ function lineSourceKey(input: SessionInput, reservationId: number): string {
     return `${sessionSourceKey(input)}:reservation:${reservationId}`;
 }
 
-function requestHash(input: SessionInput): string {
+type RequestHashOutput = Pick<SessionInput, "batchNo" | "manufacturingDate" | "expiryDate" | "targetLotId">;
+
+function requestHash(input: SessionInput, output: Partial<RequestHashOutput> = {}): string {
     const canonical = {
         sessionKey: input.sessionKey,
         taskId: input.taskId,
@@ -301,10 +304,10 @@ function requestHash(input: SessionInput): string {
         goodQty: input.goodQty,
         rejectedQty: input.rejectedQty,
         scrapQty: input.scrapQty,
-        batchNo: input.batchNo,
-        manufacturingDate: input.manufacturingDate,
-        expiryDate: input.expiryDate,
-        targetLotId: input.targetLotId,
+        batchNo: output.batchNo ?? input.batchNo,
+        manufacturingDate: output.manufacturingDate ?? input.manufacturingDate,
+        expiryDate: output.expiryDate ?? input.expiryDate,
+        targetLotId: output.targetLotId ?? input.targetLotId,
         remarks: input.remarks,
         varianceReason: input.varianceReason,
         varianceApprovalRequested: input.varianceApprovalRequested,
@@ -315,7 +318,7 @@ function requestHash(input: SessionInput): string {
     return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
-function legacyRequestHash(input: SessionInput): string {
+function legacyRequestHash(input: SessionInput, output: Partial<RequestHashOutput> = {}): string {
     const canonical = {
         sessionKey: input.sessionKey,
         taskId: input.taskId,
@@ -326,10 +329,10 @@ function legacyRequestHash(input: SessionInput): string {
         goodQty: input.goodQty,
         rejectedQty: input.rejectedQty,
         scrapQty: input.scrapQty,
-        batchNo: input.batchNo,
-        manufacturingDate: input.manufacturingDate,
-        expiryDate: input.expiryDate,
-        targetLotId: input.targetLotId,
+        batchNo: output.batchNo ?? input.batchNo,
+        manufacturingDate: output.manufacturingDate ?? input.manufacturingDate,
+        expiryDate: output.expiryDate ?? input.expiryDate,
+        targetLotId: output.targetLotId ?? input.targetLotId,
         remarks: input.remarks,
         materials: [...input.materials]
             .sort((left, right) => left.reservationId - right.reservationId)
@@ -683,7 +686,8 @@ async function ensureConsumptionAndGenealogy(
     existingConsumptionRows: any[],
     existingGenealogyRows: any[],
     ledgerId: number,
-    createdAt: string
+    createdAt: string,
+    finishedBatchNo: string | null
 ) {
     const consumptionKey = plan.sourceEventKey;
     let consumptionRow = existingConsumptionRows.find((row) => textValue(row.source_event_key) === consumptionKey);
@@ -748,7 +752,7 @@ async function ensureConsumptionAndGenealogy(
                 method: "POST",
                 body: JSON.stringify({
                     job_order_id: input.joId,
-                    batch_no: input.batchNo,
+                    batch_no: finishedBatchNo,
                     component_product_id: plan.line.productId,
                     component_mm_lot_id: plan.line.mmLotId,
                     component_lot_id: null,
@@ -807,6 +811,11 @@ async function updateJobOrderAggregates(joId: number, ledgerId: number, actorId:
 }
 
 function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[], genealogyRows: any[], actorId: number, workCenterId: number, idempotent: boolean, varianceTolerancePct: number) {
+    const persistedBatchNo = textValue(ledger.lot_number) || null;
+    const persistedMmLotId = numberId(ledger.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) || null;
+    const persistedManufacturingDate = textValue(ledger.manufacturing_date) || null;
+    const persistedExpiryDate = textValue(ledger.expiry_date) || null;
+
     return {
         success: true,
         idempotent,
@@ -821,10 +830,10 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
         goodQuantity: input.goodQty,
         rejectedQuantity: input.rejectedQty,
         scrapQuantity: input.scrapQty,
-        batchNo: input.batchNo,
-        mmLotId: numberId(ledger.mm_lot_id, ["lot_id", "mm_lot_id", "id"]) || null,
-        manufacturingDate: input.manufacturingDate,
-        expiryDate: input.expiryDate,
+        batchNo: persistedBatchNo,
+        mmLotId: persistedMmLotId,
+        manufacturingDate: persistedManufacturingDate,
+        expiryDate: persistedExpiryDate,
         remarks: input.remarks,
         varianceTolerancePct,
         qaStatus: "Pending",
@@ -876,9 +885,22 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             `Look up production session ${input.sessionKey}`
         );
         const existingLedger = existingLedgerRows[0] || null;
+        const persistedOutputHash = existingLedger
+            ? {
+                batchNo: textValue(existingLedger.lot_number) || null,
+                manufacturingDate: textValue(existingLedger.manufacturing_date) || null,
+                expiryDate: textValue(existingLedger.expiry_date) || null,
+                targetLotId: numberId(existingLedger.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) || null
+            }
+            : {};
+        const compatibleHashes = new Set([
+            hash,
+            legacyRequestHash(input),
+            requestHash(input, persistedOutputHash),
+            legacyRequestHash(input, persistedOutputHash)
+        ]);
         if (existingLedger && textValue(existingLedger.request_hash)
-            && textValue(existingLedger.request_hash) !== hash
-            && textValue(existingLedger.request_hash) !== legacyRequestHash(input)) {
+            && !compatibleHashes.has(textValue(existingLedger.request_hash))) {
             throw new ProductionSessionError(409, "SESSION_CONFLICT", `Production session ${input.sessionKey} already exists with a different payload.`);
         }
         const status = normalizeJobOrderStatus(jobOrder.status || JOB_ORDER_STATUS.DRAFT);
@@ -919,26 +941,6 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         }
         if (input.workCenterId && input.workCenterId !== workCenterId) {
             throw new ProductionSessionError(422, "STATION_MISMATCH", `The submitted station ${input.workCenterId} does not match routing task ${input.taskId}.`);
-        }
-
-        let resolvedOutputLotId: number | null = null;
-        if (input.goodQty > EPSILON) {
-            if (!input.targetLotId) {
-                throw new ProductionSessionError(422, "OUTPUT_LOT_REQUIRED", "Select an existing finished-good storage lot for positive output.");
-            }
-            try {
-                const eligibleLot = await loadEligibleFinishedGoodsLot({
-                    mmLotId: input.targetLotId,
-                    branchId,
-                    productId: producedProductId
-                });
-                resolvedOutputLotId = numberId(eligibleLot.lot_id, ["lot_id", "mm_lot_id", "id"]);
-            } catch (error) {
-                if (error instanceof MmLotError) {
-                    throw new ProductionSessionError(error.status, error.code, error.message);
-                }
-                throw error;
-            }
         }
 
         const targetQuantity = Math.max(0, finiteNumber(jobOrder.target_quantity ?? jobOrder.quantity));
@@ -1129,6 +1131,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             }
         }
 
+        const persistedFinishedBatchNo = existingLedger ? textValue(existingLedger.lot_number) || null : null;
         const ledger = existingLedger || await directusRequest<any>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger`,
             `Create production session for Job Order ${input.joId}`,
@@ -1140,8 +1143,10 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                     yield_quantity: input.goodQty,
                     rejected_quantity: input.rejectedQty,
                     scrap_quantity: input.scrapQty,
-                    lot_number: input.batchNo,
-                    mm_lot_id: resolvedOutputLotId,
+                    // Finished-goods traceability is assigned by the
+                    // In-Process QA audit, not by the shop-floor operator.
+                    lot_number: null,
+                    mm_lot_id: null,
                     qa_status: "Pending",
                     logged_at: createdAt,
                     logged_by: actorId,
@@ -1153,8 +1158,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                     jo_route_id: input.taskId,
                     work_center_id: workCenterId,
                     production_date: input.productionDate,
-                    manufacturing_date: input.manufacturingDate,
-                    expiry_date: input.expiryDate,
+                    manufacturing_date: null,
+                    expiry_date: null,
                     remarks: input.remarks
                 })
             }
@@ -1177,7 +1182,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 existingChildren.consumptionRows,
                 existingChildren.genealogyRows,
                 ledgerId,
-                createdAt
+                createdAt,
+                persistedFinishedBatchNo
             );
         }
 
@@ -1191,7 +1197,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         const finalChildren = await loadSessionChildren(ledgerId, input.joId);
         return NextResponse.json(responsePayload(
             input,
-            { ...ledger, mm_lot_id: resolvedOutputLotId, logged_by: actorId, source_event_key: sourceEventKey },
+            { ...ledger, logged_by: actorId, source_event_key: sourceEventKey },
             finalChildren.consumptionRows,
             finalChildren.genealogyRows,
             actorId,

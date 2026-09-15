@@ -9,6 +9,7 @@ import {
 import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 import { hasPagination, paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { loadEligibleFinishedGoodsLot, MmLotError } from "../../services/mm-lots.service";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "test";
@@ -42,6 +43,153 @@ async function readDirectusRows(response: Response, label: string): Promise<any[
         throw new Error(`${label} returned an invalid response`);
     }
     return payload.data;
+}
+
+class DailyQAValidationError extends Error {
+    constructor(
+        readonly status: number,
+        readonly code: string,
+        message: string
+    ) {
+        super(message);
+        this.name = "DailyQAValidationError";
+    }
+}
+
+interface DailyQAOutputMetadata {
+    mmLotId: number;
+    batchNo: string;
+    manufacturingDate: string;
+    expiryDate: string;
+}
+
+function textValue(value: unknown): string {
+    return String(value ?? "").trim();
+}
+
+function normalizeDate(value: unknown, label: string): string {
+    const date = textValue(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw new DailyQAValidationError(422, "INVALID_OUTPUT_DATE", `${label} must use YYYY-MM-DD format.`);
+    }
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+        throw new DailyQAValidationError(422, "INVALID_OUTPUT_DATE", `${label} is not a valid calendar date.`);
+    }
+    return date;
+}
+
+function normalizeOutputMetadata(value: unknown, required: boolean): DailyQAOutputMetadata | null {
+    if (value === null || value === undefined || value === "") {
+        if (required) {
+            throw new DailyQAValidationError(422, "OUTPUT_TRACEABILITY_REQUIRED", "Storage lot, output batch, manufacturing date, and expiry date are required for positive output.");
+        }
+        return null;
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+        throw new DailyQAValidationError(422, "OUTPUT_TRACEABILITY_INVALID", "Finished-goods output traceability must be an object.");
+    }
+
+    const record = value as Record<string, unknown>;
+    const mmLotId = relationId(record.mmLotId ?? record.mm_lot_id, ["mmLotId", "mm_lot_id", "lot_id", "id"]);
+    const batchNo = textValue(record.batchNo ?? record.batch_no ?? record.lotNumber ?? record.lot_number);
+    if (!mmLotId) {
+        throw new DailyQAValidationError(422, "OUTPUT_LOT_REQUIRED", "Select an active finished-goods storage lot before saving the audit.");
+    }
+    if (!batchNo) {
+        throw new DailyQAValidationError(422, "OUTPUT_BATCH_REQUIRED", "Enter the finished-goods output batch or lot number before saving the audit.");
+    }
+    if (batchNo.length > 100) {
+        throw new DailyQAValidationError(422, "OUTPUT_BATCH_TOO_LONG", "The finished-goods output batch or lot number cannot exceed 100 characters.");
+    }
+
+    const manufacturingDate = normalizeDate(record.manufacturingDate ?? record.manufacturing_date, "Manufacturing date");
+    const expiryDate = normalizeDate(record.expiryDate ?? record.expiry_date, "Expiry date");
+    if (expiryDate < manufacturingDate) {
+        throw new DailyQAValidationError(422, "INVALID_OUTPUT_DATE_RANGE", "Expiry date cannot be earlier than the manufacturing date.");
+    }
+
+    return { mmLotId, batchNo, manufacturingDate, expiryDate };
+}
+
+async function readDirectusRecord(path: string, label: string): Promise<Record<string, any>> {
+    const response = await fetch(`${DIRECTUS_URL}${path}`, { headers, cache: "no-store" });
+    if (!response.ok) {
+        throw new DailyQAValidationError(502, "DIRECTUS_LOOKUP_FAILED", `${label} failed with HTTP ${response.status}.`);
+    }
+    const payload = await response.json().catch(() => null);
+    if (!payload?.data || typeof payload.data !== "object" || Array.isArray(payload.data)) {
+        throw new DailyQAValidationError(502, "DIRECTUS_RESPONSE_INVALID", `${label} returned an invalid response.`);
+    }
+    return payload.data as Record<string, any>;
+}
+
+async function patchDirectusRecord(path: string, body: Record<string, unknown>, label: string): Promise<void> {
+    const response = await fetch(`${DIRECTUS_URL}${path}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+        throw new DailyQAValidationError(502, "DIRECTUS_WRITE_FAILED", `${label} failed with HTTP ${response.status}.`);
+    }
+}
+
+function metadataMatches(current: Record<string, any>, requested: DailyQAOutputMetadata): boolean {
+    return relationId(current.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) === requested.mmLotId
+        && textValue(current.lot_number || current.batch_no) === requested.batchNo
+        && textValue(current.manufacturing_date).slice(0, 10) === requested.manufacturingDate
+        && textValue(current.expiry_date).slice(0, 10) === requested.expiryDate;
+}
+
+async function persistOutputTraceability(
+    ledgerId: number,
+    jobOrderId: number,
+    ledger: Record<string, any>,
+    metadata: DailyQAOutputMetadata | null
+): Promise<void> {
+    if (!metadata) return;
+
+    const hasExistingMetadata = Boolean(
+        relationId(ledger.mm_lot_id, ["mm_lot_id", "lot_id", "id"])
+        || textValue(ledger.lot_number || ledger.batch_no)
+        || textValue(ledger.manufacturing_date)
+        || textValue(ledger.expiry_date)
+    );
+    if (hasExistingMetadata && !metadataMatches(ledger, metadata)) {
+        throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONFLICT", "This yield ledger already has different finished-goods traceability values.");
+    }
+
+    if (!metadataMatches(ledger, metadata)) {
+        await patchDirectusRecord(
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
+            {
+                mm_lot_id: metadata.mmLotId,
+                lot_number: metadata.batchNo,
+                manufacturing_date: metadata.manufacturingDate,
+                expiry_date: metadata.expiryDate
+            },
+            `Save output traceability for yield ledger ${ledgerId}`
+        );
+    }
+
+    const sessionKey = textValue(ledger.session_key);
+    if (!sessionKey) return;
+
+    const genealogyResponse = await fetch(
+        `${DIRECTUS_URL}/items/jo_material_genealogy?filter[job_order_id][_eq]=${encodeURIComponent(String(jobOrderId))}&filter[session_key][_eq]=${encodeURIComponent(sessionKey)}&fields=genealogy_id,batch_no&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    const genealogyRows = await readDirectusRows(genealogyResponse, "Production genealogy lookup");
+    for (const row of genealogyRows) {
+        const genealogyId = relationId(row.genealogy_id ?? row.id, ["genealogy_id", "id"]);
+        if (!genealogyId || textValue(row.batch_no) === metadata.batchNo) continue;
+        await patchDirectusRecord(
+            `/items/jo_material_genealogy/${encodeURIComponent(String(genealogyId))}`,
+            { batch_no: metadata.batchNo },
+            `Save output batch for genealogy ${genealogyId}`
+        );
+    }
 }
 
 async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> {
@@ -169,17 +317,58 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const inspectionsList = Array.isArray(body) ? body : [body];
+        const isEnvelope = Boolean(body && !Array.isArray(body) && Array.isArray(body.inspections));
+        const inspectionsList = isEnvelope ? body.inspections : (Array.isArray(body) ? body : [body]);
 
         if (inspectionsList.length === 0) {
             return NextResponse.json({ error: "No inspection data provided" }, { status: 400 });
         }
 
-        const firstEntry = inspectionsList[0];
-        const { jobOrderId, ledgerId } = firstEntry;
+        const firstEntry = inspectionsList[0] || {};
+        const jobOrderId = Number(isEnvelope ? body.jobOrderId : firstEntry.jobOrderId);
+        const ledgerId = Number(isEnvelope ? body.ledgerId : firstEntry.ledgerId);
 
-        if (!jobOrderId || !ledgerId) {
+        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0 || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
             return NextResponse.json({ error: "Missing required fields: jobOrderId, ledgerId" }, { status: 400 });
+        }
+
+        const ledger = await readDirectusRecord(
+            `/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}?fields=ledger_id,job_order_id,session_key,yield_quantity,lot_number,mm_lot_id,manufacturing_date,expiry_date`,
+            `Load yield ledger ${ledgerId}`
+        );
+        const ledgerJobOrderId = relationId(ledger.job_order_id, ["job_order_id", "id"]);
+        if (ledgerJobOrderId !== jobOrderId) {
+            throw new DailyQAValidationError(409, "LEDGER_JOB_ORDER_MISMATCH", "The selected yield ledger does not belong to this Job Order.");
+        }
+
+        const jobOrder = await readDirectusRecord(
+            `/items/manufacturing_job_orders/${encodeURIComponent(String(jobOrderId))}?fields=job_order_id,product_id,branch_id`,
+            `Load Job Order ${jobOrderId}`
+        );
+        const productId = relationId(jobOrder.product_id, ["product_id", "id"]);
+        const branchId = relationId(jobOrder.branch_id, ["branch_id", "id"]);
+        const goodOutputQuantity = Number(ledger.yield_quantity || 0);
+        if (goodOutputQuantity > 0 && (!productId || !branchId)) {
+            throw new DailyQAValidationError(409, "OUTPUT_TRACEABILITY_CONTEXT_MISSING", "The Job Order is missing its finished-good product or branch, so output traceability cannot be saved.");
+        }
+        const outputMetadata = goodOutputQuantity > 0
+            ? normalizeOutputMetadata(isEnvelope ? body.outputMetadata : null, true)
+            : null;
+
+        if (outputMetadata) {
+            try {
+                await loadEligibleFinishedGoodsLot({
+                    mmLotId: outputMetadata.mmLotId,
+                    branchId,
+                    productId
+                });
+            } catch (error) {
+                if (error instanceof MmLotError) {
+                    throw new DailyQAValidationError(error.status, error.code, error.message);
+                }
+                throw error;
+            }
+            await persistOutputTraceability(ledgerId, jobOrderId, ledger, outputMetadata);
         }
 
         const timestamp = new Date().toISOString();
@@ -200,6 +389,10 @@ export async function POST(request: Request) {
 
             if (!inspectorId) {
                 return NextResponse.json({ error: "Missing required field: inspectorId" }, { status: 400 });
+            }
+
+            if (Number(entry.jobOrderId || jobOrderId) !== jobOrderId || Number(entry.ledgerId || ledgerId) !== ledgerId) {
+                throw new DailyQAValidationError(422, "INSPECTION_REFERENCE_MISMATCH", "Every inspection must reference the selected Job Order and yield ledger.");
             }
 
             const payload = {
@@ -365,9 +558,16 @@ export async function POST(request: Request) {
 
         // Sync inventory lot status as well - removed since inventory_lots is deprecated
 
-        return NextResponse.json({ success: true, message: "Daily yield QA inspection logged successfully." });
+        return NextResponse.json({
+            success: true,
+            message: "Daily yield QA inspection logged successfully.",
+            outputMetadata
+        });
     } catch (e) {
         console.error("Error in daily-qa POST API:", e);
+        if (e instanceof DailyQAValidationError) {
+            return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+        }
         return NextResponse.json({ error: (e as Error).message || "Failed to log inspection" }, { status: 500 });
     }
 }

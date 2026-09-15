@@ -436,8 +436,4 @@ export interface ShiftRunLogPayload {
     materialsConsumed: ShiftRunMaterialConsumption[];
     varianceReason?: string | null;
     approveVariance?: boolean;
-    batchNo?: string;
-    expiryDate?: string;
-    manufacturingDate?: string;
-    targetLotId?: number;
 }
