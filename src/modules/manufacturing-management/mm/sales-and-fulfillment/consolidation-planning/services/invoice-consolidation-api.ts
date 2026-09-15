@@ -138,6 +138,8 @@ export interface LotAllocation {
     salesOrderDetailId?: number;
     orderId?: number;
     orderNo?: string;
+    customerName?: string;
+    reservationIds?: number[];
 }
 
 export async function fetchAllocations(batchId: number): Promise<LotAllocation[]> {

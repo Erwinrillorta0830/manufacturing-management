@@ -950,11 +950,12 @@ export async function allocateInvoice(invoiceId: number, userId: number) {
     const invoice: InvoiceRow | undefined = invoices[0];
     if (!invoice) throw new Error("Document not found");
 
+    const activeStatuses = "Pending,For Picking,Picking,Picked,Approved,Audited";
     const linkedJson = await directusJson(
-        `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${invoiceId}&filter[consolidator_id][is_delete][_eq]=0&fields=id&limit=1`
+        `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${invoiceId}&filter[consolidator_id][is_delete][_eq]=0&filter[consolidator_id][status][_in]=${activeStatuses}&fields=id&limit=1`
     ).catch(() => ({ data: [] }));
     if ((linkedJson.data || []).length > 0) {
-        throw new Error("Document is already linked to a consolidation batch");
+        throw new Error("Document is already linked to an active consolidation batch");
     }
 
     if (details.length === 0) throw new Error("Document has no product details");
@@ -1738,11 +1739,12 @@ export async function calculateSalesOrderAvailability(salesOrderId: number) {
 }
 
 export async function releaseInvoiceReservations(invoiceId: number, userId: number) {
+    const activeStatuses = "Pending,For Picking,Picking,Picked,Approved,Audited";
     const linkedJson = await directusJson(
-        `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${invoiceId}&filter[consolidator_id][is_delete][_eq]=0&fields=id&limit=1`
-    );
+        `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${invoiceId}&filter[consolidator_id][is_delete][_eq]=0&filter[consolidator_id][status][_in]=${activeStatuses}&fields=id&limit=1`
+    ).catch(() => ({ data: [] }));
     if ((linkedJson.data || []).length > 0) {
-        throw new Error("Reservations cannot be released after the invoice enters consolidation");
+        throw new Error("Reservations cannot be released after the invoice enters an active consolidation batch");
     }
 
     const detailsJson = await directusJson(

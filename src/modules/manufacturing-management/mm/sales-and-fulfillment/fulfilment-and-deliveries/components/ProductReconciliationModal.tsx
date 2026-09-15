@@ -56,56 +56,14 @@ interface ProductReconciliationModalProps {
 
 function initLineItemReservations(items: ClearanceLineItem[]): ClearanceLineItem[] {
     return items.map((item) => {
-        const reservations = (item.reservations || []).map((r) => ({ ...r }));
-        if (reservations.length === 0) {
-            return { ...item, reservations };
-        }
-
-        const retQty = Number(item.returned_quantity || 0);
-        const recQty = Number(item.received_quantity || 0);
-        const ordQty = Number(item.ordered_quantity || 0);
-        const physicalDispatched = reservations.reduce(
-            (sum, r) => sum + (Number(r.picked_quantity) || 0),
-            0
-        );
-        const maxReturnable = physicalDispatched > 0 ? physicalDispatched : ordQty;
-
-        if ((recQty === 0 && retQty === ordQty) || retQty === maxReturnable || (recQty === 0 && retQty > maxReturnable)) {
-            // Full return of physical dispatch: all reservations return their picked (or reserved) qty
-            return {
-                ...item,
-                returned_quantity: maxReturnable,
-                reservations: reservations.map((r) => ({
-                    ...r,
-                    returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
-                })),
-            };
-        }
-
-        if (retQty === 0) {
-            return {
-                ...item,
-                reservations: reservations.map((r) => ({ ...r, returned_quantity: 0 })),
-            };
-        }
-
-        // If returned_quantity is already allocated across reservations and sum matches, keep it
-        const currentSum = reservations.reduce((s, r) => s + (Number(r.returned_quantity) || 0), 0);
-        if (currentSum === retQty && retQty <= maxReturnable) {
-            return { ...item, reservations };
-        }
-
-        // Otherwise auto-allocate sequentially up to maxReturnable
-        const effectiveRetQty = Math.min(retQty, maxReturnable);
-        let remaining = effectiveRetQty;
-        const updatedResv = reservations.map((r) => {
-            const picked = Number(r.picked_quantity || r.reserved_quantity || 0);
-            const alloc = Math.min(picked, remaining);
-            remaining = Math.max(0, remaining - alloc);
-            return { ...r, returned_quantity: alloc };
-        });
-
-        return { ...item, returned_quantity: effectiveRetQty, reservations: updatedResv };
+        const reservations = (item.reservations || []).map((r) => ({
+            ...r,
+            returned_quantity: Number(r.returned_quantity || 0),
+        }));
+        return {
+            ...item,
+            reservations,
+        };
     });
 }
 
@@ -557,73 +515,24 @@ export default function ProductReconciliationModal({
 
     const handleReturnedQtyChange = (originalIndex: number, newReturnedQty: number) => {
         const item = lineItems[originalIndex];
-        const recQty = item.received_quantity;
-        const ordQty = item.ordered_quantity;
-
         let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
-        const physicalDispatched = updatedReservations.reduce(
-            (sum, r) => sum + (Number(r.picked_quantity) || 0),
-            0
-        );
-        const maxReturnable = physicalDispatched > 0
-            ? physicalDispatched
-            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
-        const cappedQty = Math.min(newReturnedQty, maxReturnable);
 
-        if (updatedReservations.length === 1) {
-            updatedReservations[0].returned_quantity = cappedQty;
-        } else if (updatedReservations.length > 1) {
-            if ((recQty === 0 && cappedQty === ordQty) || cappedQty === maxReturnable) {
-                updatedReservations = updatedReservations.map((r) => ({
-                    ...r,
-                    returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
-                }));
-            } else {
-                let remaining = cappedQty;
-                updatedReservations = updatedReservations.map((r) => {
-                    const picked = Number(r.picked_quantity || r.reserved_quantity || 0);
-                    const alloc = Math.min(picked, remaining);
-                    remaining = Math.max(0, remaining - alloc);
-                    return { ...r, returned_quantity: alloc };
-                });
-            }
+        // If return quantity is set to 0, clear all reservation return allocations
+        if (newReturnedQty === 0) {
+            updatedReservations = updatedReservations.map((r) => ({
+                ...r,
+                returned_quantity: 0,
+            }));
         }
 
         updateLine(originalIndex, {
-            returned_quantity: cappedQty,
+            returned_quantity: newReturnedQty,
             reservations: updatedReservations,
         });
     };
 
     const handleReceivedQtyChange = (originalIndex: number, newReceivedQty: number) => {
-        const item = lineItems[originalIndex];
-        const retQty = item.returned_quantity;
-        const ordQty = item.ordered_quantity;
-
-        let updatedReservations = item.reservations ? item.reservations.map((r) => ({ ...r })) : [];
-        const physicalDispatched = updatedReservations.reduce(
-            (sum, r) => sum + (Number(r.picked_quantity) || 0),
-            0
-        );
-        const maxDeliverable = physicalDispatched > 0
-            ? physicalDispatched
-            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
-        const cappedReceivedQty = Math.max(0, Math.min(newReceivedQty, maxDeliverable));
-        const maxReturnable = maxDeliverable;
-
-        if (cappedReceivedQty === 0 && (retQty === ordQty || retQty === maxReturnable) && updatedReservations.length > 0) {
-            updatedReservations = updatedReservations.map((r) => ({
-                ...r,
-                returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
-            }));
-            updateLine(originalIndex, {
-                received_quantity: 0,
-                returned_quantity: maxReturnable,
-                reservations: updatedReservations,
-            });
-        } else {
-            updateLine(originalIndex, { received_quantity: cappedReceivedQty });
-        }
+        updateLine(originalIndex, { received_quantity: newReceivedQty });
     };
 
     const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
@@ -689,22 +598,20 @@ export default function ProductReconciliationModal({
             return;
         }
 
-        // Validate batch reservations allocation for returns (strictly for Unfulfilled / Returns)
-        if (isUnfulfilled) {
-            for (const item of lineItems) {
-                if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
-                    const physicalDispatched = item.reservations.reduce(
-                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
-                        0
+        // Validate batch reservations allocation for returns across all items with physical batch reservations
+        for (const item of lineItems) {
+            if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
+                const physicalDispatched = item.reservations.reduce(
+                    (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                    0
+                );
+                const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
+                const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+                if (totalAlloc !== targetReturn) {
+                    toast.error(
+                        `Batch return allocation mismatch on "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned. Please allocate all returned batches.`
                     );
-                    const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
-                    const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
-                    if (totalAlloc !== targetReturn) {
-                        toast.error(
-                            `Batch return allocation mismatch on "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned (physical dispatch). Please balance batch allocation.`
-                        );
-                        return;
-                    }
+                    return;
                 }
             }
         }
@@ -715,6 +622,11 @@ export default function ProductReconciliationModal({
             const ret = item.returned_quantity;
             const ord = item.ordered_quantity;
             let status: LineStatus = "Fulfilled";
+
+            // If return quantity is 0, ensure all batch reservations also have 0 returned
+            const sanitizedReservations = ret === 0 && item.reservations
+                ? item.reservations.map((r) => ({ ...r, returned_quantity: 0 }))
+                : item.reservations;
 
             if (rec === 0 && ret === ord) {
                 status = "Unfulfilled / Returns";
@@ -729,6 +641,7 @@ export default function ProductReconciliationModal({
             return {
                 ...item,
                 line_status: status,
+                reservations: sanitizedReservations,
             };
         });
 
@@ -1197,38 +1110,25 @@ export default function ProductReconciliationModal({
                                                                         {item.received_quantity}
                                                                     </span>
                                                                 ) : (
-                                                                    (() => {
-                                                                        const physicalDispatched = (item.reservations || []).reduce(
-                                                                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
-                                                                            0
-                                                                        );
-                                                                        const maxDeliverable = physicalDispatched > 0
-                                                                            ? physicalDispatched
-                                                                            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
-                                                                        return (
-                                                                            <input
-                                                                                type="number"
-                                                                                min={0}
-                                                                                max={maxDeliverable}
-                                                                                value={item.received_quantity === 0 ? "" : item.received_quantity}
-                                                                                placeholder="0"
-                                                                                onFocus={(e) => e.target.select()}
-                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                                onChange={(e) => {
-                                                                                    const val = e.target.value;
-                                                                                    const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                                    handleReceivedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
-                                                                                }}
-                                                                                onBlur={(e) => {
-                                                                                    const val = e.target.value;
-                                                                                    if (val === "" || isNaN(parseInt(val, 10))) {
-                                                                                        handleReceivedQtyChange(originalIndex, 0);
-                                                                                    }
-                                                                                }}
-                                                                                className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                            />
-                                                                        );
-                                                                    })()
+                                                                    <input
+                                                                        type="number"
+                                                                        value={item.received_quantity === 0 ? "" : item.received_quantity}
+                                                                        placeholder="0"
+                                                                        onFocus={(e) => e.target.select()}
+                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
+                                                                            handleReceivedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
+                                                                        }}
+                                                                        onBlur={(e) => {
+                                                                            const val = e.target.value;
+                                                                            if (val === "" || isNaN(parseInt(val, 10))) {
+                                                                                handleReceivedQtyChange(originalIndex, 0);
+                                                                            }
+                                                                        }}
+                                                                        className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                                                                    />
                                                                 )}
                                                             </td>
 
@@ -1239,38 +1139,25 @@ export default function ProductReconciliationModal({
                                                                         {item.returned_quantity}
                                                                     </span>
                                                                 ) : (
-                                                                    (() => {
-                                                                        const physicalDispatched = (item.reservations || []).reduce(
-                                                                            (sum, r) => sum + (Number(r.picked_quantity) || 0),
-                                                                            0
-                                                                        );
-                                                                        const maxReturnable = physicalDispatched > 0
-                                                                            ? physicalDispatched
-                                                                            : (typeof item.received_quantity === "number" && item.received_quantity > 0 ? item.received_quantity : 0);
-                                                                        return (
-                                                                            <input
-                                                                                type="number"
-                                                                                min={0}
-                                                                                max={maxReturnable}
-                                                                                value={item.returned_quantity === 0 ? "" : item.returned_quantity}
-                                                                                placeholder="0"
-                                                                                onFocus={(e) => e.target.select()}
-                                                                                onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                                onChange={(e) => {
-                                                                                    const val = e.target.value;
-                                                                                    const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                                    handleReturnedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
-                                                                                }}
-                                                                                onBlur={(e) => {
-                                                                                    const val = e.target.value;
-                                                                                    if (val === "" || isNaN(parseInt(val, 10))) {
-                                                                                        handleReturnedQtyChange(originalIndex, 0);
-                                                                                    }
-                                                                                }}
-                                                                                className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                            />
-                                                                        );
-                                                                    })()
+                                                                    <input
+                                                                        type="number"
+                                                                        value={item.returned_quantity === 0 ? "" : item.returned_quantity}
+                                                                        placeholder="0"
+                                                                        onFocus={(e) => e.target.select()}
+                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
+                                                                            handleReturnedQtyChange(originalIndex, isNaN(parsed) ? 0 : parsed);
+                                                                        }}
+                                                                        onBlur={(e) => {
+                                                                            const val = e.target.value;
+                                                                            if (val === "" || isNaN(parseInt(val, 10))) {
+                                                                                handleReturnedQtyChange(originalIndex, 0);
+                                                                            }
+                                                                        }}
+                                                                        className="w-20 h-8 text-center bg-background border border-rose-500/40 focus:border-rose-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
+                                                                    />
                                                                 )}
                                                             </td>
 
