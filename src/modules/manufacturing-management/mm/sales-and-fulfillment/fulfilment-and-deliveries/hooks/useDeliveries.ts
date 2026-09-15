@@ -19,25 +19,31 @@ import { toast } from "sonner";
 export function computePreviewStatus(
     items: {
         ordered_quantity: number;
+        invoiced_quantity?: number;
         received_quantity: number;
         returned_quantity: number;
         has_concern?: boolean;
         concern_notes?: string;
     }[]
 ): FulfillmentStatus {
-    const totalOrdered = items.reduce((sum, i) => sum + Number(i.ordered_quantity || 0), 0);
+    const totalTarget = items.reduce((sum, i) => {
+        const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
+            ? Number(i.invoiced_quantity)
+            : Number(i.ordered_quantity || 0);
+        return sum + target;
+    }, 0);
     const totalReceived = items.reduce((sum, i) => sum + Number(i.received_quantity || 0), 0);
     const totalReturned = items.reduce((sum, i) => sum + Number(i.returned_quantity || 0), 0);
 
     const hasConcerns = items.some((i) => i.has_concern || (i.concern_notes && i.concern_notes.trim().length > 0));
 
-    if (totalReceived === 0 && totalReturned === totalOrdered) {
+    if (totalReceived === 0 && totalReturned === totalTarget && totalTarget > 0) {
         return "Unfulfilled / Returns";
     }
     if (totalReceived > 0 && totalReturned > 0) {
         return "Fulfilled with Returns";
     }
-    if (totalReceived === totalOrdered && totalReturned === 0) {
+    if (totalReceived === totalTarget && totalReturned === 0) {
         return hasConcerns ? "Fulfilled with Concerns" : "Fulfilled";
     }
     if (totalReceived === 0 && totalReturned === 0) {

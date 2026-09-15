@@ -114,7 +114,12 @@ export default function DeliveryClearanceModal({
             const hasReturnItems = (ord.items || []).some((i) => i.returned_quantity > 0);
             const isAllUnfulfilled =
                 (ord.items || []).length > 0 &&
-                (ord.items || []).every((i) => i.received_quantity === 0 && i.returned_quantity === i.ordered_quantity);
+                (ord.items || []).every((i) => {
+                    const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
+                        ? Number(i.invoiced_quantity)
+                        : Number(i.ordered_quantity || 0);
+                    return i.received_quantity === 0 && i.returned_quantity === target && target > 0;
+                });
 
             let derivedStatus = ord.fulfillment_status;
             if (savedOrder?.fulfillment_status) {
