@@ -7,37 +7,51 @@
  */
 export const JOB_ORDER_STATUS = {
     DRAFT: "Draft",
-    PLANNED: "Planned",
-    PLANNING: "Planning",
-    RELEASED: "Released",
-    PROCEED: "Proceed",
-    ONGOING: "Ongoing",
-    IN_PROGRESS: "In Progress",
-    RESERVED: "Reserved",
+    FOR_PICKING: "For Picking",
+    PICKED: "Picked",
+    IN_PRODUCTION: "In Production",
+    PRODUCTION_COMPLETED: "Production Completed",
+    FOR_QA_RECONCILIATION: "For QA and Reconciliation",
+
+    // Deprecated aliases retained while the existing UI and API callers are
+    // migrated to the canonical workflow actions.
+    PLANNED: "Draft",
+    PLANNING: "Draft",
+    RELEASED: "For Picking",
+    PROCEED: "For Picking",
+    ONGOING: "In Production",
+    IN_PROGRESS: "In Production",
+    RESERVED: "Picked",
     ON_HOLD: "On Hold",
     QA_HOLD: "QA Hold",
-    FINISHED: "Finished",
-    COMPLETED: "Completed",
+    FINISHED: "Production Completed",
+    COMPLETED: "For QA and Reconciliation",
     CLOSED: "Closed",
     CANCELLED: "Cancelled",
-    SHORTAGE: "Shortage"
+    SHORTAGE: "Draft"
 } as const;
 
 export type CanonicalJobOrderStatus = typeof JOB_ORDER_STATUS[keyof typeof JOB_ORDER_STATUS];
 
 const STATUS_BY_KEY = new Map<string, CanonicalJobOrderStatus>([
     ["draft", JOB_ORDER_STATUS.DRAFT],
-    ["planned", JOB_ORDER_STATUS.PLANNED],
-    ["planning", JOB_ORDER_STATUS.PLANNING],
-    ["released", JOB_ORDER_STATUS.RELEASED],
-    ["proceed", JOB_ORDER_STATUS.PROCEED],
-    ["ongoing", JOB_ORDER_STATUS.ONGOING],
-    ["in progress", JOB_ORDER_STATUS.IN_PROGRESS],
-    ["reserved", JOB_ORDER_STATUS.RESERVED],
+    ["planned", JOB_ORDER_STATUS.DRAFT],
+    ["planning", JOB_ORDER_STATUS.DRAFT],
+    ["shortage", JOB_ORDER_STATUS.DRAFT],
+    ["for picking", JOB_ORDER_STATUS.FOR_PICKING],
+    ["released", JOB_ORDER_STATUS.FOR_PICKING],
+    ["proceed", JOB_ORDER_STATUS.FOR_PICKING],
+    ["picked", JOB_ORDER_STATUS.PICKED],
+    ["reserved", JOB_ORDER_STATUS.PICKED],
+    ["in production", JOB_ORDER_STATUS.IN_PRODUCTION],
+    ["ongoing", JOB_ORDER_STATUS.IN_PRODUCTION],
+    ["in progress", JOB_ORDER_STATUS.IN_PRODUCTION],
     ["on hold", JOB_ORDER_STATUS.ON_HOLD],
     ["qa hold", JOB_ORDER_STATUS.QA_HOLD],
-    ["finished", JOB_ORDER_STATUS.FINISHED],
-    ["completed", JOB_ORDER_STATUS.COMPLETED],
+    ["production completed", JOB_ORDER_STATUS.PRODUCTION_COMPLETED],
+    ["finished", JOB_ORDER_STATUS.PRODUCTION_COMPLETED],
+    ["for qa and reconciliation", JOB_ORDER_STATUS.FOR_QA_RECONCILIATION],
+    ["completed", JOB_ORDER_STATUS.FOR_QA_RECONCILIATION],
     ["closed", JOB_ORDER_STATUS.CLOSED],
     ["cancelled", JOB_ORDER_STATUS.CANCELLED],
     ["canceled", JOB_ORDER_STATUS.CANCELLED],
@@ -81,9 +95,8 @@ export function isJobOrderStatus(
 export function isTerminalJobOrderStatus(value: unknown): boolean {
     return isJobOrderStatus(
         value,
-        JOB_ORDER_STATUS.FINISHED,
-        JOB_ORDER_STATUS.COMPLETED,
-        JOB_ORDER_STATUS.CLOSED
+        JOB_ORDER_STATUS.CLOSED,
+        JOB_ORDER_STATUS.CANCELLED
     );
 }
 
@@ -92,19 +105,14 @@ export function isCancelledJobOrderStatus(value: unknown): boolean {
 }
 
 /**
- * Execution statuses from which a Job Order may be cancelled from the shop
- * floor. Draft/Planned/Planning are not exposed in the production queue, and
- * terminal or already-cancelled Job Orders cannot be cancelled again.
+ * A Job Order may only be cancelled before production starts. Picked JOs may
+ * be cancelled after their staged material is returned/reversed by the
+ * cancellation transaction.
  */
 export const CANCELLABLE_JOB_ORDER_STATUSES: CanonicalJobOrderStatus[] = [
-    JOB_ORDER_STATUS.RELEASED,
-    JOB_ORDER_STATUS.PROCEED,
-    JOB_ORDER_STATUS.RESERVED,
-    JOB_ORDER_STATUS.ONGOING,
-    JOB_ORDER_STATUS.IN_PROGRESS,
-    JOB_ORDER_STATUS.ON_HOLD,
-    JOB_ORDER_STATUS.QA_HOLD,
-    JOB_ORDER_STATUS.SHORTAGE
+    JOB_ORDER_STATUS.DRAFT,
+    JOB_ORDER_STATUS.FOR_PICKING,
+    JOB_ORDER_STATUS.PICKED
 ];
 
 export function isCancellableJobOrderStatus(value: unknown): boolean {
@@ -115,16 +123,13 @@ export function isActiveJobOrderStatus(value: unknown): boolean {
     return isJobOrderStatus(
         value,
         JOB_ORDER_STATUS.DRAFT,
-        JOB_ORDER_STATUS.PLANNED,
-        JOB_ORDER_STATUS.PLANNING,
-        JOB_ORDER_STATUS.RELEASED,
-        JOB_ORDER_STATUS.PROCEED,
-        JOB_ORDER_STATUS.ONGOING,
-        JOB_ORDER_STATUS.IN_PROGRESS,
-        JOB_ORDER_STATUS.RESERVED,
+        JOB_ORDER_STATUS.FOR_PICKING,
+        JOB_ORDER_STATUS.PICKED,
+        JOB_ORDER_STATUS.IN_PRODUCTION,
+        JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
+        JOB_ORDER_STATUS.FOR_QA_RECONCILIATION,
         JOB_ORDER_STATUS.ON_HOLD,
-        JOB_ORDER_STATUS.QA_HOLD,
-        JOB_ORDER_STATUS.SHORTAGE
+        JOB_ORDER_STATUS.QA_HOLD
     );
 }
 

@@ -1,6 +1,5 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, getJobOrderIdByNo } from "./shared";
-import { assertJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 
 export async function updateJobOrder(joId: string, patchData: Record<string, any>): Promise<{ success: boolean }> {
@@ -27,12 +26,7 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
 
         // Map incoming fields to new schema fields
         if (patchData.status !== undefined) {
-            let mappedStatus = assertJobOrderStatus(patchData.status);
-            if (mappedStatus === JOB_ORDER_STATUS.SHORTAGE) mappedStatus = JOB_ORDER_STATUS.DRAFT;
-            else if (mappedStatus === JOB_ORDER_STATUS.PROCEED) mappedStatus = JOB_ORDER_STATUS.RELEASED;
-            else if (mappedStatus === JOB_ORDER_STATUS.ONGOING) mappedStatus = JOB_ORDER_STATUS.IN_PROGRESS;
-            else if (mappedStatus === JOB_ORDER_STATUS.FINISHED) mappedStatus = JOB_ORDER_STATUS.COMPLETED;
-            headerPatch.status = mappedStatus;
+            throw new Error("Job Order lifecycle status must be changed through the workflow action endpoint.");
         }
         if (patchData.due_date !== undefined) headerPatch.end_date = patchData.due_date;
         if (patchData.remarks !== undefined) headerPatch.remarks = patchData.remarks;

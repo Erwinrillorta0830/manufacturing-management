@@ -11,15 +11,15 @@ interface JobDetailsHeaderProps {
 
 const getStatusBadgeVariant = (status: string) => {
     switch (normalizeJobOrderStatus(status)) {
-        case "Draft":
+        case JOB_ORDER_STATUS.DRAFT:
             return "secondary";
-        case "Proceed":
+        case JOB_ORDER_STATUS.FOR_PICKING:
             return "outline";
-        case "Ongoing":
+        case JOB_ORDER_STATUS.IN_PRODUCTION:
             return "default";
-        case "On Hold":
+        case JOB_ORDER_STATUS.ON_HOLD:
             return "destructive";
-        case "Finished":
+        case JOB_ORDER_STATUS.PRODUCTION_COMPLETED:
             return "default";
         default:
             return "outline";
@@ -28,11 +28,7 @@ const getStatusBadgeVariant = (status: string) => {
 
 export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHeaderProps) {
     const normalizedStatus = normalizeJobOrderStatus(selectedJobOrder.status);
-    const statusLabel = normalizedStatus === JOB_ORDER_STATUS.PROCEED
-        ? JOB_ORDER_STATUS.RELEASED
-        : normalizedStatus === JOB_ORDER_STATUS.ONGOING
-        ? JOB_ORDER_STATUS.IN_PROGRESS
-        : displayJobOrderStatus(selectedJobOrder.status);
+    const statusLabel = displayJobOrderStatus(selectedJobOrder.status);
 
     return (
         <Card>
@@ -44,9 +40,9 @@ export function JobDetailsHeader({ selectedJobOrder, parentJoNo }: JobDetailsHea
                             <Badge
                                 variant={getStatusBadgeVariant(selectedJobOrder.status)}
                                 className={
-                                    isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS)
+                                    isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
                                         ? "bg-emerald-500 text-white"
-                                        : isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.CLOSED)
+                                        : isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)
                                         ? "bg-blue-500 text-white"
                                         : ""
                                 }

@@ -34,7 +34,7 @@ export function useMaterialStaging() {
     const [hasSuccessfulLoad, setHasSuccessfulLoad] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedBranchId, setSelectedBranchId] = useState("all");
-    const [selectedStatusFilter, setSelectedStatusFilter] = useState("PLANNED_RESERVED");
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState("FOR_PICKING");
     const [onlyShortages, setOnlyShortages] = useState(false);
     const [selectedJobOrderId, setSelectedJobOrderId] = useState<number | null>(null);
     const [isAllocationModalOpen, setIsAllocationModalOpen] = useState(false);
@@ -99,10 +99,7 @@ export function useMaterialStaging() {
     }, [loadData]);
 
     const filteredJobOrders = useMemo(() => jobOrders.filter(jobOrder => {
-        if (selectedStatusFilter === "PLANNED_RESERVED" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.RESERVED, JOB_ORDER_STATUS.DRAFT)) return false;
-        if (selectedStatusFilter === "PLANNED" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.DRAFT)) return false;
-        if (selectedStatusFilter === "RESERVED" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.RESERVED)) return false;
-        if (selectedStatusFilter === "RELEASED" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED)) return false;
+        if (selectedStatusFilter !== "all" && !isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.FOR_PICKING)) return false;
         if (onlyShortages && !jobOrder.has_shortage) return false;
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;

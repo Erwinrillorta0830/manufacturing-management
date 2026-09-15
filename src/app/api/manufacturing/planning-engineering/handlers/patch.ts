@@ -3,7 +3,19 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { assertJobOrderStatus, isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
+
+async function patchActorId(): Promise<number> {
+    try {
+        const token = (await cookies()).get("vos_access_token")?.value;
+        const payload = token ? JSON.parse(Buffer.from(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) : {};
+        const id = Number(payload?.id || payload?.user_id || payload?.sub);
+        return Number.isSafeInteger(id) && id > 0 ? id : 24;
+    } catch {
+        return 24;
+    }
+}
 
 async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
     const numericId = Number(jobOrderId);
@@ -48,11 +60,17 @@ export async function handlePATCH(request: Request) {
             const cancelledResponse = await cancelledJobOrderResponse(parsedJobOrderId);
             if (cancelledResponse) return cancelledResponse;
 
+            await executeJobOrderWorkflow(parsedJobOrderId, {
+                action: "place-on-hold",
+                actorUserId: await patchActorId(),
+                idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
+                remarks: `Halted at step ${haltedStepId}. Reason: ${trimmedHaltReason}`
+            });
+
             const joPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${parsedJobOrderId}`, {
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
-                    status: JOB_ORDER_STATUS.ON_HOLD,
                     actual_quantity_produced: Number(yieldQty),
                     remarks: `Halted at step ${haltedStepId}. Reason: ${trimmedHaltReason}`
                 })
@@ -161,16 +179,11 @@ export async function handlePATCH(request: Request) {
                             }
 
                             if (modified) {
-                                const allDaysCompleted = dailyBreakdown.every((d: DailyBreakdownItem) => d.status === "Completed");
                                 const joStatusPatch: Record<string, unknown> = { daily_breakdown: dailyBreakdown };
-                                if (allDaysCompleted) {
-                                    joStatusPatch.status = JOB_ORDER_STATUS.FINISHED;
-                                } else {
-                                    const anyDayStarted = dailyBreakdown.some((d: DailyBreakdownItem) => d.status === "Ongoing" || d.status === "Completed");
-                                    if (anyDayStarted && !isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.CANCELLED)) {
-                                        joStatusPatch.status = JOB_ORDER_STATUS.ONGOING;
-                                    }
-                                }
+                                // Completing a routing step updates the daily
+                                // breakdown only. Lifecycle transitions are
+                                // explicit workflow actions, so a shift/task
+                                // update cannot silently complete a JO.
 
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jo.job_order_id}`, {
                                     method: "PATCH",
@@ -440,9 +453,15 @@ export async function handlePATCH(request: Request) {
             }, { status: 409 });
         }
 
+        if (patch.status !== undefined) {
+            return NextResponse.json({
+                error: "Job Order lifecycle status must be changed through the workflow action endpoint.",
+                code: "WORKFLOW_ACTION_REQUIRED"
+            }, { status: 409 });
+        }
+
         // Map camelCase patch fields to snake_case fields
         const dbPatch: Record<string, unknown> = {};
-        if (patch.status !== undefined) dbPatch.status = assertJobOrderStatus(patch.status);
         if (patch.bom !== undefined) dbPatch.bom = patch.bom;
         if (patch.components !== undefined) dbPatch.components = patch.components;
         if (patch.routings !== undefined) dbPatch.routings = patch.routings;

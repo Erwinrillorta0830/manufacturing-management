@@ -583,7 +583,8 @@ export async function GET(request: Request) {
         const queue = searchParams.get("queue") || "";
         const selectedIdsParam = searchParams.get("selectedIds") || "";
         const forProductionQueue = queue === "for-production";
-        if (queue && !forProductionQueue) {
+        const inProductionQueue = queue === "in-production";
+        if (queue && !forProductionQueue && !inProductionQueue) {
             return NextResponse.json({ error: `Unsupported Sales Order queue: ${queue}` }, { status: 400 });
         }
         const excludeHasJo = searchParams.get("excludeHasJo") === "true" || forProductionQueue;
@@ -598,7 +599,9 @@ export async function GET(request: Request) {
         const filters = {
             search,
             status: forProductionQueue
-                ? "For Production,In Production"
+                ? "For Production"
+                : inProductionQueue
+                ? "In Production"
                 : excludeHasJo
                 ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
                 : status,
@@ -741,7 +744,7 @@ export async function GET(request: Request) {
             contextOrders,
             details,
             excludeHasJo ? plannedQuantities : undefined,
-            excludeHasJo
+            excludeHasJo || inProductionQueue
         );
 
         const totalPages = Math.ceil(totalCount / limit);

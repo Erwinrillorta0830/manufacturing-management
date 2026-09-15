@@ -84,10 +84,10 @@ export function DemandLinesTable({
                 <div>
                     <CardTitle className="text-base font-bold flex items-center gap-2">
                         <Plus className="h-5 w-5 text-primary" />
-                        Sales Order Demand
+                        For Production Demand
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        One row per Sales Order. Product lines stay visible inside the row; only eligible remaining quantities can be selected.
+                        Sales Orders with status For Production. Product lines stay visible inside the row; only eligible remaining quantities can be selected.
                     </CardDescription>
                 </div>
                 <div className="flex w-full md:w-auto gap-2 shrink-0">

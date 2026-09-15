@@ -125,12 +125,12 @@ export function ReleasedJobQueue({
         <Card className="h-full">
             <CardHeader className="pb-3">
                 <CardTitle className="flex justify-between items-center text-lg">
-                    <span>Released Job Orders</span>
+                    <span>Production Job Orders</span>
                     <Badge variant="outline" className="ml-2 font-mono">
                         {filteredJobOrders.length}
                     </Badge>
                 </CardTitle>
-                <CardDescription>Queue of released orders active on the shop floor</CardDescription>
+                <CardDescription>Job Orders available for staging handoff or active shop-floor execution</CardDescription>
             </CardHeader>
             
             <CardContent className="space-y-4">
