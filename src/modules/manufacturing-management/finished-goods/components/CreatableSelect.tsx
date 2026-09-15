@@ -149,7 +149,7 @@ export function CreatableSelect({
                         onKeyDown={onKeyDown}
                         data-index={dataIndex}
                     >
-                        <span className="truncate w-full text-left flex items-center">
+                        <span className="min-w-0 flex-1 truncate overflow-hidden text-left flex items-center">
                             {isLoading && !selectedOption ? (
                                 <span className="inline-flex items-center gap-2 text-muted-foreground animate-pulse">
                                     <span className="h-3 w-32 bg-muted-foreground/20 rounded inline-block" />

@@ -120,7 +120,7 @@ export const generateCollectionPDF = (
             formatShortDate(check.date || pouch.date),
             check.docNo || pouch.docNo,
             pouch.isPosted ? "POSTED" : "DRAFT",
-            check.bankName,
+            check.bankName && check.bankName.toLowerCase() !== "unknown bank" ? check.bankName : "—",
             check.checkNo,
             formatShortDate(check.chequeDate),
             displayCustomer(check.customerName),

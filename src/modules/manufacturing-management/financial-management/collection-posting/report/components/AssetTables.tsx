@@ -25,7 +25,16 @@ export function DepositsTable({ checks }: { checks: CheckDetailDto[] }) {
                                         <span className="text-[9px] font-mono text-muted-foreground group-hover:text-foreground transition-colors">{chk.docNo}</span>
                                     </div>
                                 </td>
-                                <td className="py-2"><div className="font-bold">{chk.bankName}</div><div className="text-[9px] font-mono text-muted-foreground">{chk.checkNo}</div></td>
+                                <td className="py-2">
+                                    <div className="font-bold">
+                                        {chk.bankName && chk.bankName.toLowerCase() !== "unknown bank" ? (
+                                            chk.bankName
+                                        ) : (
+                                            <span className="font-mono font-normal text-muted-foreground">—</span>
+                                        )}
+                                    </div>
+                                    <div className="text-[9px] font-mono text-muted-foreground">{chk.checkNo}</div>
+                                </td>
                                 <td className="text-right py-2 font-mono font-black">₱{chk.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                             </tr>
                         ))}

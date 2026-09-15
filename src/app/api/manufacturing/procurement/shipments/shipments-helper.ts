@@ -15,15 +15,16 @@ import { resolvePurchaseOrderLineId, summarizeReceivingHistory } from "../../qa-
 import { movementMmLotId } from "../../services/mm-lots.service";
 import { forceReceivedById, isForceReceived, remainingReceivingQuantity } from "../../qa-receiving/_force-received";
 import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order-branch";
+import type { QaReceiptSelection } from "../../qa-receiving/_receipt-options";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
     fetchCurrentPurchaseOrderRejectionStages,
     type PurchaseOrderRejectionStage
 } from "../../purchase-orders/_rejection-guard";
 import {
-    CURRENCY_DECIMAL_SCALE,
     DecimalValue,
     EXCHANGE_RATE_DECIMAL_SCALE,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
     UNIT_PRICE_DECIMAL_SCALE
 } from "@/modules/manufacturing-management/decimal";
 import { PurchaseOrderPaymentModeError, validatePurchaseOrderPaymentMode } from "../../purchase-orders/_payment-modes";
@@ -284,6 +285,13 @@ export interface ExtendedShipmentLineItem {
     over_delivery_quantity?: number;
     latest_receipt?: LatestReceivingSnapshot | null;
     warehouse_receipt?: WarehouseReceivingSnapshot | null;
+    current_receipt_header_id?: number | null;
+    current_receipt_number?: string | null;
+    current_receipt_date?: string | null;
+    current_receipt_quantity?: number | null;
+    current_receipt_accepted_quantity?: number | null;
+    current_receipt_rejected_quantity?: number | null;
+    current_receipt_error?: string | null;
     rejection_reason?: string;
     qa_status?: string;
     base_unit_cost_php?: number | string;
@@ -403,6 +411,33 @@ function relationId(value: unknown, key: string): number | null {
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizedReceiptNumber(value: unknown, lineId: number): string {
+    const receiptNumber = String(value || "").trim();
+    const suffix = `-${lineId}`;
+    return receiptNumber.endsWith(suffix)
+        ? receiptNumber.slice(0, -suffix.length)
+        : receiptNumber;
+}
+
+function matchesReceiptSelection(
+    row: DirectusReceivingRecord,
+    lineId: number,
+    selection: QaReceiptSelection
+): boolean {
+    if (selection.receivingHeaderId !== null) {
+        return relationId(row.receiving_header_id, "id") === selection.receivingHeaderId;
+    }
+    return normalizedReceiptNumber(row.receipt_no, lineId) === selection.receiptNumber;
+}
+
+function warehouseReceiptIdentity(row: DirectusReceivingRecord): string {
+    const headerId = relationId(row.receiving_header_id, "id");
+    if (headerId) return `header:${headerId}`;
+    const receiptNumber = String(row.receipt_no || "").trim();
+    if (receiptNumber) return `receipt:${receiptNumber}`;
+    return `row:${receivingRecordId(row.purchase_order_product_id)}`;
+}
+
 interface ExtendedShipment extends Partial<DirectusShipment> {
     remark?: string;
     notes?: string;
@@ -430,19 +465,19 @@ function mapPurchaseOrder(
         : normalizeLegacyExchangeRate(po.exchange_rate, `${poLabel}.exchange_rate`);
     const totalPhp = normalizeLegacyDecimal(
         po.total_amount ?? po.gross_amount,
-        "0.00",
-        CURRENCY_DECIMAL_SCALE,
+        "0.0000",
+        PROCUREMENT_MONEY_DECIMAL_SCALE,
         `${poLabel}.total_amount`
     );
     const storedForeignCurrency = normalizeLegacyDecimalOrNull(
         po.total_foreign_currency,
-        CURRENCY_DECIMAL_SCALE,
+        PROCUREMENT_MONEY_DECIMAL_SCALE,
         `${poLabel}.total_foreign_currency`
     );
     const foreignCurrency = storedForeignCurrency
         || (DecimalValue.from(rate).compare(0) > 0
-            ? DecimalValue.from(totalPhp).divideRounded(rate, CURRENCY_DECIMAL_SCALE).toFixed(CURRENCY_DECIMAL_SCALE)
-            : "0.00");
+            ? DecimalValue.from(totalPhp).divideRounded(rate, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+            : "0.0000");
     const storedSupplierId = supplierId(po.supplier_name);
     const supplier = storedSupplierId ? suppliers.get(storedSupplierId) || storedSupplierId : null;
     const branchId = resolvePurchaseOrderBranchId(po);
@@ -690,6 +725,14 @@ export async function fetchIncomingShipmentsPage(query: PurchaseOrderListQuery) 
             ]
         });
     }
+    if (query.supplierId) clauses.push({ supplier_name: { _eq: query.supplierId } });
+    if (query.inventoryStatus) {
+        const inventoryStatusIds = query.inventoryStatus === INVENTORY_STATUS.FOR_PICKUP
+            ? [INVENTORY_STATUS.FOR_PICKUP, 12]
+            : [query.inventoryStatus];
+        clauses.push({ inventory_status: { _in: inventoryStatusIds } });
+    }
+    if (query.paymentStatus) clauses.push({ payment_status: { _eq: query.paymentStatus } });
     if (query.queue === "receiving" && !query.status && !query.approvalStage) {
         clauses.push({
             inventory_status: {
@@ -831,7 +874,10 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
 
 export async function fetchShipmentLineItems(
     shipmentId: number,
-    options: { requireCompletePackagingWeight?: boolean } = {}
+    options: {
+        requireCompletePackagingWeight?: boolean;
+        receiptSelection?: QaReceiptSelection;
+    } = {}
 ): Promise<ExtendedShipmentLineItem[]> {
     try {
         // Fetch the header first so force-closed orders can expose zero remaining intake.
@@ -871,11 +917,11 @@ export async function fetchShipmentLineItems(
 
         // Manufacturing dates are persisted on inventory movements. Resolve them through
         // the receiving-record IDs instead of substituting the inventory lot creation date.
-        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
+        const receivingUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,purchase_order_line_id,product_id,receipt_no,receipt_date,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,is_over_received,over_delivery_quantity,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method&limit=-1`;
         let receivingRes = await fetch(receivingUrl, { headers, cache: "no-store" });
         if (!receivingRes.ok) {
             receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving?filter[purchase_order_id][_eq]=${shipmentId}&filter[is_reverted][_eq]=0&fields=purchase_order_product_id,product_id,receipt_no,receipt_date,batch_no,mm_lot_id,lot_id,receipt_type,received_quantity,quantity_rejected,isPosted,is_reverted,is_replacement,expiry_date,rejection_reason,qa_status,branch_id,received_date,receiving_method,receiving_header_id,receiving_header_id.id,receiving_header_id.receiving_ticket_no,receiving_header_id.receipt_date&limit=-1`,
                 { headers, cache: "no-store" }
             );
         }
@@ -1002,13 +1048,36 @@ export async function fetchShipmentLineItems(
                 Math.max(0, Number(pop.ordered_quantity || 0) - previouslyAcceptedQuantity)
             );
             const lineId = Number(pop.purchase_order_product_id);
-            const warehouseRowsForLine = receivingData.filter(row =>
+            const activeWarehouseRowsForLine = receivingData.filter(row =>
                 isUnpostedWarehouseReceiving(row)
                 && resolvePurchaseOrderLineId(row, popData) === lineId
             );
+            const warehouseReceiptIdentities = new Set(activeWarehouseRowsForLine.map(warehouseReceiptIdentity));
+            const hasAmbiguousWarehouseReceipt = warehouseReceiptIdentities.size > 1;
+            const selectedWarehouseRowsForLine = options.receiptSelection
+                ? activeWarehouseRowsForLine.filter(row => matchesReceiptSelection(row, lineId, options.receiptSelection!))
+                : activeWarehouseRowsForLine;
+            const currentWarehouseRows = hasAmbiguousWarehouseReceipt ? [] : activeWarehouseRowsForLine;
+            const warehouseRowsForLine = hasAmbiguousWarehouseReceipt ? [] : selectedWarehouseRowsForLine;
+            const currentWarehouseRow = currentWarehouseRows[0];
+            const currentWarehouseHeader = currentWarehouseRow && typeof currentWarehouseRow.receiving_header_id === "object"
+                ? currentWarehouseRow.receiving_header_id
+                : null;
             const warehouseRow = warehouseRowsForLine[0];
             const warehouseHeader = warehouseRow && typeof warehouseRow.receiving_header_id === "object"
                 ? warehouseRow.receiving_header_id
+                : null;
+            const currentReceiptQuantity = currentWarehouseRows.length > 0
+                ? currentWarehouseRows.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0)
+                : null;
+            const currentReceiptRejectedQuantity = currentWarehouseRows.length > 0
+                ? currentWarehouseRows.reduce((sum, row) => sum + Math.max(0, Number(row.quantity_rejected || 0)), 0)
+                : null;
+            const currentReceiptAcceptedQuantity = currentReceiptQuantity === null || currentReceiptRejectedQuantity === null
+                ? null
+                : Math.max(0, currentReceiptQuantity - currentReceiptRejectedQuantity);
+            const currentReceiptError = hasAmbiguousWarehouseReceipt
+                ? "Multiple active Warehouse Receiving handoffs exist for this purchase-order line. Resolve the active handoff before starting QA."
                 : null;
             const warehouseReceipt: WarehouseReceivingSnapshot | null = warehouseRowsForLine.length > 0
                 ? {
@@ -1023,8 +1092,16 @@ export async function fetchShipmentLineItems(
                     received_quantity: warehouseRowsForLine.reduce((sum, row) => sum + Math.max(0, Number(row.received_quantity || 0)), 0)
                 }
                 : null;
-            const latestReceipt = originalReceivingData
-                .filter(row => resolvePurchaseOrderLineId(row, popData) === lineId)
+            const receiptRowsForLine = options.receiptSelection
+                ? receivingData.filter(row =>
+                    row.is_replacement !== true
+                    && Number(row.is_replacement) !== 1
+                    && !preQaRfidReceivingIds.has(receivingRecordId(row.purchase_order_product_id))
+                    && resolvePurchaseOrderLineId(row, popData) === lineId
+                    && matchesReceiptSelection(row, lineId, options.receiptSelection!)
+                )
+                : originalReceivingData.filter(row => resolvePurchaseOrderLineId(row, popData) === lineId);
+            const latestReceipt = receiptRowsForLine
                 .sort((left, right) => {
                     const rightDate = Date.parse(String(right.received_date || "")) || 0;
                     const leftDate = Date.parse(String(left.received_date || "")) || 0;
@@ -1122,10 +1199,23 @@ export async function fetchShipmentLineItems(
                  previously_accepted_quantity: previouslyAcceptedQuantity,
                  remaining_quantity: remainingQuantity,
                  remaining_accepted_quantity: remainingAcceptedQuantity,
-                 is_over_received: latestSnapshot?.is_over_received || false,
-                 over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
-                 latest_receipt: latestSnapshot,
+                is_over_received: latestSnapshot?.is_over_received || false,
+                over_delivery_quantity: latestSnapshot?.over_delivery_quantity || 0,
+                latest_receipt: latestSnapshot,
                 warehouse_receipt: warehouseReceipt,
+                current_receipt_header_id: currentWarehouseRow ? relationId(currentWarehouseRow.receiving_header_id, "id") : null,
+                current_receipt_number: currentWarehouseRows.length > 0
+                    ? String(currentWarehouseHeader?.receiving_ticket_no || currentWarehouseRow?.receipt_no || "")
+                    : null,
+                current_receipt_date: currentWarehouseHeader?.receipt_date
+                    ? String(currentWarehouseHeader.receipt_date).slice(0, 10)
+                    : currentWarehouseRow?.receipt_date
+                        ? String(currentWarehouseRow.receipt_date).slice(0, 10)
+                        : null,
+                current_receipt_quantity: currentReceiptQuantity,
+                current_receipt_accepted_quantity: currentReceiptAcceptedQuantity,
+                current_receipt_rejected_quantity: currentReceiptRejectedQuantity,
+                current_receipt_error: currentReceiptError,
                 rejection_reason: latestSnapshot?.rejection_reason || "",
                 qa_status: latestReceipt ? latestReceipt.qa_status || "Pending" : "Pending",
                 // purchase_order_products.unit_price is the PHP base price;
@@ -1145,13 +1235,13 @@ export async function fetchShipmentLineItems(
                  allocated_expense_php: normalizeLegacyDecimal(
                      allocation?.allocatedExpense || 0,
                      "0.0000",
-                     UNIT_PRICE_DECIMAL_SCALE,
+                     PROCUREMENT_MONEY_DECIMAL_SCALE,
                      `purchase_order_products/${pop.purchase_order_product_id}.allocated_expense_php`
                  ),
                 final_landed_unit_cost: normalizeLegacyDecimal(
                     finalLandedUnitCost,
                     "0.0000",
-                    UNIT_PRICE_DECIMAL_SCALE,
+                    PROCUREMENT_MONEY_DECIMAL_SCALE,
                     `purchase_order_products/${pop.purchase_order_product_id}.final_landed_unit_cost`
                 ),
                 batch_no: latestReceipt ? latestReceipt.batch_no || "" : "",
@@ -1232,7 +1322,9 @@ export async function createIncomingShipment(
             withholdingPercent: Number(item.withholding_percent || 0)
         })), 1);
         const totalPhp = calculatedTotals.netPhp;
-        const totalForeignCurrency = DecimalValue.from(totalPhp).divideRounded(exchangeRate, 2).toFixed(2);
+        const totalForeignCurrency = DecimalValue.from(totalPhp)
+            .divideRounded(exchangeRate, PROCUREMENT_MONEY_DECIMAL_SCALE)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
 
         const poPayload = {
             purchase_order_no: `PO-${extendedData.reference_number || Date.now()}`,
@@ -1356,8 +1448,8 @@ export async function updateIncomingShipmentStatus(
                         method: "PATCH",
                         headers,
                         body: JSON.stringify({
-                            cost_per_unit: finalLandedUnitCost,
-                            estimated_unit_cost: finalLandedUnitCost,
+                            cost_per_unit: DecimalValue.from(finalLandedUnitCost).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                            estimated_unit_cost: DecimalValue.from(finalLandedUnitCost).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
                             ...productUpdateAuditFields(userId)
                         })
                     }).catch(err => console.error("Error updating product cost on status change:", err));
@@ -1423,9 +1515,9 @@ export async function receiveIncomingShipment(
                 lot_id: item.lot_id,
                 expiry_date: item.expiry_date || null,
                 received_quantity: item.received_quantity,
-                unit_price: item.unit_price,
-                discounted_amount: 0,
-                total_amount: item.total_amount,
+                unit_price: DecimalValue.from(item.unit_price).toFixed(UNIT_PRICE_DECIMAL_SCALE),
+                discounted_amount: DecimalValue.from(0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                total_amount: DecimalValue.from(item.total_amount).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
                 branch_id: branchId,
                 receipt_no: `REC-${shipmentId}-${Date.now()}`,
                 received_date: new Date().toISOString(),
@@ -1433,8 +1525,8 @@ export async function receiveIncomingShipment(
                 qa_status: item.qa_status || "Passed",
                 quantity_rejected: item.quantity_rejected || 0,
                 rejection_reason: item.rejection_reason || null,
-                allocated_expense_php: 0,
-                final_landed_unit_cost: item.unit_price
+                allocated_expense_php: DecimalValue.from(0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE),
+                final_landed_unit_cost: DecimalValue.from(item.unit_price).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
             };
 
             const porRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_receiving`, {

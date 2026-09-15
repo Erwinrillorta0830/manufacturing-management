@@ -25,6 +25,7 @@ import { evaluateReceivingStatus, RECEIVING_STATUS_EPSILON } from "../../qa-rece
 import { sumMovementQuantitiesByStorageLot } from "../../qa-receiving/_movement-stock";
 import {
     loadMmLots,
+    lotUnitId,
     resolveOrCreateMmInventoryLot,
     loadMovementRowsForMmLots,
     MmLotError
@@ -36,6 +37,7 @@ import { resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../
 import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../../qa-receiving/_supplier-document-type";
 import { resolveBaseUnitCostPhp, resolveLandedCostCurrency } from "../landed-cost/_domain";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
+import { normalizeProcurementMoney } from "@/modules/manufacturing-management/decimal";
 import {
     allocationCapacityKey,
     capacityAuditsEqual,
@@ -771,9 +773,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (lotBranchById.get(allocation.storageLotId) !== expectedBranchId) {
                     throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} is not assigned to the required inventory branch.`, 409);
                 }
-                const lotUomId = relationValueId(lot.unit_id, ["unit_id", "id"]);
+                const lotUomId = lotUnitId(lot);
                 if (lotUomId !== productUomId) {
-                    throw new ReceivingError(`Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`, 409);
+                    throw new ReceivingError(
+                        `Storage lot ${String(lot.lot_name || allocation.storageLotId)} UOM does not match product ${productId}.`,
+                        409,
+                        RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                    );
                 }
                 const parentProductId = relationValueId(product.parent_id, ["product_id", "id"]);
                 if (!isStorageLotProductCompatible(lot, {
@@ -920,8 +926,12 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             for (const lotId of allocationLotIds) {
                 const lot = freshLots.find(row => Number(row.lot_id) === lotId);
                 if (!lot) throw new ReceivingError(`Storage lot ${lotId} no longer exists.`, 409);
-                if (relationValueId(lot.unit_id, ["unit_id", "id"]) !== uomByLot.get(lotId)) {
-                    throw new ReceivingError(`Storage lot ${lotId} UOM changed while receiving was being prepared.`, 409);
+                if (lotUnitId(lot) !== uomByLot.get(lotId)) {
+                    throw new ReceivingError(
+                        `Storage lot ${lotId} UOM changed while receiving was being prepared.`,
+                        409,
+                        RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH
+                    );
                 }
                 const capacityInspection = inspectLotCapacity(lot.max_batch_capacity);
                 if (capacityInspection.status === "INVALID") {
@@ -954,10 +964,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 if (!primaryAllocation) throw new ReceivingError(`A storage lot is required for product ${line.productId}.`, 400);
                 const receiptPayload = {
                     purchase_order_id: shipmentId, purchase_order_line_id: line.item.line_id, receiving_header_id: options.receivingHeaderId || null, product_id: line.productId, batch_no: primaryAllocation.batchNumber, mm_lot_id: primaryAllocation.storageLotId, lot_id: null,
-                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received, unit_price: line.baseUnitCostPhp,
-                    discounted_amount: Number(line.poLine.discounted_amount || 0), discount_type: line.poLine.discount_type || null,
-                    total_amount: Number(line.poLine.net_amount ?? line.poLine.total_amount ?? 0), allocated_expense_php: allocation.allocatedExpense,
-                    final_landed_unit_cost: allocation.finalLandedUnitCost, branch_id: branchId,
+                    expiry_date: primaryAllocation.expirationDate, received_quantity: line.received,
+                    unit_price: normalizeProcurementMoney(line.baseUnitCostPhp),
+                    discounted_amount: normalizeProcurementMoney(String(line.poLine.discounted_amount ?? 0)),
+                    discount_type: line.poLine.discount_type || null,
+                    total_amount: normalizeProcurementMoney(String(line.poLine.net_amount ?? line.poLine.total_amount ?? 0)),
+                    allocated_expense_php: normalizeProcurementMoney(allocation.allocatedExpense),
+                    final_landed_unit_cost: normalizeProcurementMoney(allocation.finalLandedUnitCost), branch_id: branchId,
                     receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
                     receipt_type: supplierDocumentTypeId,

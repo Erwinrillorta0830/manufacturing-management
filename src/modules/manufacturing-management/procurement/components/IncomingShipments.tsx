@@ -59,6 +59,11 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
 
     const [search, setSearch] = useState(() => isQueueMode ? searchParams.get("search") || "" : "");
     const [statusFilter, setStatusFilter] = useState(() => isQueueMode ? searchParams.get("status") || "All" : "All");
+    const [supplierFilter, setSupplierFilter] = useState(() => isQueueMode ? searchParams.get("supplierId") || "" : "");
+    const [inventoryStatusFilter, setInventoryStatusFilter] = useState(() => isQueueMode ? searchParams.get("inventoryStatus") || "" : "");
+    const [paymentStatusFilter, setPaymentStatusFilter] = useState(() => isQueueMode ? searchParams.get("paymentStatus") || "" : "");
+    const [startDate, setStartDate] = useState(() => isQueueMode ? searchParams.get("startDate") || "" : "");
+    const [endDate, setEndDate] = useState(() => isQueueMode ? searchParams.get("endDate") || "" : "");
     const [currentPage, setCurrentPage] = useState(() => {
         const page = Number(searchParams.get("page"));
         return isQueueMode && Number.isSafeInteger(page) && page > 0 ? page : 1;
@@ -119,29 +124,45 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
 
     useEffect(() => {
         if (!isQueueMode || !onServerQueryChange) return;
+        if (startDate && endDate && startDate > endDate) return;
         const timeout = window.setTimeout(() => {
             onServerQueryChange({
                 page: currentPage,
                 limit: itemsPerPage,
-                search,
-                status: statusFilter === "All" ? undefined : statusFilter
+                search: search.trim(),
+                supplierId: Number.isSafeInteger(Number(supplierFilter)) && Number(supplierFilter) > 0 ? Number(supplierFilter) : undefined,
+                inventoryStatus: Number.isSafeInteger(Number(inventoryStatusFilter)) && Number(inventoryStatusFilter) > 0 ? Number(inventoryStatusFilter) : undefined,
+                paymentStatus: Number.isSafeInteger(Number(paymentStatusFilter)) && Number(paymentStatusFilter) > 0 ? Number(paymentStatusFilter) : undefined,
+                startDate: startDate || undefined,
+                endDate: endDate || undefined,
+                sort: "date_encoded",
+                direction: "desc"
             });
         }, 250);
         return () => window.clearTimeout(timeout);
-    }, [currentPage, isQueueMode, itemsPerPage, onServerQueryChange, search, statusFilter]);
+    }, [currentPage, endDate, inventoryStatusFilter, isQueueMode, itemsPerPage, onServerQueryChange, paymentStatusFilter, search, startDate, supplierFilter]);
 
     useEffect(() => {
         if (!isQueueMode) return;
         const params = new URLSearchParams(window.location.search);
         if (search.trim()) params.set("search", search.trim());
         else params.delete("search");
-        if (statusFilter !== "All") params.set("status", statusFilter);
-        else params.delete("status");
+        params.delete("status");
+        if (supplierFilter) params.set("supplierId", supplierFilter);
+        else params.delete("supplierId");
+        if (inventoryStatusFilter) params.set("inventoryStatus", inventoryStatusFilter);
+        else params.delete("inventoryStatus");
+        if (paymentStatusFilter) params.set("paymentStatus", paymentStatusFilter);
+        else params.delete("paymentStatus");
+        if (startDate) params.set("startDate", startDate);
+        else params.delete("startDate");
+        if (endDate) params.set("endDate", endDate);
+        else params.delete("endDate");
         params.set("page", String(currentPage));
         params.set("limit", String(itemsPerPage));
         const nextUrl = `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
         window.history.replaceState(window.history.state, "", nextUrl);
-    }, [currentPage, isQueueMode, itemsPerPage, pathname, search, statusFilter]);
+    }, [currentPage, endDate, inventoryStatusFilter, isQueueMode, itemsPerPage, pathname, paymentStatusFilter, search, startDate, supplierFilter]);
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -183,16 +204,25 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         ? filteredShipments
         : filteredShipments.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-    const hasListFilters = Boolean(search.trim() || statusFilter !== "All");
+    const dateRangeError = startDate && endDate && startDate > endDate
+        ? "The end date must be on or after the start date."
+        : null;
+    const hasListFilters = isQueueMode
+        ? Boolean(search.trim() || supplierFilter || inventoryStatusFilter || paymentStatusFilter || startDate || endDate)
+        : Boolean(search.trim() || statusFilter !== "All");
 
     const queueReturnHref = useMemo(() => {
         const params = new URLSearchParams();
         if (search.trim()) params.set("search", search.trim());
-        if (statusFilter !== "All") params.set("status", statusFilter);
+        if (supplierFilter) params.set("supplierId", supplierFilter);
+        if (inventoryStatusFilter) params.set("inventoryStatus", inventoryStatusFilter);
+        if (paymentStatusFilter) params.set("paymentStatus", paymentStatusFilter);
+        if (startDate) params.set("startDate", startDate);
+        if (endDate) params.set("endDate", endDate);
         params.set("page", String(currentPage));
         params.set("limit", String(itemsPerPage));
         return `${pathname}${params.toString() ? `?${params.toString()}` : ""}`;
-    }, [currentPage, itemsPerPage, pathname, search, statusFilter]);
+    }, [currentPage, endDate, inventoryStatusFilter, itemsPerPage, pathname, paymentStatusFilter, search, startDate, supplierFilter]);
 
     const shipmentDetailHref = (shipmentId: number) => (
         `/mm/incoming-shipments/${shipmentId}?returnTo=${encodeURIComponent(queueReturnHref)}`
@@ -282,6 +312,17 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     setSearch={setSearch}
                     statusFilter={statusFilter}
                     setStatusFilter={setStatusFilter}
+                    supplierFilter={supplierFilter}
+                    setSupplierFilter={setSupplierFilter}
+                    inventoryStatusFilter={inventoryStatusFilter}
+                    setInventoryStatusFilter={setInventoryStatusFilter}
+                    paymentStatusFilter={paymentStatusFilter}
+                    setPaymentStatusFilter={setPaymentStatusFilter}
+                    startDate={startDate}
+                    setStartDate={setStartDate}
+                    endDate={endDate}
+                    setEndDate={setEndDate}
+                    dateRangeError={dateRangeError}
                     itemsPerPage={itemsPerPage}
                     setItemsPerPage={setItemsPerPage}
                     currentPage={currentPage}

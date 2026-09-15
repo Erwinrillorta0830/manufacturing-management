@@ -219,20 +219,28 @@ export function CashIssuanceCreateDialog({
         const refs = new Set<string>();
         payables.forEach((p) => {
             if (p.referenceNo) {
-                // referenceNo is usually `${po.poNo} / ${po.receiptNo}` or contains poNo
                 const parts = p.referenceNo.split(" / ");
                 parts.forEach((part) => refs.add(part.trim().toLowerCase()));
+                refs.add(p.referenceNo.trim().toLowerCase());
             }
         });
         return refs;
     }, [payables]);
 
     const availableUnpaidPos = useMemo(() => {
+        const seenKeys = new Set<string>();
         return unpaidPos.filter((po) => {
+            if (seenKeys.has(po.uniqueKey)) return false;
+            seenKeys.add(po.uniqueKey);
+
             const poNoLower = po.poNo.trim().toLowerCase();
             const receiptNoLower = po.receiptNo ? po.receiptNo.trim().toLowerCase() : "";
             const baseRefLower = `${poNoLower} / ${receiptNoLower}`;
-            return !existingPoReferences.has(poNoLower) && !existingPoReferences.has(baseRefLower);
+            return (
+                !existingPoReferences.has(poNoLower) &&
+                !existingPoReferences.has(receiptNoLower) &&
+                !existingPoReferences.has(baseRefLower)
+            );
         });
     }, [unpaidPos, existingPoReferences]);
 
@@ -1124,9 +1132,6 @@ export function CashIssuanceCreateDialog({
                                             <TableCell className="text-xs font-black text-primary uppercase">
                                                 <div className="flex flex-col gap-1">
                                                     {po.receiptNo}
-                                                    {po.type === 'CWO' && <Badge variant="outline"
-                                                        className="w-fit text-[8px] bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800">Cash
-                                                        With Order</Badge>}
                                                 </div>
                                             </TableCell>
                                             <TableCell onClick={(e: React.MouseEvent) => e.stopPropagation()}>

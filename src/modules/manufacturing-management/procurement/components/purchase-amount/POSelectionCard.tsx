@@ -9,6 +9,7 @@ import type { IncomingShipment } from "@/modules/manufacturing-management/procur
 import {
     LANDED_COST_INVENTORY_STATUS
 } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 export type EligibleOrder = IncomingShipment & Partial<PurchaseOrderHeader> & {
     supplier_name?: string | { supplier_name?: string } | null;
@@ -46,7 +47,7 @@ export default function POSelectionCard({
                     const suppName = typeof po.supplier_name === "object" ? po.supplier_name?.supplier_name : (po.supplier_name || "Supplier");
                     const curr = String(po.currency_code || (po.is_import === 1 ? "USD" : "PHP")).toUpperCase();
                     const amount = curr === "PHP" ? po.total_amount ?? po.total_php_value : po.total_foreign_currency;
-                    const amt = Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 });
+                    const amt = Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE });
                     const forceClosed = Boolean(po.isForceReceived || po.forceReceivedAt);
                     const statusLabel = Number(po.inventory_status) === LANDED_COST_INVENTORY_STATUS ? "Received" : "Not eligible";
                     return {
@@ -77,7 +78,7 @@ export default function POSelectionCard({
                         <div><div className="text-muted-foreground">Status</div><div className="font-bold">{selectedShipment.status || "Received"}</div></div>
                         <div><div className="text-muted-foreground">Payment</div><div className="font-bold">{Number(selectedShipment.payment_status) === 2 ? "Awaiting Payment" : String(selectedShipment.payment_status || "Unavailable")}</div></div>
                         <div><div className="text-muted-foreground">Currency</div><div className="font-bold">{currency}</div></div>
-                        <div><div className="text-muted-foreground">Total Value</div><div className="font-bold">{currency === "USD" ? "$" : "₱"}{Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div></div>
+                        <div><div className="text-muted-foreground">Total Value</div><div className="font-bold">{currency === "USD" ? "$" : "₱"}{Number(amount || 0).toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}</div></div>
                     </div>
                 );
             })()}

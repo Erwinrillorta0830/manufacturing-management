@@ -1,4 +1,4 @@
-import { DecimalValue, type DecimalInput } from "../decimal";
+import { DecimalValue, PROCUREMENT_MONEY_DECIMAL_SCALE, type DecimalInput } from "../decimal";
 
 export interface PercentageDiscountCalculation {
     grossAmount: string;
@@ -18,16 +18,18 @@ export function calculatePercentageDiscount(
     unitPrice: DecimalInput,
     discountPercent: DecimalInput
 ): PercentageDiscountCalculation {
-    const grossAmount = DecimalValue.from(quantity).multiply(unitPrice).toFixed(2);
+    const grossAmount = DecimalValue.from(quantity).multiply(unitPrice).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     const discountPerUnit = DecimalValue.from(unitPrice)
         .multiply(discountPercent)
-        .divideRounded(100, 2)
-        .toFixed(2);
+        .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
     const discountAmount = DecimalValue.from(grossAmount)
         .multiply(discountPercent)
-        .divideRounded(100, 2)
-        .toFixed(2);
-    const netAmount = DecimalValue.from(grossAmount).subtract(discountAmount).toFixed(2);
+        .divideRounded(100, PROCUREMENT_MONEY_DECIMAL_SCALE)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+    const netAmount = DecimalValue.from(grossAmount)
+        .subtract(discountAmount)
+        .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
 
     return { grossAmount, discountPerUnit, discountAmount, netAmount };
 }

@@ -30,6 +30,7 @@ export async function POST(request: Request) {
                 : 500;
         return NextResponse.json({
             error: (error as Error).message || "Failed to resolve purchase-order commercial terms.",
+            code: error instanceof PurchaseOrderPriceTypeError ? error.code : undefined,
             details: error instanceof PurchaseOrderCommercialResolutionError || error instanceof PurchaseOrderPriceTypeError
                 ? error.details
                 : undefined

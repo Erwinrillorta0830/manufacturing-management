@@ -110,6 +110,8 @@ export async function GET(
                             customerNameMap.set(c.customer_code, c.customer_name);
                         }
                     });
+                } else {
+                    console.warn(`Directus customer lookup returned status ${custRes.status}`);
                 }
             } catch (err) {
                 console.error("Error fetching customer names for collection allocation details:", err);
@@ -193,7 +195,7 @@ export async function GET(
         const cashBucketByDetailId = new Map(details.map((d) => [d.id, d]));
 
         const invoiceAllocations = collInvoices.map((ci) => {
-            const inv = salesInvoices.find((si) => si.invoice_id === ci.invoice_id) || {};
+            const inv = salesInvoices.find((si) => Number(si.invoice_id) === Number(ci.invoice_id)) || {};
             const code = (inv.customer_code as string) || "";
             const resolvedCustomerName = customerNameMap.get(code) || (inv.customer_name as string) || "Deleted Customer";
             
@@ -202,6 +204,19 @@ export async function GET(
             const netVal = typeof inv.net_amount === "number" ? inv.net_amount : (typeof inv.total_amount === "number" ? inv.total_amount : (typeof inv.gross_amount === "number" ? inv.gross_amount : null));
 
             const safeInvId = Number(inv.invoice_id || ci.invoice_id);
+
+            // Compute total payments from historyMap (posted collection invoices)
+            const historyEntries = historyMap.get(safeInvId) || [];
+            const totalPayments = historyEntries.reduce((sum: number, h: { amount: number }) => sum + (Number(h.amount) || 0), 0);
+
+            // Compute total returns from collReturns for this invoice
+            const totalReturns = collReturns
+                .filter((cr) => Number(cr.invoice_no) === safeInvId)
+                .reduce((sum: number, cr: Record<string, unknown>) => sum + (Number(cr.amount) || 0), 0);
+
+            // Compute live remaining balance deducting returns
+            const baseBalance = (typeof inv.remaining_balance === "number" ? inv.remaining_balance : netVal) ?? (netVal ?? 0);
+            const liveRemainingBalance = Math.max(0, baseBalance - totalReturns);
 
             // Resolve reference number from source_temp_id or matching detail
             let resolvedRef = ci.source_temp_id;
@@ -223,9 +238,12 @@ export async function GET(
                 invoiceId: safeInvId,
                 grossAmount: grossVal,
                 originalAmount: netVal,
-                remainingBalance: inv.remaining_balance ?? netVal,
+                remainingBalance: liveRemainingBalance,
+                totalPayments,
+                totalMemos: 0,
+                totalReturns,
                 referenceNo: resolvedRef,
-                history: historyMap.get(safeInvId) || [],
+                history: historyEntries,
             };
         });
 

@@ -1,4 +1,4 @@
-import { unitId, type MmLotRecord } from "../services/mm-lots.service";
+import { lotUnitId, type MmLotRecord } from "../services/mm-lots.service";
 import { inspectLotCapacity, type LotCapacityStatus } from "./_lot-capacity";
 
 export interface LotProductScope {
@@ -58,7 +58,7 @@ export function isStorageLotStatusEligible(status: unknown): boolean {
 }
 
 export function isStorageLotProductCompatible(lot: MmLotRecord, product: LotProductScope): boolean {
-    if (unitId(lot.unit_id) !== product.uomId) return false;
+    if (lotUnitId(lot) !== product.uomId) return false;
 
     const lotProductTypeId = explicitProductTypeId(lot);
     if (lotProductTypeId !== null && lotProductTypeId !== product.productTypeId) return false;
@@ -93,7 +93,7 @@ export function evaluateStorageLotEligibility(
         };
     }
     if (!isStorageLotProductCompatible(lot, product)) {
-        const reason = unitId(lot.unit_id) === product.uomId ? "PRODUCT_SCOPE" : "UOM";
+        const reason = lotUnitId(lot) === product.uomId ? "PRODUCT_SCOPE" : "UOM";
         return {
             eligible: false,
             reason,

@@ -51,6 +51,9 @@ interface DirectusOrder {
     workflow_revision?: unknown;
     currency_code?: unknown;
     total_amount?: unknown;
+    total_foreign_currency?: unknown;
+    date_approved?: unknown;
+    remark?: unknown;
     date_encoded?: unknown;
 }
 
@@ -213,7 +216,7 @@ async function directusRows(path: string, message: string): Promise<Record<strin
 }
 
 async function loadOrder(purchaseOrderId: number): Promise<DirectusOrder> {
-    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,date_encoded`);
+    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded`);
     if (result.response.status === 404) throw new WarehouseReceivingError("Purchase order not found.", 404);
     if (!result.response.ok) throw new WarehouseReceivingError("Unable to load the purchase order.", 503);
     const order = bodyData(result.body) as DirectusOrder | null;
@@ -448,6 +451,7 @@ async function buildOrderView(order: DirectusOrder) {
         poNumber: String(order.reference || order.purchase_order_no || `PO-${purchaseOrderId}`),
         purchaseOrderNumber: String(order.purchase_order_no || ""),
         supplierName,
+        supplierId: relationId(order.supplier_name, ["id", "supplier_id"]),
         branch: {
             id: relationId(branch.id, ["id", "branch_id"]) || orderBranchId(order),
             name: String(branch.branch_name || ""),
@@ -457,8 +461,14 @@ async function buildOrderView(order: DirectusOrder) {
         status: inventoryStatusToPurchaseOrderStatus(statusId(order), Number(order.payment_status)) as string,
         inventoryStatus: statusId(order) as InventoryStatusId,
         workflowRevision: workflowRevision(order),
-        currencyCode: String(order.currency_code || "PHP"),
+        currencyCode: String(order.currency_code || "PHP").trim().toUpperCase(),
         totalAmount: numberValue(order.total_amount),
+        totalPhpAmount: numberValue(order.total_amount),
+        totalForeignAmount: order.total_foreign_currency == null
+            ? null
+            : numberValue(order.total_foreign_currency),
+        dateApproved: order.date_approved ? String(order.date_approved) : null,
+        remarks: String(order.remark || "").trim(),
         lines: viewLines,
         draft: warehouseHeader
             ? {
@@ -512,10 +522,11 @@ async function validateWarehouseLines(order: DirectusOrder, command: WarehouseRe
         if (submitted.productId !== line.productId) throw new WarehouseReceivingError(`Product mismatch for line ${line.lineId}.`, 400);
         const previous = postedByLine.get(line.lineId) || 0;
         const allowable = Math.max(0, line.orderedQuantity - previous);
-        if (submitted.receivedQuantity > allowable + QUANTITY_EPSILON) {
-            throw new WarehouseReceivingError(`Received quantity for ${line.productName} exceeds the allowable quantity of ${allowable}.`, 400);
-        }
-        return { line, quantity: submitted.receivedQuantity };
+        return {
+            line,
+            quantity: submitted.receivedQuantity,
+            overage: Math.max(0, submitted.receivedQuantity - allowable)
+        };
     });
     if (command.action === "submit_to_qa") {
         const metadata = requireReceiptMetadata(command);
@@ -630,8 +641,14 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         if (!header) throw new WarehouseReceivingError("The purchase order is in Warehouse Receiving but its draft is missing.", 409);
         return buildOrderView(order);
     }
-    if (currentStatus !== INVENTORY_STATUS.APPROVED) {
-        throw new WarehouseReceivingError("Only Approved purchase orders can be started in Warehouse Receiving.", 409);
+    if (currentStatus !== INVENTORY_STATUS.APPROVED && currentStatus !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+        throw new WarehouseReceivingError("Only Approved or Partially Received purchase orders can be started in Warehouse Receiving.", 409);
+    }
+    if (currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+        const currentView = await buildOrderView(order);
+        if (!currentView.lines.some(line => line.remainingQuantity > QUANTITY_EPSILON)) {
+            throw new WarehouseReceivingError("This purchase order has no remaining quantity to receive.", 409);
+        }
     }
     const branchId = orderBranchId(order);
     await loadBranch(branchId);
@@ -735,27 +752,44 @@ export async function GET(request: Request) {
         const purchaseOrderId = Number(searchParams.get("purchaseOrderId") || searchParams.get("poId") || 0);
         if (purchaseOrderId > 0) {
             const order = await loadOrder(purchaseOrderId);
-            if (!([INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.WAREHOUSE_RECEIVING] as number[]).includes(statusId(order))) {
+            if (!([INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.PARTIALLY_RECEIVED, INVENTORY_STATUS.WAREHOUSE_RECEIVING] as number[]).includes(statusId(order))) {
                 throw new WarehouseReceivingError("This purchase order is not available in Warehouse Receiving.", 409);
             }
             return NextResponse.json({ data: await buildOrderView(order) });
         }
         const params = new URLSearchParams({
-            "filter[inventory_status][_in]": `${INVENTORY_STATUS.APPROVED},${INVENTORY_STATUS.WAREHOUSE_RECEIVING}`,
-            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,date_encoded",
+            "filter[inventory_status][_in]": `${INVENTORY_STATUS.APPROVED},${INVENTORY_STATUS.PARTIALLY_RECEIVED},${INVENTORY_STATUS.WAREHOUSE_RECEIVING}`,
+            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded",
             limit: "-1",
-            sort: "-date_encoded"
+            sort: "-date_approved,-date_encoded"
         });
         const orders = await directusRows(`/items/purchase_order?${params.toString()}`, "Unable to load the Warehouse Receiving queue.") as DirectusOrder[];
         const views = await Promise.all(orders.map(order => buildOrderView(order)));
         const search = (searchParams.get("search") || "").trim().toLowerCase();
-        const filtered = search
-            ? views.filter(view => `${view.poNumber} ${view.purchaseOrderNumber} ${view.supplierName}`.toLowerCase().includes(search))
-            : views;
+        const supplierId = Number(searchParams.get("supplierId") || 0);
+        const status = (searchParams.get("status") || "").trim();
+        const dateFrom = searchParams.get("dateFrom") ? validateDateOnly(searchParams.get("dateFrom") || "") : null;
+        const dateTo = searchParams.get("dateTo") ? validateDateOnly(searchParams.get("dateTo") || "") : null;
+        if (dateFrom && dateTo && dateFrom > dateTo) {
+            throw new WarehouseReceivingError("Date Approved range is invalid: the start date must be on or before the end date.", 400);
+        }
+        const supplierOptions = [...new Map(
+            views
+                .filter(view => view.supplierId !== null)
+                .map(view => [view.supplierId as number, { id: view.supplierId as number, name: view.supplierName }])
+        ).values()].sort((left, right) => left.name.localeCompare(right.name));
+        const filtered = views.filter(view => {
+            const approvedDate = view.dateApproved?.slice(0, 10) || null;
+            return (!search || `${view.poNumber} ${view.purchaseOrderNumber} ${view.supplierName} ${view.remarks} ${view.status}`.toLowerCase().includes(search))
+                && (!supplierId || view.supplierId === supplierId)
+                && (!status || status === "ALL" || view.status === status)
+                && (!dateFrom || (approvedDate !== null && approvedDate >= dateFrom))
+                && (!dateTo || (approvedDate !== null && approvedDate <= dateTo));
+        });
         const page = Math.max(1, Number(searchParams.get("page") || 1));
         const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 25)));
         const start = (page - 1) * limit;
-        return NextResponse.json({ data: { items: filtered.slice(start, start + limit), page, limit, total: filtered.length } });
+        return NextResponse.json({ data: { items: filtered.slice(start, start + limit), page, limit, total: filtered.length, supplierOptions } });
     } catch (error) {
         const status = error instanceof PurchaseOrderAuthorizationError
             ? error.status

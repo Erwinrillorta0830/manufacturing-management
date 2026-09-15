@@ -111,6 +111,17 @@ export async function fetchReceivingTicketByIdempotencyKey(idempotencyKey: strin
     return mapTicket(rows(result.body)[0]);
 }
 
+export async function fetchReceivingTicketById(headerId: number): Promise<ReceivingTicketRow | null> {
+    const params = new URLSearchParams({
+        "filter[id][_eq]": String(headerId),
+        fields: ticketFields(),
+        limit: "1"
+    });
+    const result = await directusJson(`/items/purchase_order_receiving_headers?${params.toString()}`);
+    if (!result.ok) throw new ReceivingTicketError("Unable to look up the selected receiving ticket.");
+    return mapTicket(rows(result.body)[0]);
+}
+
 async function fetchReceivingTicketByNumber(receiptNumber: string): Promise<ReceivingTicketRow | null> {
     const params = new URLSearchParams({
         "filter[receiving_ticket_no][_eq]": receiptNumber,

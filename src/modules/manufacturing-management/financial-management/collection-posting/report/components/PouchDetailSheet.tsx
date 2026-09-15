@@ -42,6 +42,10 @@ const displayCustomer = (value?: string | null) => {
 const formatMoney = (value?: number | null) =>
     `${PESO}${Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 const formatCheckDate = (value?: string | null) => value ? format(parseISO(value), "MM/dd/yyyy") : "—";
+const displayBankName = (value?: string | null) => {
+    const bank = value?.trim();
+    return bank && bank.toLowerCase() !== "unknown bank" ? bank : null;
+};
 
 export function PouchDetailSheet({ pouch, isOpen, onClose, onPrint, isPrinting = false }: PouchDetailSheetProps) {
     const [inlineSearch, setInlineSearch] = useState("");
@@ -192,7 +196,9 @@ export function PouchDetailSheet({ pouch, isOpen, onClose, onPrint, isPrinting =
                                                 <tr><td colSpan={5} className="py-10 text-center italic text-muted-foreground">No checks recorded.</td></tr>
                                             ) : checks.map((check, index) => (
                                                 <tr key={index} className="border-b border-border/40 transition-colors hover:bg-muted/40">
-                                                    <td className="pl-5 font-bold">{check.bankName}</td>
+                                                    <td className="pl-5 font-bold">
+                                                        {displayBankName(check.bankName) ?? <span className="font-mono font-normal text-muted-foreground">—</span>}
+                                                    </td>
                                                     <td className="font-mono text-muted-foreground">{check.checkNo}</td>
                                                     <td className="font-mono text-muted-foreground">{formatCheckDate(check.chequeDate)}</td>
                                                     <td className="text-muted-foreground">{displayCustomer(check.customerName)}</td>

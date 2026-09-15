@@ -13,6 +13,11 @@ import {
     deriveLineGrossWeightKg,
     resolveProductWeightBreakdown
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import {
+    DecimalValue,
+    normalizeProcurementMoney,
+    PROCUREMENT_MONEY_DECIMAL_SCALE
+} from "@/modules/manufacturing-management/decimal";
 import type { PurchaseOrderCategoryType } from "../_category-type";
 export { toStandardKg } from "@/modules/manufacturing-management/procurement/packaging-weight";
 
@@ -109,7 +114,14 @@ interface StoredExpense {
 }
 
 function roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+}
+
+function sumMoney(values: readonly number[]): number {
+    return Number(values.reduce(
+        (total, value) => total.add(value),
+        DecimalValue.from(0)
+    ).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 export function normalizeAllocationMethod(value: string): AllocationMethod {
@@ -249,7 +261,7 @@ export async function processShipmentLandedCosts(
             amount_php: Number(record.amount_php)
         } satisfies LandedCostExpenseInput;
     }));
-    const totalExpensesPhp = resolvedExpenses.reduce((sum, expense) => sum + Number(expense.amount_php || 0), 0);
+    const totalExpensesPhp = sumMoney(resolvedExpenses.map(expense => Number(expense.amount_php || 0)));
     const lines = await fetchShipmentLineItems(shipmentId) as ExtendedShipmentLineItem[];
     const inputs: LandedCostInput[] = lines.map(line => {
         const product = line.product_id as unknown as Record<string, unknown>;
@@ -284,7 +296,7 @@ export async function processShipmentLandedCosts(
         for (const expense of resolvedExpenses) {
             const amountPhp = Number(expense.amount_php || 0);
             const expenseId = await createExpense({
-                amount_php: amountPhp,
+                amount_php: normalizeProcurementMoney(amountPhp),
                 purchase_order_id: shipmentId,
                 overhead_id: expense.overhead_id,
                 expense_type: expense.expense_type || "",
@@ -346,8 +358,8 @@ export async function processShipmentLandedCosts(
                 method: "PATCH",
                 headers,
                 body: JSON.stringify({
-                    cost_per_unit: allocation.finalLandedUnitCost,
-                    estimated_unit_cost: allocation.finalLandedUnitCost,
+                    cost_per_unit: normalizeProcurementMoney(allocation.finalLandedUnitCost),
+                    estimated_unit_cost: normalizeProcurementMoney(allocation.finalLandedUnitCost),
                     ...productUpdateAuditFields(userId)
                 })
             });
@@ -379,7 +391,7 @@ export async function processShipmentLandedCosts(
                 purchase_order_id: expense.purchase_order_id,
                 overhead_id: overheadId,
                 expense_type: expense.expense_type || "",
-                amount_php: Number(expense.amount_php || 0),
+                amount_php: normalizeProcurementMoney(Number(expense.amount_php || 0)),
                 allocation_method: expense.allocation_method
             }).catch(() => { rollbackFailed = true; });
         }

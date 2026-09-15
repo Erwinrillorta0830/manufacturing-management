@@ -16,15 +16,16 @@ export async function POST(
 ) {
     const params = await props.params;
     try {
-        // Post the collection (set isPosted = 1)
         const url = `${DIRECTUS_URL}/items/collection/${params.id}`;
+        const phDate = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Manila" }).replace("T", " ");
         
         const res = await fetch(url, { 
             method: "PATCH", 
             headers, 
             body: JSON.stringify({
-                isPosted: 1,
-                date_posted: new Date().toISOString()
+                isPosted: true,
+                is_posted: true,
+                date_posted: phDate
             })
         });
         

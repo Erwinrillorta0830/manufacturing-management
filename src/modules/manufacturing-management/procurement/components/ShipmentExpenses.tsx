@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { resolveProductWeightBreakdown } from "../packaging-weight";
 import { LANDED_COST_METHOD_OPTIONS } from "../landed-cost-methods";
 import LandedCostAttachments from "./LandedCostAttachments";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Landmark, Plus, Scale, DollarSign, Layers, Anchor, AlertCircle, Info, Calculator, Check, ArrowRight, Loader2 } from "lucide-react";
 
@@ -150,19 +151,19 @@ export default function ShipmentExpenses({
                         <div className="space-y-3.5 text-xs">
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">FOB Cargo Value</span>
-                                <span className="font-semibold text-foreground">₱{totalPhpFob.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span className="font-semibold text-foreground">₱{totalPhpFob.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-muted-foreground">Allocated Duties & Arrastre</span>
-                                <span className="font-semibold text-emerald-600">₱{totalAllocatedExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span className="font-semibold text-emerald-600">₱{totalAllocatedExpenses.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}</span>
                             </div>
                             <div className="flex justify-between border-t pt-2.5 font-bold">
                                 <span>Total Acquisition Value</span>
-                                <span className="text-foreground">₱{(totalPhpFob + totalAllocatedExpenses).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                <span className="text-foreground">₱{(totalPhpFob + totalAllocatedExpenses).toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}</span>
                             </div>
                             <div className="flex justify-between text-[11px] text-muted-foreground">
                                 <span>Avg Landed Overhead / Unit</span>
-                                <span>₱{totalManifestQty > 0 ? ((totalAllocatedExpenses / totalManifestQty).toFixed(2)) : "0.00"}</span>
+                                <span>₱{totalManifestQty > 0 ? ((totalAllocatedExpenses / totalManifestQty).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)) : "0.0000"}</span>
                             </div>
                             {(expenses.some(e => e.allocation_method === "Hybrid") || allocationForm?.allocation_method === "Hybrid") && (
                                 <div className="flex justify-between items-center text-[11px] text-muted-foreground border-t pt-2.5 mt-2.5">
@@ -170,7 +171,7 @@ export default function ShipmentExpenses({
                                     <div className="flex gap-1.5">
                                         <span className="bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded font-bold">RM Qty: {rmQuantity.toLocaleString()}</span>
                                         <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-bold">PKG Weight: {pkgWeight.toLocaleString()}kg</span>
-                                        <span className="bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded font-bold">FG Value: ₱{fgCommercialValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span className="bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded font-bold">FG Value: ₱{fgCommercialValue.toLocaleString(undefined, { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}</span>
                                     </div>
                                 </div>
                             )}
@@ -236,10 +237,10 @@ export default function ShipmentExpenses({
                                                         )}
                                                     </td>
                                                     <td className="p-3 text-right font-mono text-muted-foreground">
-                                                        ₱{Number(line.base_unit_cost_php).toFixed(2)}
+                                                        ₱{Number(line.base_unit_cost_php).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)}
                                                     </td>
                                                     <td className="p-3 text-right font-mono font-bold bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
-                                                        ₱{Number(line.final_landed_unit_cost || line.base_unit_cost_php).toFixed(2)}
+                                                        ₱{Number(line.final_landed_unit_cost || line.base_unit_cost_php).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)}
                                                     </td>
                                                 </tr>
                                             );

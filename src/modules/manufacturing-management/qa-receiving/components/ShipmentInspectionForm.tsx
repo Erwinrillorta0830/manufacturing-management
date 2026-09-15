@@ -2,7 +2,7 @@ import React from "react";
 import Image from "next/image";
 import { ArrowLeft, MapPin, AlertTriangle, CheckCircle2, Search, ChevronDown, Plus, Minus, Trash2, Loader2, ReceiptText, CalendarDays, Radio, RefreshCw } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
-import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus } from "../types";
+import { Shipment, ShipmentLineItem, Branch, InspectionRow, StorageLot, StorageLotBatch, StorageLotLookupState, QaSpecificationLoadState, QaSpecificationReadings, ReceivingQaEvaluation, ReceivingLotAllocationInput, OverDeliveryLine, SupplierDocumentType, ReceivingQuantityStatus, QaReceiptOption } from "../types";
 import { deriveRejectedQuantity } from "@/app/api/manufacturing/qa/_receiving-evaluation";
 import { canForceReceivePurchaseOrder, isForceReceived } from "@/app/api/manufacturing/qa-receiving/_force-received";
 import { INVENTORY_STATUS } from "@/app/api/manufacturing/procurement/_domain";
@@ -11,6 +11,25 @@ import ProductQaChecklist from "./ProductQaChecklist";
 import ForceReceivedDialog from "./ForceReceivedDialog";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
 import { configuredBadStockBranchId } from "../services/qa-api";
+
+function relationNumber(value: unknown, keys: string[]): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        for (const key of keys) {
+            const nested = relationNumber(record[key], keys);
+            if (nested !== null) return nested;
+        }
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function storageLotUnitId(lot: StorageLot): number | null {
+    return relationNumber(lot.unit_id, ["unit_id", "id"])
+        || relationNumber(lot.uom_id, ["uom_id", "unit_id", "id"]);
+}
 
 interface ShipmentInspectionFormProps {
     selectedShipment: Shipment;
@@ -26,6 +45,9 @@ interface ShipmentInspectionFormProps {
     loadStorageLotBatches: (productId: number, lotId: number, branchId?: number, disposition?: "accepted" | "rejected") => Promise<StorageLotBatch[]>;
     receivingTicketNumber: string;
     onReceiptNumberChange: (value: string) => void;
+    receiptOptions: QaReceiptOption[];
+    selectedReceipt: QaReceiptOption | null;
+    onReceiptSelection: (value: string) => void;
     receiptDate: string;
     onReceiptDateChange: (value: string) => void;
     supplierDocumentTypes: SupplierDocumentType[];
@@ -65,6 +87,7 @@ interface SearchableStorageLotSelectProps {
     value: string | number;
     disabled?: boolean;
     storageLots: StorageLot[];
+    productUnitId: number | null;
     id?: string;
     ariaLabel?: string;
     onChange: (value: string) => void;
@@ -74,6 +97,7 @@ function SearchableStorageLotSelect({
     value,
     disabled,
     storageLots,
+    productUnitId,
     id,
     ariaLabel,
     onChange
@@ -81,7 +105,11 @@ function SearchableStorageLotSelect({
     const options = React.useMemo(() => {
         const seenLotIds = new Set<string>();
         return storageLots
-            .filter(lot => lot.is_selectable !== false || String(lot.lot_id) === String(value))
+            .filter(lot => {
+                const isCurrent = String(lot.lot_id) === String(value);
+                const isUomCompatible = productUnitId !== null && storageLotUnitId(lot) === productUnitId;
+                return (lot.is_selectable !== false || isCurrent) && (isUomCompatible || isCurrent);
+            })
             .filter(lot => {
                 const lotId = String(lot.lot_id);
                 if (seenLotIds.has(lotId)) return false;
@@ -93,6 +121,7 @@ function SearchableStorageLotSelect({
                 const lotName = String(lot.lot_name || lot.lot_code || `Lot ${lotId}`);
                 const available = lot.availableQuantity ?? lot.max_batch_capacity;
                 const isCurrent = lotId === String(value);
+                const isUomMismatch = productUnitId === null || storageLotUnitId(lot) !== productUnitId;
                 const isFull = typeof lot.availableQuantity === "number" && lot.availableQuantity <= 0;
                 const availabilityLabel = lot.capacity_status === "UNCONFIGURED"
                     ? "capacity not configured"
@@ -102,11 +131,11 @@ function SearchableStorageLotSelect({
 
                 return {
                     value: lotId,
-                    label: `${lotName} (${availabilityLabel})`,
-                    disabled: isFull && !isCurrent
+                    label: `${lotName} (${isUomMismatch ? "UOM mismatch - replace" : availabilityLabel})`,
+                    disabled: isUomMismatch || (isFull && !isCurrent)
                 };
             });
-    }, [storageLots, value]);
+    }, [productUnitId, storageLots, value]);
 
     return (
         <div data-testid="storage-lot-picker" aria-label={ariaLabel} className="relative min-w-0 flex-1 overflow-visible">
@@ -197,6 +226,7 @@ interface LotAllocationGroup {
 interface LotAllocationEditorProps {
     lineId: number;
     productId: number;
+    productUnitId: number | null;
     isPackaging: boolean;
     disposition: AllocationDisposition;
     allocations: ReceivingLotAllocationInput[];
@@ -212,6 +242,7 @@ interface LotAllocationEditorProps {
 function LotAllocationEditor({
     lineId,
     productId,
+    productUnitId,
     isPackaging,
     disposition,
     allocations,
@@ -230,7 +261,9 @@ function LotAllocationEditor({
 
     const loadBatches = React.useCallback((lotId: number) => {
         if (batchOptionsByLot[lotId]) return;
-        const lotBranchId = storageLots.find(lot => String(lot.lot_id) === String(lotId))?.branch_id || undefined;
+        const lot = storageLots.find(candidate => String(candidate.lot_id) === String(lotId));
+        if (!lot || productUnitId === null || storageLotUnitId(lot) !== productUnitId) return;
+        const lotBranchId = lot.branch_id || undefined;
         void loadStorageLotBatches(productId, lotId, lotBranchId || undefined, disposition)
             .then(batches => setBatchOptionsByLot(previous => ({ ...previous, [lotId]: batches })))
             .catch(error => {
@@ -238,7 +271,7 @@ function LotAllocationEditor({
                     setBatchOptionsByLot(previous => ({ ...previous, [lotId]: [] }));
                 }
             });
-    }, [batchOptionsByLot, disposition, loadStorageLotBatches, productId, storageLots]);
+    }, [batchOptionsByLot, disposition, loadStorageLotBatches, productId, productUnitId, storageLots]);
 
     React.useEffect(() => {
         for (const allocation of allocations) {
@@ -343,6 +376,7 @@ function LotAllocationEditor({
     const canAddLot = !readOnly
         && !hasUnassignedGroup
         && storageLots.some(lot => {
+            if (productUnitId === null || storageLotUnitId(lot) !== productUnitId) return false;
             const availableQuantity = lot.availableQuantity;
             const hasCapacity = availableQuantity === null
                 || availableQuantity === undefined
@@ -399,6 +433,9 @@ function LotAllocationEditor({
                 </div>
             ) : groups.map(group => {
                 const selectedLot = effectiveStorageLots.find(lot => String(lot.lot_id) === group.storageLotId);
+                const selectedLotUomId = selectedLot ? storageLotUnitId(selectedLot) : null;
+                const selectedLotUomMismatch = selectedLot !== undefined
+                    && (productUnitId === null || selectedLotUomId !== productUnitId);
                 const groupTotal = group.allocations.reduce((sum, allocation) => sum + Math.max(0, Number(allocation.quantity) || 0), 0);
                 const lotIncomingTotal = [...allocations, ...otherAllocations]
                     .filter(allocation => String(allocation.storageLotId) === group.storageLotId)
@@ -418,6 +455,7 @@ function LotAllocationEditor({
                                             value={group.storageLotId}
                                             disabled={readOnly}
                                             storageLots={getStorageLotsForGroup(group)}
+                                            productUnitId={productUnitId}
                                             id={`receiving-${lineId}-${disposition}-${group.groupId.replace(/[^a-zA-Z0-9_-]/g, "-")}-storage-lot`}
                                             ariaLabel={tone.label + " storage lot"}
                                             onChange={value => changeLot(group, value)}
@@ -439,7 +477,7 @@ function LotAllocationEditor({
                                         <button
                                             type="button"
                                             onClick={() => addBatch(group)}
-                                            disabled={!group.storageLotId}
+                                            disabled={!group.storageLotId || selectedLotUomMismatch}
                                             className={"h-8 px-2.5 rounded-lg border bg-background text-[10px] font-extrabold flex items-center gap-1.5 hover:bg-muted disabled:opacity-50 " + tone.text + " " + tone.border}
                                             aria-label={"Add batch to " + tone.label.toLowerCase() + " lot group"}
                                         >
@@ -452,6 +490,11 @@ function LotAllocationEditor({
                                 <div className="mt-1 text-[9px] font-semibold text-muted-foreground">
                                     {selectedLot.lot_name} · {selectedLot.availableQuantity ?? selectedLot.max_batch_capacity ?? "capacity unavailable"} unit(s) available before this receipt.
                                 </div>
+                            )}
+                            {selectedLotUomMismatch && (
+                                <p className="mt-1 text-[9px] font-bold text-red-700" role="alert">
+                                    Storage lot {selectedLot?.lot_name || group.storageLotId} does not match this product&apos;s UOM. Select a compatible lot before adding batches.
+                                </p>
                             )}
                         </div>
                         <div className="overflow-x-auto">
@@ -597,6 +640,9 @@ export default function ShipmentInspectionForm({
     loadStorageLotBatches,
     receivingTicketNumber,
     onReceiptNumberChange,
+    receiptOptions,
+    selectedReceipt,
+    onReceiptSelection,
     receiptDate,
     onReceiptDateChange,
     supplierDocumentTypes,
@@ -633,6 +679,12 @@ export default function ShipmentInspectionForm({
 }: ShipmentInspectionFormProps) {
     const [forceReceivedOpen, setForceReceivedOpen] = React.useState(false);
     const forceClosed = Boolean(selectedShipment.isForceReceived || isForceReceived(selectedShipment.forceReceivedAt));
+    const historicalReceiptOnly = Boolean(
+        selectedReceipt?.readOnly
+        && !isReplacement
+        && selectedShipment.status !== "Received"
+        && Number(selectedShipment.inventory_status) !== INVENTORY_STATUS.RECEIVED
+    );
     const canForceReceive = Boolean(onForceReceived) && canForceReceivePurchaseOrder({
         inventoryStatus: selectedShipment.inventory_status ?? (selectedShipment.status === "Partially Received" ? INVENTORY_STATUS.PARTIALLY_RECEIVED : null),
         isForceReceived: forceClosed,
@@ -648,6 +700,20 @@ export default function ShipmentInspectionForm({
     const totalOrderedQty = React.useMemo(() => {
         return lineItems.reduce((sum, l) => sum + Number(l.quantity_ordered || 0), 0);
     }, [lineItems]);
+
+    const receiptSelectOptions = React.useMemo(() => receiptOptions.map(option => ({
+        value: option.key,
+        label: `${option.receiptNumber} ${option.receiptDate || ""} ${option.postingStatus}`.trim(),
+        labelNode: (
+            <div className="flex min-w-0 items-center justify-between gap-3">
+                <span className="truncate font-semibold">{option.receiptNumber}</span>
+                <span className="shrink-0 text-[9px] text-muted-foreground">
+                    {option.receiptDate || "No date"} · {option.postingStatus}
+                </span>
+            </div>
+        ),
+        triggerNode: <span className="truncate">{option.receiptNumber}</span>
+    })), [receiptOptions]);
 
     const [dropdownOpen, setDropdownOpen] = React.useState(false);
     const [dropdownSearch, setDropdownSearch] = React.useState("");
@@ -807,7 +873,7 @@ export default function ShipmentInspectionForm({
                             <p className="text-[10px] text-muted-foreground">Verify physical quantities, tag batch IDs, and set Expiration limits.</p>
                             {readOnly && (
                                 <span className="text-[9px] bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5 rounded font-extrabold whitespace-nowrap">
-                                    Received - View Only
+                                    {historicalReceiptOnly ? "Receipt - View Only" : "Received - View Only"}
                                 </span>
                             )}
                             {forceClosed && (
@@ -900,23 +966,46 @@ export default function ShipmentInspectionForm({
                     </label>
                     <div className="relative">
                         <ReceiptText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-primary pointer-events-none" />
-                        <input
-                            id="receiving-receipt-number"
-                            name="receiptNumber"
-                            type="text"
-                            required={!readOnly}
-                            maxLength={32}
-                            autoComplete="off"
-                            value={receivingTicketNumber}
-                            onChange={event => onReceiptNumberChange(event.target.value)}
-                            readOnly={readOnly}
-                            aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
-                            aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
-                            className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
-                        />
+                        {isReplacement ? (
+                            <input
+                                id="receiving-receipt-number"
+                                name="receiptNumber"
+                                type="text"
+                                required={!readOnly}
+                                maxLength={32}
+                                autoComplete="off"
+                                value={receivingTicketNumber}
+                                onChange={event => onReceiptNumberChange(event.target.value)}
+                                readOnly={readOnly}
+                                aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
+                                aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
+                                className={`w-full h-10 rounded-xl border bg-background text-foreground text-xs font-semibold pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-primary ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""} ${readOnly ? "bg-muted/30 cursor-default" : ""}`}
+                            />
+                        ) : (
+                            <CreatableSelect
+                                id="receiving-receipt-number"
+                                options={receiptSelectOptions}
+                                value={selectedReceipt?.key || ""}
+                                onValueChange={onReceiptSelection}
+                                placeholder={receiptOptions.length > 0 ? "Select receipt number" : "No receipt records found"}
+                                searchPlaceholder="Search receipt number..."
+                                disabled={receiptOptions.length === 0}
+                                aria-label="Receipt Number"
+                                aria-invalid={Boolean(issueFor(undefined, "receiptNumber"))}
+                                aria-describedby={issueFor(undefined, "receiptNumber") ? "receiving-receipt-number-error" : undefined}
+                                className={`h-10 rounded-xl bg-background !pl-10 pr-3 text-xs font-semibold ${issueFor(undefined, "receiptNumber") ? "border-red-500" : ""}`}
+                                popoverClassName="z-[100] min-w-[320px] max-w-[calc(100vw-2rem)] p-0"
+                            />
+                        )}
                     </div>
                     {issueFor(undefined, "receiptNumber") && <p id="receiving-receipt-number-error" className="text-[9px] font-semibold text-red-600" role="alert">{issueFor(undefined, "receiptNumber")?.message}</p>}
-                    <p className="text-[9px] text-muted-foreground">Enter the physical receiving ticket or delivery receipt number.</p>
+                    <p className="text-[9px] text-muted-foreground">
+                        {isReplacement
+                            ? "Enter the new replacement delivery receipt number."
+                            : selectedReceipt?.readOnly
+                                ? "Historical receipt is view-only. Select another receipt to inspect."
+                                : "Select the physical receiving ticket or delivery receipt to inspect."}
+                    </p>
                 </div>
 
                 <div className="min-w-0 space-y-1">
@@ -1057,6 +1146,7 @@ export default function ShipmentInspectionForm({
 
                         const prod = line.product_id;
                         const productId = Number(prod.product_id);
+                        const productUnitId = relationNumber(prod.unit_of_measurement, ["unit_id", "uom_id", "id"]);
                         const lineStorageLots = storageLotsByProductId[productId] || [];
                         const lineRejectedStorageLots = rejectedStorageLotsByProductId[productId] || [];
                         const lineStorageLotLookup = storageLotLookupStateByProductId[productId] || { status: "loading" as const, error: null };
@@ -1074,6 +1164,18 @@ export default function ShipmentInspectionForm({
                         const remainingAcceptedVal = Math.max(0, Number(line.remaining_accepted_quantity ?? (orderedVal - previouslyAcceptedVal)));
                         const acceptedVal = row.acceptedQty !== "" ? Number(row.acceptedQty) : 0;
                         const rejectedVal = Math.max(0, deriveRejectedQuantity(receivedVal, acceptedVal));
+                        const currentReceiptQuantity = line.current_receipt_quantity === null || line.current_receipt_quantity === undefined
+                            ? null
+                            : Number(line.current_receipt_quantity);
+                        const hasCurrentReceipt = isReplacement || readOnly || (
+                            !line.current_receipt_error
+                            && currentReceiptQuantity !== null
+                            && Number.isFinite(currentReceiptQuantity)
+                            && currentReceiptQuantity > 0
+                        );
+                        const currentReceiptPhysicalVal = hasCurrentReceipt ? receivedVal : null;
+                        const currentReceiptAcceptedVal = hasCurrentReceipt ? acceptedVal : null;
+                        const lineInputDisabled = readOnly || (!isReplacement && !hasCurrentReceipt);
                         const overDeliveryQuantity = Math.max(0, receivedVal - remainingVal);
                         const quantitiesReconcile = [receivedVal, acceptedVal].every(Number.isFinite)
                             && acceptedVal >= 0
@@ -1149,7 +1251,7 @@ export default function ShipmentInspectionForm({
                                         loadState={qaSpecificationStates[prod.product_id]}
                                         readings={qaReadings[line.line_id] || {}}
                                         onReadingChange={handleUpdateQaReading}
-                                        readOnly={readOnly}
+                                        readOnly={readOnly || !hasCurrentReceipt}
                                     />
                                 )}
                                 {lineIssue("qaReading") && (
@@ -1161,11 +1263,20 @@ export default function ShipmentInspectionForm({
                                     </p>
                                 )}
 
+                                {!readOnly && !isReplacement && !hasCurrentReceipt && (
+                                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-700" role="alert">
+                                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                                        <span>{line.current_receipt_error || "No positive Warehouse Receiving handoff is available for this line. Complete Warehouse Receiving before entering QA quantities."}</span>
+                                    </div>
+                                )}
+
                                 <div className="flex flex-wrap gap-x-5 gap-y-1 border-y py-2 text-[9px] font-semibold text-muted-foreground">
                                     <span>Previously received: <strong className="text-foreground">{previouslyReceivedVal.toLocaleString()}</strong></span>
                                     <span>Previously accepted: <strong className="text-emerald-700">{previouslyAcceptedVal.toLocaleString()}</strong></span>
-                                    <span>Remaining accepted: <strong className="text-primary">{remainingAcceptedVal.toLocaleString()}</strong></span>
-                                    <span>Physical remaining: <strong className="text-foreground">{remainingVal.toLocaleString()}</strong></span>
+                                    <span>This receipt accepted: <strong className="text-primary">{currentReceiptAcceptedVal === null ? "—" : currentReceiptAcceptedVal.toLocaleString()}</strong></span>
+                                    <span>This receipt physical: <strong className="text-foreground">{currentReceiptPhysicalVal === null ? "—" : currentReceiptPhysicalVal.toLocaleString()}</strong></span>
+                                    <span>PO accepted balance: <strong className="text-primary">{remainingAcceptedVal.toLocaleString()}</strong></span>
+                                    <span>PO physical balance: <strong className="text-foreground">{remainingVal.toLocaleString()}</strong></span>
                                 </div>
 
                                  {/* QA Inputs Grid - Touch Optimized layout */}
@@ -1193,7 +1304,7 @@ export default function ShipmentInspectionForm({
                                                      <button
                                                          type="button"
                                                          onClick={() => handleUpdateRow(line.line_id, "receivedQty", Math.max(0, receivedVal - 1))}
-                                                         disabled={readOnly}
+                                                         disabled={lineInputDisabled}
                                                          className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
                                                      >
                                                          <Minus className="h-3.5 w-3.5" />
@@ -1205,14 +1316,14 @@ export default function ShipmentInspectionForm({
                                                          placeholder="Manually count"
                                                         value={row.receivedQty}
                                                         onChange={e => handleUpdateRow(line.line_id, "receivedQty", e.target.value === "" ? "" : Number(e.target.value))}
-                                                        disabled={readOnly}
+                                                        disabled={lineInputDisabled}
                                                          aria-invalid={!readOnly && Boolean(quantityIssue)}
                                                         className="w-full h-10 border border-border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 transition-all"
                                                      />
                                                      <button
                                                          type="button"
                                                          onClick={() => handleUpdateRow(line.line_id, "receivedQty", receivedVal + 1)}
-                                                         disabled={readOnly}
+                                                         disabled={lineInputDisabled}
                                                          className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
                                                      >
                                                          <Plus className="h-3.5 w-3.5" />
@@ -1234,7 +1345,7 @@ export default function ShipmentInspectionForm({
                                                     <button
                                                         type="button"
                                                         onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.max(0, acceptedVal - 1))}
-                                                        disabled={readOnly}
+                                                        disabled={lineInputDisabled}
                                                         className="w-10 h-10 border border-r-0 bg-background text-foreground rounded-l-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
                                                     >
                                                         <Minus className="h-3.5 w-3.5" />
@@ -1247,14 +1358,14 @@ export default function ShipmentInspectionForm({
                                                         placeholder="Accepted qty"
                                                         value={row.acceptedQty}
                                                         onChange={e => handleUpdateRow(line.line_id, "acceptedQty", e.target.value === "" ? "" : Number(e.target.value))}
-                                                        disabled={readOnly}
+                                                        disabled={lineInputDisabled}
                                                          aria-invalid={!readOnly && (!quantitiesReconcile || Boolean(quantityIssue))}
                                                          className={`w-full h-10 border bg-background text-center text-xs font-semibold text-foreground outline-none focus:ring-0 ${!readOnly && !quantitiesReconcile ? "border-red-500 bg-red-500/5" : ""}`}
                                                     />
                                                     <button
                                                         type="button"
                                                         onClick={() => handleUpdateRow(line.line_id, "acceptedQty", Math.min(receivedVal, acceptedVal + 1))}
-                                                        disabled={readOnly}
+                                                        disabled={lineInputDisabled}
                                                         className="w-10 h-10 border border-l-0 bg-background text-foreground rounded-r-lg hover:bg-muted font-extrabold flex items-center justify-center transition-colors text-base select-none shrink-0"
                                                     >
                                                         <Plus className="h-3.5 w-3.5" />
@@ -1334,13 +1445,14 @@ export default function ShipmentInspectionForm({
                                             <LotAllocationEditor
                                                 lineId={line.line_id}
                                                 productId={Number(prod.product_id)}
+                                                productUnitId={productUnitId}
                                                 isPackaging={row.isPackaging}
                                                 disposition="accepted"
                                                 allocations={row.acceptedLotAllocations}
                                                 otherAllocations={row.rejectedLotAllocations}
                                                 expectedQuantity={acceptedVal}
                                                 storageLots={lineStorageLots}
-                                                readOnly={readOnly || lineStorageLotLookup.status !== "loaded"}
+                                                readOnly={readOnly || !hasCurrentReceipt || lineStorageLotLookup.status !== "loaded"}
                                                 loadStorageLotBatches={loadStorageLotBatches}
                                                 onChange={allocations => handleUpdateAllocations(line.line_id, allocations)}
                                                 onAddLot={() => addAcceptedLot(line.line_id, row)}
@@ -1356,12 +1468,12 @@ export default function ShipmentInspectionForm({
                                                 </div>
                                         {lineRejectedStorageLotLookup.status === "loading" && (
                                             <p className="flex items-center gap-1.5 text-[9px] font-semibold text-muted-foreground" role="status">
-                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active quarantine storage lots...
+                                                <Loader2 className="h-3 w-3 animate-spin" /> Loading active Bad Order storage lots...
                                             </p>
                                         )}
                                         {lineRejectedStorageLotLookup.status === "error" && (
                                             <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-2 text-[9px] text-red-700" role="alert">
-                                                <span>Unable to load quarantine storage lots. This is a lookup failure, not an empty lot list.</span>
+                                                <span>{lineRejectedStorageLotLookup.error || "Unable to load Bad Order storage lots. This is a lookup failure, not an empty lot list."}</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => onRetryStorageLots(productId, "rejected")}
@@ -1374,20 +1486,21 @@ export default function ShipmentInspectionForm({
                                         {lineRejectedStorageLotLookup.status === "loaded" && lineRejectedStorageLots.length === 0 && (
                                             <p className="text-[9px] font-semibold text-amber-700" role="alert">
                                                 {hasConfiguredBadOrderBranch
-                                                    ? "No compatible quarantine / Bad Order storage lots are available. A lot must match this product's UOM and be active on the configured Bad Order branch."
+                                                    ? "No compatible storage lots are available on the configured Bad Order branch. Standard Empty / Vacant lots are valid targets; the lot category flag is not required. Lots must match this product's UOM and product scope and have available capacity."
                                                     : "The receiving branch has no active Bad Order / quarantine branch configured, so rejected quantity cannot be mapped to storage lots."}
                                             </p>
                                         )}
                                                 <LotAllocationEditor
                                                     lineId={line.line_id}
                                                     productId={productId}
+                                                    productUnitId={productUnitId}
                                                     isPackaging={row.isPackaging}
                                                     disposition="rejected"
                                                     allocations={row.rejectedLotAllocations}
                                                     otherAllocations={row.acceptedLotAllocations}
                                                     expectedQuantity={rejectedVal}
                                                     storageLots={lineRejectedStorageLots}
-                                                    readOnly={readOnly || lineRejectedStorageLotLookup.status !== "loaded"}
+                                                    readOnly={readOnly || !hasCurrentReceipt || lineRejectedStorageLotLookup.status !== "loaded"}
                                                     loadStorageLotBatches={loadStorageLotBatches}
                                                     onChange={allocations => handleUpdateRejectedAllocations(line.line_id, allocations)}
                                                     onAddLot={() => addRejectedLot(line.line_id, row)}
@@ -1441,7 +1554,7 @@ export default function ShipmentInspectionForm({
                                         placeholder={isRemarksMandatory ? "Logistics discrepancy or bad order explanation is mandatory" : "Reason for discrepancy or failure"}
                                         value={row.rejectionReason}
                                         onChange={e => handleUpdateRow(line.line_id, "rejectionReason", e.target.value)}
-                                        disabled={readOnly}
+                                        disabled={lineInputDisabled}
                                         aria-invalid={Boolean(lineIssue("remarks"))}
                                         aria-describedby={lineIssue("remarks") ? `remarks-error-${line.line_id}` : undefined}
                                         className={`w-full h-10 bg-background border text-foreground rounded-lg px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-primary ${lineIssue("remarks") ? "border-red-500" : ""}`}
@@ -1488,7 +1601,11 @@ export default function ShipmentInspectionForm({
                 {readOnly ? (
                     <div className="flex items-start gap-2 text-[10px] text-emerald-700 max-w-xl" role="status">
                         <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-                        <span>This purchase order has already been received. The details are available for viewing only.</span>
+                        <span>
+                            {historicalReceiptOnly
+                                ? "This receipt has already been posted. The details are available for viewing only."
+                                : "This purchase order has already been received. The details are available for viewing only."}
+                        </span>
                     </div>
                 ) : qaSubmissionBlockReason ? (
                     <div className="flex items-start gap-2 text-[10px] text-amber-700 max-w-xl" role="alert">

@@ -31,6 +31,7 @@ import { resolvePurchaseOrderBranchId } from "../_purchase-order-branch";
 import { quantityStatusFromReceivingStatus } from "../_receiving-status";
 import {
     allocateReceivingTicket,
+    fetchReceivingTicketById,
     fetchReceivingTicketByIdempotencyKey,
     fetchWarehouseReceivingTicket,
     markReceivingTicketFailed,
@@ -545,6 +546,7 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/json", cookie: request.headers.get("cookie") || "" },
             body: JSON.stringify({
                 shipmentId: parsed.data.shipmentId,
+                receivingHeaderId: parsed.data.receivingHeaderId ?? null,
                 receiptNumber: parsed.data.receiptNumber,
                 receiptDate: parsed.data.receiptDate,
                 supplierDocumentTypeId: parsed.data.supplierDocumentTypeId ?? null,
@@ -633,7 +635,18 @@ export async function POST(request: Request) {
             });
         const warehouseTicket = parsed.data.replacementDispositionId
             ? null
-            : await fetchWarehouseReceivingTicket(parsed.data.shipmentId, parsed.data.workflowRevision);
+            : parsed.data.receivingHeaderId
+                ? await fetchReceivingTicketById(parsed.data.receivingHeaderId)
+                : await fetchWarehouseReceivingTicket(parsed.data.shipmentId, parsed.data.workflowRevision);
+        if (parsed.data.receivingHeaderId && (
+            !warehouseTicket
+            || warehouseTicket.purchase_order_id !== parsed.data.shipmentId
+            || warehouseTicket.workflow_revision !== parsed.data.workflowRevision
+            || warehouseTicket.receiving_ticket_no !== parsed.data.receiptNumber.trim()
+            || (warehouseTicket.posting_status !== "Reserved" && warehouseTicket.posting_status !== "Failed")
+        )) {
+            throw new CommitError(409, "The selected Warehouse Receiving receipt is no longer available for QA posting.");
+        }
         const receivingTicket = warehouseTicket || await allocateReceivingTicket({
                 purchaseOrderId: parsed.data.shipmentId,
                 branchId: purchaseOrderBranchId,

@@ -63,7 +63,7 @@ export function usePurchaseOrderApproval(
         try {
             const [orders, supplierRows] = await Promise.all([
                 fetchPurchaseOrders(stageQuery, controller.signal),
-                fetchSuppliers()
+                fetchSuppliers("all")
             ]);
             if (controller.signal.aborted) return;
             setShipments(orders.data);

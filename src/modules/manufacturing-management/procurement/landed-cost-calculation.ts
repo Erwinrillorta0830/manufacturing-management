@@ -1,4 +1,5 @@
 import { calculatePackagingWeightShares } from "./packaging-weight";
+import { DecimalValue, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../decimal";
 
 export type LandedCostAllocationRule = "Quantity" | "Value" | "Weight" | "Volume" | "Hybrid";
 export type PurchaseOrderCategoryType = "RAW_MATERIAL" | "PACKAGING" | "FINISHED_GOODS";
@@ -37,11 +38,23 @@ export interface LandedCostCalculationResult {
     roundingRecipientKey: number | null;
 }
 
-const MONEY_SCALE = 100;
 const EPSILON = 0.0000001;
 
 function roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * MONEY_SCALE) / MONEY_SCALE;
+    return Number(DecimalValue.from(value).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+}
+
+function addMoney(left: number, right: number): number {
+    return Number(DecimalValue.from(left).add(right).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+}
+
+function multiplyMoney(left: number, right: number): number {
+    return Number(DecimalValue.from(left).multiply(right).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
+}
+
+function divideMoney(left: number, right: number): number {
+    if (right === 0) return 0;
+    return Number(DecimalValue.from(left).divideRounded(right, PROCUREMENT_MONEY_DECIMAL_SCALE).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE));
 }
 
 function finiteNonNegative(value: number, fallback = 0): number {
@@ -92,18 +105,18 @@ export function calculateLandedCost(
     }));
 
     const totalShipmentValue = normalizedLines.reduce(
-        (sum, line) => sum + line.quantity * line.baseUnitCostPhp,
+        (sum, line) => addMoney(sum, multiplyMoney(line.quantity, line.baseUnitCostPhp)),
         0
     );
     const rawMaterialValue = normalizedLines
         .filter(line => line.category_type === "RAW_MATERIAL")
-        .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
+        .reduce((sum, line) => addMoney(sum, multiplyMoney(line.quantity, line.baseUnitCostPhp)), 0);
     const packagingValue = normalizedLines
         .filter(line => line.category_type === "PACKAGING")
-        .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
+        .reduce((sum, line) => addMoney(sum, multiplyMoney(line.quantity, line.baseUnitCostPhp)), 0);
     const finishedGoodsValue = normalizedLines
         .filter(line => line.category_type === "FINISHED_GOODS")
-        .reduce((sum, line) => sum + line.quantity * line.baseUnitCostPhp, 0);
+        .reduce((sum, line) => addMoney(sum, multiplyMoney(line.quantity, line.baseUnitCostPhp)), 0);
     const rmValueShare = totalShipmentValue > EPSILON ? rawMaterialValue / totalShipmentValue : 0;
     const pkgValueShare = totalShipmentValue > EPSILON ? packagingValue / totalShipmentValue : 0;
     const fgValueShare = totalShipmentValue > EPSILON ? finishedGoodsValue / totalShipmentValue : 0;
@@ -118,15 +131,17 @@ export function calculateLandedCost(
             throw new Error("Gross Weight is required for Packaging items.");
         }
         if (totalShipmentValue > EPSILON) {
-            rmFeePool = normalizedFee * rmValueShare;
-            pkgFeePool = normalizedFee * pkgValueShare;
-            fgFeePool = normalizedFee * fgValueShare;
+            rmFeePool = multiplyMoney(normalizedFee, rmValueShare);
+            pkgFeePool = multiplyMoney(normalizedFee, pkgValueShare);
+            fgFeePool = multiplyMoney(normalizedFee, fgValueShare);
         } else {
             const rmCount = normalizedLines.filter(line => line.category_type === "RAW_MATERIAL").length;
             const pkgCount = normalizedLines.filter(line => line.category_type === "PACKAGING").length;
             const fgCount = normalizedLines.filter(line => line.category_type === "FINISHED_GOODS").length;
             const populatedCategoryCount = [rmCount, pkgCount, fgCount].filter(count => count > 0).length;
-            const categoryPool = populatedCategoryCount > 0 ? normalizedFee / populatedCategoryCount : 0;
+            const categoryPool = populatedCategoryCount > 0
+                ? divideMoney(normalizedFee, populatedCategoryCount)
+                : 0;
             rmFeePool = rmCount > 0 ? categoryPool : 0;
             pkgFeePool = pkgCount > 0 ? categoryPool : 0;
             fgFeePool = fgCount > 0 ? categoryPool : 0;
@@ -145,8 +160,8 @@ export function calculateLandedCost(
             rawAllocations.set(
                 line.key,
                 totalRawQuantity > EPSILON
-                    ? rmFeePool * line.quantity / totalRawQuantity
-                    : rmFeePool / Math.max(1, rawLines.length)
+                    ? multiplyMoney(rmFeePool, line.quantity / totalRawQuantity)
+                    : divideMoney(rmFeePool, Math.max(1, rawLines.length))
             );
         }
         const packageWeightShares = calculatePackagingWeightShares(packageLines.map(line => ({
@@ -158,20 +173,22 @@ export function calculateLandedCost(
             weightShares.set(line.key, share);
             rawAllocations.set(
                 line.key,
-                share > EPSILON ? pkgFeePool * share : pkgFeePool / Math.max(1, packageLines.length)
+                share > EPSILON
+                    ? multiplyMoney(pkgFeePool, share)
+                    : divideMoney(pkgFeePool, Math.max(1, packageLines.length))
             );
         }
         const totalFinishedGoodsValue = finishedGoodsLines.reduce(
-            (sum, line) => sum + line.quantity * line.baseUnitCostPhp,
+            (sum, line) => addMoney(sum, multiplyMoney(line.quantity, line.baseUnitCostPhp)),
             0
         );
         for (const line of finishedGoodsLines) {
-            const commercialValue = line.quantity * line.baseUnitCostPhp;
+            const commercialValue = multiplyMoney(line.quantity, line.baseUnitCostPhp);
             rawAllocations.set(
                 line.key,
                 totalFinishedGoodsValue > EPSILON
-                    ? fgFeePool * commercialValue / totalFinishedGoodsValue
-                    : fgFeePool / Math.max(1, finishedGoodsLines.length)
+                    ? multiplyMoney(fgFeePool, commercialValue / totalFinishedGoodsValue)
+                    : divideMoney(fgFeePool, Math.max(1, finishedGoodsLines.length))
             );
         }
     } else {
@@ -180,7 +197,7 @@ export function calculateLandedCost(
             const ratio = totalRatio > EPSILON
                 ? allocationRatio(rule, line) / totalRatio
                 : 1 / normalizedLines.length;
-            rawAllocations.set(line.key, normalizedFee * ratio);
+            rawAllocations.set(line.key, multiplyMoney(normalizedFee, ratio));
         }
     }
 
@@ -188,13 +205,13 @@ export function calculateLandedCost(
     let highestValue = -1;
     let roundingRecipientKey: number | null = null;
     const results = normalizedLines.map(line => {
-        const commercialValue = line.quantity * line.baseUnitCostPhp;
+        const commercialValue = multiplyMoney(line.quantity, line.baseUnitCostPhp);
         if (commercialValue > highestValue) {
             highestValue = commercialValue;
             roundingRecipientKey = line.key;
         }
         const allocatedExpense = roundMoney(rawAllocations.get(line.key) || 0);
-        roundedTotal += allocatedExpense;
+        roundedTotal = addMoney(roundedTotal, allocatedExpense);
         const categoryFeePool = rule === "Hybrid"
             ? line.category_type === "PACKAGING"
                 ? pkgFeePool
@@ -213,20 +230,24 @@ export function calculateLandedCost(
         };
     });
 
-    const roundingVariance = roundMoney(normalizedFee - roundedTotal);
+    const roundingVariance = Number(
+        DecimalValue.from(normalizedFee)
+            .subtract(roundedTotal)
+            .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)
+    );
     if (roundingVariance !== 0 && roundingRecipientKey !== null) {
         const recipient = results.find(line => line.key === roundingRecipientKey);
         if (recipient) {
             recipient.roundingVariance = roundingVariance;
-            recipient.allocatedExpense = roundMoney(recipient.allocatedExpense + roundingVariance);
+            recipient.allocatedExpense = addMoney(recipient.allocatedExpense, roundingVariance);
         }
     }
 
     for (const line of results) {
         line.addedUnitCost = line.quantity > EPSILON
-            ? roundMoney(line.allocatedExpense / line.quantity)
+            ? divideMoney(line.allocatedExpense, line.quantity)
             : 0;
-        line.finalLandedUnitCost = roundMoney(line.baseUnitCostPhp + line.addedUnitCost);
+        line.finalLandedUnitCost = addMoney(line.baseUnitCostPhp, line.addedUnitCost);
     }
 
     return {

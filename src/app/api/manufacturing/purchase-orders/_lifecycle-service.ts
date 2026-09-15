@@ -18,7 +18,13 @@ import {
     PurchaseOrderPriceTypeError,
     resolvePurchaseOrderPriceType
 } from "./_price-type";
-import { compareDecimals, normalizeDecimal, type DecimalInput } from "@/modules/manufacturing-management/decimal";
+import {
+    compareDecimals,
+    EXCHANGE_RATE_DECIMAL_SCALE,
+    normalizeDecimal,
+    PROCUREMENT_MONEY_DECIMAL_SCALE,
+    type DecimalInput
+} from "@/modules/manufacturing-management/decimal";
 import {
     buildPurchaseOrderRevisionSnapshot,
     type PurchaseOrderRevisionSnapshot
@@ -93,8 +99,8 @@ function mapApprovalRule(row: Record<string, unknown>): PurchaseOrderApprovalRul
     return {
         ruleId: Number(row.rule_id),
         priority: Number(row.priority || 0),
-        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0)),
-        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php)),
+        minimumTotalPhp: normalizeDecimal(String(row.minimum_total_php ?? 0), PROCUREMENT_MONEY_DECIMAL_SCALE),
+        maximumTotalPhp: row.maximum_total_php == null ? null : normalizeDecimal(String(row.maximum_total_php), PROCUREMENT_MONEY_DECIMAL_SCALE),
         currencyCode: typeof row.currency_code === "string" ? row.currency_code : null,
         importScope: row.import_scope === "Domestic" || row.import_scope === "Import" ? row.import_scope : "Any",
         productCategoryId: relationId(row.product_category_id, "category_id"),
@@ -350,7 +356,7 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         delivery_terms: order.delivery_terms || null,
         price_type: order.price_type || null,
         currency_code: order.currency_code || "PHP",
-        exchange_rate: order.exchange_rate || 1,
+        exchange_rate: normalizeDecimal(order.exchange_rate ?? 1, EXCHANGE_RATE_DECIMAL_SCALE),
         total_foreign_currency: order.total_foreign_currency || 0,
         gross_amount: order.gross_amount || 0,
         total_amount: order.total_amount || 0,
@@ -497,7 +503,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         throw new PurchaseOrderLifecycleError("Purchase orders can only be revised after a formal Finance rejection.", 409);
     }
 
-    const exchangeRate = command.shipmentData.exchange_rate;
+    const exchangeRate = normalizeDecimal(command.shipmentData.exchange_rate, EXCHANGE_RATE_DECIMAL_SCALE);
     const currencyCode = String(command.shipmentData.currency_code || "PHP").toUpperCase();
     if (currencyCode !== "PHP" && currencyCode !== "USD") {
         throw new PurchaseOrderLifecycleError("Currency must be PHP or USD.", 400);
@@ -520,7 +526,8 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
                 productId: Number(line.product_id),
                 unitPrice: line.base_unit_cost_php
             })),
-            resolvedPriceType.missingProductIds
+            resolvedPriceType.missingProductIds,
+            resolvedPriceType.missingPriceDetails
         );
     } catch (error) {
         if (error instanceof PurchaseOrderPriceTypeError) {

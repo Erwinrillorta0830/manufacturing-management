@@ -161,6 +161,11 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
     const isBalanced = Math.abs(balance) < 0.01;
 
     const currentStepIndex = getVoucherStepIndex(disbursement.status);
+    const hasUnreleasedPayments = Boolean(
+        disbursement.payments &&
+        disbursement.payments.length > 0 &&
+        disbursement.payments.some(p => !p.releasedDate || String(p.releasedDate).trim() === "")
+    );
     return (
         <Sheet open={open} onOpenChange={(val) => {
             if (!val && loading) return;
@@ -528,10 +533,10 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
                         {(disbursement.status === "Approved" || disbursement.status === "Partially Released") && subModule === "releasing" && (
                             <Button
                                 onClick={() => handleAction("Released")}
-                                disabled={loading || !disbursement.payments || disbursement.payments.length === 0}
+                                disabled={loading || !disbursement.payments || disbursement.payments.length === 0 || !hasUnreleasedPayments}
                                 className="text-[10px] font-black uppercase tracking-widest h-10 px-6 sm:px-10 bg-purple-600 hover:bg-purple-700 text-white shadow-md disabled:opacity-50">
                                 {loading ? <Loader2 className="w-4 h-4 animate-spin sm:mr-2" /> : <Send className="w-4 h-4 sm:mr-2" />}
-                                Release Check
+                                {hasUnreleasedPayments ? "Release Check" : "All Checks Released"}
                             </Button>
                         )}
 
@@ -539,12 +544,17 @@ export function CashIssuanceViewDialog({ disbursement, open, onOpenChange, onUpd
                             <div className="flex flex-col items-end gap-1">
                                 <Button 
                                     onClick={() => handleAction("Posted")} 
-                                    disabled={loading || !isBalanced || isApprover} 
+                                    disabled={loading || !isBalanced || totalDebit <= 0 || isApprover} 
                                     className="text-[10px] font-black uppercase tracking-widest h-10 px-6 sm:px-10 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md disabled:opacity-50"
                                 >
                                     {loading ? <Loader2 className="w-4 h-4 animate-spin sm:mr-2" /> : <Lock className="w-4 h-4 sm:mr-2" />}
                                     Post to Ledger
                                 </Button>
+                                {!isBalanced && (
+                                    <span className="text-[9px] text-destructive font-black uppercase tracking-widest mt-1">
+                                        Unbalanced Voucher (Debit: {formatCurrency(totalDebit)} vs Credit: {formatCurrency(totalCredit)}) - Posting Locked
+                                    </span>
+                                )}
                                 {isApprover && (
                                     <span className="text-[9px] text-destructive font-black uppercase tracking-widest mt-1">
                                         Segregation of Duties: Approver cannot post

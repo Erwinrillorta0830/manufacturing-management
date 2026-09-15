@@ -105,11 +105,18 @@ export default function MovementPayloadModal({
                 <p className="text-xs text-muted-foreground border rounded-lg p-3 bg-muted/20">No {kind.toLowerCase()} movement is required.</p>
             ) : (
                 <div className="overflow-x-auto border rounded-xl shadow-sm">
-                    <table className="w-full min-w-[950px] text-xs">
+                    <table className="w-full min-w-[980px] table-fixed text-xs">
+                        <colgroup>
+                            <col className="w-[24%]" />
+                            <col className="w-[19%]" />
+                            <col className="w-[10%]" />
+                            <col className="w-[17%]" />
+                            <col className="w-[15%]" />
+                            <col className="w-[15%]" />
+                        </colgroup>
                         <thead className="bg-muted/60 text-muted-foreground uppercase text-[10px] font-extrabold tracking-wider border-b">
                             <tr>
                                 <th className="px-3 py-2.5 text-left">Product</th>
-                                <th className="px-3 py-2.5 text-left">Branch</th>
                                 <th className="px-3 py-2.5 text-left">Storage Lot / Batch</th>
                                 <th className="px-3 py-2.5 text-right">Quantity</th>
                                 <th className="px-3 py-2.5 text-left">Dates</th>
@@ -124,7 +131,6 @@ export default function MovementPayloadModal({
                                     className="hover:bg-muted/20"
                                 >
                                     <td className="px-3 py-2.5 align-top font-semibold text-foreground"><strong>{productName}</strong><br /><span className="text-muted-foreground text-[11px] font-mono">{productCode}</span></td>
-                                    <td className="px-3 py-2.5 align-top font-medium"><strong>{route.branch.name}</strong><br /><span className="text-muted-foreground text-[11px]">{route.branch.code}</span></td>
                                     <td className="px-3 py-2.5 align-top font-medium"><strong>{route.storageLotName}</strong><br /><span className="text-muted-foreground text-[11px]">Batch: {route.supplierBatchNumber}</span></td>
                                     <td className="px-3 py-2.5 align-top text-right font-mono font-bold text-foreground text-sm">{route.quantity.toLocaleString()}</td>
                                     <td className="px-3 py-2.5 align-top font-mono text-[11px]">MFG: {route.manufacturingDate || "N/A"}<br />EXP: {route.expiryDate || "N/A"}</td>
@@ -368,11 +374,54 @@ export default function MovementPayloadModal({
                         </>
                     ) : (
                     <>
-                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11px] border-y py-2">
-                        <span><strong>Destination:</strong> {preview!.destinationBranch.name} ({preview!.destinationBranch.code})</span>
-                        <span><strong>Inspector:</strong> {preview!.inspectorName}</span>
-                        <span><strong>Status:</strong> Ready to post</span>
-                    </div>
+                    <section
+                        aria-label="Receiving preview summary"
+                        data-testid="ledger-preview-summary"
+                        className="overflow-hidden rounded-xl border border-border/80 bg-muted/10 shadow-sm"
+                    >
+                        <dl className="grid grid-cols-1 gap-px bg-border sm:grid-cols-3">
+                            <div data-testid="ledger-preview-branch" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Branch</dt>
+                                <dd className="mt-1 break-words text-sm font-extrabold leading-tight text-foreground">
+                                    {preview!.destinationBranch.name}
+                                    <span className="ml-1 font-mono text-[10px] font-semibold text-muted-foreground">({preview!.destinationBranch.code})</span>
+                                </dd>
+                            </div>
+                            <div data-testid="ledger-preview-receipt-number" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Number</dt>
+                                <dd className="mt-1 break-words font-mono text-sm font-extrabold leading-tight text-primary">
+                                    {preview!.receivingTicketNumber || "N/A"}
+                                </dd>
+                            </div>
+                            <div data-testid="ledger-preview-inspector" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">QA Inspector</dt>
+                                <dd className="mt-1 break-words text-sm font-extrabold leading-tight text-foreground">
+                                    {preview!.inspectorName || "N/A"}
+                                </dd>
+                            </div>
+                            <div data-testid="ledger-preview-receipt-type" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Type</dt>
+                                <dd className="mt-1 break-words text-sm font-semibold leading-tight text-foreground">
+                                    {preview!.supplierDocumentType?.label || preview!.supplierDocumentType?.code || "N/A"}
+                                </dd>
+                            </div>
+                            <div data-testid="ledger-preview-status" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Status</dt>
+                                <dd className="mt-1">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-extrabold text-emerald-700 dark:text-emerald-300">
+                                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Ready to Post
+                                    </span>
+                                </dd>
+                            </div>
+                            <div data-testid="ledger-preview-receipt-date" className="min-w-0 bg-background px-4 py-3">
+                                <dt className="text-[10px] font-extrabold uppercase tracking-wider text-foreground/70">Receipt Date</dt>
+                                <dd className="mt-1 font-mono text-sm font-extrabold leading-tight text-foreground">
+                                    {preview!.receiptDate || "N/A"}
+                                </dd>
+                            </div>
+                        </dl>
+                    </section>
 
                     {preview!.lines.some(line => line.isOverReceived) && (
                         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-800" role="alert">
