@@ -36,6 +36,7 @@ export interface ClearanceLineItem {
     product_description?: string;
     uom?: string;
     ordered_quantity: number;
+    invoiced_quantity?: number;
     received_quantity: number;
     returned_quantity: number;
     unit_price: number;
