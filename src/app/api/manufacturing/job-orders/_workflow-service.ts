@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import {
     CANCELLABLE_JOB_ORDER_STATUSES,
@@ -33,6 +34,7 @@ export interface JobOrderWorkflowCommand {
     actorUserId: number | null;
     idempotencyKey: string;
     remarks?: string;
+    resolutionRemarks?: string;
     workCenterId?: number | null;
     overrideReason?: string;
     force?: boolean;
@@ -70,6 +72,17 @@ function positiveInteger(value: unknown): number | null {
 
 function text(value: unknown): string {
     return String(value ?? "").trim();
+}
+
+function workflowRequestHash(command: JobOrderWorkflowCommand): string {
+    return createHash("sha256").update(JSON.stringify({
+        action: command.action,
+        remarks: text(command.remarks),
+        resolutionRemarks: text(command.resolutionRemarks),
+        workCenterId: command.workCenterId ?? null,
+        overrideReason: text(command.overrideReason),
+        force: command.force === true
+    })).digest("hex");
 }
 
 async function directusRequest<T>(
@@ -138,6 +151,7 @@ function allowedStatuses(action: JobOrderWorkflowAction): CanonicalJobOrderStatu
         case "place-on-hold": return [JOB_ORDER_STATUS.IN_PRODUCTION];
         case "resume-production": return [JOB_ORDER_STATUS.ON_HOLD];
         case "complete-production": return [JOB_ORDER_STATUS.IN_PRODUCTION];
+        case "terminate-production": return [JOB_ORDER_STATUS.IN_PRODUCTION, JOB_ORDER_STATUS.ON_HOLD];
         case "begin-qa-reconciliation": return [JOB_ORDER_STATUS.PRODUCTION_COMPLETED];
         case "close": return [JOB_ORDER_STATUS.FOR_QA_RECONCILIATION];
         case "cancel": return CANCELLABLE_JOB_ORDER_STATUSES;
@@ -152,6 +166,7 @@ function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "complete-production": return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
+        case "terminate-production": return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
         case "begin-qa-reconciliation": return JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
         case "close": return JOB_ORDER_STATUS.CLOSED;
         case "cancel": return JOB_ORDER_STATUS.CANCELLED;
@@ -172,7 +187,7 @@ async function findIdempotentHistory(jobOrderId: number, idempotencyKey: string)
     const encodedKey = encodeURIComponent(idempotencyKey);
     try {
         const rows = await directusRows(
-            `/items/manufacturing_job_order_status_history?filter[job_order_id][_eq]=${jobOrderId}&filter[event_key][_eq]=${encodedKey}&fields=history_id,old_status,new_status,changed_at,event_key&limit=1`,
+            `/items/manufacturing_job_order_status_history?filter[job_order_id][_eq]=${jobOrderId}&filter[event_key][_eq]=${encodedKey}&fields=history_id,old_status,new_status,changed_at,event_key,workflow_action,workflow_request_hash&limit=1`,
             "Check Job Order workflow idempotency"
         );
         return rows[0] || null;
@@ -353,15 +368,74 @@ async function markReservationsWip(jobOrderId: number, actorUserId: number | nul
     }
 }
 
+function isCommitted(value: unknown): boolean {
+    const status = text(value).toUpperCase();
+    return !status || status === "COMMITTED";
+}
+
+function isApplied(value: unknown): boolean {
+    return value === undefined || value === null
+        || value === true
+        || value === 1
+        || value === "1"
+        || text(value).toLowerCase() === "true";
+}
+
+async function loadCommittedProductionRecords(jobOrderId: number): Promise<DirectusRecord[]> {
+    const ledgers = await directusRows(
+        `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=ledger_id,yield_quantity,rejected_quantity,scrap_quantity,commit_status,session_key,source_event_key&limit=-1`,
+        `Load production sessions for Job Order ${jobOrderId}`
+    );
+    const pendingLedgers = ledgers.filter((ledger) => !isCommitted(ledger.commit_status));
+    if (pendingLedgers.length > 0) {
+        throw new JobOrderWorkflowError(
+            "Production cannot be completed while a production session is still pending commitment.",
+            409,
+            "PRODUCTION_SESSION_PENDING",
+            { ledgerIds: pendingLedgers.map((row) => numberValue(row.ledger_id ?? row.id)) }
+        );
+    }
+    if (ledgers.length === 0) return [];
+
+    const ledgerIds = ledgers.map((row) => numberValue(row.ledger_id ?? row.id)).filter((id) => id > 0);
+    const consumptions = ledgerIds.length > 0
+        ? await directusRows(
+            `/items/manufacturing_job_order_yield_ledger_bom_consumage?filter[ledger_id][_in]=${ledgerIds.join(",")}&fields=consumage_id,ledger_id,source_event_key,reservation_applied,material_aggregate_applied&limit=-1`,
+            `Load production consumption records for Job Order ${jobOrderId}`
+        )
+        : [];
+    const missingConsumption = ledgers.filter((ledger) => {
+        const ledgerId = numberValue(ledger.ledger_id ?? ledger.id);
+        const rows = consumptions.filter((row) => numberValue(row.ledger_id) === ledgerId);
+        return rows.length === 0 || rows.some((row) => !isApplied(row.reservation_applied) || !isApplied(row.material_aggregate_applied));
+    });
+    if (missingConsumption.length > 0) {
+        throw new JobOrderWorkflowError(
+            "Production cannot be completed until every committed session has committed exact material consumption.",
+            422,
+            "PRODUCTION_CONSUMPTION_INCOMPLETE",
+            { ledgerIds: missingConsumption.map((row) => numberValue(row.ledger_id ?? row.id)) }
+        );
+    }
+    return ledgers;
+}
+
 async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<void> {
     const jobOrderId = numberValue(jobOrder.job_order_id);
     const routes = await directusRows(
         `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,status&limit=-1`,
         "Load Job Order routing operations"
     );
+    if (routes.length === 0) {
+        throw new JobOrderWorkflowError(
+            "Production cannot be completed until routing operations are configured.",
+            422,
+            "PRODUCTION_OPERATIONS_MISSING"
+        );
+    }
     const incompleteRoutes = routes.filter((route) => {
         const status = text(route.status).toLowerCase();
-        return status && !["completed", "done", "closed"].includes(status);
+        return !["completed", "done", "closed"].includes(status);
     });
     if (incompleteRoutes.length > 0) {
         throw new JobOrderWorkflowError(
@@ -371,16 +445,41 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             { routeIds: incompleteRoutes.map((route) => numberValue(route.jo_route_id ?? route.id)) }
         );
     }
+
+    const ledgers = await loadCommittedProductionRecords(jobOrderId);
     const target = Number(jobOrder.target_quantity || 0);
-    const produced = Math.max(
-        Number(jobOrder.completed_quantity || 0),
-        Number(jobOrder.actual_quantity_produced || 0)
-    );
-    if (target > 0 && produced <= QUANTITY_EPSILON) {
+    if (!Number.isFinite(target) || target <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
-            "Production cannot be completed until at least one output quantity is recorded.",
+            "Production cannot be completed without a positive Job Order target quantity.",
+            422,
+            "PRODUCTION_TARGET_REQUIRED"
+        );
+    }
+    const accountedOutput = ledgers.reduce((sum, ledger) => sum
+        + Math.max(0, Number(ledger.yield_quantity || 0))
+        + Math.max(0, Number(ledger.rejected_quantity || 0))
+        + Math.max(0, Number(ledger.scrap_quantity || 0)), 0);
+    if (accountedOutput <= QUANTITY_EPSILON) {
+        throw new JobOrderWorkflowError(
+            "Production cannot be completed until output quantities are recorded.",
             422,
             "PRODUCTION_OUTPUT_REQUIRED"
+        );
+    }
+    if (accountedOutput > target + QUANTITY_EPSILON) {
+        throw new JobOrderWorkflowError(
+            "Production output cannot exceed the Job Order target.",
+            422,
+            "PRODUCTION_OUTPUT_OVER_TARGET",
+            { targetQuantity: target, accountedOutput }
+        );
+    }
+    if (Math.abs(accountedOutput - target) > QUANTITY_EPSILON) {
+        throw new JobOrderWorkflowError(
+            "Normal completion requires good, rejected, and scrap output to equal the Job Order target. Use controlled termination for a below-target run.",
+            422,
+            "PRODUCTION_OUTPUT_INCOMPLETE",
+            { targetQuantity: target, accountedOutput }
         );
     }
 }
@@ -421,6 +520,7 @@ async function writeTransition(
         : [
             `Workflow action: ${command.action}`,
             suppliedRemarks,
+            command.resolutionRemarks?.trim() ? `Resolution: ${command.resolutionRemarks.trim()}` : "",
             command.overrideReason?.trim() ? `Override reason: ${command.overrideReason.trim()}` : ""
         ].filter(Boolean).join(" | ");
 
@@ -434,7 +534,7 @@ async function writeTransition(
     } else if (command.action === "start-production") {
         lifecycleFields.production_started_at = now;
         lifecycleFields.production_started_by = command.actorUserId;
-    } else if (command.action === "complete-production") {
+    } else if (command.action === "complete-production" || command.action === "terminate-production") {
         lifecycleFields.production_completed_at = now;
         lifecycleFields.production_completed_by = command.actorUserId;
     } else if (command.action === "begin-qa-reconciliation") {
@@ -454,7 +554,7 @@ async function writeTransition(
                 status: nextStatus,
                 ...lifecycleFields,
                 ...(command.action === "start-production" && command.workCenterId ? { primary_work_center_id: command.workCenterId } : {}),
-                ...(command.action === "place-on-hold" || command.action === "resume-production" ? { remarks: transitionRemarks } : {})
+                ...(command.action === "place-on-hold" || command.action === "resume-production" || command.action === "terminate-production" ? { remarks: transitionRemarks } : {})
             })
         }
     );
@@ -471,6 +571,7 @@ async function writeTransition(
                     new_status: nextStatus,
                     event_key: command.idempotencyKey,
                     workflow_action: command.action,
+                    workflow_request_hash: workflowRequestHash(command),
                     changed_by: command.actorUserId,
                     changed_at: now,
                     remarks: transitionRemarks || `Workflow action: ${command.action}`,
@@ -499,7 +600,7 @@ async function writeTransition(
             ...(command.action === "start-production" ? {
                 primary_work_center_id: jobOrder.primary_work_center_id ?? null
             } : {}),
-            ...(command.action === "place-on-hold" || command.action === "resume-production" ? {
+            ...(command.action === "place-on-hold" || command.action === "resume-production" || command.action === "terminate-production" ? {
                 remarks: jobOrder.remarks ?? null
             } : {})
         };
@@ -508,6 +609,7 @@ async function writeTransition(
             "complete-staging": "picked",
             "start-production": "production_started",
             "complete-production": "production_completed",
+            "terminate-production": "production_completed",
             "begin-qa-reconciliation": "qa_started",
             close: "closed"
         };
@@ -554,6 +656,24 @@ export async function executeJobOrderWorkflow(
     }
 
     if (existing) {
+        const existingAction = text(existing.workflow_action);
+        if (existingAction && existingAction !== command.action) {
+            throw new JobOrderWorkflowError(
+                "The idempotency key was already used for a different Job Order workflow action.",
+                409,
+                "WORKFLOW_IDEMPOTENCY_CONFLICT",
+                { idempotencyKey, existingAction, requestedAction: command.action }
+            );
+        }
+        const existingRequestHash = text(existing.workflow_request_hash);
+        if (existingRequestHash && existingRequestHash !== workflowRequestHash(command)) {
+            throw new JobOrderWorkflowError(
+                "The idempotency key was already used with a different workflow payload.",
+                409,
+                "WORKFLOW_IDEMPOTENCY_CONFLICT",
+                { idempotencyKey }
+            );
+        }
         const existingStatus = normalizeJobOrderStatus(existing.new_status) || previousStatus;
         return {
             jobOrderId,
@@ -579,8 +699,11 @@ export async function executeJobOrderWorkflow(
         );
     }
 
-    if (["place-on-hold", "resume-production", "cancel"].includes(command.action) && !text(command.remarks)) {
+    if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
+    }
+    if (command.action === "resume-production" && !text(command.resolutionRemarks)) {
+        throw new JobOrderWorkflowError("A resolution remark is required before resuming production.", 400, "WORKFLOW_RESOLUTION_REQUIRED");
     }
 
     if (command.force && !text(command.overrideReason)) {
@@ -597,6 +720,7 @@ export async function executeJobOrderWorkflow(
         await assertFullStaging(jobOrderId);
     }
     if (command.action === "complete-production") await assertProductionCanComplete(jobOrder);
+    if (command.action === "terminate-production") await loadCommittedProductionRecords(jobOrderId);
     if (command.action === "close") await assertClosurePrerequisites(jobOrderId);
 
     if (command.action === "cancel") {

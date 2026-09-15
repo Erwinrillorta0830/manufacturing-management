@@ -50,7 +50,9 @@ export function JobOrderCancellationModal({
         [preview]
     );
     const isReturnMode = mode === "return";
-    const blocked = Boolean(preview?.blockedReason) && (isReturnMode ? !preview?.canReturnMaterials : !preview?.cancellable);
+    const blocked = Boolean(preview?.blockedReason) && (isReturnMode
+        ? Number(preview?.totals.returnableQuantity || 0) > 0 && !preview?.canReturnMaterials
+        : !preview?.cancellable);
     const confirmDisabled = loading
         || submitting
         || !preview
@@ -71,7 +73,7 @@ export function JobOrderCancellationModal({
                     </DialogTitle>
                     <DialogDescription className="text-xs">
                         {isReturnMode
-                            ? "Return the unconsumed floor material of a cancelled Job Order to its original lot and MAIN-STORE bin."
+                            ? "Return the unconsumed floor material from this Job Order to its destination lot and MAIN-STORE bin."
                             : "Return all unconsumed floor material, release reservations, and mark the Job Order as Cancelled."}
                     </DialogDescription>
                 </DialogHeader>

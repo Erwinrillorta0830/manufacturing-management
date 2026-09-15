@@ -12,7 +12,13 @@ import {
     unitId,
     type MmLotRecord
 } from "../services/mm-lots.service";
-import { normalizeBatchNo, normalizeDirectusStagingMovement, type MaterialStagingStockMovement } from "./_stock";
+import {
+    normalizeBatchNo,
+    normalizeDirectusStagingMovement,
+    isValidQaStatus,
+    isExpired,
+    type MaterialStagingStockMovement
+} from "./_stock";
 import type {
     AllocationCandidate,
     AllocationLine,
@@ -255,21 +261,6 @@ function reservationMatches(
         && reservation.mmLotId === candidate.mm_lot_id
         && reservation.inventoryLotId === candidate.inventory_lot_id
         && normalizeBatchNo(reservation.batchNo) === normalizeBatchNo(candidate.batch_no);
-}
-
-function isValidQaStatus(value: unknown): boolean {
-    const status = canonicalTypeName(value || "GOOD");
-    return !["FAILED", "REJECTED", "QUARANTINED", "QUARANTINE", "BAD", "HOLD"].includes(status);
-}
-
-function isExpired(value: unknown): boolean {
-    const raw = text(value);
-    if (!raw) return false;
-    const expiry = new Date(raw);
-    if (Number.isNaN(expiry.getTime())) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return expiry.getTime() < today.getTime();
 }
 
 function candidateSort(left: AllocationCandidate, right: AllocationCandidate): number {

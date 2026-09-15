@@ -324,6 +324,30 @@ export async function handleGET(request: Request) {
                 return NextResponse.json({ error: "Job Order has no branch assigned", code: "JOB_ORDER_BRANCH_MISSING" }, { status: 400 });
             }
             const branchId = Number(joData.branch_id);
+            const jobOrderVersionId = Number(
+                joData.version_id?.version_id
+                || joData.version_id?.id
+                || joData.version_id
+                || 0
+            );
+            let varianceTolerancePct = 0;
+            if (Number.isSafeInteger(jobOrderVersionId) && jobOrderVersionId > 0) {
+                try {
+                    const versionRes = await fetch(
+                        `${DIRECTUS_URL}/items/product_manufacturing_version/${encodeURIComponent(String(jobOrderVersionId))}?fields=version_id,material_consumption_variance_tolerance_pct`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (versionRes.ok) {
+                        const versionData = (await versionRes.json()).data;
+                        const parsedTolerance = Number(versionData?.material_consumption_variance_tolerance_pct);
+                        if (Number.isFinite(parsedTolerance) && parsedTolerance >= 0 && parsedTolerance <= 100) {
+                            varianceTolerancePct = parsedTolerance;
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error loading material-consumption variance tolerance:", error);
+                }
+            }
 
             if (pIds.length > 0) {
                 const pRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${pIds.join(",")}&fields=product_id,product_name,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,parent_id&limit=-1`, { headers });
@@ -714,6 +738,8 @@ export async function handleGET(request: Request) {
                         inventory_lot_id: inventoryLotIdValue,
                         batch_no: reservation.batch_no || null,
                         reservation_status: reservation.reservation_status || null,
+                        allocated_quantity: Number(d.allocated_quantity || d.required_quantity || d.quantity_required || 0),
+                        required_quantity: Number(d.required_quantity || d.quantity_required || d.allocated_quantity || 0),
                         reserved_quantity: Number(reservation.reserved_quantity || 0),
                         staged_quantity: stagedQuantity,
                         issued_to_wip_quantity: issuedToWipQuantity,
@@ -725,6 +751,7 @@ export async function handleGET(request: Request) {
                         available_stock: calculatedRemainingWip,
                         staging_bin: reservation.staging_bin || null,
                         expiry_date: reservation.expiry_date || null,
+                        material_consumption_variance_tolerance_pct: varianceTolerancePct,
                         actual_qty: "0"
                     };
                 });
@@ -857,6 +884,7 @@ export async function handleGET(request: Request) {
                     lot_no: lotNo,
                     receipt_no: receiptNo,
                     candidate_lots: candidateLots,
+                    material_consumption_variance_tolerance_pct: varianceTolerancePct,
                     is_sub_assembly: isSubAssembly,
                     reservations: reservationDetails
                 };

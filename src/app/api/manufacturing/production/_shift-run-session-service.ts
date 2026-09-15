@@ -10,6 +10,7 @@ import {
 } from "@/app/api/manufacturing/directus-api";
 import {
     isCancelledJobOrderStatus,
+    isJobOrderStatus,
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
@@ -62,6 +63,8 @@ interface SessionInput {
     expiryDate: string | null;
     targetLotId: number | null;
     remarks: string | null;
+    varianceReason: string | null;
+    varianceApprovalRequested: boolean;
     materials: MaterialLine[];
 }
 
@@ -79,6 +82,10 @@ interface MaterialPlan {
     materialActualAfter: number;
     materialReservedBefore: number;
     materialReservedAfter: number;
+    varianceQuantity: number;
+    varianceReason: string | null;
+    varianceApprovedBy: number | null;
+    varianceApprovedAt: string | null;
     existingConsumption?: any | null;
 }
 
@@ -98,6 +105,7 @@ function numberId(value: unknown, keys: string[] = [
     "unit_id",
     "uom_id",
     "branch_id",
+    "version_id",
     "work_center_id",
     "user_id",
     "sub"
@@ -246,6 +254,10 @@ function normalizeSessionInput(body: any): SessionInput {
     const rejectionReasonId = textValue(body?.rejectionReasonId);
     if (rejectionReasonId) remarksParts.push(`Rejection reason ID: ${rejectionReasonId}`);
     const remarks = remarksParts.filter(Boolean).join(" | ").slice(0, 5000) || null;
+    const varianceReason = textValue(body?.varianceReason ?? body?.variance_reason);
+    if (varianceReason.length > 5000) {
+        throw new ProductionSessionError(422, "VARIANCE_REASON_TOO_LONG", "Variance reason cannot exceed 5,000 characters.");
+    }
 
     return {
         sessionKey,
@@ -264,6 +276,8 @@ function normalizeSessionInput(body: any): SessionInput {
         expiryDate,
         targetLotId,
         remarks,
+        varianceReason: varianceReason || null,
+        varianceApprovalRequested: body?.approveVariance === true || body?.varianceApprovalRequested === true,
         materials
     };
 }
@@ -277,6 +291,31 @@ function lineSourceKey(input: SessionInput, reservationId: number): string {
 }
 
 function requestHash(input: SessionInput): string {
+    const canonical = {
+        sessionKey: input.sessionKey,
+        taskId: input.taskId,
+        joId: input.joId,
+        workCenterId: input.workCenterId,
+        shiftName: input.shiftName,
+        productionDate: input.productionDate,
+        goodQty: input.goodQty,
+        rejectedQty: input.rejectedQty,
+        scrapQty: input.scrapQty,
+        batchNo: input.batchNo,
+        manufacturingDate: input.manufacturingDate,
+        expiryDate: input.expiryDate,
+        targetLotId: input.targetLotId,
+        remarks: input.remarks,
+        varianceReason: input.varianceReason,
+        varianceApprovalRequested: input.varianceApprovalRequested,
+        materials: [...input.materials]
+            .sort((left, right) => left.reservationId - right.reservationId)
+            .map((line) => ({ ...line }))
+    };
+    return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function legacyRequestHash(input: SessionInput): string {
     const canonical = {
         sessionKey: input.sessionKey,
         taskId: input.taskId,
@@ -332,7 +371,29 @@ async function directusRows<T = any>(pathname: string, label: string): Promise<T
     return rows as T[];
 }
 
-async function getSessionActorId(): Promise<number> {
+interface SessionActor {
+    actorId: number;
+    canApproveVariance: boolean;
+}
+
+function tokenRoleValues(payload: Record<string, unknown>): string[] {
+    return [payload.role, payload.roles, payload.position, payload.job_title, payload.department]
+        .flatMap((value) => Array.isArray(value) ? value : [value])
+        .map((value) => {
+            if (value && typeof value === "object") {
+                const role = value as Record<string, unknown>;
+                return String(role.name ?? role.code ?? role.title ?? "").trim().toLowerCase();
+            }
+            return String(value ?? "").trim().toLowerCase();
+        })
+        .filter(Boolean);
+}
+
+function truthyClaim(value: unknown): boolean {
+    return value === true || value === 1 || value === "1" || textValue(value).toLowerCase() === "true";
+}
+
+async function getSessionActor(): Promise<SessionActor> {
     try {
         const cookieStore = await cookies();
         const token = cookieStore.get("vos_access_token")?.value;
@@ -341,9 +402,15 @@ async function getSessionActorId(): Promise<number> {
             if (parts.length >= 2) {
                 let encoded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
                 while (encoded.length % 4) encoded += "=";
-                const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+                const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as Record<string, unknown>;
                 const actorId = numberId(payload?.id ?? payload?.user_id ?? payload?.sub);
-                if (actorId) return actorId;
+                if (actorId) {
+                    const roles = tokenRoleValues(payload);
+                    const canApproveVariance = truthyClaim(payload.isAdmin)
+                        || truthyClaim(payload.is_admin)
+                        || roles.some((role) => role === "admin" || role === "administrator");
+                    return { actorId, canApproveVariance };
+                }
             }
         }
     } catch (error) {
@@ -352,7 +419,66 @@ async function getSessionActorId(): Promise<number> {
 
     // Keep the existing Manufacturing service actor as a local-development
     // fallback. The client cannot choose or override this value.
-    return 24;
+    return { actorId: 24, canApproveVariance: false };
+}
+
+interface MaterialVariancePolicy {
+    versionId: number;
+    tolerancePct: number;
+}
+
+async function loadMaterialVariancePolicy(jobOrder: any, productId: number): Promise<MaterialVariancePolicy> {
+    const versionId = numberId(jobOrder.version_id, ["version_id", "id"]);
+    if (!versionId) {
+        throw new ProductionSessionError(
+            422,
+            "JOB_ORDER_VERSION_REQUIRED",
+            "The Job Order must reference an approved manufacturing version before production can be recorded."
+        );
+    }
+
+    let version: any;
+    try {
+        version = await directusRequest<any>(
+            `${DIRECTUS_URL}/items/product_manufacturing_version/${encodeURIComponent(String(versionId))}?fields=version_id,product_id,status,material_consumption_variance_tolerance_pct`,
+            `Load approved manufacturing version ${versionId}`
+        );
+    } catch (error) {
+        throw new ProductionSessionError(
+            502,
+            "JOB_ORDER_VERSION_UNAVAILABLE",
+            "The approved manufacturing version could not be loaded. Production cannot be recorded until it is available.",
+            { versionId, cause: error instanceof Error ? error.message : String(error) }
+        );
+    }
+
+    const versionProductId = numberId(version.product_id);
+    if (versionProductId && versionProductId !== productId) {
+        throw new ProductionSessionError(
+            422,
+            "JOB_ORDER_VERSION_MISMATCH",
+            "The Job Order manufacturing version does not belong to its finished-good product.",
+            { versionId, versionProductId, productId }
+        );
+    }
+    const versionStatus = textValue(version.status).toLowerCase();
+    if (versionStatus && !["active", "approved"].includes(versionStatus)) {
+        throw new ProductionSessionError(
+            409,
+            "JOB_ORDER_VERSION_NOT_APPROVED",
+            `Manufacturing version ${versionId} is ${version.status} and is not approved for production.`
+        );
+    }
+
+    const tolerancePct = finiteNumber(version.material_consumption_variance_tolerance_pct);
+    if (tolerancePct < 0 || tolerancePct > 100) {
+        throw new ProductionSessionError(
+            422,
+            "VARIANCE_TOLERANCE_INVALID",
+            `Manufacturing version ${versionId} has an invalid material-consumption variance tolerance.`
+        );
+    }
+    return { versionId, tolerancePct };
 }
 
 function reservationSnapshot(row: any) {
@@ -591,6 +717,10 @@ async function ensureConsumptionAndGenealogy(
                     material_actual_after: plan.materialActualAfter,
                     material_reserved_before: plan.materialReservedBefore,
                     material_reserved_after: plan.materialReservedAfter,
+                    variance_quantity: plan.varianceQuantity,
+                    variance_reason: plan.varianceReason,
+                    variance_approved_by: plan.varianceApprovedBy,
+                    variance_approved_at: plan.varianceApprovedAt,
                     material_aggregate_applied: false
                 })
             }
@@ -676,7 +806,7 @@ async function updateJobOrderAggregates(joId: number, ledgerId: number, actorId:
     );
 }
 
-function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[], genealogyRows: any[], actorId: number, workCenterId: number, idempotent: boolean) {
+function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[], genealogyRows: any[], actorId: number, workCenterId: number, idempotent: boolean, varianceTolerancePct: number) {
     return {
         success: true,
         idempotent,
@@ -696,6 +826,7 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
         manufacturingDate: input.manufacturingDate,
         expiryDate: input.expiryDate,
         remarks: input.remarks,
+        varianceTolerancePct,
         qaStatus: "Pending",
         materials: consumptionRows.map((row) => ({
             consumageId: numberId(row.consumage_id ?? row.id),
@@ -708,6 +839,10 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
             uomId: numberId(row.uom_id),
             theoreticalQuantity: finiteNumber(row.theoretical_quantity),
             actualQuantity: finiteNumber(row.quantity_consumed),
+            varianceQuantity: finiteNumber(row.variance_quantity),
+            varianceReason: textValue(row.variance_reason) || null,
+            varianceApprovedBy: numberId(row.variance_approved_by) || null,
+            varianceApprovedAt: textValue(row.variance_approved_at) || null,
             reservationApplied: isTrue(row.reservation_applied),
             materialAggregateApplied: isTrue(row.material_aggregate_applied)
         })),
@@ -725,7 +860,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
     try {
         const body = await request.json();
         const input = normalizeSessionInput(body);
-        const actorId = await getSessionActorId();
+        const actor = await getSessionActor();
+        const actorId = actor.actorId;
         const now = await getISOStringInConfiguredTimezone();
         const createdAt = formatPhtDateTime();
         const sourceEventKey = sessionSourceKey(input);
@@ -735,6 +871,16 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(input.joId))}?fields=*`,
             `Load Job Order ${input.joId}`
         );
+        const existingLedgerRows = await directusRows<any>(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&filter[session_key][_eq]=${encodeURIComponent(input.sessionKey)}&limit=1`,
+            `Look up production session ${input.sessionKey}`
+        );
+        const existingLedger = existingLedgerRows[0] || null;
+        if (existingLedger && textValue(existingLedger.request_hash)
+            && textValue(existingLedger.request_hash) !== hash
+            && textValue(existingLedger.request_hash) !== legacyRequestHash(input)) {
+            throw new ProductionSessionError(409, "SESSION_CONFLICT", `Production session ${input.sessionKey} already exists with a different payload.`);
+        }
         const status = normalizeJobOrderStatus(jobOrder.status || JOB_ORDER_STATUS.DRAFT);
         if (!status) {
             throw new ProductionSessionError(409, "JOB_ORDER_STATUS_UNKNOWN", `Job Order ${input.joId} has an unknown status and cannot accept a production session.`);
@@ -742,7 +888,13 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         if (isCancelledJobOrderStatus(status)) {
             throw new ProductionSessionError(409, "JOB_ORDER_CANCELLED", `Job Order ${input.joId} is cancelled and cannot accept a production session.`);
         }
-        if (status !== JOB_ORDER_STATUS.IN_PRODUCTION) {
+        if (isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD) && !existingLedger) {
+            throw new ProductionSessionError(409, "PRODUCTION_ON_HOLD", `Job Order ${input.joId} is on hold and cannot accept a production session until the hold is resolved.`);
+        }
+        if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED) && !existingLedger) {
+            throw new ProductionSessionError(409, "PRODUCTION_COMPLETED", `Job Order ${input.joId} has completed production and cannot accept another production session.`);
+        }
+        if (status !== JOB_ORDER_STATUS.IN_PRODUCTION && !existingLedger) {
             throw new ProductionSessionError(409, "JOB_ORDER_NOT_IN_PRODUCTION", `Job Order ${input.joId} must be In Production before a session can be recorded.`);
         }
 
@@ -751,6 +903,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         if (!branchId || !producedProductId) {
             throw new ProductionSessionError(422, "JOB_ORDER_CONTEXT_MISSING", "The Job Order must have a branch and finished-good product before production can be recorded.");
         }
+        const variancePolicy = await loadMaterialVariancePolicy(jobOrder, producedProductId);
 
         const route = await directusRequest<any>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${encodeURIComponent(String(input.taskId))}?fields=jo_route_id,job_order_id,work_center_id,status`,
@@ -786,15 +939,6 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 }
                 throw error;
             }
-        }
-
-        const existingLedgerRows = await directusRows<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(input.joId))}&filter[session_key][_eq]=${encodeURIComponent(input.sessionKey)}&limit=1`,
-            `Look up production session ${input.sessionKey}`
-        );
-        const existingLedger = existingLedgerRows[0] || null;
-        if (existingLedger && textValue(existingLedger.request_hash) && textValue(existingLedger.request_hash) !== hash) {
-            throw new ProductionSessionError(409, "SESSION_CONFLICT", `Production session ${input.sessionKey} already exists with a different payload.`);
         }
 
         const targetQuantity = Math.max(0, finiteNumber(jobOrder.target_quantity ?? jobOrder.quantity));
@@ -867,6 +1011,10 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                     materialActualAfter: finiteNumber(existingConsumption.material_actual_after),
                     materialReservedBefore: finiteNumber(existingConsumption.material_reserved_before),
                     materialReservedAfter: finiteNumber(existingConsumption.material_reserved_after),
+                    varianceQuantity: finiteNumber(existingConsumption.variance_quantity),
+                    varianceReason: textValue(existingConsumption.variance_reason) || null,
+                    varianceApprovedBy: numberId(existingConsumption.variance_approved_by),
+                    varianceApprovedAt: textValue(existingConsumption.variance_approved_at) || null,
                     existingConsumption
                 });
                 const cursor = cursorByMaterial.get(line.joMaterialId);
@@ -887,17 +1035,12 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             const materialReservedBefore = cursor.reserved;
             const materialActualAfter = roundedQuantity(materialActualBefore + line.actualQty);
             const materialReservedAfter = roundedQuantity(Math.max(0, materialReservedBefore - line.actualQty));
-            const baseQuantity = Math.max(0, finiteNumber(material.allocated_quantity ?? material.required_quantity ?? 0));
-            const totalOutputQuantity = input.goodQty + input.rejectedQty + input.scrapQty;
-            const theoreticalQuantity = targetQuantity > EPSILON
-                ? roundedQuantity((baseQuantity / targetQuantity) * totalOutputQuantity)
-                : 0;
             const plan: MaterialPlan = {
                 line,
                 material,
                 reservation,
                 sourceEventKey: sourceKey,
-                theoreticalQuantity,
+                theoreticalQuantity: 0,
                 reservationActualBefore: reservationState.actual,
                 reservationActualAfter: roundedQuantity(reservationState.actual + line.actualQty),
                 remainingWipBefore: reservationState.remaining,
@@ -906,11 +1049,84 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                 materialActualAfter,
                 materialReservedBefore,
                 materialReservedAfter,
+                varianceQuantity: 0,
+                varianceReason: null,
+                varianceApprovedBy: null,
+                varianceApprovedAt: null,
                 existingConsumption: null
             };
             plans.push(plan);
             cursor.actual = materialActualAfter;
             cursor.reserved = materialReservedAfter;
+        }
+
+        const materialVarianceGroups = new Map<number, MaterialPlan[]>();
+        for (const plan of plans) {
+            const existing = materialVarianceGroups.get(plan.line.joMaterialId) || [];
+            existing.push(plan);
+            materialVarianceGroups.set(plan.line.joMaterialId, existing);
+        }
+        for (const [joMaterialId, materialPlans] of materialVarianceGroups) {
+            const freshPlans = materialPlans.filter((plan) => !plan.existingConsumption);
+            if (freshPlans.length > 0) {
+                const material = materialPlans[0].material;
+                const baseQuantity = Math.max(0, finiteNumber(material.allocated_quantity ?? material.required_quantity ?? 0));
+                const totalOutputQuantity = input.goodQty + input.rejectedQty + input.scrapQty;
+                const materialTheoretical = targetQuantity > EPSILON
+                    ? roundedQuantity((baseQuantity / targetQuantity) * totalOutputQuantity)
+                    : 0;
+                const existingTheoretical = materialPlans
+                    .filter((plan) => Boolean(plan.existingConsumption))
+                    .reduce((sum, plan) => sum + plan.theoreticalQuantity, 0);
+                const theoreticalToDistribute = Math.max(0, materialTheoretical - existingTheoretical);
+                const weights = freshPlans.map((plan) => Math.max(EPSILON, reservationSnapshot(plan.reservation).remaining));
+                const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+                let distributed = 0;
+                freshPlans.forEach((plan, index) => {
+                    const value = index === freshPlans.length - 1
+                        ? roundedQuantity(theoreticalToDistribute - distributed)
+                        : roundedQuantity(theoreticalToDistribute * (weights[index] / totalWeight));
+                    plan.theoreticalQuantity = Math.max(0, value);
+                    distributed += plan.theoreticalQuantity;
+                });
+            }
+            const theoreticalQuantity = roundedQuantity(materialPlans.reduce((sum, plan) => sum + plan.theoreticalQuantity, 0));
+            const actualQuantity = roundedQuantity(materialPlans.reduce((sum, plan) => sum + plan.line.actualQty, 0));
+            const allowedVariance = Math.max(EPSILON, Math.abs(theoreticalQuantity) * variancePolicy.tolerancePct / 100);
+            const varianceQuantity = roundedQuantity(actualQuantity - theoreticalQuantity);
+            const exceedsTolerance = Math.abs(varianceQuantity) > allowedVariance;
+
+            if (exceedsTolerance && !input.varianceReason) {
+                throw new ProductionSessionError(
+                    422,
+                    "VARIANCE_REASON_REQUIRED",
+                    `Material ${joMaterialId} is outside the configured ${variancePolicy.tolerancePct}% consumption variance tolerance. Provide a reason before submitting.`,
+                    { joMaterialId, tolerancePct: variancePolicy.tolerancePct, theoreticalQuantity, actualQuantity, varianceQuantity }
+                );
+            }
+            if (exceedsTolerance && !input.varianceApprovalRequested) {
+                throw new ProductionSessionError(
+                    422,
+                    "VARIANCE_APPROVAL_REQUIRED",
+                    `Material ${joMaterialId} is outside the configured variance tolerance. Confirm administrator approval before submitting.`,
+                    { joMaterialId, tolerancePct: variancePolicy.tolerancePct, theoreticalQuantity, actualQuantity, varianceQuantity }
+                );
+            }
+            if (exceedsTolerance && !actor.canApproveVariance) {
+                throw new ProductionSessionError(
+                    403,
+                    "VARIANCE_APPROVAL_NOT_AUTHORIZED",
+                    "Only an authenticated administrator may approve material consumption variance.",
+                    { joMaterialId, tolerancePct: variancePolicy.tolerancePct, theoreticalQuantity, actualQuantity, varianceQuantity }
+                );
+            }
+
+            for (const plan of materialPlans) {
+                plan.varianceQuantity = varianceQuantity;
+                plan.varianceReason = exceedsTolerance ? input.varianceReason : null;
+                plan.varianceApprovedBy = exceedsTolerance ? actorId : null;
+                plan.varianceApprovedAt = exceedsTolerance ? now : null;
+            }
         }
 
         const ledger = existingLedger || await directusRequest<any>(
@@ -980,7 +1196,8 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             finalChildren.genealogyRows,
             actorId,
             workCenterId,
-            Boolean(existingLedger)
+            Boolean(existingLedger),
+            variancePolicy.tolerancePct
         ));
     } catch (error) {
         console.error("Error in production shift-run session:", error);

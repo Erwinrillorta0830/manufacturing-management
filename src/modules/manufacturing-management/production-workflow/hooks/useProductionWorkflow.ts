@@ -12,9 +12,11 @@ import {
     submitQAVerification,
     fetchJobOrderCancellationPreview,
     cancelJobOrder,
-    returnJobOrderMaterials
+    returnJobOrderMaterials,
+    executeJobOrderWorkflow
 } from "../services/production-api";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
 export function useProductionWorkflow() {
     // --- State Variables ---
@@ -58,6 +60,7 @@ export function useProductionWorkflow() {
     const [loadingCancellation, setLoadingCancellation] = useState(false);
     const [submittingCancellation, setSubmittingCancellation] = useState(false);
     const [cancellationError, setCancellationError] = useState<string | null>(null);
+    const [workflowSubmitting, setWorkflowSubmitting] = useState(false);
 
     // Get current Job Order object
     const selectedJobOrder = useMemo(() => {
@@ -670,6 +673,40 @@ export function useProductionWorkflow() {
         }
     }, [cancellationPreview, cancellationMode, fetchJobs]);
 
+    const handleWorkflowAction = useCallback(async (
+        action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
+        input: { remarks?: string; resolutionRemarks?: string } = {}
+    ): Promise<boolean> => {
+        if (!selectedJobOrder) return false;
+        const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
+        if (!jobOrderId) {
+            toast.error("The selected Job Order has no valid identifier.");
+            return false;
+        }
+
+        setWorkflowSubmitting(true);
+        try {
+            await executeJobOrderWorkflow(jobOrderId, {
+                action,
+                ...input
+            });
+            const successMessage: Record<typeof action, string> = {
+                "place-on-hold": "Production placed on hold.",
+                "resume-production": "Production resumed.",
+                "complete-production": "Production completed and sent for QA reconciliation.",
+                "terminate-production": "Production terminated. Remaining WIP is ready for reconciliation or return."
+            };
+            toast.success(successMessage[action]);
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to execute the Job Order workflow action.");
+            return false;
+        } finally {
+            setWorkflowSubmitting(false);
+        }
+    }, [selectedJobOrder, fetchJobs]);
+
     const filteredJobOrders = useMemo(() => {
         return jobOrders.filter((jo) => {
             const matchesSearch =
@@ -747,6 +784,8 @@ export function useProductionWorkflow() {
         submittingCancellation,
         cancellationError,
         openCancellationModal,
-        handleConfirmCancellation
+        handleConfirmCancellation,
+        workflowSubmitting,
+        handleWorkflowAction
     };
 }
