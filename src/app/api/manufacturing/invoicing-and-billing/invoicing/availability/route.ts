@@ -279,6 +279,7 @@ export async function GET(request: Request) {
         let sibSoMap = new Map<number, { order_id: number; order_no: string; customer_code?: string }>();
         let invoicedSibIds = new Set<number>();
         const siblingInvoicedByProduct = new Map<number, number>();
+        const totalBatchPickedByProductId = new Map<number, number>();
 
         try {
             const ciRes = await fetch(
@@ -312,7 +313,7 @@ export async function GET(request: Request) {
                             const sibJunctions = (await siblingCiRes.json()).data || [];
                             const allOrderIds = sibJunctions.map((j: { invoice_id: number }) => Number(j.invoice_id)).filter(Boolean);
 
-                            const [sibSoRes, sibSodRes, sibInvRes] = await Promise.all([
+                            const [sibSoRes, sibSodRes, sibInvRes, conDetailsRes] = await Promise.all([
                                 fetch(
                                     `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allOrderIds.join(",")}&fields=order_id,order_no,customer_code&limit=-1`,
                                     { headers: directusHeaders, cache: "no-store" }
@@ -322,24 +323,51 @@ export async function GET(request: Request) {
                                     { headers: directusHeaders, cache: "no-store" }
                                 ),
                                 fetch(
-                                    `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${allOrderIds.join(",")}&filter[transaction_status][_neq]=Cancelled&fields=order_id&limit=-1`,
+                                    `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${allOrderIds.join(",")}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id,order_id&limit=-1`,
+                                    { headers: directusHeaders, cache: "no-store" }
+                                ),
+                                fetch(
+                                    `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${consolidatorId}&fields=id,sales_order_detail_id,product_id,ordered_quantity,picked_quantity,applied_quantity&limit=-1`,
                                     { headers: directusHeaders, cache: "no-store" }
                                 ),
                             ]);
 
+                            const conDetailsList: Array<{
+                                id: number;
+                                sales_order_detail_id?: number | null;
+                                product_id: number;
+                                ordered_quantity: number;
+                                picked_quantity?: number | null;
+                                applied_quantity?: number | null;
+                            }> = conDetailsRes.ok ? (await conDetailsRes.json()).data || [] : [];
+
+                            for (const cd of conDetailsList) {
+                                const pId = Number(cd.product_id);
+                                const q = Number(cd.picked_quantity !== undefined && cd.picked_quantity !== null ? cd.picked_quantity : cd.applied_quantity || 0);
+                                totalBatchPickedByProductId.set(pId, (totalBatchPickedByProductId.get(pId) || 0) + q);
+                            }
+
                             const sibSoList: Array<{ order_id: number; order_no: string; customer_code?: string }> =
                                 sibSoRes.ok ? (await sibSoRes.json()).data || [] : [];
                             allBatchSodList = sibSodRes.ok ? (await sibSodRes.json()).data || [] : [];
-                            invoicedSibIds = new Set(
-                                sibInvRes.ok ? ((await sibInvRes.json()).data || []).map((x: { order_id: number }) => Number(x.order_id)) : []
-                            );
-                            invoicedSibIds.delete(salesOrderId);
+
+                            const sibInvoices = sibInvRes.ok ? (await sibInvRes.json()).data || [] : [];
+                            const activeSibInvoiceIds: number[] = [];
+                            invoicedSibIds = new Set<number>();
+                            for (const inv of sibInvoices) {
+                                const oId = Number(inv.order_id);
+                                if (oId !== salesOrderId) {
+                                    invoicedSibIds.add(oId);
+                                    const invId = Number(inv.invoice_id || inv.id);
+                                    if (invId) activeSibInvoiceIds.push(invId);
+                                }
+                            }
                             sibSoMap = new Map(sibSoList.map((s) => [Number(s.order_id), s]));
 
-                            if (invoicedSibIds.size > 0) {
+                            if (activeSibInvoiceIds.length > 0) {
                                 try {
                                     const sibInvDetailsRes = await fetch(
-                                        `${DIRECTUS_URL}/items/sales_invoice_details?filter[order_id][_in]=${Array.from(invoicedSibIds).join(",")}&fields=order_id,product_id,quantity&limit=-1`,
+                                        `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${activeSibInvoiceIds.join(",")}&fields=invoice_no,order_id,product_id,quantity&limit=-1`,
                                         { headers: directusHeaders, cache: "no-store" }
                                     );
                                     if (sibInvDetailsRes.ok) {
@@ -565,37 +593,37 @@ export async function GET(request: Request) {
             let lineSiblingOrders: SiblingConsolidatedOrder[] = [];
             const siblingInvoicedQty = siblingInvoicedByProduct.get(pId) || 0;
 
+            let totalBatchPicked: number | undefined = undefined;
+            let alreadyInvoicedAcrossBatch: number | undefined = undefined;
+            let remainingBatchPool: number | undefined = undefined;
+            let remainingOrderQuantity: number | undefined = undefined;
+            let shortfall = 0;
+            let maxInvoiceable = totalPicked;
+
             if (consolidatorId) {
-                // Find all reservations for this product across the consolidation batch
-                const prodConsolidatorReservations = allBatchReservations.filter(
-                    (r) => Number(r.product_id) === pId && r.status !== "Released"
-                );
+                totalBatchPicked = totalBatchPickedByProductId.get(pId) || 0;
+                alreadyInvoicedAcrossBatch = siblingInvoicedQty;
+                remainingBatchPool = Math.max(0, totalBatchPicked - alreadyInvoicedAcrossBatch);
+                remainingOrderQuantity = reqQty;
+                maxInvoiceable = Math.min(remainingOrderQuantity, remainingBatchPool);
+                shortfall = Math.max(0, remainingOrderQuantity - remainingBatchPool);
+                totalPoolQuantity = remainingBatchPool;
 
-                const totalConsolidationPool = prodConsolidatorReservations.reduce((sum, r) => {
-                    const q = Math.max(
-                        Number(r.picked_quantity || 0),
-                        r.status === "Picked" || r.status === "Consumed" ? Number(r.reserved_quantity || 0) : 0,
-                        Number(r.reserved_quantity || 0)
-                    );
-                    return sum + q;
-                }, 0);
+                // Allocate lineBatches up to maxInvoiceable across the consolidation lots
+                let budget = maxInvoiceable;
+                lineBatches = lineBatches.map((b) => {
+                    const cap = Number(b.totalBatchPickedPool || b.onhandQuantity || b.pickedQuantity || 0);
+                    const alloc = Math.min(budget, cap);
+                    budget = Math.max(0, budget - alloc);
+                    return {
+                        ...b,
+                        pickedQuantity: alloc,
+                    };
+                });
 
-                const poolBase = totalConsolidationPool > 0 ? totalConsolidationPool : totalPicked;
-                const remainingPool = Math.max(0, poolBase - siblingInvoicedQty);
-                totalPoolQuantity = remainingPool;
-
-                // If consolidation pool is capped by sibling invoices, clamp batch picked quantities accordingly
-                if (totalPoolQuantity < totalPicked) {
-                    let remainingBudget = totalPoolQuantity;
-                    lineBatches = lineBatches.map((b) => {
-                        const originalPicked = Number(b.pickedQuantity || 0);
-                        const cappedPicked = Math.min(originalPicked, remainingBudget);
-                        remainingBudget = Math.max(0, remainingBudget - cappedPicked);
-                        return {
-                            ...b,
-                            pickedQuantity: cappedPicked,
-                        };
-                    });
+                if (budget > 0 && lineBatches.length > 0) {
+                    lineBatches[0].pickedQuantity = (lineBatches[0].pickedQuantity || 0) + budget;
+                    budget = 0;
                 }
 
                 // Build sibling orders specifically for this product
@@ -627,7 +655,7 @@ export async function GET(request: Request) {
                 lineSiblingOrders = allSiblingOrders;
             }
 
-            const finalPickedQty = consolidatorId ? Math.min(totalPicked, totalPoolQuantity) : totalPicked;
+            const finalPickedQty = consolidatorId ? maxInvoiceable : totalPicked;
 
             lines.push({
                 productId: pId,
@@ -642,6 +670,12 @@ export async function GET(request: Request) {
                 isPicked: true,
                 batches: lineBatches,
                 siblingOrders: lineSiblingOrders,
+                isConsolidated: Boolean(consolidatorId),
+                totalBatchPicked,
+                alreadyInvoicedAcrossBatch,
+                remainingBatchPool,
+                remainingOrderQuantity,
+                shortfall,
             });
         }
 

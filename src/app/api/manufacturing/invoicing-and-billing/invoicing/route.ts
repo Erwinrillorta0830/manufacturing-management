@@ -12,7 +12,7 @@ class ApiError extends Error {
 }
 
 type Row = Record<string, unknown>;
-const locks = new Map<number, Promise<void>>();
+const locks = new Map<string, Promise<void>>();
 
 async function directus(collection: string, params = new URLSearchParams()) {
     const response = await fetch(`${DIRECTUS_URL}/items/${collection}?${params}`, { headers: directusHeaders, cache: "no-store" });
@@ -25,18 +25,18 @@ async function remove(collection: string, id: number) {
     if (!response.ok && response.status !== 404) throw new Error(`${collection} ${id} delete returned ${response.status}`);
 }
 
-async function withLock<T>(orderId: number, operation: () => Promise<T>) {
-    const previous = locks.get(orderId) || Promise.resolve();
+async function withLock<T>(key: string, operation: () => Promise<T>) {
+    const previous = locks.get(key) || Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });
     const queued = previous.then(() => current);
-    locks.set(orderId, queued);
+    locks.set(key, queued);
     await previous;
     try {
         return await operation();
     } finally {
         release();
-        if (locks.get(orderId) === queued) locks.delete(orderId);
+        if (locks.get(key) === queued) locks.delete(key);
     }
 }
 
@@ -59,7 +59,30 @@ export async function POST(request: Request) {
             throw new ApiError(400, "invoiceDate and dueDate must be valid dates.");
         }
 
-        return await withLock(salesOrderId, async () => {
+        // Check if sales order belongs to a consolidation batch before acquiring lock
+        let consolidatorId: number | null = null;
+        try {
+            const ciRes = await fetch(
+                `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_eq]=${salesOrderId}&fields=id,consolidator_id&limit=1`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (ciRes.ok) {
+                const ciData = (await ciRes.json()).data || [];
+                if (ciData.length > 0) {
+                    const rawC = ciData[0].consolidator_id;
+                    const parsedId = typeof rawC === "object" && rawC !== null ? Number(rawC.id) : Number(rawC);
+                    if (Number.isSafeInteger(parsedId) && parsedId > 0) {
+                        consolidatorId = parsedId;
+                    }
+                }
+            }
+        } catch (ciErr) {
+            console.warn("[Invoicing POST] Warning checking consolidator batch:", ciErr);
+        }
+
+        const lockKey = consolidatorId ? `batch:${consolidatorId}` : `order:${salesOrderId}`;
+
+        return await withLock(lockKey, async () => {
             const invoiceTypes = await directus("sales_invoice_type", new URLSearchParams({
                 "filter[id][_eq]": String(invoiceTypeId),
                 fields: "id,type,isOfficial,max_length",
@@ -139,6 +162,78 @@ export async function POST(request: Request) {
 
             if (!Number.isFinite(gross) || gross <= 0 || !Number.isFinite(discount) || discount < 0 || discount > gross) {
                 throw new ApiError(409, "Sales order has invalid invoice amounts.");
+            }
+
+            // Model B Invariant: Validate requested quantities against live remaining batch pool inside the lock
+            if (consolidatorId) {
+                const conDetailsRes = await fetch(
+                    `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${consolidatorId}&fields=id,product_id,picked_quantity,applied_quantity&limit=-1`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                const conDetailsList: Array<{
+                    product_id: number;
+                    picked_quantity?: number | null;
+                    applied_quantity?: number | null;
+                }> = conDetailsRes.ok ? (await conDetailsRes.json()).data || [] : [];
+
+                const totalBatchPickedByProduct = new Map<number, number>();
+                for (const cd of conDetailsList) {
+                    const pId = Number(cd.product_id);
+                    const q = Number(cd.picked_quantity !== undefined && cd.picked_quantity !== null ? cd.picked_quantity : cd.applied_quantity || 0);
+                    totalBatchPickedByProduct.set(pId, (totalBatchPickedByProduct.get(pId) || 0) + q);
+                }
+
+                const siblingCiRes = await fetch(
+                    `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${consolidatorId}&limit=-1&fields=invoice_id`,
+                    { headers: directusHeaders, cache: "no-store" }
+                );
+                const sibJunctions = siblingCiRes.ok ? (await siblingCiRes.json()).data || [] : [];
+                const allOrderIds = sibJunctions.map((j: { invoice_id: number }) => Number(j.invoice_id)).filter(Boolean);
+                const siblingOrderIds = allOrderIds.filter((id: number) => id !== salesOrderId);
+
+                const siblingInvoicedByProduct = new Map<number, number>();
+                if (siblingOrderIds.length > 0) {
+                    const sibInvRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_in]=${siblingOrderIds.join(",")}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id&limit=-1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    const sibInvoices = sibInvRes.ok ? (await sibInvRes.json()).data || [] : [];
+                    const activeSibInvoiceIds = sibInvoices.map((inv: { invoice_id: number }) => Number(inv.invoice_id)).filter(Boolean);
+
+                    if (activeSibInvoiceIds.length > 0) {
+                        const sibInvDetailsRes = await fetch(
+                            `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_in]=${activeSibInvoiceIds.join(",")}&fields=invoice_no,order_id,product_id,quantity&limit=-1`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        );
+                        if (sibInvDetailsRes.ok) {
+                            const sibInvDetails = (await sibInvDetailsRes.json()).data || [];
+                            for (const d of sibInvDetails) {
+                                const prodId = Number(d.product_id);
+                                const qty = Number(d.quantity || 0);
+                                siblingInvoicedByProduct.set(prodId, (siblingInvoicedByProduct.get(prodId) || 0) + qty);
+                            }
+                        }
+                    }
+                }
+
+                for (const detail of details) {
+                    const pId = Number(detail.product_id);
+                    const customAlloc = lineAllocMap.get(pId);
+                    const reqQty = customAlloc ? Number(customAlloc.quantity || 0) : Number(detail.ordered_quantity || 0);
+                    if (reqQty <= 0) continue;
+
+                    const totalPicked = totalBatchPickedByProduct.get(pId) || 0;
+                    const alreadyInvoiced = siblingInvoicedByProduct.get(pId) || 0;
+                    const liveRemainingPool = Math.max(0, totalPicked - alreadyInvoiced);
+
+                    if (reqQty > liveRemainingPool) {
+                        const prodName = productMap.get(pId)?.product_name || `Product #${pId}`;
+                        throw new ApiError(
+                            409,
+                            `Requested quantity (${reqQty}) for "${prodName}" exceeds the remaining consolidation batch pool (${liveRemainingPool}). Another sibling invoice has already consumed batch inventory.`
+                        );
+                    }
+                }
             }
 
             let invoiceId: number | null = null;
@@ -244,8 +339,9 @@ export async function POST(request: Request) {
                                     console.warn("[Invoicing] Warning inserting sales_invoice_batches:", err);
                                 });
 
-                                // Reconcile sales_order_reservation to Consumed
-                                if (detail.detail_id) {
+                                // Reconcile sales_order_reservation to Consumed (for standalone orders only)
+                                // Under Model B, consolidated batches leave historical physical reservations intact
+                                if (!consolidatorId && detail.detail_id) {
                                     const soResRes = await fetch(
                                         `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_eq]=${detail.detail_id}&filter[inventory_lot_id][_eq]=${rawInvId}&limit=1`,
                                         { headers: directusHeaders, cache: "no-store" }
@@ -258,7 +354,6 @@ export async function POST(request: Request) {
                                                 method: "PATCH",
                                                 headers: directusHeaders,
                                                 body: JSON.stringify({
-                                                    picked_quantity: bQty,
                                                     status: "Consumed",
                                                     modified_date: nowIso,
                                                     modified_by: userId,
