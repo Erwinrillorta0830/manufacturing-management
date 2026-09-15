@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { getAvailableInventoryLots } from "./inventory-helper";
 import {
     isCancelledJobOrderStatus,
@@ -399,7 +399,8 @@ export async function createJobOrder(
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
             branch_id: joData.branch_id ? Number(joData.branch_id) : null,
             created_by: joData.created_by ? Number(joData.created_by) : null,
-            created_at: new Date().toISOString(),
+            created_at: formatPhtDateTime(),
+            modified_at: null,
             remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
         };
 
@@ -430,7 +431,7 @@ export async function createJobOrder(
                 event_key: `create:${joNoStr}`,
                 remarks: "Initial Job Order Creation",
                 changed_by: joData.created_by ? Number(joData.created_by) : null,
-                changed_at: new Date().toISOString()
+                changed_at: formatPhtDateTime()
             })
         });
         if (!historyRes.ok) {
@@ -557,7 +558,7 @@ export async function createJobOrder(
                                     operator_id: Number(uId),
                                     logged_hours: 0,
                                     hourly_rate: userRate,
-                                    logged_at: new Date().toISOString()
+                                    logged_at: formatPhtDateTime()
                                 };
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
                                     method: "POST",
@@ -666,7 +667,7 @@ export async function createJobOrder(
                                         reservation_type: "SOFT",
                                         status: "ACTIVE",
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
-                                        created_at: new Date().toISOString()
+                                        created_at: formatPhtDateTime()
                                     };
                                     await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
@@ -852,7 +853,7 @@ export async function createJobOrder(
                         sales_order_detail_id: detailId,
                         allocated_quantity: allocationQuantity,
                         reservation_type: "SOFT",
-                        created_at: new Date().toISOString(),
+                        created_at: formatPhtDateTime(),
                         created_by: joData.created_by ? Number(joData.created_by) : null
                     })
                 });

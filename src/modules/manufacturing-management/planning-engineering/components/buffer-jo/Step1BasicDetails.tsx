@@ -292,22 +292,7 @@ export function Step1BasicDetails({
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                        Priority
-                    </label>
-                    <Input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={priority}
-                        onChange={(e) => setPriority(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                        className="h-9 font-semibold bg-card border-input text-foreground"
-                        required
-                    />
-                </div>
-
+            <div>
                 <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                         Shift Option (Hours)

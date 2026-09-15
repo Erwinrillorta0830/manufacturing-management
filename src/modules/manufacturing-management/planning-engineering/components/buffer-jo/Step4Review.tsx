@@ -115,10 +115,6 @@ export function Step4Review({
                                 </span>
                                 <span className="font-bold text-foreground">{dueDate || "Not set"}</span>
                             </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground">Priority:</span>
-                                <span className="font-bold text-foreground">{priority}</span>
-                            </div>
                         </div>
                     </div>
 
