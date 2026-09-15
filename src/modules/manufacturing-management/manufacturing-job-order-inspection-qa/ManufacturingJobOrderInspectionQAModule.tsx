@@ -110,7 +110,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                         <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><PackageCheck className="h-5 w-5" /></div>
                         <div>
                             <h1 className="text-lg font-bold tracking-tight">JO Daily Yields</h1>
-                            <p className="text-xs text-muted-foreground">Review daily production yields, complete in-process QA, and move fulfilled Sales Orders to consolidation.</p>
+                            <p className="text-xs text-muted-foreground">Review daily production yields, complete in-process QA, and move Sales Orders with enough QA-passed output to consolidation.</p>
                         </div>
                     </div>
                     <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading} className="min-h-10 gap-2 self-start sm:self-auto">
@@ -175,7 +175,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
             </section>
 
             <Dialog open={Boolean(jobOrderState.selectedJobOrder)} onOpenChange={(open) => { if (!open) jobOrderState.closeDetails(); }}>
-                <DialogContent className="w-[calc(100vw-1rem)] max-w-none sm:max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-1rem)] overflow-hidden flex flex-col bg-background text-foreground">
+                <DialogContent className="w-[calc(100vw-2rem)] max-w-[1400px] sm:max-w-[1400px] max-h-[calc(100dvh-1rem)] overflow-hidden flex flex-col bg-background text-foreground">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-primary"><PackageCheck className="h-5 w-5" /> {details?.jobOrderNo || jobOrderState.selectedJobOrder?.jobOrderNo || "Job Order Details"}</DialogTitle>
                         <DialogDescription className="text-xs">Daily yield QA and linked Sales Order fulfillment details.</DialogDescription>
@@ -202,7 +202,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                             <section className="rounded-xl border">
                                 <div className="border-b p-4">
                                     <h3 className="font-bold">JO Daily Yield Table</h3>
-                                    <p className="mt-1 text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability.</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">Each production session is listed once with its QA state and output traceability. A passed yield contributes its Good Qty and Rejected Qty to Produced Qty; Scrap Qty is excluded.</p>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <Table>
@@ -231,7 +231,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                             <section className="rounded-xl border">
                                 <div className="border-b p-4">
                                     <h3 className="font-bold">Sales Order Fulfillment</h3>
-                                    <p className="mt-1 text-xs text-muted-foreground">A Sales Order can move to consolidation only after all of its detail lines are fulfilled.</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">A Sales Order can move to consolidation only after every detail line has enough QA-passed output.</p>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <Table>
