@@ -9,7 +9,6 @@ import { CashIssuanceViewDialog } from "./components/CashIssuanceViewDialog";
 import { CashIssuanceDashboardTab } from "./components/CashIssuanceDashboardTab";
 import { Disbursement } from "./types";
 import { disbursementProvider } from "./providers/fetchProvider";
-import { SearchableDropdown } from "./components/SearchableDropdown";
 import { AddPayeeModal } from "./components/modals/add-payee-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -344,21 +343,15 @@ export default function CashIssuanceModule({ initialSubModule = "preparation" }:
 
                                     {/* Division */}
                                     <div className="space-y-2">
-                                        <Label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/80">Cost Division</Label>
-                                        <SearchableDropdown<string>
-                                            options={[
-                                                { value: "", label: "All Divisions" },
-                                                ...divisions.map((d, idx) => ({
-                                                    value: String(d.divisionId),
-                                                    label: d.divisionName || `Division-${d.divisionId || idx}`,
-                                                })),
-                                            ]}
-                                            value={divisionFilter}
-                                            onSelect={setDivisionFilter}
-                                            placeholder="All Divisions"
-                                            className="h-9 w-full rounded-lg border border-border/50 bg-background px-3 text-xs font-bold uppercase text-foreground shadow-sm focus:ring-1 focus:ring-primary/30 transition-all outline-none"
-                                            popoverWidth="w-[280px]"
-                                        />
+                                        <Label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/80">Division</Label>
+                                        <select className="h-9 w-full rounded-lg border border-border/50 bg-background px-3 text-xs font-bold uppercase text-foreground shadow-sm focus:ring-1 focus:ring-primary/30 transition-all outline-none" value={divisionFilter} onChange={e => setDivisionFilter(e.target.value)}>
+                                            <option value="">All Divisions</option>
+                                            {divisions.map((div, idx) => (
+                                                <option key={`f-div-${div.divisionId || idx}`} value={div.divisionId}>
+                                                    {div.divisionName}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
 
                                     {/* Department */}

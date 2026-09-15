@@ -62,11 +62,24 @@ export const findUnderAllocatedInvoice = (
 
 export const findOverAllocatedInvoice = (
     invoices: UnpaidInvoice[],
-    allocations: SettlementAllocation[]
+    allocations: SettlementAllocation[],
+    wallet?: { id: string; balanceTypeId?: number; type?: string }[]
 ): UnpaidInvoice | undefined => invoices.find(invoice => {
     const required = getInvoiceRequiredBalance(invoice);
     const applied = getInvoiceAppliedForSettlement(allocations, invoice.id);
-    return applied - required > SETTLEMENT_BALANCE_TOLERANCE;
+
+    const overageAdjAmount = allocations
+        .filter(a => a.invoiceId === invoice.id && a.allocationType === "ADJUSTMENT")
+        .reduce((sum, a) => {
+            const w = wallet?.find(item => item.id === a.sourceTempId);
+            if (w && w.balanceTypeId === 1) {
+                return sum + Number(a.amountApplied || 0);
+            }
+            return sum;
+        }, 0);
+
+    const effectiveLimit = required + overageAdjAmount;
+    return applied - effectiveLimit > SETTLEMENT_BALANCE_TOLERANCE;
 });
 
 export const getCartBalanceTotals = (

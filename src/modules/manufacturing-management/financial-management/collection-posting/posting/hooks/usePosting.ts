@@ -1,6 +1,7 @@
 "use client";
 
 import {useState, useEffect, useCallback, useRef} from "react";
+import {toast} from "sonner";
 import {fetchProvider} from "../../providers/fetchProvider";
 import {fetchCompanyProfile} from "../../company-profile";
 import type {CompanyProfile, CompanyProfileStatus} from "../../company-profile";
@@ -319,16 +320,26 @@ export function usePosting() {
     }, [loadCompanyProfile]);
 
     const handlePostPouch = async (id: number, docNo: string) => {
-        // The UI handles the confirmation modal before calling handlePostPouch
         setIsPosting(true);
         try {
-            await fetchProvider.post(`/api/manufacturing/financial-management/collection-posting/collections/${id}/post`, {});
-            alert(`Pouch ${docNo} has been successfully posted to the General Ledger!`);
+            const result = await fetchProvider.post<Record<string, unknown>>(
+                `/api/manufacturing/financial-management/collection-posting/collections/${id}/post`,
+                {}
+            );
+            
+            setSelectedPouch(current => current ? {
+                ...current,
+                ...(result || {}),
+                isPosted: 1,
+                status: "POSTED",
+            } as TreasuryPouchDetail : null);
+
+            toast.success(`Pouch ${docNo} has been successfully posted to the General Ledger!`);
             setIsReviewSheetOpen(false);
             await fetchQueue();
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
-            alert(`Failed to post pouch: ${errorMessage}`);
+            toast.error(`Failed to post pouch: ${errorMessage}`);
         } finally {
             setIsPosting(false);
         }

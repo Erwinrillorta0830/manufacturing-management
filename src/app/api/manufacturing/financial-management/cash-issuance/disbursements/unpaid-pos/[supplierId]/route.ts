@@ -72,7 +72,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         // Fetch active disbursements system-wide to prevent duplicate tagging
         const disbursementQuery = new URLSearchParams({
-            "filter[status][_in]": ["Draft", "Submitted", "Approved", "Released"].join(","),
+            "filter[status][_in]": ["Draft", "Submitted", "Returned for Revision", "Approved", "Partially Released", "Released", "Posted"].join(","),
             fields: "id",
             limit: "-1",
         });
@@ -179,17 +179,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 }
                 
                 const cwoRefKey = purchaseOrderReferenceKeyFromParts(poNo, "ADVANCE-CWO");
-                if (taggedPurchaseOrderKeys.has(cwoRefKey)) {
+                const cwoRefKeyFormatted = purchaseOrderReferenceKeyFromParts(poNo, `WH-CWO-${poNo}`);
+                if (taggedPurchaseOrderKeys.has(cwoRefKey) || taggedPurchaseOrderKeys.has(cwoRefKeyFormatted)) {
                     continue;
                 }
 
                 const remainingDue = Math.max(0, Number(po.total_amount || po.gross_amount || 0));
                 if (remainingDue > 0.01) {
                     unpaidPos.push({
-                        uniqueKey: `${poNo}-ADVANCE-CWO`,
+                        uniqueKey: `${poNo}-WH-CWO-${poNo}`,
                         poId,
                         poNo,
-                        receiptNo: "ADVANCE-CWO",
+                        receiptNo: `WH-CWO-${poNo}`,
                         date: po.date ? po.date.split("T")[0] : null,
                         amountDue: Number(remainingDue.toFixed(2)),
                         type: "CWO"
@@ -263,7 +264,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             }
         }
 
-        return NextResponse.json(unpaidPos);
+        // Deduplicate output array by uniqueKey to guarantee no duplicate receipt rows are returned
+        const uniqueUnpaidPosMap = new Map<string, (typeof unpaidPos)[number]>();
+        for (const item of unpaidPos) {
+            if (!uniqueUnpaidPosMap.has(item.uniqueKey)) {
+                uniqueUnpaidPosMap.set(item.uniqueKey, item);
+            }
+        }
+
+        return NextResponse.json(Array.from(uniqueUnpaidPosMap.values()));
 
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";

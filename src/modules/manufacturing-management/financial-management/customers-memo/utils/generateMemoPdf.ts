@@ -122,11 +122,12 @@ export async function generateMemoPdf(details: DetailedMemo, options: MemoPdfOpt
     // Summary Box
     const summaryW = 65;
     const summaryX = doc.internal.pageSize.getWidth() - finalMargins.right - summaryW;
-    const summaryY = infoY - 2;
+    const summaryY = infoY;
+    const summaryHeight = 28;
     
     doc.setDrawColor(200);
     doc.setLineWidth(0.2);
-    doc.roundedRect(summaryX, summaryY, summaryW, 28, 2, 2, "S");
+    doc.roundedRect(summaryX, summaryY, summaryW, summaryHeight, 2, 2, "S");
     
     doc.setFillColor(26, 26, 46);
     doc.roundedRect(summaryX, summaryY, summaryW, 7, 2, 2, "F");
@@ -161,7 +162,8 @@ export async function generateMemoPdf(details: DetailedMemo, options: MemoPdfOpt
         doc.text(row[1], sumCol2, rowY, { align: "right" });
     });
 
-    y = infoY + (infoRows.length * 5) + 8;
+    const infoHeight = infoRows.length * 5;
+    y = Math.max(infoY + infoHeight, summaryY + summaryHeight) + 8;
 
     // --- Tables ---
     // Applied Invoices

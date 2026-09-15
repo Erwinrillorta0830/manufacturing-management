@@ -20,18 +20,19 @@ const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
 async function syncPurchaseOrderStatuses(disbursement: DisbursementRow, payablesList: PayableRow[]) {
     const poNumbers = new Set<string>();
     payablesList.forEach((p) => {
-        const ref = String(p.reference_no || "");
-        if (ref && ref.includes("/")) {
-            const parts = ref.split("/");
-            const poNo = parts[0].trim();
-            if (poNo) poNumbers.add(poNo);
+        const ref = String(p.reference_no || "").trim();
+        if (ref) {
+            const poNo = ref.includes("/") ? ref.split("/")[0].trim() : ref;
+            if (poNo && poNo.toUpperCase().startsWith("PO-")) {
+                poNumbers.add(poNo);
+            }
         }
     });
 
     for (const poNo of poNumbers) {
         try {
             // Find PO from Directus
-            const poRes = await fetch(`${DIRECTUS_URL}/items/purchase_order?filter[purchase_order_no][_eq]=${encodeURIComponent(poNo)}&fields=purchase_order_id,payment_type,payment_status`, {
+            const poRes = await fetch(`${DIRECTUS_URL}/items/purchase_order?filter[purchase_order_no][_eq]=${encodeURIComponent(poNo)}&fields=purchase_order_id,payment_type,payment_status,total_amount,gross_amount`, {
                 headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` }
             });
             if (!poRes.ok) continue;
@@ -39,13 +40,6 @@ async function syncPurchaseOrderStatuses(disbursement: DisbursementRow, payables
             if (!poData) continue;
 
             const poId = poData.purchase_order_id;
-
-            // Automatically set to partially paid (status 3)
-            await fetch(`${DIRECTUS_URL}/items/purchase_order/${poId}`, {
-                method: "PATCH",
-                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ payment_status: 3 })
-            });
 
             // Calculate total liability
             // 1. Sum of purchase_order_receiving
@@ -75,16 +69,18 @@ async function syncPurchaseOrderStatuses(disbursement: DisbursementRow, payables
                 }, 0);
             }
 
-            const totalLiability = receivingSum + productsSum;
+            const totalLiability = (receivingSum + productsSum) > 0 
+                ? (receivingSum + productsSum) 
+                : Number(poData.total_amount || poData.gross_amount || 0);
 
-            // Calculate total paid from all Released or Posted disbursements
-            const disRes = await fetch(`${DIRECTUS_URL}/items/disbursement?filter[status][_in]=Released,Posted&fields=id&limit=-1`, {
+            // Calculate total paid from all Posted disbursements
+            const disRes = await fetch(`${DIRECTUS_URL}/items/disbursement?filter[status][_eq]=Posted&fields=id&limit=-1`, {
                 headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` }
             });
             const disList = disRes.ok ? (((await disRes.json()).data || []) as Array<{ id: number }>) : [];
             const disIds = disList.map(d => d.id);
 
-            // Always include the current disbursement being transitioned
+            // Always include the current disbursement being posted
             const currentId = Number(disbursement.id);
             if (currentId && !disIds.includes(currentId)) {
                 disIds.push(currentId);
@@ -92,7 +88,7 @@ async function syncPurchaseOrderStatuses(disbursement: DisbursementRow, payables
 
             let totalPaid = 0;
             if (disIds.length > 0) {
-                const paidRes = await fetch(`${DIRECTUS_URL}/items/disbursement_payables?filter[reference_no][_starts_with]=${encodeURIComponent(poNo + " /")}&filter[disbursement_id][_in]=${disIds.join(",")}&fields=amount`, {
+                const paidRes = await fetch(`${DIRECTUS_URL}/items/disbursement_payables?filter[reference_no][_contains]=${encodeURIComponent(poNo)}&filter[disbursement_id][_in]=${disIds.join(",")}&fields=amount`, {
                     headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` }
                 });
                 const paidList = paidRes.ok ? (((await paidRes.json()).data || []) as Array<{ amount?: number }>) : [];
@@ -102,13 +98,14 @@ async function syncPurchaseOrderStatuses(disbursement: DisbursementRow, payables
                 }, 0);
             }
 
-            if (totalPaid >= (totalLiability - 1.0)) {
-                // Mark as fully paid (status 4)
-                await fetch(`${DIRECTUS_URL}/items/purchase_order/${poId}`, {
-                    method: "PATCH",
-                    headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ payment_status: 4 })
-                });
+            const targetStatus = (totalLiability > 0 && totalPaid >= (totalLiability - 1.0)) ? 4 : 3;
+            const patchRes = await fetch(`${DIRECTUS_URL}/items/purchase_order/${poId}`, {
+                method: "PATCH",
+                headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ payment_status: targetStatus })
+            });
+            if (!patchRes.ok) {
+                console.error(`Failed to patch PO ${poNo} to status ${targetStatus}:`, await patchRes.text());
             }
         } catch (e) {
             console.error(`Sync PO status failed for PO ${poNo}:`, e);
@@ -350,7 +347,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                     }
                 }
 
-                // Removed releasedBy and dateReleased assignments
+                const unreleasedPaymentIds = payments
+                    .filter((p) => !p.released_date || String(p.released_date).trim() === "")
+                    .map((p) => p.id)
+                    .filter(Boolean);
+
+                if (unreleasedPaymentIds.length === 0 && payments.length > 0) {
+                    return NextResponse.json({
+                        message: "All check lines on this voucher are already released.",
+                        detail: "No unreleased check payment lines were found for release.",
+                    }, { status: 400 });
+                }
 
                 // Recalculate parent values dynamically upon payment line processing:
                 // disbursement.paid_amount = sum(disbursement_payments.amount)
@@ -371,9 +378,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                     newStatus = "Partially Released";
                 }
 
-                // Batch-update all related payment rows to bind release audit stamps
-                const paymentIds = payments.map((p) => p.id).filter(Boolean);
-                if (paymentIds.length > 0) {
+                // Batch-update only UNRELEASED payment rows to bind release audit stamps
+                if (unreleasedPaymentIds.length > 0) {
                     try {
                         const batchRes = await fetch(`${DIRECTUS_URL}/items/disbursement_payments`, {
                             method: "PATCH",
@@ -382,9 +388,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                                 "Content-Type": "application/json"
                             },
                             body: JSON.stringify({
-                                keys: paymentIds,
+                                keys: unreleasedPaymentIds,
                                 data: {
-                                    // Removed released_by
                                     released_date: getNowInPhtISO()
                                 }
                             })
@@ -396,17 +401,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
                         console.error("Failed to execute batch release update on payments:", err);
                     }
                 }
-
-                // Sync PO statuses
-                await syncPurchaseOrderStatuses(currentDis, payables);
                 break;
             }
             case "Posted":
-                if (currentDis.status !== "Released" && currentDis.status !== "Partially Released") {
-                    return NextResponse.json({ message: "Can only post Released or Partially Released disbursements." }, { status: 400 });
+                if (currentDis.status !== "Released") {
+                    return NextResponse.json({ message: "Can only post Released disbursements. Partially released or unreleased vouchers cannot be posted." }, { status: 400 });
                 }
-                if (!isBalanced) {
-                    return NextResponse.json({ message: "Cannot post: Debits do not match Credits. The voucher must be balanced first." }, { status: 400 });
+                if (!isBalanced || totalDebit <= 0 || totalCredit <= 0) {
+                    return NextResponse.json({
+                        message: "Cannot post unbalanced voucher",
+                        detail: `Total Debits (${totalDebit.toFixed(2)}) must equal Total Credits (${totalCredit.toFixed(2)}) and be greater than 0.`
+                    }, { status: 400 });
                 }
                 if (currentDis.approver_id != null && Number(currentDis.approver_id) === currentUserId) {
                     return NextResponse.json({
