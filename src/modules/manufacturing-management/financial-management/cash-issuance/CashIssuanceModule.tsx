@@ -281,7 +281,7 @@ export default function CashIssuanceModule({ initialSubModule = "preparation" }:
 
                                 {/* Secondary Row (Advanced Filters) */}
                                 <div className={cn(
-                                    "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 px-5 pb-5 border-t border-border/50 bg-muted/10 transition-all duration-300 ease-in-out overflow-hidden",
+                                    "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 px-5 pb-5 border-t border-border/50 bg-muted/10 transition-all duration-300 ease-in-out overflow-hidden",
                                     showFilters ? "pt-5 opacity-100 max-h-[500px]" : "pt-0 opacity-0 max-h-0 border-transparent pb-0"
                                 )}>
                                     {/* Supplier Combobox */}
@@ -341,19 +341,6 @@ export default function CashIssuanceModule({ initialSubModule = "preparation" }:
                                         </div>
                                     )}
 
-                                    {/* Division */}
-                                    <div className="space-y-2">
-                                        <Label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/80">Division</Label>
-                                        <select className="h-9 w-full rounded-lg border border-border/50 bg-background px-3 text-xs font-bold uppercase text-foreground shadow-sm focus:ring-1 focus:ring-primary/30 transition-all outline-none" value={divisionFilter} onChange={e => setDivisionFilter(e.target.value)}>
-                                            <option value="">All Divisions</option>
-                                            {divisions.map((div, idx) => (
-                                                <option key={`f-div-${div.divisionId || idx}`} value={div.divisionId}>
-                                                    {div.divisionName}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-
                                     {/* Department */}
                                     <div className="space-y-2">
                                         <Label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/80">Cost Department</Label>
@@ -377,7 +364,6 @@ export default function CashIssuanceModule({ initialSubModule = "preparation" }:
                                             <TabsTrigger value="All" className="rounded-lg text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-background data-[state=active]:shadow-sm px-4">All Types</TabsTrigger>
                                             <TabsTrigger value="Trade" className="rounded-lg text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-background data-[state=active]:shadow-sm px-4">Trade</TabsTrigger>
                                             <TabsTrigger value="Non-Trade" className="rounded-lg text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-background data-[state=active]:shadow-sm px-4">Non-Trade</TabsTrigger>
-                                            <TabsTrigger value="WER" className="rounded-lg text-[10px] font-black uppercase tracking-widest data-[state=active]:bg-background data-[state=active]:shadow-sm px-4">WER</TabsTrigger>
                                         </TabsList>
                                     </div>
 
