@@ -283,10 +283,6 @@ export function JobOrderShiftLogModal({
 
     const handleShiftLogSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!shiftYieldQty || Number(shiftYieldQty) <= 0) {
-            toast.error("Please enter a valid yield quantity.");
-            return;
-        }
         const newYield = Number(shiftYieldQty) || 0;
         const newRejected = Number(rejectedQty) || 0;
         const newScrap = Number(scrapQty) || 0;
