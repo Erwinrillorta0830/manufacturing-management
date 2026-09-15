@@ -60,8 +60,7 @@ export default function ProductionWorkflowModule() {
         loadingOperators,
         searchQuery,
         setSearchQuery,
-        statusFilter,
-        setStatusFilter,
+        inProductionJobOrders,
         selectedAssigneeId,
         setSelectedAssigneeId,
         manualHours,
@@ -155,13 +154,10 @@ export default function ProductionWorkflowModule() {
     }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
-        return jobOrders.filter((jo) => isJobOrderStatus(
-            jo.status,
-            JOB_ORDER_STATUS.IN_PRODUCTION
-        )).length;
-    }, [jobOrders]);
+        return inProductionJobOrders.length;
+    }, [inProductionJobOrders]);
 
-    const totalRuns = jobOrders.length;
+    const totalRuns = inProductionJobOrders.length;
     const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
     const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
     const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
@@ -197,7 +193,7 @@ export default function ProductionWorkflowModule() {
 
     const completedWorkstations = React.useMemo(() => {
         let count = 0;
-        jobOrders.forEach((jo) => {
+        inProductionJobOrders.forEach((jo) => {
             const tasks = jo.routing_tasks || jo.routingTasks || [];
             tasks.forEach((t) => {
                 if (t.status === "Completed") {
@@ -206,7 +202,7 @@ export default function ProductionWorkflowModule() {
             });
         });
         return count;
-    }, [jobOrders]);
+    }, [inProductionJobOrders]);
 
     const parentJo = selectedJobOrder?.parentJobOrderId ? jobOrders.find((j) => Number(j.order_id) === Number(selectedJobOrder.parentJobOrderId)) : null;
     const parentJoNo = parentJo?.jo_id || null;
@@ -291,12 +287,12 @@ export default function ProductionWorkflowModule() {
             {/* Live Metrics Row */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Active Runs Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Released, ready-to-run, and in-progress Job Orders loaded in this terminal.">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="In-Production Job Orders currently loaded in this terminal.">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active WIP Runs</span>
                         <div className="flex items-baseline gap-2">
                             <span className="text-2xl font-bold tracking-tight text-foreground">{activeRuns}</span>
-                            <span className="text-xs text-muted-foreground">/ {totalRuns} Job Orders</span>
+                            <span className="text-xs text-muted-foreground">/ {totalRuns} In Production JOs</span>
                         </div>
                     </div>
                     <div className="p-3 bg-primary/10 text-primary rounded-xl">
@@ -319,7 +315,7 @@ export default function ProductionWorkflowModule() {
                 </div>
 
                 {/* Completed Workstations Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Routing steps marked Completed across all Job Orders loaded in this terminal.">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Routing steps marked Completed across In-Production Job Orders loaded in this terminal.">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Completed Operations</span>
                         <div className="flex items-baseline gap-2">
@@ -342,15 +338,12 @@ export default function ProductionWorkflowModule() {
                     setSelectedJobOrderId={setSelectedJobOrderId}
                     searchQuery={searchQuery}
                     setSearchQuery={setSearchQuery}
-                    statusFilter={statusFilter}
-                    setStatusFilter={setStatusFilter}
                     loadingJobs={loadingJobs}
                     branches={branches}
                     selectedBranchFilter={selectedBranchFilter}
                     setSelectedBranchFilter={setSelectedBranchFilter}
                     onClearFilters={() => {
                         setSearchQuery("");
-                        setStatusFilter("Active");
                         setSelectedBranchFilter("All");
                     }}
                     onAssignWorkstation={(jo) => openStationScanner(jo)}
