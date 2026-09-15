@@ -67,6 +67,7 @@ export interface JobOrder {
     rejected_quantity?: number;
     producedQty?: number;
     produced_quantity?: number;
+    productionOutputQuantity?: number;
     due_date: string;
     status: CanonicalJobOrderStatus | string;
     branch_id: number;

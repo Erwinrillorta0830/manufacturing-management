@@ -48,7 +48,7 @@ const ACTION_COPY: Record<ProductionWorkflowAction, {
     },
     "complete-production": {
         title: "Complete Production",
-        description: "The server will verify route completion, output totals, and exact material consumption before closing production.",
+        description: "The server will verify route completion, target output, and exact material consumption before sending this Job Order to QA and reconciliation.",
         submitLabel: "Complete Production",
         icon: <CheckCircle2 className="h-5 w-5 text-emerald-600" />
     },

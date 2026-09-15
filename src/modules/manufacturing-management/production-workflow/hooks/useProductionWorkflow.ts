@@ -693,7 +693,7 @@ export function useProductionWorkflow() {
             const successMessage: Record<typeof action, string> = {
                 "place-on-hold": "Production placed on hold.",
                 "resume-production": "Production resumed.",
-                "complete-production": "Production completed and sent for QA reconciliation.",
+                "complete-production": "Production completed and sent directly to QA and reconciliation.",
                 "terminate-production": "Production terminated. Remaining WIP is ready for reconciliation or return."
             };
             toast.success(successMessage[action]);

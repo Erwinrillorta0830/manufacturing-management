@@ -33,6 +33,28 @@ export async function fetchJobOrderDailyYieldDetails(
     return readResponse<JobOrderDailyYieldDetails>(response, "Failed to load Job Order details.");
 }
 
+export async function closeJobOrder(
+    jobOrderId: number,
+    idempotencyKey: string
+): Promise<{ status: string; idempotent: boolean }> {
+    const response = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(jobOrderId))}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "close", idempotencyKey })
+    });
+    const payload = await response.json().catch(() => null) as {
+        data?: { status?: string; newStatus?: string; idempotent?: boolean };
+        error?: string;
+    } | null;
+    if (!response.ok) {
+        throw new Error(payload?.error || "Failed to close the Job Order.");
+    }
+    return {
+        status: payload?.data?.status || payload?.data?.newStatus || "Closed",
+        idempotent: payload?.data?.idempotent === true
+    };
+}
+
 export async function moveSalesOrderToConsolidation(orderId: number): Promise<{ orderStatus: string }> {
     const response = await fetch("/api/manufacturing/sales-order", {
         method: "PATCH",
