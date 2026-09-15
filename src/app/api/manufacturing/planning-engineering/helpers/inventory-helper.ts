@@ -124,7 +124,7 @@ export async function getAvailableInventoryLots(
     const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
     const reservations = reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
     const directusMovements = directusMovementsRes?.ok
-        ? ((await directusMovementsRes.json()).data || [])
+        ? (((await directusMovementsRes.json()).data || []) as unknown[])
             .filter((row: unknown): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
             .map(normalizeDirectusStagingMovement)
         : [];

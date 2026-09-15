@@ -8,7 +8,7 @@ import {
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
 import { isValidQaStatus, isExpired, normalizeBatchNo, normalizeDirectusStagingMovement } from "@/app/api/manufacturing/material-staging/_stock";
-import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
+import { fetchMmInventoryMovements, type NormalizedMmInventoryMovement } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 const EPSILON = 0.000001;
 const SOURCE_BIN = "MAIN-STORE";
@@ -69,11 +69,17 @@ function relationId(value: unknown, key: string): number {
     return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function movementLotReference(row: Record<string, unknown>): number {
+type MovementReferenceRow = {
+    mm_lot_id?: unknown;
+    lot_id?: unknown;
+    inventory_lot_id?: unknown;
+};
+
+function movementLotReference(row: MovementReferenceRow): number {
     return relationId(row.mm_lot_id, "lot_id") || relationId(row.lot_id, "lot_id") || 0;
 }
 
-function movementInventoryLotReference(row: Record<string, unknown>): number {
+function movementInventoryLotReference(row: MovementReferenceRow): number {
     return relationId(row.inventory_lot_id, "inventory_lot_id") || relationId(row.inventory_lot_id, "id") || 0;
 }
 
@@ -380,7 +386,7 @@ async function computeLotBalance(
             .map(movement => Number(movement.movement_id || 0))
             .filter(movementId => movementId > 0)
     );
-    const movements = [
+    const movements: Array<NormalizedMmInventoryMovement | ReturnType<typeof normalizeDirectusStagingMovement>> = [
         ...springMovements,
         ...directusMovementRows
             .map(normalizeDirectusStagingMovement)
