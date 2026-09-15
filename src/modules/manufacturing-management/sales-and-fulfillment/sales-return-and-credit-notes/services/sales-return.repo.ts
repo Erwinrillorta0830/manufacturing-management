@@ -112,7 +112,7 @@ export async function getRawReturns(
  * Fetches raw sales return detail items for a specific return number.
  */
 export async function getRawReturnDetails(returnNo: string) {
-  const searchUrl = `/items/sales_return_details?filter[return_no][_eq]=${encodeURIComponent(returnNo)}&fields=*,product_id.*&limit=-1`;
+  const searchUrl = `/items/sales_return_details?filter[return_no][_eq]=${encodeURIComponent(returnNo)}&fields=*,product_id.*,product_id.product_type.*&limit=-1`;
   return directusGet<{ data: Record<string, unknown>[] }>(searchUrl);
 }
 
@@ -212,6 +212,9 @@ export async function getRawProductCatalog(includeInactive = false) {
     directusGet<{ data: Record<string, unknown>[] }>(
       "/items/product_per_price_type?limit=-1&filter[status][_eq]=approved",
     ),
+    directusGet<{ data: Record<string, unknown>[] }>(
+      "/items/product_type?limit=-1&fields=id,name",
+    ),
   ]);
 }
 
@@ -264,6 +267,15 @@ export async function getRawUnits() {
 export async function getRawPriceTypes() {
   return directusGet<{ data: Record<string, unknown>[] }>(
     "/items/price_types?limit=-1&sort=sort",
+  );
+}
+
+/**
+ * Fetches product types from the product_type table.
+ */
+export async function getRawProductTypes() {
+  return directusGet<{ data: Record<string, unknown>[] }>(
+    "/items/product_type?limit=-1&fields=id,name",
   );
 }
 

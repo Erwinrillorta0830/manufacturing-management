@@ -123,7 +123,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
         const popUrl = `${DIRECTUS_URL}/items/purchase_order_products?limit=-1&filter=${encodeURIComponent(
             JSON.stringify({ purchase_order_id: { _in: poIds } })
-        )}&fields=purchase_order_product_id,purchase_order_id,product_id,category_type`;
+        )}&fields=purchase_order_product_id,purchase_order_id,product_id,category_type,total_amount,ordered_quantity,unit_price`;
         
         const popRes = await fetch(popUrl, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
@@ -186,6 +186,30 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
                 const remainingDue = Math.max(0, Number(po.total_amount || po.gross_amount || 0));
                 if (remainingDue > 0.01) {
+                    const cwoProducts = popData.filter((pop: { purchase_order_id?: unknown }) => {
+                        const id = typeof pop.purchase_order_id === 'object' && pop.purchase_order_id !== null
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            ? Number((pop.purchase_order_id as any)?.id || (pop.purchase_order_id as any)?.purchase_order_id)
+                            : Number(pop.purchase_order_id);
+                        return id === poId;
+                    });
+
+                    const cwoBreakdownMap: Record<string, number> = {};
+                    for (const pop of cwoProducts) {
+                        const category = pop.category_type || "RAW_MATERIAL";
+                        const lineAmt = pop.total_amount !== null && pop.total_amount !== undefined
+                            ? Number(pop.total_amount)
+                            : (Number(pop.ordered_quantity || 0) * Number(pop.unit_price || 0));
+                        cwoBreakdownMap[category] = (cwoBreakdownMap[category] || 0) + (lineAmt || 0);
+                    }
+
+                    const cwoBreakdown = Object.entries(cwoBreakdownMap)
+                        .map(([categoryType, amount]) => ({
+                            categoryType,
+                            amount: Number(Math.max(0, amount).toFixed(2))
+                        }))
+                        .filter(b => b.amount > 0);
+
                     unpaidPos.push({
                         uniqueKey: `${poNo}-WH-CWO-${poNo}`,
                         poId,
@@ -193,7 +217,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                         receiptNo: `WH-CWO-${poNo}`,
                         date: po.date ? po.date.split("T")[0] : null,
                         amountDue: Number(remainingDue.toFixed(2)),
-                        type: "CWO"
+                        type: "CWO",
+                        breakdown: cwoBreakdown.length > 0 ? cwoBreakdown : [{ categoryType: "RAW_MATERIAL", amount: Number(remainingDue.toFixed(2)) }]
                     });
                 }
                 

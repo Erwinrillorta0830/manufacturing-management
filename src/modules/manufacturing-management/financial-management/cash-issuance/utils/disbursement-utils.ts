@@ -5,6 +5,16 @@ export function formatCurrency(amount: number): string {
     return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount || 0);
 }
 
+export function formatAmountNumber(amount: number | string | null | undefined): string {
+    if (amount === null || amount === undefined || amount === "") return "0.00";
+    const num = Number(String(amount).replace(/,/g, ""));
+    if (!Number.isFinite(num)) return "0.00";
+    return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(num);
+}
+
 export function getCookie(name: string): string {
     if (typeof window === "undefined") return "";
     const value = `; ${document.cookie}`;
