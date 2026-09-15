@@ -157,11 +157,27 @@ export async function scanStationStart(payload: StationScanPayload): Promise<Sta
     return data;
 }
 
-export async function fetchWorkCenters(): Promise<WorkCenter[]> {
-    const res = await fetch("/api/manufacturing/production/station-scan", { cache: "no-store" });
+export type WorkCenterApplicabilitySource = "VERSION_ROUTING" | "JO_ROUTES" | "NONE" | "ALL";
+
+export interface WorkCenterListResponse {
+    data: WorkCenter[];
+    applicableWorkCenterIds: number[];
+    source: WorkCenterApplicabilitySource;
+}
+
+export async function fetchWorkCenters(jobOrderId?: number | string | null): Promise<WorkCenterListResponse> {
+    const hasJobOrder = jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "";
+    const query = hasJobOrder
+        ? `?action=applicable-work-centers&joId=${encodeURIComponent(String(jobOrderId))}`
+        : "";
+    const res = await fetch(`/api/manufacturing/production/station-scan${query}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load work centers list.");
     const json = await res.json();
-    return json.data || [];
+    return {
+        data: json.data || [],
+        applicableWorkCenterIds: Array.isArray(json.applicableWorkCenterIds) ? json.applicableWorkCenterIds : [],
+        source: hasJobOrder ? (json.source || "NONE") : "ALL"
+    };
 }
 
 export async function fetchJobOrderStatusHistory(joId: string | number): Promise<JobOrderStatusHistoryRecord[]> {

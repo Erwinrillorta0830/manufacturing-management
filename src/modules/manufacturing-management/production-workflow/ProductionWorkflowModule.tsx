@@ -27,6 +27,7 @@ import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
 import { RoutingSequence } from "./components/RoutingSequence";
 import OperatorPanel from "./components/OperatorPanel";
 import { OperationStepTracker } from "./components/OperationStepTracker";
+import { JobOrderProgressSummary } from "./components/JobOrderProgressSummary";
 import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
@@ -111,6 +112,7 @@ export default function ProductionWorkflowModule() {
     const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
+    const [scannerJobOrder, setScannerJobOrder] = useState<any | null>(null);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isKioskMode, setIsKioskMode] = useState(false);
@@ -170,7 +172,7 @@ export default function ProductionWorkflowModule() {
     )
         ? {
             label: "Log shift run",
-            description: "Record this shift's good output, scrap, and material backflushing."
+            description: "Record this session's output, traceability details, and exact WIP consumption."
         }
         : null;
     const selectedCalloutAction = onBenchNextAction || selectedJobOrderJourney?.nextAction || null;
@@ -204,6 +206,11 @@ export default function ProductionWorkflowModule() {
         fetchClockedIn();
     };
 
+    const openStationScanner = (jobOrder?: any | null) => {
+        setScannerJobOrder(jobOrder || null);
+        setIsScannerOpen(true);
+    };
+
     return (
         <div className={`flex flex-col space-y-6 max-w-7xl mx-auto p-1 sm:p-2 transition-all ${isKioskMode ? "fixed inset-0 z-50 bg-background p-4 overflow-y-auto max-w-none" : ""}`}>
             
@@ -226,7 +233,7 @@ export default function ProductionWorkflowModule() {
                             Shop Floor Execution Terminal
                         </h1>
                         <p className="text-xs sm:text-sm text-muted-foreground max-w-xl">
-                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, point-of-use backflushing, and QA gates.
+                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, exact WIP consumption, and QA gates.
                         </p>
                     </div>
 
@@ -234,7 +241,7 @@ export default function ProductionWorkflowModule() {
                     <div className="flex flex-wrap gap-2 w-full md:w-auto shrink-0">
                         <StatusLegendPopover />
                         <Button 
-                            onClick={() => setIsScannerOpen(true)}
+                            onClick={() => openStationScanner(null)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold shadow-md shadow-emerald-500/20 h-10 text-xs px-4"
                         >
                             <Scan className="mr-2 h-4 w-4" /> Station Start Scanner
@@ -328,6 +335,7 @@ export default function ProductionWorkflowModule() {
                         setStatusFilter("Active");
                         setSelectedBranchFilter("All");
                     }}
+                    onAssignWorkstation={(jo) => openStationScanner(jo)}
                 />
             </div>
 
@@ -364,7 +372,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedJobOrder?.producedQty || selectedJobOrder?.completed_quantity || 0} pcs</span>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedJobOrder?.producedQty || selectedJobOrder?.completed_quantity || 0} pcs</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
@@ -407,6 +415,14 @@ export default function ProductionWorkflowModule() {
                                         className="h-10 text-xs font-bold border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600"
                                     >
                                         <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
+                                    </Button>
+                                )}
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED) && !selectedJobOrder?.primary_work_center_id && (
+                                    <Button
+                                        onClick={() => openStationScanner(selectedJobOrder)}
+                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
+                                    >
+                                        <Building2 className="mr-1.5 h-4 w-4" /> Assign Workstation
                                     </Button>
                                 )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
@@ -468,6 +484,11 @@ export default function ProductionWorkflowModule() {
                                 </Button>
                             </div>
                         )}
+                        {/* Job Order progress summary above the operation tracker */}
+                        {selectedJobOrder && (
+                            <JobOrderProgressSummary jobOrder={selectedJobOrder} />
+                        )}
+
                         {/* Operation Step Tracker Section */}
                         {selectedJobOrder && (
                             <OperationStepTracker
@@ -516,8 +537,12 @@ export default function ProductionWorkflowModule() {
             {/* --- STATION START SCANNER MODAL --- */}
             <StationStartScanner
                 open={isScannerOpen}
-                onOpenChange={setIsScannerOpen}
+                onOpenChange={(open) => {
+                    setIsScannerOpen(open);
+                    if (!open) setScannerJobOrder(null);
+                }}
                 jobOrders={jobOrders}
+                initialJobOrder={scannerJobOrder}
                 onStationStarted={handleStationStarted}
             />
 

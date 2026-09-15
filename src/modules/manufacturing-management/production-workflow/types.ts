@@ -74,6 +74,7 @@ export interface JobOrder {
     priority?: number;
     start_date?: string | null;
     primary_work_center_id?: number | null;
+    primary_work_center_name?: string | null;
     work_center_name?: string | null;
     routing_tasks?: RoutingTask[];
     routingTasks?: RoutingTask[];
@@ -319,16 +320,58 @@ export interface StationScanResponse {
     error?: string;
 }
 
+export interface ProductionMaterialReservation {
+    reservation_id: number | null;
+    jo_material_id: number;
+    product_id: number;
+    product_name: string;
+    product_code?: string;
+    uom_id: number | null;
+    unit_shortcut: string;
+    mm_lot_id: number | null;
+    inventory_lot_id: number | null;
+    batch_no: string | null;
+    reservation_status: string | null;
+    allocated_quantity?: number;
+    reserved_quantity: number;
+    staged_quantity: number;
+    issued_to_wip_quantity: number;
+    actual_used_quantity: number;
+    returned_quantity: number;
+    remaining_wip_quantity: number;
+    available_stock: number;
+    actual_qty: string;
+    theoretical_quantity?: number;
+}
+
+export interface ShiftRunMaterialConsumption {
+    joMaterialId: number;
+    reservationId: number;
+    productId: number;
+    mmLotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    uomId: number;
+    actualQty: number;
+}
+
 export interface ShiftRunLogPayload {
+    sessionKey: string;
     taskId: number;
     joId: string | number;
+    workCenterId: number;
     shiftName: string;
+    productionDate: string;
     yieldQty: number;
-    scrapQty?: number;
+    rejectedQty: number;
+    scrapQty: number;
+    remarks?: string | null;
     rejectionReasonId?: number | string | null;
     rejectionRemarks?: string | null;
-    inspectorId: number | null;
-    qaStatus: "Passed" | "QA Hold" | "Pending";
+    /** @deprecated The API resolves the operator from the authenticated session. */
+    inspectorId?: number | null;
+    /** @deprecated Production sessions always start Pending QA. */
+    qaStatus?: "Passed" | "QA Hold" | "Pending";
     qaParameters?: Array<{
         parameter_id: number;
         test_name: string;
@@ -336,12 +379,7 @@ export interface ShiftRunLogPayload {
         is_failed: boolean;
         remarks?: string;
     }>;
-    materialsConsumed?: Array<{
-        product_id: number;
-        actual_qty: number;
-        lot_id?: number;
-        batch_no?: string;
-    }>;
+    materialsConsumed: ShiftRunMaterialConsumption[];
     batchNo?: string;
     expiryDate?: string;
     manufacturingDate?: string;

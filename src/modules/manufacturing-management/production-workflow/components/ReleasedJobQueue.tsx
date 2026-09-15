@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { Search, Loader2, AlertCircle, CornerDownRight } from "lucide-react";
+import { Search, Loader2, AlertCircle, CornerDownRight, Building2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ interface ReleasedJobQueueProps {
     selectedBranchFilter: string;
     setSelectedBranchFilter: (b: string) => void;
     onClearFilters?: () => void;
+    onAssignWorkstation?: (jo: JobOrder) => void;
 }
 
 export function ReleasedJobQueue({
@@ -39,7 +40,8 @@ export function ReleasedJobQueue({
     branches,
     selectedBranchFilter,
     setSelectedBranchFilter,
-    onClearFilters
+    onClearFilters,
+    onAssignWorkstation
 }: ReleasedJobQueueProps) {
     // Find all Job Orders that have a parent present in the current filtered list
     const childJobOrderIds = new Set<string>();
@@ -61,6 +63,9 @@ export function ReleasedJobQueue({
         const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
 
         const producedQty = jo.producedQty ?? jo.completed_quantity ?? 0;
+        const needsWorkstation = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED) && !jo.primary_work_center_id;
+        const workstationLabel = jo.primary_work_center_name
+            || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
         const journey = resolveJobOrderJourney({
             status: jo.status,
             allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
@@ -102,6 +107,26 @@ export function ReleasedJobQueue({
                     <span>Target/Prod: <strong className="text-foreground">{jo.quantity.toLocaleString()}</strong> / <strong className="text-emerald-400 font-mono">{producedQty.toLocaleString()}</strong></span>
                     <span>Due: <strong className="text-foreground">{new Date(jo.due_date).toLocaleDateString()}</strong></span>
                 </div>
+
+                <div className="mt-2 text-[10px] font-semibold text-muted-foreground">
+                    Workstation:{" "}
+                    <strong className={jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>
+                        {workstationLabel}
+                    </strong>
+                </div>
+                {needsWorkstation && (
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onAssignWorkstation?.(jo);
+                        }}
+                        className="mt-2 h-8 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm shadow-emerald-500/20"
+                    >
+                        <Building2 className="mr-1.5 h-3.5 w-3.5" /> Assign Workstation
+                    </Button>
+                )}
 
                 {/* Est. Production Days */}
                 {(() => {
