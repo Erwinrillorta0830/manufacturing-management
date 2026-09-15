@@ -21,6 +21,29 @@ export interface JOTableProps {
     handleOpenDetails: (jo: any) => void;
 }
 
+function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
+    const salesOrders = (jobOrder.salesOrders || jobOrder.sales_orders || [])
+        .map((salesOrder: any) => String(salesOrder.order_no || salesOrder.orderNo || "").trim())
+        .filter(Boolean)
+        .filter((orderNo: string, index: number, orderNumbers: string[]) => orderNumbers.indexOf(orderNo) === index);
+
+    return (
+        <td className="px-4 py-3 align-top">
+            {salesOrders.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                    {salesOrders.map((orderNo: string) => (
+                        <span key={orderNo} className="font-mono text-xs font-semibold text-primary whitespace-nowrap">
+                            {orderNo}
+                        </span>
+                    ))}
+                </div>
+            ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+            )}
+        </td>
+    );
+}
+
 export function JOTable({
     unreleasedJobs,
     familyGroups,
@@ -41,6 +64,7 @@ export function JOTable({
                 <thead className="text-xs uppercase bg-muted/40 font-bold border-b text-foreground">
                     <tr>
                         <th className="px-4 py-3">Job Order ID</th>
+                        <th className="px-4 py-3">Connected SO</th>
                         <th className="px-4 py-3">Product Name</th>
                         <th className="px-4 py-3 text-right">Target Qty</th>
                         <th className="px-4 py-3">Duration / Lead Time</th>
@@ -74,6 +98,7 @@ export function JOTable({
                             return (
                                 <tr key={jo.jo_id || jo.id} className="hover:bg-muted/10">
                                     <td className="px-4 py-3 font-semibold text-primary">{jo.jo_id}</td>
+                                    <ConnectedSalesOrderCell jobOrder={jo} />
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-bold text-foreground">{jo.product_name}</span>
@@ -156,7 +181,7 @@ export function JOTable({
                             <React.Fragment key={`family-group-${fg.familyId}`}>
                                 {/* Family Header Banner */}
                                 <tr className="bg-sky-500/10 dark:bg-sky-950/40 border-t-2 border-b border-sky-500/30">
-                                    <td colSpan={7} className="px-4 py-2.5">
+                                    <td colSpan={8} className="px-4 py-2.5">
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div className="flex items-center gap-2 text-xs font-bold text-sky-700 dark:text-sky-300">
                                                 <span className="bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
@@ -193,6 +218,7 @@ export function JOTable({
                                         </span>
                                         <span>{fg.parentJo.jo_id}</span>
                                     </td>
+                                    <ConnectedSalesOrderCell jobOrder={fg.parentJo} />
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-bold text-foreground">{fg.parentJo.product_name}</span>
@@ -256,6 +282,7 @@ export function JOTable({
                                                 </span>
                                                 <span>{cJo.jo_id}</span>
                                             </td>
+                                            <ConnectedSalesOrderCell jobOrder={cJo} />
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="font-medium text-foreground">{cJo.product_name}</span>
