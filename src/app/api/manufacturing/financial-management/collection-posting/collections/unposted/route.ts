@@ -16,22 +16,51 @@ export async function GET(request: Request) {
         
         const page = parseInt(searchParams.get("page") || "1");
         const size = parseInt(searchParams.get("size") || "25");
-        
-        searchParams.delete("page");
-        searchParams.delete("size");
-        
-        searchParams.append("page", String(page));
-        searchParams.append("limit", String(size));
-        searchParams.append("meta", "filter_count");
+        const salesmanCode = searchParams.get("salesmanCode") || "";
+        const search = searchParams.get("search") || "";
+        const dateFrom = searchParams.get("dateFrom") || "";
+        const dateTo = searchParams.get("dateTo") || "";
+        const sortField = searchParams.get("sortField") || "collection_date";
+        const sortDir = searchParams.get("sortDir") || "desc";
 
-        // Pass through query parameters but force isPosted=0
-        searchParams.append("filter[isPosted][_eq]", "0");
-        if (!searchParams.has("sort")) {
-            searchParams.append("sort", "-collection_date");
+        const directusParams = new URLSearchParams();
+        directusParams.append("page", String(page));
+        directusParams.append("limit", String(size));
+        directusParams.append("meta", "filter_count");
+        directusParams.append("fields", "*.*");
+
+        const fieldMap: Record<string, string> = {
+            docNo: "docNo",
+            collectionDate: "collection_date",
+            encodedDate: "date_encoded",
+            date_encoded: "date_encoded",
+            amount: "totalAmount",
+            salesmanName: "salesman_id.salesman_name",
+        };
+        const mappedSort = fieldMap[sortField] || sortField;
+        directusParams.append("sort", `${sortDir === "desc" ? "-" : ""}${mappedSort}`);
+
+        // Directus standard query filters (bracket notation)
+        directusParams.append("filter[isPosted][_eq]", "0");
+
+        if (salesmanCode) {
+            directusParams.append("filter[salesman_id][salesman_code][_eq]", salesmanCode);
         }
-        searchParams.append("fields", "*.*");
 
-        const url = `${DIRECTUS_URL}/items/collection?${searchParams.toString()}`;
+        if (search) {
+            directusParams.append("filter[_or][0][docNo][_icontains]", search);
+            directusParams.append("filter[_or][1][collection_receipt_no][_icontains]", search);
+        }
+
+        if (dateFrom) {
+            directusParams.append("filter[collection_date][_gte]", dateFrom);
+        }
+
+        if (dateTo) {
+            directusParams.append("filter[collection_date][_lte]", dateTo);
+        }
+
+        const url = `${DIRECTUS_URL}/items/collection?${directusParams.toString()}`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) throw new Error(`Directus returned status ${res.status}`);
         

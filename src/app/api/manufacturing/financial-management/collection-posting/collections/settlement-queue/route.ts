@@ -50,14 +50,23 @@ export async function GET(request: Request) {
         }
 
         if (collectorFilter && collectorFilter !== "all") {
-            const parts = collectorFilter.split(" ");
-            const firstPart = parts[0];
+            const trimmed = collectorFilter.trim();
             try {
-                const userUrl = `${DIRECTUS_URL}/items/user?filter[_or][0][user_fname][_icontains]=${encodeURIComponent(firstPart)}&filter[_or][1][first_name][_icontains]=${encodeURIComponent(firstPart)}`;
+                const userUrl = `${DIRECTUS_URL}/items/user?limit=-1`;
                 const userRes = await fetch(userUrl, { headers, cache: "no-store" });
                 if (userRes.ok) {
                     const userData = await userRes.json();
-                    const matchingUserIds = (userData.data || []).map((u: Record<string, unknown>) => u.user_id || u.id);
+                    const allUsers = userData.data || [];
+                    const matchingUserIds = allUsers
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        .filter((u: any) => {
+                            const fullName = `${u.user_fname || u.first_name || ""} ${u.user_lname || u.last_name || ""}`.trim();
+                            return fullName.toLowerCase() === trimmed.toLowerCase() ||
+                                String(u.user_id || u.id) === trimmed;
+                        })
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        .map((u: any) => u.user_id || u.id);
+
                     if (matchingUserIds.length > 0) {
                         directusFilters.collected_by = { _in: matchingUserIds };
                     } else {
