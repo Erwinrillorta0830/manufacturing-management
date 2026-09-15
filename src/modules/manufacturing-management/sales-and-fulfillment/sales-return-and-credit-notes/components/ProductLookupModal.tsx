@@ -407,6 +407,9 @@ export function ProductLookupModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
+        showCloseButton={false}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
         className={cn(
           "flex flex-col p-0 overflow-hidden bg-background border-0 shadow-2xl [&>button]:hidden",
           "h-[90vh] w-[95vw] max-w-[1400px]! z-200",
@@ -680,6 +683,21 @@ export function ProductLookupModal({
                           >
                             {parentData.product_name}
                           </CardTitle>
+                          {(() => {
+                            const rawType = parentData.product_type ?? group.variants.find(v => v.product_type)?.product_type;
+                            const typeObj = productTypesList.find(
+                              (t) => t.id?.toString() === rawType?.toString()
+                            );
+                            const typeName = typeObj?.name || (typeof rawType === "string" ? rawType : null);
+                            if (!typeName) return null;
+                            return (
+                              <div className="pt-1.5 flex items-center">
+                                <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                  {typeName}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </CardHeader>
                         <CardContent className="p-0 flex flex-col flex-1 divide-y divide-border">
                           {group.variants.map((product) => {

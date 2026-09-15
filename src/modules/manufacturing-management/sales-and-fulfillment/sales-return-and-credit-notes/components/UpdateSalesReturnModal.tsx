@@ -102,7 +102,7 @@ interface SalesReturnGroup {
 // OPTIMIZED SUB-COMPONENTS (PERFORMANCE FIX)
 // =============================================================================
 
-const RemarksInputSection = React.memo(({ value, onChange, disabled }: { value: string, onChange: (val: string) => void, disabled?: boolean }) => {
+const RemarksInputSection = React.memo(({ value, onChange, disabled, isLoading }: { value: string, onChange: (val: string) => void, disabled?: boolean, isLoading?: boolean }) => {
   const [localRemarks, setLocalRemarks] = useState(value);
 
   useEffect(() => {
@@ -114,14 +114,18 @@ const RemarksInputSection = React.memo(({ value, onChange, disabled }: { value: 
       <Label className="text-xs uppercase font-bold text-muted-foreground">
         Remarks
       </Label>
-      <Textarea
-        value={localRemarks}
-        onChange={(e) => setLocalRemarks(e.target.value)}
-        onBlur={() => onChange(localRemarks)}
-        disabled={disabled}
-        className="resize-none min-h-[120px] border-border focus:border-primary bg-background shadow-sm"
-        placeholder="Enter return remarks..."
-      />
+      {isLoading ? (
+        <Skeleton className="min-h-[120px] w-full rounded-md" />
+      ) : (
+        <Textarea
+          value={localRemarks}
+          onChange={(e) => setLocalRemarks(e.target.value)}
+          onBlur={() => onChange(localRemarks)}
+          disabled={disabled}
+          className="resize-none min-h-[120px] border-border focus:border-primary bg-background shadow-sm"
+          placeholder="Enter return remarks..."
+        />
+      )}
     </div>
   );
 });
@@ -809,6 +813,29 @@ export function UpdateSalesReturnModal({
     setOrderError(false);
     setInvoiceError(false);
 
+    if (loading) {
+      toast.error("Please wait for sales return details to finish loading.");
+      return;
+    }
+
+    if (details.length === 0) {
+      toast.error("Cannot receive an empty sales return. Please add products first.");
+      return;
+    }
+
+    const hasZeroQuantity = details.some(
+      (item) => !item.quantity || Number(item.quantity) <= 0,
+    );
+    if (hasZeroQuantity) {
+      toast.error("All product lines must have a quantity greater than 0 before receiving.");
+      return;
+    }
+
+    if (!totalNet || totalNet <= 0 || !totalGross || totalGross <= 0) {
+      toast.error("Cannot receive a sales return with zero or invalid total amount.");
+      return;
+    }
+
     if (!headerData.orderNo || !headerData.orderNo.toString().trim()) {
       toast.error("Order No. is required.");
       setOrderError(true);
@@ -1035,7 +1062,12 @@ export function UpdateSalesReturnModal({
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="w-full max-w-[95vw] lg:max-w-7xl h-[90vh] flex flex-col p-0 overflow-hidden bg-background border-0 shadow-2xl rounded-xl [&>button]:hidden">
+      <DialogContent
+        showCloseButton={false}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="w-full max-w-[95vw] lg:max-w-7xl h-[90vh] flex flex-col p-0 overflow-hidden bg-background border-0 shadow-2xl rounded-xl [&>button]:hidden"
+      >
         {/* HEADER */}
         <div className="px-8 py-5 border-b border-border flex justify-between items-center bg-background shrink-0">
           <div>
@@ -1043,18 +1075,25 @@ export function UpdateSalesReturnModal({
               {isPending ? "Edit Sales Return" : "Return Details"}
             </DialogTitle>
             <div className="flex items-center gap-2 mt-1">
-              <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase tracking-wider">
-                {headerData.returnNo}
-              </span>
-              <span className="text-muted-foreground text-sm">|</span>
-              <span className="text-sm text-muted-foreground">
-                {headerData.returnDate}
-              </span>
+              {loading ? (
+                <Skeleton className="h-5 w-44 rounded" />
+              ) : (
+                <>
+                  <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase tracking-wider">
+                    {headerData.returnNo}
+                  </span>
+                  <span className="text-muted-foreground text-sm">|</span>
+                  <span className="text-sm text-muted-foreground">
+                    {headerData.returnDate}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button
             onClick={onClose}
-            className="bg-destructive hover:bg-destructive text-white p-2 rounded-md shadow-sm transition-all active:scale-95"
+            disabled={loading || isUpdating || isReceiving}
+            className="bg-destructive hover:bg-destructive text-white p-2 rounded-md shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="h-5 w-5" />
           </button>
@@ -1069,18 +1108,18 @@ export function UpdateSalesReturnModal({
             <ReadOnlyField label="Salesman" value={getSalesmanName(headerData.salesmanId)} isLoading={loading} />
             <ReadOnlyField label="Salesman Code" value={getSalesmanCode(headerData.salesmanId)} isLoading={loading} />
             <ReadOnlyField label="Customer" value={getCustomerName(headerData.customerCode)} isLoading={loading} />
-            <ReadOnlyField label="Customer Code" value={headerData.customerCode} />
+            <ReadOnlyField label="Customer Code" value={headerData.customerCode} isLoading={loading} />
 
             <ReadOnlyField label="Branch" value={getSalesmanBranch(headerData.salesmanId)} isLoading={loading} />
-            <ReadOnlyField label="Return Date" value={headerData.returnDate} />
-            <ReadOnlyField label="Received Date" value={headerData.status === "Received" && headerData.receivedAt ? headerData.receivedAt : "-"} />
-            <ReadOnlyField label="Price Type" value={getResolvedPriceType(headerData.priceType)} />
+            <ReadOnlyField label="Return Date" value={headerData.returnDate} isLoading={loading} />
+            <ReadOnlyField label="Received Date" value={headerData.status === "Received" && headerData.receivedAt ? headerData.receivedAt : "-"} isLoading={loading} />
+            <ReadOnlyField label="Price Type" value={getResolvedPriceType(headerData.priceType)} isLoading={loading} />
 
             <div className="flex items-center space-x-2 pt-2 col-span-2 lg:col-span-4">
               <Checkbox
                 id="isThirdParty"
                 checked={headerData.isThirdParty || false}
-                disabled={!canEditAll}
+                disabled={!canEditAll || loading}
                 onCheckedChange={(checked) =>
                   setHeaderData({
                     ...headerData,
@@ -1109,7 +1148,8 @@ export function UpdateSalesReturnModal({
                 <div className="flex items-center gap-3">
                   <Button
                     size="sm"
-                    className="bg-primary hover:bg-primary text-white gap-2 shadow-md shadow-primary/20"
+                    disabled={loading}
+                    className="bg-primary hover:bg-primary text-white gap-2 shadow-md shadow-primary/20 disabled:opacity-50"
                     onClick={() => setIsProductLookupOpen(true)}
                   >
                     <Plus className="h-4 w-4" /> Add Product
@@ -1700,7 +1740,9 @@ export function UpdateSalesReturnModal({
                     Order No. <span className="text-destructive">*</span>
                   </Label>
                   {/* Order No Dropdown */}
-                  {canEditAll ? (
+                  {loading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : canEditAll ? (
                     <div className="relative group">
                       <input
                         type="text"
@@ -1762,7 +1804,9 @@ export function UpdateSalesReturnModal({
                     Invoice No. <span className="text-destructive">*</span>
                   </Label>
                   {/* Invoice No Dropdown */}
-                  {canEditAll ? (
+                  {loading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : canEditAll ? (
                     <div className="relative group">
                       <input
                         type="text"
@@ -1824,6 +1868,7 @@ export function UpdateSalesReturnModal({
                 value={headerData.remarks || ""}
                 onChange={(val) => setHeaderData({ ...headerData, remarks: val })}
                 disabled={!canEditLimited}
+                isLoading={loading}
               />
             </div>
 
@@ -1922,24 +1967,26 @@ export function UpdateSalesReturnModal({
 
         {/* FOOTER ACTIONS */}
         <div className="border-t border-border p-5 bg-background flex justify-end gap-3 shrink-0">
-          <Button variant="outline" onClick={handlePrintInNewTab}>
+          <Button variant="outline" onClick={handlePrintInNewTab} disabled={loading || isUpdating || isReceiving}>
             <Printer className="h-4 w-4 mr-2" /> Print Slip
           </Button>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={loading || isUpdating || isReceiving}>
             Close
           </Button>
           <Button
             className="min-w-[100px]"
             onClick={handleReceiveClick}
-            disabled={!isPending}
+            disabled={loading || !isPending || isReceiving || isUpdating || details.length === 0 || totalNet <= 0}
           >
+            {isReceiving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Receive
           </Button>
           <Button
             className="bg-primary hover:bg-primary text-white min-w-40"
             onClick={handleUpdateClick}
-            disabled={!canEditLimited}
+            disabled={loading || !canEditLimited || isUpdating || isReceiving}
           >
+            {isUpdating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Update Sales Return
           </Button>
         </div>
