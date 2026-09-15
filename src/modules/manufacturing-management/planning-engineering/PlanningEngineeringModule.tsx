@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +73,38 @@ function NoMaterialsState() {
             <Database className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
             <p className="font-bold text-emerald-700 dark:text-emerald-300">No materials required</p>
             <p className="text-sm text-muted-foreground">This Job Order has no BOM material rows. Material reservation is not applicable.</p>
+        </div>
+    );
+}
+
+function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
+    const rows = Array.isArray(history) ? history : [];
+    if (rows.length === 0) return null;
+
+    return (
+        <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+                <History className="h-4 w-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">Status history</h3>
+            </div>
+            <div className="space-y-2">
+                {rows.slice(0, 8).map((entry, index) => {
+                    const previous = entry.old_status || entry.previous_status || "Created";
+                    const next = entry.new_status || "Unknown";
+                    const changedAt = entry.changed_at ? new Date(entry.changed_at).toLocaleString() : "Time not recorded";
+                    return (
+                        <div key={entry.history_id || entry.id || `${next}-${changedAt}-${index}`} className="flex flex-col gap-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                            <div className="min-w-0">
+                                <span className="font-semibold text-muted-foreground">{previous}</span>
+                                <span className="mx-2 text-muted-foreground">-&gt;</span>
+                                <span className="font-bold text-foreground">{next}</span>
+                                {entry.workflow_action && <span className="ml-2 text-[10px] font-mono text-muted-foreground">({entry.workflow_action})</span>}
+                            </div>
+                            <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={entry.changed_at || undefined}>{changedAt}</time>
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 }
@@ -1161,6 +1193,7 @@ export default function PlanningEngineeringModule() {
                             blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).blockers}
                             title="What's next"
                         />
+                        <JobOrderStatusHistoryPanel history={activeFamilyJo?.status_history} />
                         {isFamilyOverview ? (
                             /* DUAL / MULTI FAMILY VIEW: Render Parent & Child JOs side-by-side / stacked */
                             <div className="space-y-8">

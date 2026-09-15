@@ -35,7 +35,9 @@ export async function fetchSalesOrders(
 ): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
     const soRes = await fetch(`/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`, { cache: "no-store" });
     if (!soRes.ok) {
-        throw new Error("Failed to fetch unfulfilled sales orders.");
+        throw new Error(queue === "in-production"
+            ? "Failed to fetch Sales Orders in production."
+            : "Failed to fetch For Production Sales Orders.");
     }
     const soData = await soRes.json();
     return {

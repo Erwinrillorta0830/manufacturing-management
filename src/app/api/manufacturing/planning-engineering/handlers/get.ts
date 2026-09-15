@@ -1495,7 +1495,8 @@ export async function handleGET(request: Request) {
                 createdBy: item.created_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
-                yield_logs: item.yield_logs || []
+                yield_logs: item.yield_logs || [],
+                status_history: item.status_history || []
             }));
             return NextResponse.json(camelCaseList);
         }

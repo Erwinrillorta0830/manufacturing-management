@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
-import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -54,7 +54,12 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             );
         }
 
+        const statusHistoryPromise = fetch(
+            `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=-1&sort=-changed_at&fields=*`,
+            { headers: headersNoCache }
+        ).catch(() => null);
         const responses = await Promise.all(fetchList);
+        const statusHistoryResponse = await statusHistoryPromise;
 
         const jos = responses[0].ok ? (await responses[0].json()).data || [] : [];
         const josos = responses[1].ok ? (await responses[1].json()).data || [] : [];
@@ -65,6 +70,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const mfgYieldLedger = responses[6].ok ? (await responses[6].json()).data || [] : [];
         const mfgVersions = responses[7].ok ? (await responses[7].json()).data || [] : [];
         const invMovements = await movementPromise;
+        const statusHistoryRows = statusHistoryResponse?.ok
+            ? (await statusHistoryResponse.json()).data || []
+            : [];
 
         let mfgRoutings = [];
         let mfgBoms = [];
@@ -128,6 +136,19 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             }
             return 0;
         };
+
+        const statusHistoryByJobOrder = new Map<number, any[]>();
+        statusHistoryRows.forEach((history: any) => {
+            const jobOrderId = getRelationId(history.job_order_id, ["job_order_id"]);
+            if (!jobOrderId) return;
+            const historyList = statusHistoryByJobOrder.get(jobOrderId) || [];
+            historyList.push({
+                ...history,
+                old_status: normalizeJobOrderStatus(history.old_status) || history.old_status || null,
+                new_status: normalizeJobOrderStatus(history.new_status) || history.new_status
+            });
+            statusHistoryByJobOrder.set(jobOrderId, historyList);
+        });
 
         const allocatedDetailIds = Array.from(new Set(
             josos
@@ -197,18 +218,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             const joIdInt = Number(jo.job_order_id || jo.id || 0);
 
             const canonicalStatus = normalizeJobOrderStatus(jo.status);
-            let mappedStatus = canonicalStatus || jo.status;
-            if (canonicalStatus === JOB_ORDER_STATUS.FOR_PICKING) {
-                mappedStatus = JOB_ORDER_STATUS.FOR_PICKING;
-            } else if (canonicalStatus === JOB_ORDER_STATUS.IN_PRODUCTION) {
-                mappedStatus = JOB_ORDER_STATUS.IN_PRODUCTION;
-            } else if (
-                canonicalStatus === JOB_ORDER_STATUS.PRODUCTION_COMPLETED
-                || canonicalStatus === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION
-                || canonicalStatus === JOB_ORDER_STATUS.CLOSED
-            ) {
-                mappedStatus = JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
-            }
+            const mappedStatus = canonicalStatus || jo.status;
 
             const matchedProduct = productsList.find((p: any) => Number(p.product_id) === Number(jo.product_id));
             const productName = matchedProduct?.product_name || `Product #${jo.product_id}`;
@@ -437,7 +447,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 parent_job_order_id: resolvedParentId,
                 completed_quantity: completedQuantity,
                 produced_quantity: totalProduced,
-                yield_logs: joYieldLogs
+                yield_logs: joYieldLogs,
+                status_history: statusHistoryByJobOrder.get(joIdInt) || []
             };
         });
     } catch (e) {
