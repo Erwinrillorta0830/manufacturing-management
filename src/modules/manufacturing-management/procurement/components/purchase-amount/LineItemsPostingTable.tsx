@@ -1,8 +1,10 @@
 "use client";
 
-import { Calculator, Lock } from "lucide-react";
+import { Calculator, Lock, RefreshCw } from "lucide-react";
 import { HybridCalculationResult } from "./types";
 import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface LineItemsPostingTableProps {
     calculationResult: HybridCalculationResult;
@@ -10,13 +12,29 @@ interface LineItemsPostingTableProps {
     posting: boolean;
     canPost: boolean;
     disabledReason?: string;
+    currencyCode?: string;
+    onRefreshPrices?: () => void;
+    syncing?: boolean;
+    lastSyncedAt?: string | null;
+    changedLineIds?: number[];
 }
 
-function formatPhp(value: number, fractionDigits = PROCUREMENT_MONEY_DECIMAL_SCALE): string {
-    return `PHP ${Number(value || 0).toLocaleString("en-US", {
+function formatAmount(value: number, fractionDigits = PROCUREMENT_MONEY_DECIMAL_SCALE): string {
+    return Number(value || 0).toLocaleString("en-US", {
         minimumFractionDigits: fractionDigits,
         maximumFractionDigits: fractionDigits
-    })}`;
+    });
+}
+
+function formatQuantity(value: number): string {
+    return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 6 });
+}
+
+function formatSyncTime(value?: string | null): string | null {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export default function LineItemsPostingTable({
@@ -24,27 +42,52 @@ export default function LineItemsPostingTable({
     onExecutePosting,
     posting,
     canPost,
-    disabledReason
+    disabledReason,
+    currencyCode,
+    onRefreshPrices,
+    syncing = false,
+    lastSyncedAt,
+    changedLineIds = []
 }: LineItemsPostingTableProps) {
+    const priceCurrency = (currencyCode || calculationResult.lineCalculations[0]?.currency_code || "PHP").toUpperCase();
+    const syncedLabel = formatSyncTime(lastSyncedAt);
+
     return (
         <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <Calculator className="h-4 w-4" />
                     Landed Cost Allocation Preview
                 </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                    {syncedLabel && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Last synced {syncedLabel}
+                        </span>
+                    )}
+                    {onRefreshPrices && (
+                        <Button type="button" size="sm" variant="outline" onClick={onRefreshPrices} disabled={syncing}>
+                            <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+                            {syncing ? "Syncing..." : "Refresh prices"}
+                        </Button>
+                    )}
+                </div>
             </div>
 
             <div className="border rounded-xl overflow-x-auto bg-background">
-                <table className="w-full min-w-[720px] text-xs text-left">
+                <table className="w-full min-w-[1160px] text-xs text-left">
                     <thead className="bg-muted/50 border-b text-[11px] font-bold text-muted-foreground uppercase">
                         <tr>
-                            <th className="p-3">Item</th>
+                            <th className="p-3">Material</th>
                             <th className="p-3">Category</th>
+                            <th className="p-3 text-center">UOM</th>
                             <th className="p-3 text-right">Received Qty</th>
-                            <th className="p-3 text-right">Base Cost (PHP)</th>
+                            <th className="p-3 text-right">List Price ({priceCurrency})</th>
+                            <th className="p-3 text-right">Discount</th>
+                            <th className="p-3 text-right">Net Amount ({priceCurrency})</th>
                             <th className="p-3 text-right">Allocated Adjustment / Unit (PHP)</th>
-                            <th className="p-3 text-right">Final Landed Unit Cost (PHP)</th>
+                            <th className="p-3 text-right">Final Landed Cost / Unit (PHP)</th>
+                            <th className="p-3 text-right">Total Landed Cost (PHP)</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -60,25 +103,51 @@ export default function LineItemsPostingTable({
                                 : line.category_type === "FINISHED_GOODS"
                                     ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
                                     : "bg-blue-500/10 text-blue-600 border-blue-500/20";
+                            const receivedQuantity = Number(line.accepted_quantity ?? line.received_quantity ?? 0);
+                            const listPrice = Number(line.list_price ?? line.unit_price_foreign ?? line.base_unit_cost_php ?? 0);
+                            const discountPercent = Number(line.discount_percent || 0);
+                            const discountAmount = Number(line.discount_amount || 0);
+                            const hasDiscount = discountPercent > 0 || discountAmount > 0;
+                            const netAmount = Number(line.net_amount ?? Math.max(0, receivedQuantity * listPrice - discountAmount));
+                            const allocatedAdjustment = Number(line.allocated_expense_php || 0);
+                            const finalLandedUnitCost = Number(line.final_landed_unit_cost || 0);
+                            // Recomputed from the live preview calculation so landed-fee edits
+                            // update every row immediately (audit view keeps the persisted value).
+                            const totalLandedCost = finalLandedUnitCost * receivedQuantity;
+                            const isUpdated = changedLineIds.includes(line.purchase_order_product_id);
 
                             return (
-                                <tr key={line.purchase_order_product_id} className="hover:bg-muted/30">
-                                    <td className="p-3 font-semibold">{name}</td>
+                                <tr key={line.purchase_order_product_id} className={cn("hover:bg-muted/30", isUpdated && "bg-warning/5")}>
+                                    <td className="p-3 font-semibold">
+                                        {name}
+                                        {isUpdated && (
+                                            <span className="ml-2 inline-flex items-center rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-warning">
+                                                updated
+                                            </span>
+                                        )}
+                                    </td>
                                     <td className="p-3">
                                         <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${categoryClass}`}>
                                             {categoryLabel}
                                         </span>
                                     </td>
-                                    <td className="p-3 text-right font-mono font-bold">
-                                        {Number(line.accepted_quantity ?? line.received_quantity ?? 0).toLocaleString()}
+                                    <td className="p-3 text-center font-mono text-muted-foreground">{line.uom || "—"}</td>
+                                    <td className="p-3 text-right font-mono font-bold tabular-nums">{formatQuantity(receivedQuantity)}</td>
+                                    <td className="p-3 text-right font-mono tabular-nums">
+                                        {formatAmount(listPrice)}
+                                        <span className="ml-1.5 text-[9px] font-bold uppercase text-muted-foreground" title={line.priced_at || undefined}>
+                                            {line.price_source || "PO"}
+                                        </span>
                                     </td>
-                                    <td className="p-3 text-right font-mono">{formatPhp(line.base_unit_cost_php)}</td>
-                                    <td className="p-3 text-right font-mono font-bold text-emerald-600">
-                                        +{formatPhp(line.allocated_expense_php)}
+                                    <td className="p-3 text-right font-mono tabular-nums">
+                                        {hasDiscount ? `${discountPercent.toFixed(2)}% (${formatAmount(discountAmount)})` : "—"}
                                     </td>
-                                    <td className="p-3 text-right font-mono font-bold text-amber-600">
-                                        {formatPhp(line.final_landed_unit_cost)}
+                                    <td className="p-3 text-right font-mono font-bold tabular-nums">{formatAmount(netAmount)}</td>
+                                    <td className={cn("p-3 text-right font-mono font-bold tabular-nums", allocatedAdjustment > 0 ? "text-emerald-600" : "text-muted-foreground")}>
+                                        {allocatedAdjustment > 0 ? `+${formatAmount(allocatedAdjustment)}` : formatAmount(allocatedAdjustment)}
                                     </td>
+                                    <td className="p-3 text-right font-mono font-bold text-amber-600 tabular-nums">{formatAmount(finalLandedUnitCost)}</td>
+                                    <td className="p-3 text-right font-mono font-black tabular-nums">{formatAmount(totalLandedCost)}</td>
                                 </tr>
                             );
                         })}

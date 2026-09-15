@@ -78,10 +78,12 @@ export function isPlanningVisibleDetail(
     orderStatus: unknown,
     isScheduled: boolean,
     plannedQuantity = 0,
-    includeAllStatuses = false
+    includeAllStatuses = false,
+    hasActiveJobOrder = false
 ): boolean {
     const status = String(orderStatus || "").trim();
     const remaining = detailRemainingQuantity(detail, plannedQuantity);
+    if (hasActiveJobOrder) return false;
     if (status === "For Production") return remaining > 0 && !isScheduled;
     if (status === "In Production") return isDetailUnfulfilled(detail) || isScheduled || remaining > 0;
     if (includeAllStatuses && status !== "Cancelled") {

@@ -1446,6 +1446,7 @@ export async function handleGET(request: Request) {
                 products: item.products || [],
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],
+                salesOrders: item.sales_orders || [],
                 shiftOption: item.shift_option || "8",
                 dailyBreakdown: item.daily_breakdown || null,
                 remarks: item.remarks || null,

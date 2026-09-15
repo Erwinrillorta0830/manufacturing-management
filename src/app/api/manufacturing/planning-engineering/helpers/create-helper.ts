@@ -108,6 +108,38 @@ async function assertFreshAllocationCapacity(
     }
 }
 
+async function transitionLinkedSalesOrdersToInProduction(
+    parentOrderIds: Set<number>,
+    previousParentStatuses: Map<number, string>
+) {
+    for (const parentOrderId of parentOrderIds) {
+        const previousStatus = String(previousParentStatuses.get(parentOrderId) || "").trim();
+        if (previousStatus !== "For Production") continue;
+
+        // Re-read the parent before patching so a concurrent downstream
+        // transition is not overwritten by this JO-link operation.
+        const currentResponse = await fetch(
+            `${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`,
+            { headers, cache: "no-store" }
+        );
+        if (!currentResponse.ok) {
+            throw new Error(`Failed to re-read Sales Order ${parentOrderId} before status transition: ${currentResponse.status}`);
+        }
+        const currentOrder = (await currentResponse.json()).data;
+        const currentStatus = String(currentOrder?.order_status || "").trim();
+        if (currentStatus !== "For Production") continue;
+
+        const statusResponse = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ order_status: "In Production" })
+        });
+        if (!statusResponse.ok) {
+            throw new Error(`Failed to transition Sales Order ${parentOrderId} to In Production: ${statusResponse.status}`);
+        }
+    }
+}
+
 export async function createJobOrder(
     joData: Partial<DirectusJobOrder>,
     salesOrderIds: number[] = [],
@@ -840,16 +872,7 @@ export async function createJobOrder(
 
             // A regular JO puts its linked parent orders into production only
             // after every requested allocation has been persisted.
-            for (const parentOrderId of affectedOrderIds) {
-                const statusResponse = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ order_status: "In Production" })
-                });
-                if (!statusResponse.ok) {
-                    throw new Error(`Failed to transition Sales Order ${parentOrderId} to In Production: ${statusResponse.status}`);
-                }
-            }
+            await transitionLinkedSalesOrdersToInProduction(affectedOrderIds, previousParentStatuses);
         }
 
         return { jo_id: joNoStr, status: initialStatus, shortfalls };

@@ -18,7 +18,7 @@ export function PlanningSummaryCards({
 }: PlanningSummaryCardsProps) {
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Card 1: Pending Demand Lines */}
+            {/* Card 1: For Production Demand */}
             <div 
                 onClick={() => onSelectTab?.("demand")}
                 className={`bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between transition-all ${
@@ -27,13 +27,13 @@ export function PlanningSummaryCards({
             >
                 <div className="space-y-1" title="Unfulfilled Sales Order lines for the selected branch.">
                     <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Sales Order Demand
+                        For Production Demand
                     </p>
                     <div className="text-2xl font-black text-foreground">
                         {demandLinesCount.toLocaleString()}
                     </div>
                     <p className="text-[10px] text-muted-foreground">
-                        Unfulfilled demand lines in this branch
+                        Unlinked demand ready for JO planning
                     </p>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">

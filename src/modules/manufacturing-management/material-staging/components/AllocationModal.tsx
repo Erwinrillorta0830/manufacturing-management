@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchAllocationPreview } from "../services/staging-api";
+import { createMaterialStagingOperationId } from "../utils/operation-id";
 import type {
     AllocationLine,
     AllocationMode,
@@ -74,7 +75,7 @@ export function AllocationModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="w-[calc(100vw-2rem)] max-w-5xl max-h-[92vh] overflow-y-auto p-0 gap-0">
+            <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] sm:max-w-5xl min-w-0 max-h-[92vh] overflow-x-hidden overflow-y-auto p-0 gap-0">
                 <AllocationForm
                     key={`${activeItem.jobOrder.job_order_id}-${activeItem.material.jo_material_id}`}
                     activeItem={activeItem}
@@ -223,7 +224,7 @@ function AllocationForm({
                 material_ids: [material.jo_material_id],
                 lines: latestPreview.proposed_allocations,
                 source_bin: "MAIN-STORE",
-                operation_id: crypto.randomUUID(),
+                operation_id: createMaterialStagingOperationId(),
                 preview_token: latestPreview.preview_token,
                 remarks: remarks.trim()
             });
@@ -233,33 +234,33 @@ function AllocationForm({
     };
 
     return (
-        <form onSubmit={handleSubmit} className="flex flex-col">
-            <div className="border-b border-border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex items-start gap-3">
+        <form onSubmit={handleSubmit} className="flex min-w-0 w-full flex-col">
+            <div className="min-w-0 border-b border-border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-6">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
                             <PackageCheck className="h-5 w-5" />
                         </div>
-                        <div>
+                        <div className="min-w-0 flex-1">
                             <DialogTitle className="text-lg font-bold">Allocate Material to Floor Staging</DialogTitle>
                             <DialogDescription className="mt-1 text-xs">
                                 Review exact raw-material lots and batches before posting the single staging issue.
                             </DialogDescription>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <div className="mt-2 flex min-w-0 flex-wrap gap-2 text-xs">
                                 <Badge variant="outline" className="font-mono">JO #{jobOrder.job_order_no}</Badge>
-                                <Badge variant="outline">{material.product_name}</Badge>
+                                <Badge variant="outline" className="max-w-full truncate">{material.product_name}</Badge>
                                 <Badge variant="outline">Remaining: {remainingQuantity.toLocaleString()} {material.uom}</Badge>
                             </div>
                         </div>
                     </div>
-                    <div className="min-w-[220px] space-y-1">
+                    <div className="w-full min-w-0 space-y-1 sm:w-[220px]">
                         <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">Target work center</Label>
                         <Select value={selectedWorkCenterId} onValueChange={(value) => {
                             setSelectedWorkCenterId(value);
                             setPreview(null);
                             void loadPreview({ ...previewPayload, work_center_id: Number(value), lines: undefined });
                         }}>
-                            <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select work center" /></SelectTrigger>
+                            <SelectTrigger className="h-9 w-full min-w-0 text-xs"><SelectValue placeholder="Select work center" /></SelectTrigger>
                             <SelectContent>
                                 {workCenters.filter(center => center.is_active !== false).map(center => (
                                     <SelectItem key={center.work_center_id} value={String(center.work_center_id)} className="text-xs">
@@ -273,7 +274,7 @@ function AllocationForm({
                 </div>
             </div>
 
-            <div className="space-y-5 p-6">
+            <div className="min-w-0 space-y-5 p-6">
                 <div className="grid gap-3 sm:grid-cols-2">
                     <button type="button" onClick={() => handleModeChange("auto")} className={`rounded-xl border p-4 text-left transition ${mode === "auto" ? "border-primary bg-primary/5 ring-1 ring-primary/20" : "border-border hover:bg-muted/40"}`}>
                         <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4 text-primary" /> Auto FEFO</div>
@@ -288,7 +289,7 @@ function AllocationForm({
                 {loadingPreview ? (
                     <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-10 text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking eligible inventory lots and batches…</div>
                 ) : selectedMaterialPreview ? (
-                    <div className="overflow-hidden rounded-xl border border-border">
+                    <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 p-3">
                             <div>
                                 <div className="text-xs font-semibold uppercase tracking-wider">Eligible lots and batches</div>
@@ -299,7 +300,7 @@ function AllocationForm({
                         {selectedMaterialPreview.candidates.length === 0 ? (
                             <div className="p-8 text-center text-xs text-muted-foreground">No eligible lot/batch inventory is available for this material.</div>
                         ) : (
-                            <div className="overflow-x-auto">
+                            <div className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
                                 <table className="w-full min-w-[760px] text-xs">
                                     <thead className="bg-muted/20 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                                         <tr>
@@ -345,7 +346,7 @@ function AllocationForm({
                 {formError && <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{formError}</div>}
             </div>
 
-            <DialogFooter className="border-t border-border bg-muted/10 p-5">
+            <DialogFooter className="w-full min-w-0 border-t border-border bg-muted/10 p-5">
                 <Button type="button" variant="outline" onClick={onClose} disabled={isLoading}>Cancel</Button>
                 <Button type="submit" disabled={isLoading || loadingPreview || !preview || selectedQuantity + 0.000001 < remainingQuantity}>
                     {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Staging…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Commit Staging Issue</>}

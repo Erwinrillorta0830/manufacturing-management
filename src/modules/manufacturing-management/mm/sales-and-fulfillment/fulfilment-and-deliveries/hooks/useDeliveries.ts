@@ -132,6 +132,8 @@ export function useDeliveries() {
     };
 
     const reload = useCallback(async () => {
+        setLoading(true);
+        setError(null);
         try {
             const data = await fetchDeliveryClearanceList({
                 page,
@@ -152,10 +154,13 @@ export function useDeliveries() {
                 const fresh = (data.content || []).find((r) => r.consolidator_id === prev.consolidator_id);
                 return fresh || prev;
             });
+            toast.success("Delivery manifests refreshed.");
         } catch (err) {
             const msg = err instanceof Error ? err.message : "Failed to load delivery clearance data.";
             setError(msg);
             toast.error(msg);
+        } finally {
+            setLoading(false);
         }
     }, [page, size, searchQuery, statusFilter, selectedBranchId]);
 

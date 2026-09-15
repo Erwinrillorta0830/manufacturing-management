@@ -37,6 +37,7 @@ import {
     Link2,
     SlidersHorizontal,
     Lock,
+ 
 } from "lucide-react";
 import ReconciliationLotAllocationModal from "./ReconciliationLotAllocationModal";
 
@@ -633,6 +634,28 @@ export default function ProductReconciliationModal({
         setAllocationModalItemIndex(null);
     };
 
+    // Helper to zero out received quantities and mark all items as unfulfilled
+    // const handleMarkAllUnfulfilled = () => {
+    //     if (effectiveReadOnly) return;
+    //     setLineItems((prev) =>
+    //         prev.map((item) => {
+    //             const ordQty = Number(item.ordered_quantity || 0);
+    //             const updatedReservations = (item.reservations || []).map((r) => ({
+    //                 ...r,
+    //                 returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+    //             }));
+    //             return {
+    //                 ...item,
+    //                 received_quantity: 0,
+    //                 returned_quantity: ordQty,
+    //                 line_status: "Unfulfilled / Returns" as LineStatus,
+    //                 reservations: updatedReservations,
+    //             };
+    //         })
+    //     );
+    //     toast.info("Order marked as Unfulfilled. It will return to 'For Consolidation' for re-dispatch upon clearance.");
+    // };
+
     // Helper to save remarks only when product reconciliation quantities are locked
     const handleSaveRemarks = () => {
         if (!order) return;
@@ -892,6 +915,23 @@ export default function ProductReconciliationModal({
                             </div>
                         </div>
 
+                        {/* Unfulfilled Re-Consolidation & Invoice Reuse Alert Banner */}
+                        {/* {isUnfulfilled && !effectiveReadOnly && (
+                            <div className="p-3.5 bg-rose-500/10 border border-rose-500/25 rounded-xl flex items-start gap-3 text-xs text-rose-800 dark:text-rose-200">
+                                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                                <div className="space-y-1">
+                                    <p className="font-black text-xs uppercase tracking-wide">
+                                        Unfulfilled Delivery — Re-Consolidation & Invoice Reuse
+                                    </p>
+                                    <p className="text-[11px] leading-relaxed opacity-95">
+                                        Upon confirming clearance, this delivery attempt is logged in the unfulfilled ledger (inventory reversal IN). 
+                                        The sales order will automatically return to <b>For Consolidation</b> so it can be re-consolidated into a new trip manifest.
+                                        The existing sales invoice ({order.invoice_no && order.invoice_no !== "---" ? order.invoice_no : "pending"}) will be preserved and reused.
+                                    </p>
+                                </div>
+                            </div>
+                        )} */}
+
                         {/* Terminal Status / Read-Only Alert Banner */}
                         {effectiveReadOnly && (
                             <div
@@ -1054,9 +1094,22 @@ export default function ProductReconciliationModal({
                                     </p>
                                 </div>
 
-                                {/* Product Search Bar */}
-                                <div className="relative w-full sm:w-72 shrink-0">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                                <div className="flex items-center gap-2 w-full sm:w-auto">
+                                    {/* {!effectiveReadOnly && (
+                                        <button
+                                            type="button"
+                                            onClick={handleMarkAllUnfulfilled}
+                                            className="px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 shrink-0"
+                                            title="Zero out received quantities and mark this order as unfulfilled for re-consolidation"
+                                        >
+                                            <RotateCcw className="h-3.5 w-3.5" />
+                                            Mark as Unfulfilled
+                                        </button>
+                                    )} */}
+
+                                    {/* Product Search Bar */}
+                                    <div className="relative w-full sm:w-72 shrink-0">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                                     <input
                                         type="text"
                                         placeholder="Search product name or SKU..."
@@ -1073,8 +1126,9 @@ export default function ProductReconciliationModal({
                                             <X className="h-3.5 w-3.5" />
                                         </button>
                                     )}
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
 
                             <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                 <div className="overflow-x-auto">

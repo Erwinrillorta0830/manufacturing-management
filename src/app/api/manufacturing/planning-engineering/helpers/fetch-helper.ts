@@ -129,6 +129,46 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             return 0;
         };
 
+        const allocatedDetailIds = Array.from(new Set(
+            josos
+                .map((allocation: any) => getRelationId(allocation.sales_order_detail_id, ["detail_id"]))
+                .filter((detailId: number) => detailId > 0)
+        ));
+        let salesOrderDetails: any[] = [];
+        let salesOrderParents: any[] = [];
+
+        if (allocatedDetailIds.length > 0) {
+            try {
+                const detailsRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${allocatedDetailIds.join(",")}&fields=detail_id,order_id&limit=-1`,
+                    { headers: headersNoCache }
+                );
+                salesOrderDetails = detailsRes.ok ? (await detailsRes.json()).data || [] : [];
+
+                const parentOrderIds = Array.from(new Set(
+                    salesOrderDetails
+                        .map((detail: any) => getRelationId(detail.order_id, ["order_id"]))
+                        .filter((orderId: number) => orderId > 0)
+                ));
+                if (parentOrderIds.length > 0) {
+                    const ordersRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_no&limit=-1`,
+                        { headers: headersNoCache }
+                    );
+                    salesOrderParents = ordersRes.ok ? (await ordersRes.json()).data || [] : [];
+                }
+            } catch (error) {
+                console.warn("[Manufacturing Directus API] Failed to resolve Job Order sales order references:", error);
+            }
+        }
+
+        const salesOrderDetailsById = new Map<number, any>(
+            salesOrderDetails.map((detail: any) => [getRelationId(detail.detail_id, ["detail_id"]), detail])
+        );
+        const salesOrderParentsById = new Map<number, any>(
+            salesOrderParents.map((order: any) => [getRelationId(order.order_id, ["order_id"]), order])
+        );
+
         const isEnabledFlag = (value: unknown): boolean => {
             if (value === true || value === 1) return true;
             const normalized = String(value ?? "").trim().toLowerCase();
@@ -179,12 +219,20 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const salesOrders = josos
                 .filter((s: any) => s.job_order_id ? getObjId(s.job_order_id) === joIdInt : s.jo_id === joNo)
-                .map((s: any) => ({
-                    jo_id: joNo,
-                    order_id: s.sales_order_detail_id,
-                    order_no: `SO-DETAIL-${s.sales_order_detail_id}`,
-                    quantity: Number(s.allocated_quantity || 0)
-                }));
+                .map((s: any) => {
+                    const detailId = getRelationId(s.sales_order_detail_id, ["detail_id"]);
+                    const detail = salesOrderDetailsById.get(detailId);
+                    const orderId = getRelationId(detail?.order_id, ["order_id"]);
+                    const order = salesOrderParentsById.get(orderId);
+
+                    return {
+                        jo_id: joNo,
+                        order_id: orderId || detailId,
+                        sales_order_detail_id: detailId || null,
+                        order_no: order?.order_no || (orderId ? `SO-${orderId}` : `SO-DETAIL-${detailId}`),
+                        quantity: Number(s.allocated_quantity || 0)
+                    };
+                });
 
             // Map routing tasks relationally. New job-order routes carry their
             // master routing/QA metadata; legacy rows resolve it by the persisted
