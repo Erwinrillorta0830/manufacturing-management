@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   X,
   Plus,
   Trash2,
-  Copy,
   Save,
   ChevronDown,
   FileText,
@@ -15,6 +14,9 @@ import {
   Loader2,
   Check,
   ChevronsUpDown,
+  Layers,
+  AlertCircle,
+  Boxes,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -51,8 +53,13 @@ import {
   Product,
 } from "../types/sales-return.types";
 
-// Import Child Modal
+// Import Child Modals
 import { ProductLookupModal } from "./ProductLookupModal";
+import {
+  LotBatchSelectionModal,
+  type LotBatchSelectionResult,
+  type FormSiblingAllocation,
+} from "./LotBatchSelectionModal";
 // Import API Client & Helpers
 import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import { resolveFinalDiscount } from "../services/sales-return.helpers";
@@ -67,6 +74,7 @@ interface SalesReturnGroup {
   key: string;
   code: string;
   description: string;
+  productType?: string;
   unit: string;
   returnType: string;
   unitPrice: number;
@@ -266,9 +274,73 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   // --- RFID State ---
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
-  // --- 3. CART STATE ---
+  // --- 3. CART & LOT ALLOCATION STATE ---
   const [items, setItems] = useState<SalesReturnItem[]>([]);
   const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([]);
+  const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
+  const [activeLotBatchIndex, setActiveLotBatchIndex] = useState<number | null>(null);
+
+  const handleOpenLotBatchModal = useCallback((index: number) => {
+    setActiveLotBatchIndex(index);
+    setLotBatchModalOpen(true);
+  }, []);
+
+  const handleApplyLotBatch = useCallback((result: LotBatchSelectionResult) => {
+    if (activeLotBatchIndex !== null && activeLotBatchIndex >= 0) {
+      setItems((prev) => {
+        if (activeLotBatchIndex >= prev.length) return prev;
+        const updated = [...prev];
+        const targetItem = { ...updated[activeLotBatchIndex] };
+
+        const totalAllocQty = result.total_quantity || 
+          (result.lot_allocations?.reduce((sum, g) => 
+            sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0) ?? targetItem.quantity);
+
+        targetItem.lot_id = result.lot_id;
+        targetItem.lot_name = result.lot_name;
+        targetItem.inventory_lot_id = result.inventory_lot_id;
+        targetItem.batch = result.batch_no;
+        targetItem.manufacturing_date = result.manufacturing_date;
+        targetItem.expiry_date = result.expiry_date;
+        targetItem.qa_status = result.qa_status;
+        targetItem.lot_allocations = result.lot_allocations;
+
+        if (totalAllocQty > 0 && targetItem.quantity !== totalAllocQty) {
+          targetItem.quantity = totalAllocQty;
+          const agPrice = targetItem.agreedPrice !== undefined && targetItem.agreedPrice !== null ? targetItem.agreedPrice : targetItem.unitPrice;
+          const newGross = Math.round(totalAllocQty * agPrice * 100) / 100;
+          let newDiscountAmt = 0;
+          if (targetItem.discountType) {
+            const selectedOption = lineDiscountOptions.find(d => d.id.toString() === targetItem.discountType?.toString());
+            if (selectedOption) {
+              const percentage = parseFloat(selectedOption.total_percent) || 0;
+              newDiscountAmt = Math.round(newGross * (percentage / 100) * 100) / 100;
+            }
+          }
+          targetItem.grossAmount = newGross;
+          targetItem.discountAmount = newDiscountAmt;
+          targetItem.totalAmount = Math.round((newGross - newDiscountAmt) * 100) / 100;
+          targetItem.priceVariance = Math.round((targetItem.unitPrice - agPrice) * totalAllocQty * 100) / 100;
+        }
+
+        updated[activeLotBatchIndex] = targetItem;
+        return updated;
+      });
+    }
+  }, [activeLotBatchIndex, lineDiscountOptions]);
+
+  const formSiblingAllocations: FormSiblingAllocation[] = useMemo(() => {
+    return items.map((item) => ({
+      product_id: item.productId,
+      product_name: item.description,
+      product_code: item.code,
+      quantity: item.quantity,
+      lot_id: item.lot_id,
+      lot_name: item.lot_name,
+      lot_allocations: item.lot_allocations,
+      batch_no: item.batch,
+    }));
+  }, [items]);
 
   // 🟢 NEW: Effect to fetch invoice line items
   useEffect(() => {
@@ -914,28 +986,15 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     }
 
     const missingLotDetails = items.some(
-      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+      (item) => {
+        const hasAlloc = (item.lot_allocations && item.lot_allocations.length > 0) || (item.lot_id && item.batch);
+        return !hasAlloc;
+      }
     );
     if (missingLotDetails) {
-      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      toast.error("Please assign Lot and Batch allocations for all products.");
       setLotDetailsError(true);
       return;
-    }
-
-    for (const item of items) {
-      if (item.lot_id) {
-        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
-        const onhand = lotOnhandMap[item.lot_id] ?? 0;
-        const maxCap = lot?.max_batch_capacity ?? 0;
-        const incomingQty = Number(item.quantity) || 0;
-        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-        if (maxCap > 0 && incomingQty > availableCap) {
-          toast.error("Lot Capacity Exceeded", {
-            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot.`
-          });
-          return;
-        }
-      }
     }
 
     try {
@@ -1084,34 +1143,6 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
   const handleRemoveItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleDuplicateItem = (index: number) => {
-    setItems((prev) => {
-      const original = prev[index];
-      if (!original) return prev;
-      
-      const price = Number(original.unitPrice || 0);
-      const gross = Math.round(1 * price * 100) / 100;
-      // We calculate a proportional discount if needed, but for simplicity
-      // since the user modifies it, we can reset discountAmount to 0 or re-calculate it based on discountType.
-      // Resetting discountAmount is safer when quantity is 1 unless it's a fixed % type.
-      
-      const duplicate: SalesReturnItem = {
-        ...original,
-        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Unique ID for React rendering
-        rfidTags: [], // Clear out RFIDs
-        quantity: 1, // Start with quantity 1
-        grossAmount: gross,
-        totalAmount: gross,
-        discountAmount: 0,
-        discountType: null // Reset discount to ensure accuracy
-      };
-
-      const updated = [...prev];
-      updated.splice(index + 1, 0, duplicate);
-      return updated;
-    });
   };
 
   const handleItemChange = (
@@ -1440,13 +1471,6 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 Products Summary
               </h3>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground mr-1">
-                      {items.length} {items.length === 1 ? "item" : "items"} total
-                    </span>
-                  </div>
-                </div>
                 <Button
                   size="sm"
                   onClick={handleOpenProductLookup}
@@ -1458,74 +1482,55 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             </div>
 
             <div className="overflow-x-auto relative pb-4">
-              <Table className="min-w-[1600px]">
+              <Table className="min-w-[1100px]">
                 <TableHeader>
                   <TableRow className="bg-primary hover:bg-primary! border-none">
                     <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
                       Code
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 min-w-[200px] uppercase text-xs">
                       Description
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[130px] uppercase text-xs">
+                      Product Type
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 min-w-[230px] uppercase text-xs">
+                      Lot &amp; Batch Allocation
                     </TableHead>
                     <TableHead className="text-white font-semibold h-11 w-[80px] uppercase text-xs">
                       Unit
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-center min-w-[100px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 text-center min-w-[90px] uppercase text-xs">
                       Qty
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
                       Unit Price
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
                       Agreed Price
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[100px] uppercase text-xs">
                       Variance
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
                       Gross
                     </TableHead>
                     <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                       Disc. Type
                     </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[140px] uppercase text-xs">
-                      Disc. Amt
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 text-right min-w-[150px] uppercase text-xs">
-                      Total
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
-                      Lot
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
-                      Capacity
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
-                      Batch
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
-                      Mfg Date
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
-                      Exp Date
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
-                      Reason
-                    </TableHead>
-                    <TableHead className="text-white font-semibold h-11 w-[200px] uppercase text-xs">
+                    <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                       Return Type
                     </TableHead>
-                    {/* 🟢 REVISED: Delete Column hidden if not Pending */}
-                    {true && (
-                      <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
-                    )}
+                    <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      Actions
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={12}
+                        colSpan={13}
                         className="h-24 text-center text-muted-foreground text-sm"
                       >
                         No products found.
@@ -1537,6 +1542,29 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                       {items.map((item, idx) => {
                         const isManual = !item.rfidTags || item.rfidTags.length === 0;
                         if (!isManual) return null;
+                        
+                        const hasAllocations = Boolean(
+                          (item.lot_allocations && item.lot_allocations.length > 0) ||
+                          (item.lot_id && item.batch)
+                        );
+
+                        const allocatedSum = item.lot_allocations && item.lot_allocations.length > 0
+                          ? item.lot_allocations.reduce((sum, g) => 
+                              sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0)
+                          : (item.lot_id && item.batch ? item.quantity : null);
+
+                        const hasQtyMismatch = allocatedSum !== null && allocatedSum !== Number(item.quantity);
+
+                        const displayInfo = item.lot_allocations && item.lot_allocations.length > 0
+                          ? (item.lot_allocations.length === 1
+                              ? `${item.lot_allocations[0].lot_name || `Lot #${item.lot_allocations[0].lot_id}`} • ${item.lot_allocations[0].batches.map(b => b.batch_no).filter(Boolean).join(', ')} (${allocatedSum} ${item.unit})`
+                              : `${item.lot_allocations.length} Lots • ${item.lot_allocations.reduce((acc, g) => acc + (g.batches?.length || 1), 0)} Batches (${allocatedSum} ${item.unit})`)
+                          : (item.lot_id && item.batch
+                              ? `${lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || `Lot #${item.lot_id}`} • ${item.batch}`
+                              : null);
+
+                        const isBadQA = item.qa_status && item.qa_status !== 'GOOD';
+
                         return (
                           <TableRow
                             key={item.id || idx}
@@ -1553,6 +1581,62 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                 {item.description}
                               </div>
                             </TableCell>
+
+                            {/* PRODUCT TYPE CELL */}
+                            <TableCell className="align-middle p-2">
+                              <span className="text-xs text-muted-foreground font-medium">
+                                {item.product_type_name || "-"}
+                              </span>
+                            </TableCell>
+                            
+                            {/* LOT & BATCH ALLOCATION CELL */}
+                            <TableCell className="align-middle p-2">
+                              <div className="flex flex-col gap-1">
+                                {hasAllocations && displayInfo ? (
+                                  <Badge
+                                    variant="outline"
+                                    onClick={() => handleOpenLotBatchModal(idx)}
+                                    className={cn(
+                                      "text-[11px] py-1 px-2 font-medium cursor-pointer transition-colors max-w-[280px] truncate justify-start gap-1.5 shadow-2xs hover:opacity-85",
+                                      isBadQA
+                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                        : "bg-primary/10 text-primary border-primary/30"
+                                    )}
+                                    title={`Click to edit allocations:\n${displayInfo}`}
+                                  >
+                                    <Layers className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">{displayInfo}</span>
+                                  </Badge>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleOpenLotBatchModal(idx)}
+                                    className={cn(
+                                      "h-8 text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 justify-start gap-1.5 shadow-2xs",
+                                      lotDetailsError && !hasAllocations && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                    )}
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-amber-600" />
+                                    Assign Lot &amp; Batch
+                                  </Button>
+                                )}
+
+                                {hasQtyMismatch && (
+                                  <Badge
+                                    variant="destructive"
+                                    onClick={() => handleOpenLotBatchModal(idx)}
+                                    className="text-[10px] py-0.5 px-1.5 font-bold cursor-pointer gap-1 shadow-2xs hover:bg-destructive/90 transition-colors w-fit"
+                                    title={`Quantity Mismatch: Table quantity is ${item.quantity}, but allocated batch sum is ${allocatedSum}. Click to balance batches.`}
+                                  >
+                                    <AlertCircle className="w-3 h-3" />
+                                    Mismatch ({allocatedSum} alloc)
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+
                             <TableCell className="text-sm text-muted-foreground align-middle">
                               <Badge
                                 variant="outline"
@@ -1563,20 +1647,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             </TableCell>
                             {/* Quantity */}
                             <TableCell className="text-center align-middle p-2">
-                              {true ? (
-                                <Input
-                                  type="number"
-                                  className="h-9 w-full text-center text-sm border-border px-2"
-                                  value={item.quantity}
-                                  onChange={(e) =>
-                                    handleItemChange(idx, "quantity", e.target.value)
-                                  }
-                                />
-                              ) : (
-                                <span className="text-sm font-semibold text-foreground">
-                                  {item.quantity}
-                                </span>
-                              )}
+                              <Input
+                                type="number"
+                                className="h-9 w-full text-center text-sm border-border px-2"
+                                value={item.quantity}
+                                onChange={(e) =>
+                                  handleItemChange(idx, "quantity", e.target.value)
+                                }
+                              />
                             </TableCell>
                             {/* Unit Price */}
                             <TableCell className="text-right align-middle p-2 bg-muted/10">
@@ -1586,22 +1664,16 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             </TableCell>
                             {/* Agreed Price */}
                             <TableCell className="text-center align-middle p-2">
-                              {true ? (
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  className="h-9 w-full text-right text-sm border-border px-2"
-                                  value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
-                                  onChange={(e) =>
-                                    handleItemChange(idx, "agreedPrice", e.target.value)
-                                  }
-                                />
-                              ) : (
-                                <span className="text-sm text-foreground">
-                                  {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </span>
-                              )}
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                className="h-9 w-full text-right text-sm border-border px-2"
+                                value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
+                                onChange={(e) =>
+                                  handleItemChange(idx, "agreedPrice", e.target.value)
+                                }
+                              />
                             </TableCell>
                             {/* Variance */}
                             <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
@@ -1611,173 +1683,74 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono whitespace-nowrap">
                               {(Number(item.grossAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </TableCell>
-                            {/* Discount */}
                             <TableCell className="align-middle p-2">
-                              {true ? (
-                                (() => {
-                                  const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
-                                  const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
-                                  const currentDiscVal = item.discountType?.toString() ? (
-                                    lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
-                                      ? item.discountType.toString()
-                                      : defaultVal
-                                  ) : defaultVal;
-                                  return (
-                                    <LocalSearchableSelect
-                                      value={currentDiscVal}
-                                      onValueChange={(val) => handleItemChange(idx, "discountType", val)}
-                                      options={lineDiscountOptions.map((opt) => ({
-                                        value: opt.id.toString(),
-                                        label: opt.discount_type,
-                                      }))}
-                                      placeholder="Select Discount..."
-                                      className="h-9 w-full text-xs"
-                                    />
-                                  );
-                                })()
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  {lineDiscountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right align-middle p-2">
-                              <Input type="number" readOnly className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""} />
-                            </TableCell>
-                            <TableCell className="text-right font-bold text-sm text-foreground align-middle whitespace-nowrap">
-                              ₱{(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </TableCell>
-                            <TableCell className="align-middle p-2">
-                              {true ? (
-                                <LocalSearchableSelect
-                                  value={item.lot_id ? item.lot_id.toString() : ""}
-                                  onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
-                                  options={lotOptions
-                                    .filter(l => {
-                                      if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
-                                      const onhand = lotOnhandMap[l.lot_id] ?? 0;
-                                      const maxCap = l.max_batch_capacity ?? 0;
-                                      const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                      return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
-                                    })
-                                    .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
-                                  placeholder="Select lot"
-                                  className="h-9 text-xs"
-                                />
-                              ) : (
-                                <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
-                              )}
-                            </TableCell>
-                            {/* Capacity */}
-                            <TableCell className="align-middle p-2 text-center">
                               {(() => {
-                                if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
-                                const lot = lotOptions.find(l => l.lot_id === item.lot_id);
-                                const maxCap = lot?.max_batch_capacity ?? 0;
-                                const onhand = lotOnhandMap[item.lot_id] ?? 0;
-                                const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                const isFull = maxCap > 0 && item.quantity > availableCap;
+                                const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
+                                const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
+                                const currentDiscVal = item.discountType?.toString() ? (
+                                  lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
+                                    ? item.discountType.toString()
+                                    : defaultVal
+                                ) : defaultVal;
                                 return (
-                                  <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
-                                    {item.quantity} / {availableCap}
-                                  </div>
+                                  <LocalSearchableSelect
+                                    value={currentDiscVal}
+                                    onValueChange={(val) => handleItemChange(idx, "discountType", val)}
+                                    options={lineDiscountOptions.map((opt) => ({
+                                      value: opt.id.toString(),
+                                      label: opt.discount_type,
+                                    }))}
+                                    placeholder="Select Discount..."
+                                    className="h-9 w-full text-xs"
+                                  />
                                 );
                               })()}
                             </TableCell>
+
+                            {/* Return Type */}
                             <TableCell className="align-middle p-2">
-                              {true ? (
-                                <Input
-                                  type="text"
-                                  className="h-9 w-full text-left text-sm border-border px-2"
-                                  value={item.batch || ""}
-                                  onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
-                                  placeholder="Batch no."
-                                />
-                              ) : (
-                                <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
-                              )}
-                            </TableCell>
-                            {/* MFG Date */}
-                            <TableCell className="align-middle p-2">
-                              {true ? (
-                                <Input
-                                  type="date"
-                                  className="h-9 w-full text-sm border-border px-2"
-                                  value={item.manufacturing_date || ""}
-                                  onChange={(e) => handleItemChange(idx, "manufacturing_date", e.target.value)}
-                                />
-                              ) : (
-                                <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
-                              )}
-                            </TableCell>
-                            {/* EXP Date */}
-                            <TableCell className="align-middle p-2">
-                              {true ? (
-                                <Input
-                                  type="date"
-                                  className="h-9 w-full text-sm border-border px-2"
-                                  value={item.expiry_date || ""}
-                                  onChange={(e) => handleItemChange(idx, "expiry_date", e.target.value)}
-                                />
-                              ) : (
-                                <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
-                              )}
-                            </TableCell>
-                            {/* Reason */}
-                            <TableCell className="align-middle p-2">
-                              {true ? (
-                                <ReasonInputSection
-                                  value={item.reason || ""}
-                                  onChange={(val) => handleItemChange(idx, "reason", val)}
-                                />
-                              ) : (
-                                <span className="text-sm text-muted-foreground italic truncate block max-w-[120px]" title={item.reason || ""}>
-                                  {item.reason || "-"}
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="align-middle p-2">
-                              {true ? (
-                                <LocalSearchableSelect
-                                  value={item.returnType || ""}
-                                  onValueChange={(val) => {
-                                    handleItemChange(idx, "returnType", val);
-                                    setReturnTypeError(false);
-                                  }}
-                                  options={returnTypeOptions.length > 0
-                                    ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
+                              <LocalSearchableSelect
+                                value={item.returnType || ""}
+                                onValueChange={(val) => handleItemChange(idx, "returnType", val)}
+                                options={
+                                  returnTypeOptions.length > 0
+                                    ? returnTypeOptions.map((rt) => ({
+                                        value: rt.type_name,
+                                        label: rt.type_name,
+                                      }))
                                     : [
-                                      { value: "Good Order", label: "Good Order" },
-                                      { value: "Bad Order", label: "Bad Order" }
-                                    ]
-                                  }
-                                  placeholder="Select type"
-                                  className={cn(
-                                    "h-9 text-xs",
-                                    returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                  )}
-                                />
-                              ) : (
-                                <Badge variant="outline" className="font-normal">{item.returnType || "Unassigned"}</Badge>
-                              )}
+                                        { value: "Good Order", label: "Good Order" },
+                                        { value: "Bad Order", label: "Bad Order" },
+                                      ]
+                                }
+                                placeholder="Select Return Type..."
+                                className={cn(
+                                  "h-9 w-full text-xs",
+                                  returnTypeError && !item.returnType && "border-destructive ring-1 ring-destructive/30 bg-destructive/5"
+                                )}
+                              />
                             </TableCell>
-                            {true && (
-                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                <button onClick={() => handleDuplicateItem(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
-                                  <Copy className="h-4 w-4" />
-                                </button>
-                                <button onClick={() => handleRemoveItem(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </TableCell>
-                            )}
+
+                            {/* Actions */}
+                            <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleRemoveItem(idx)}
+                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md"
+                                title="Remove Item"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         );
                       })}
 
+                      {/* 2. RENDER RFID GROUPED ITEMS */}
                       {Object.values(
                         items.filter(i => i.rfidTags && i.rfidTags.length > 0).reduce((acc, item) => {
-                          // Find the true index in items
                           const idx = items.findIndex(d => d === item);
                           const rType = item.returnType || "Unassigned";
                           const key = `${item.productId}-${item.unit}-${rType}`;
@@ -1786,6 +1759,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               key,
                               code: item.code,
                               description: item.description,
+                              productType: item.product_type_name || (typeof item.product_type === "string" ? item.product_type : undefined),
                               unit: item.unit,
                               returnType: rType,
                               unitPrice: item.unitPrice,
@@ -1810,7 +1784,6 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                         <React.Fragment key={group.key}>
                           {/* Parent Summary Row */}
                           <TableRow className="bg-muted/10 font-semibold border-b border-border">
-                            {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
                             <TableCell className="text-sm text-foreground align-middle font-mono">
                               <div className="flex items-center gap-2">
                                 {group.children.length > 0 ? (
@@ -1822,7 +1795,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                     <ChevronDown className={`h-4 w-4 transition-transform ${expandedGroups[group.key] ? 'rotate-180' : ''}`} />
                                   </button>
                                 ) : (
-                                  <div className="w-6" /> // spacer
+                                  <div className="w-6" />
                                 )}
                                 <span>{group.code}</span>
                               </div>
@@ -1834,6 +1807,18 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               >
                                 {group.description}
                               </div>
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                              {group.productType ? (
+                                <Badge variant="outline" className="font-normal text-[11px]">
+                                  {group.productType}
+                                </Badge>
+                              ) : "-"}
+                            </TableCell>
+                            <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                              <Badge variant="outline" className="font-normal text-[11px]">
+                                {group.children.length} RFID scan(s)
+                              </Badge>
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground align-middle">
                               <Badge
@@ -1856,93 +1841,86 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               {(group.totalVariance || 0) > 0 ? "+" : ""}{(group.totalVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
-                              {(
-                                Number(group.totalGross)
-                              ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </TableCell>
-                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                              -
-                            </TableCell>
-                            <TableCell className="text-right align-middle p-2 text-muted-foreground font-mono">
-                              {group.totalDiscount.toLocaleString()}
-                            </TableCell>
-                            <TableCell className="text-right font-bold text-sm text-primary align-middle">
-                              {group.totalNet.toLocaleString()}
+                              {(Number(group.totalGross)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="align-middle p-2 text-center text-muted-foreground">
                               -
                             </TableCell>
                             <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                              -
-                            </TableCell>
-                            <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                              -
-                            </TableCell>
-                            <TableCell className="align-middle p-2">
-                              {group.returnType !== "Unassigned" ? (
-                                <Badge
-                                  variant="secondary"
-                                  className="bg-primary/20 text-primary hover:bg-primary/20 hover:text-primary font-medium"
-                                >
-                                  {group.returnType}
-                                </Badge>
-                              ) : (
-                                <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
-                              )}
+                              <Badge variant="outline" className="font-normal text-[11px]">
+                                {group.returnType || "-"}
+                              </Badge>
                             </TableCell>
                             <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
                           </TableRow>
 
-                          {/* Child Rows (Individual Scans/Additions) */}
-                          {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => (
-                            <TableRow
-                              key={item.id || idx}
-                              className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
-                            >
-                              {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
-                              <TableCell colSpan={2} className="text-sm text-foreground font-bold align-middle pl-10 font-mono">
-                                {item.rfidTags && item.rfidTags.length > 0 ? (
-                                  <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
-                                    <span className="text-primary truncate">{item.rfidTags[0]}</span>
-                                    <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
-                                  </div>
-                                ) : null}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground align-middle">
-                              </TableCell>
-                              <TableCell className="text-center align-middle p-2">
-                                {true ? (
-                                  item.rfidTags && item.rfidTags.length > 0 ? (
-                                    <div className="text-center font-semibold text-sm">{item.quantity}</div>
+                          {/* Child Rows */}
+                          {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => {
+                            const hasAllocations = Boolean(
+                              (item.lot_allocations && item.lot_allocations.length > 0) ||
+                              (item.lot_id && item.batch)
+                            );
+                            const allocatedSum = item.lot_allocations && item.lot_allocations.length > 0
+                              ? item.lot_allocations.reduce((sum, g) => 
+                                  sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0)
+                              : (item.lot_id && item.batch ? item.quantity : null);
+
+                            const displayInfo = item.lot_allocations && item.lot_allocations.length > 0
+                              ? (item.lot_allocations.length === 1
+                                  ? `${item.lot_allocations[0].lot_name || `Lot #${item.lot_allocations[0].lot_id}`} • ${item.lot_allocations[0].batches.map(b => b.batch_no).filter(Boolean).join(', ')} (${allocatedSum} ${item.unit})`
+                                  : `${item.lot_allocations.length} Lots (${allocatedSum} ${item.unit})`)
+                              : (item.lot_id && item.batch ? `${item.batch}` : null);
+
+                            return (
+                              <TableRow
+                                key={item.id || idx}
+                                className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
+                              >
+                                <TableCell colSpan={2} className="text-sm text-foreground font-bold align-middle pl-10 font-mono">
+                                  {item.rfidTags && item.rfidTags.length > 0 ? (
+                                    <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
+                                      <span className="text-primary truncate">{item.rfidTags[0]}</span>
+                                      <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
+                                    </div>
+                                  ) : null}
+                                </TableCell>
+                                <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                                  {item.product_type_name || "-"}
+                                </TableCell>
+                                <TableCell className="align-middle p-2">
+                                  {hasAllocations && displayInfo ? (
+                                    <Badge
+                                      variant="outline"
+                                      onClick={() => handleOpenLotBatchModal(idx)}
+                                      className="text-[10px] py-0.5 px-1.5 font-medium cursor-pointer transition-colors bg-primary/10 text-primary border-primary/30 gap-1"
+                                    >
+                                      <Layers className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">{displayInfo}</span>
+                                    </Badge>
                                   ) : (
-                                    <Input
-                                      type="number"
-                                      className="h-9 w-full text-center text-sm border-border px-2"
-                                      value={item.quantity}
-                                      onChange={(e) =>
-                                        handleItemChange(
-                                          idx,
-                                          "quantity",
-                                          e.target.value,
-                                        )
-                                      }
-                                    />
-                                  )
-                                ) : (
-                                  <span className="text-sm font-semibold text-foreground">
-                                    {item.quantity}
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenLotBatchModal(idx)}
+                                      className="h-7 text-[10px] font-semibold text-amber-700 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20"
+                                    >
+                                      Assign
+                                    </Button>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-sm text-muted-foreground align-middle">
+                                  {item.unit}
+                                </TableCell>
+                                <TableCell className="text-center align-middle p-2">
+                                  <div className="text-center font-semibold text-sm">{item.quantity}</div>
+                                </TableCell>
+                                <TableCell className="text-right align-middle p-2 bg-muted/10">
+                                  <span className="text-sm text-foreground">
+                                    {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                   </span>
-                                )}
-                              </TableCell>
-                              {/* Unit Price */}
-                              <TableCell className="text-right align-middle p-2 bg-muted/10">
-                                <span className="text-sm text-foreground">
-                                  {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </span>
-                              </TableCell>
-                              {/* Agreed Price */}
-                              <TableCell className="text-center align-middle p-2">
-                                {true ? (
+                                </TableCell>
+                                <TableCell className="text-center align-middle p-2">
                                   <Input
                                     type="number"
                                     min="0"
@@ -1950,201 +1928,46 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                     className="h-9 w-full text-right text-sm border-border px-2"
                                     value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
                                     onChange={(e) =>
-                                      handleItemChange(
-                                        idx,
-                                        "agreedPrice",
-                                        e.target.value,
-                                      )
+                                      handleItemChange(idx, "agreedPrice", e.target.value)
                                     }
                                   />
-                                ) : (
-                                  <span className="text-sm text-foreground">
-                                    {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                                  {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
+                                  {(Number(item.grossAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="align-middle p-2">
+                                  <span className="text-xs text-muted-foreground">
+                                    {lineDiscountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
                                   </span>
-                                )}
-                              </TableCell>
-                              {/* Variance */}
-                              <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                                {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </TableCell>
-                              {/* Gross */}
-                              <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
-                                {(
-                                  Number(item.grossAmount) || 0
-                                ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {true ? (
-                                  (() => {
-                                    const noDiscountOpt = lineDiscountOptions.find(o => o.discount_type === "No Discount");
-                                    const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
-                                    const currentDiscVal = item.discountType?.toString() ? (
-                                      lineDiscountOptions.some(o => o.id.toString() === item.discountType?.toString())
-                                        ? item.discountType.toString()
-                                        : defaultVal
-                                    ) : defaultVal;
-                                    return (
-                                      <LocalSearchableSelect
-                                        value={currentDiscVal}
-                                        onValueChange={(val) => handleItemChange(idx, "discountType", val)}
-                                        options={lineDiscountOptions.map((opt) => ({
-                                          value: opt.id.toString(),
-                                          label: opt.discount_type,
-                                        }))}
-                                        placeholder="Select Discount..."
-                                        className="h-9 w-full text-xs"
-                                      />
-                                    );
-                                  })()
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">
-                                    {lineDiscountOptions.find(
-                                      (d) => d.id.toString() == item.discountType,
-                                    )?.discount_type || "None"}
-                                  </span>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right align-middle p-2">
-                                <Input
-                                  type="number"
-                                  readOnly
-                                  className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed"
-                                  value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""}
-                                />
-                              </TableCell>
-                              <TableCell className="text-right font-bold text-sm text-foreground align-middle">
-                                {(Number(item.totalAmount) || 0).toLocaleString()}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {true ? (
-                                  <LocalSearchableSelect
-                                    value={item.lot_id ? item.lot_id.toString() : ""}
-                                    onValueChange={(val) => handleItemChange(idx, "lot_id", Number(val))}
-                                    options={lotOptions
-                                      .filter(l => {
-                                        if (l.branch_id !== branchId || l.unit_id !== item.unit_id) return false;
-                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
-                                        const maxCap = l.max_batch_capacity ?? 0;
-                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
-                                      })
-                                      .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
-                                    placeholder="Select lot"
-                                    className={cn(
-                                      "h-9 text-xs",
-                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* Capacity */}
-                              <TableCell className="align-middle p-2 text-center">
-                                {(() => {
-                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
-                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
-                                  const maxCap = lot?.max_batch_capacity ?? 0;
-                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
-                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                  const isFull = maxCap > 0 && item.quantity > availableCap;
-                                  return (
-                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
-                                      {item.quantity} / {availableCap}
-                                    </div>
-                                  );
-                                })()}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {true ? (
-                                  <Input
-                                    type="text"
-                                    className={cn(
-                                      "h-9 w-full text-left text-sm border-border px-2",
-                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.batch || ""}
-                                    onChange={(e) => handleItemChange(idx, "batch", e.target.value)}
-                                    placeholder="Batch no."
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* MFG Date */}
-                              <TableCell className="align-middle p-2">
-                                {true ? (
-                                  <Input
-                                    type="date"
-                                    className={cn(
-                                      "h-9 w-full text-sm border-border px-2",
-                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.manufacturing_date || ""}
-                                    onChange={(e) => handleItemChange(idx, "manufacturing_date", e.target.value)}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* EXP Date */}
-                              <TableCell className="align-middle p-2">
-                                {true ? (
-                                  <Input
-                                    type="date"
-                                    className={cn(
-                                      "h-9 w-full text-sm border-border px-2",
-                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.expiry_date || ""}
-                                    onChange={(e) => handleItemChange(idx, "expiry_date", e.target.value)}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {true ? (
+                                </TableCell>
+                                <TableCell className="align-middle p-2">
                                   <LocalSearchableSelect
                                     value={item.returnType || ""}
-                                    onValueChange={(val) => {
-                                      handleItemChange(idx, "returnType", val);
-                                      setReturnTypeError(false);
-                                    }}
-                                    options={returnTypeOptions.length > 0
-                                      ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
-                                      : [
-                                        { value: "Good Order", label: "Good Order" },
-                                        { value: "Bad Order", label: "Bad Order" }
-                                      ]
+                                    onValueChange={(val) => handleItemChange(idx, "returnType", val)}
+                                    options={
+                                      returnTypeOptions.length > 0
+                                        ? returnTypeOptions.map((rt) => ({
+                                            value: rt.type_name,
+                                            label: rt.type_name,
+                                          }))
+                                        : [
+                                            { value: "Good Order", label: "Good Order" },
+                                            { value: "Bad Order", label: "Bad Order" },
+                                          ]
                                     }
-                                    placeholder="Select type"
+                                    placeholder="Select Return Type..."
                                     className={cn(
-                                      "h-9 text-sm",
-                                      returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      "h-9 w-full text-xs",
+                                      returnTypeError && !item.returnType && "border-destructive ring-1 ring-destructive/30 bg-destructive/5"
                                     )}
                                   />
-                                ) : (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-[10px] font-normal"
-                                  >
-                                    {item.returnType as React.ReactNode}
-                                  </Badge>
-                                )}
-                              </TableCell>
-                              {true && (
+                                </TableCell>
                                 <TableCell className="text-center align-middle whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                   <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
-                                    onClick={() => handleDuplicateItem(idx)}
-                                    title="Duplicate row"
-                                  >
-                                    <Copy className="h-4 w-4" />
-                                  </Button>
-                                  <Button
+                                    type="button"
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
@@ -2154,9 +1977,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
                                 </TableCell>
-                              )}
-                            </TableRow>
-                          ))}
+                              </TableRow>
+                            );
+                          })}
                         </React.Fragment>
                       ))}
                     </>
@@ -2448,6 +2271,36 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* LOT & BATCH SELECTION MODAL */}
+      {activeLotBatchIndex !== null && activeLotBatchIndex >= 0 && items[activeLotBatchIndex] && (
+        <LotBatchSelectionModal
+          open={lotBatchModalOpen}
+          onOpenChange={setLotBatchModalOpen}
+          branchId={branchId ? Number(branchId) : undefined}
+          productId={items[activeLotBatchIndex].productId}
+          productName={items[activeLotBatchIndex].description}
+          productCode={items[activeLotBatchIndex].code}
+          productUomId={items[activeLotBatchIndex].unit_id}
+          productUomName={items[activeLotBatchIndex].unit}
+          requestedQuantity={items[activeLotBatchIndex].quantity}
+          adjustmentType="IN"
+          initialValues={{
+            lot_id: items[activeLotBatchIndex].lot_id || undefined,
+            lot_name: items[activeLotBatchIndex].lot_name || undefined,
+            inventory_lot_id: items[activeLotBatchIndex].inventory_lot_id || undefined,
+            batch_no: items[activeLotBatchIndex].batch || "",
+            manufacturing_date: items[activeLotBatchIndex].manufacturing_date,
+            expiry_date: items[activeLotBatchIndex].expiry_date,
+            qa_status: items[activeLotBatchIndex].qa_status || "GOOD",
+            lot_allocations: items[activeLotBatchIndex].lot_allocations,
+            total_quantity: items[activeLotBatchIndex].quantity,
+          }}
+          initialLotAllocations={items[activeLotBatchIndex].lot_allocations}
+          existingFormAllocations={formSiblingAllocations.filter((_, idx) => idx !== activeLotBatchIndex)}
+          onConfirm={handleApplyLotBatch}
+        />
+      )}
     </div>
   );
 }

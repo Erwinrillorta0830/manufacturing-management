@@ -1,4 +1,4 @@
-// src/modules/manufacturing-management/sales-and-fulfillment/sales-return-manual/types/sales-return.types.ts
+import type { LotAllocationGroup, QAStatus } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 
 // --- RETURN TYPES ---
 export type ReturnType = "Good Order" | "Bad Order" | "Expired" | string;
@@ -20,10 +20,13 @@ export interface SalesReturnItem {
   discountAmount: number;
   totalAmount: number;
   lot_id?: number | null;
+  lot_name?: string | null;
   inventory_lot_id?: number | null;
   batch?: string | null;
   manufacturing_date?: string | null;
   expiry_date?: string | null;
+  qa_status?: QAStatus | null;
+  lot_allocations?: LotAllocationGroup[];
   reason?: string;
   returnType?: string;
   rfidTags?: string[];
@@ -32,6 +35,8 @@ export interface SalesReturnItem {
   // 🟢 Fields for Price Type Recalculation
   availablePrices?: ProductPerPriceType[];
   unitMultiplier?: number;
+  product_type?: number | string | null;
+  product_type_name?: string | null;
   priceA?: number;
   priceB?: number;
   priceC?: number;
@@ -91,6 +96,7 @@ export interface Product {
   description: string;
   product_brand: number;
   product_category: number;
+  product_type?: number | null;
 
   // Critical for Unit Logic
   unit_of_measurement: number;
@@ -129,6 +135,12 @@ export interface ProductPerPriceType {
   status: string;
 }
 
+export interface ProductType {
+  id: number;
+  name: string;
+  default_purchase_price_type_id?: number | null;
+}
+
 export interface ProductCatalog {
   brands: Brand[];
   categories: Category[];
@@ -136,6 +148,7 @@ export interface ProductCatalog {
   units: Unit[];
   connections: ProductSupplierConnection[];
   products: Product[];
+  productTypes?: ProductType[];
   supplierCategoryDiscount?: SupplierCategoryDiscount[];
   productPrices: ProductPerPriceType[];
 }

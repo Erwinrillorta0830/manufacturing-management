@@ -25,6 +25,7 @@ import {
   Supplier,
   Unit,
   Product,
+  ProductType,
   ProductSupplierConnection,
   API_LineDiscount,
   PriceTypeOption,
@@ -69,6 +70,7 @@ export function ProductLookupModal({
     ProductSupplierConnection[]
   >([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productTypesList, setProductTypesList] = useState<ProductType[]>([]);
   const [productPrices, setProductPrices] = useState<ProductPerPriceType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -104,6 +106,7 @@ export function ProductLookupModal({
           setUnitsList(Array.isArray(catalog.units) ? catalog.units : []);
           setSupplierConnections(Array.isArray(catalog.connections) ? catalog.connections : []);
           setProducts(Array.isArray(catalog.products) ? catalog.products : []);
+          setProductTypesList(Array.isArray(catalog.productTypes) ? catalog.productTypes : []);
           setProductPrices(Array.isArray(catalog.productPrices) ? catalog.productPrices : []);
         } catch (error) {
           console.error("Failed to load data", error);
@@ -302,6 +305,11 @@ export function ProductLookupModal({
       } else {
         const totalAmount = Math.round(selectedPrice * 100) / 100;
 
+        const productTypeId = product.product_type ? Number(product.product_type) : null;
+        const productTypeName = productTypeId
+          ? productTypesList.find((pt) => Number(pt.id) === productTypeId)?.name || null
+          : null;
+
         const newItem: SalesReturnItem = {
           tempId: `added-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           productId: product.product_id,
@@ -319,6 +327,8 @@ export function ProductLookupModal({
           availablePrices: productPrices.filter(p => p.product_id === product.product_id),
           returnType: "",
           reason: "",
+          product_type: productTypeId,
+          product_type_name: productTypeName,
           unitMultiplier: product.unit_of_measurement_count || 1,
         };
         return [...prevItems, newItem];

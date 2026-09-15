@@ -20,6 +20,7 @@ import type {
   API_SalesReturnType,
   PriceTypeOption,
   ProductPerPriceType,
+  ProductType,
 } from "../types/sales-return.types";
 
 import * as repo from "./sales-return.repo";
@@ -81,16 +82,20 @@ export async function fetchReturnDetails(
 ): Promise<SalesReturnItem[]> {
   if (!returnNo) return [];
 
-  const [detailsRes, unitsRes, returnTypesRes] =
+  const [detailsRes, unitsRes, returnTypesRes, productTypesRes] =
     await Promise.all([
       repo.getRawReturnDetails(returnNo),
       repo.getRawUnits(),
       repo.getRawReferences().then((refs) => refs[4]),
+      repo.getRawProductTypes().catch(() => ({ data: [] })),
     ]);
 
   const rawItems = detailsRes.data || [];
   const units = (unitsRes.data || []) as unknown as Unit[];
   const returnTypes = (returnTypesRes.data || []) as unknown as API_SalesReturnType[];
+  const productTypes = (productTypesRes?.data || []) as { id: number; name: string }[];
+  const productTypeMap = new Map<number, string>();
+  productTypes.forEach((pt) => productTypeMap.set(Number(pt.id), pt.name));
 
   // Build aggregate discount percentage map from junction + line_discount tables
   const discountPercentMap = await buildDiscountPercentMap();
@@ -112,6 +117,15 @@ export async function fetchReturnDetails(
     const returnTypeObj = returnTypes.find(
       (rt: API_SalesReturnType) => rt.type_id == detail.sales_return_type_id,
     );
+
+    const productTypeId =
+      typeof product.product_type === "object" && product.product_type !== null
+        ? (product.product_type.id ?? product.product_type.type_id)
+        : product.product_type;
+    const productTypeName =
+      typeof product.product_type === "object" && product.product_type !== null
+        ? product.product_type.name || null
+        : productTypeMap.get(Number(product.product_type)) || null;
 
     return {
       id: detail.detail_id || detail.id,
@@ -154,6 +168,8 @@ export async function fetchReturnDetails(
         ? Number(detail.sales_return_type_id)
         : "",
       returnType: returnTypeObj ? returnTypeObj.type_name : "Good Order",
+      product_type: productTypeId ? Number(productTypeId) : null,
+      product_type_name: productTypeName,
       priceA: product.priceA,
       priceB: product.priceB,
       priceC: product.priceC,
@@ -176,6 +192,7 @@ export async function fetchReferences(): Promise<{
   lineDiscounts: API_LineDiscount[];
   returnTypes: API_SalesReturnType[];
   priceTypes: PriceTypeOption[];
+  productTypes: ProductType[];
 }> {
   const [salesmenRes, customersRes, branchesRes, lineDiscountsRes, returnTypesRes] =
     await repo.getRawReferences();
@@ -187,6 +204,15 @@ export async function fetchReferences(): Promise<{
     priceTypesData = ((priceTypesRes.data || []) as unknown as PriceTypeOption[]);
   } catch (err) {
     console.error("Failed to fetch price types:", err);
+  }
+
+  // Fetch product types
+  let productTypesData: ProductType[] = [];
+  try {
+    const productTypesRes = await repo.getRawProductTypes();
+    productTypesData = ((productTypesRes.data || []) as unknown as ProductType[]);
+  } catch (err) {
+    console.error("Failed to fetch product types:", err);
   }
 
   const salesmenData = (salesmenRes.data || []) as any[];
@@ -252,6 +278,7 @@ export async function fetchReferences(): Promise<{
     lineDiscounts: enrichedLineDiscounts,
     returnTypes: (returnTypesRes.data || []) as unknown as API_SalesReturnType[],
     priceTypes: priceTypesData,
+    productTypes: productTypesData,
   };
 }
 
@@ -278,9 +305,10 @@ export async function fetchProductCatalog(
   supplierCategoryDiscount: any[];
   products: Product[];
   productPrices: ProductPerPriceType[];
+  productTypes: ProductType[];
 }> {
   const catalogData = await repo.getRawProductCatalog(includeInactive);
-  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes, productPricesRes] = catalogData;
+  const [brandsRes, categoriesRes, suppliersRes, unitsRes, connectionsRes, productsRes, productPricesRes, productTypesRes] = catalogData;
 
   let scdpcRes = { data: [] as any[] };
 
@@ -318,6 +346,12 @@ export async function fetchProductCatalog(
       : item.product_id,
   }));
 
+  const productTypes = ((productTypesRes?.data || []) as any[]).map((item: any) => ({
+    id: item.id,
+    name: item.name,
+    default_purchase_price_type_id: item.default_purchase_price_type_id,
+  }));
+
   return {
     brands: (brandsRes.data || []) as unknown as Brand[],
     categories: (categoriesRes.data || []) as unknown as Category[],
@@ -327,6 +361,7 @@ export async function fetchProductCatalog(
     supplierCategoryDiscount,
     products: (productsRes.data || []) as unknown as Product[],
     productPrices: productPrices as ProductPerPriceType[],
+    productTypes: productTypes as ProductType[],
   };
 }
 
