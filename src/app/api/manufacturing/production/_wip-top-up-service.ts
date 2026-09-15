@@ -226,7 +226,6 @@ async function resolveTransactionTypeId(typeName: string): Promise<number> {
 }
 
 interface InventoryLotRow extends Record<string, unknown> {
-    id?: unknown;
     inventory_lot_id?: unknown;
     lot_id?: unknown;
     product_id?: unknown;
@@ -235,7 +234,6 @@ interface InventoryLotRow extends Record<string, unknown> {
     expiry_date?: unknown;
     manufacturing_date?: unknown;
     batch_no?: unknown;
-    unit_id?: unknown;
     status?: unknown;
 }
 
@@ -254,7 +252,7 @@ async function findInventoryLot(
     if (lotId) filters.push(`filter[lot_id][_eq]=${lotId}`);
     if (batchNo) filters.push(`filter[batch_no][_eq]=${encodeURIComponent(batchNo)}`);
     const rows = await directusRows<InventoryLotRow>(
-        `/items/mm_inventory_lots?${filters.join("&")}&fields=id,inventory_lot_id,lot_id,product_id,branch_id,batch_no,qa_status,expiry_date,manufacturing_date,status,unit_id&limit=1`,
+        `/items/mm_inventory_lots?${filters.join("&")}&fields=inventory_lot_id,lot_id,product_id,branch_id,batch_no,qa_status,expiry_date,manufacturing_date,status&limit=1`,
         "Load inventory lot for WIP top-up"
     );
     const row = rows[0] || null;
@@ -322,7 +320,7 @@ async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: nu
         if (isExpired(inventoryLot.expiry_date ?? receipt?.expiry_date)) {
             throw new WipTopUpError("The inventory lot is already expired.", 409, "LOT_EXPIRED");
         }
-        const inventoryLotId = relationId(inventoryLot.inventory_lot_id ?? inventoryLot.id, "inventory_lot_id");
+        const inventoryLotId = relationId(inventoryLot.inventory_lot_id, "inventory_lot_id");
         if (!inventoryLotId) {
             throw new WipTopUpError("The selected lot has no canonical inventory lot identifier.", 409, "INVENTORY_LOT_REQUIRED");
         }
@@ -358,9 +356,13 @@ async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: nu
     if (isExpired(inventoryLot.expiry_date)) {
         throw new WipTopUpError("The inventory lot is already expired.", 409, "LOT_EXPIRED");
     }
+    const inventoryLotId = relationId(inventoryLot.inventory_lot_id, "inventory_lot_id");
+    if (!inventoryLotId) {
+        throw new WipTopUpError("The selected lot has no canonical inventory lot identifier.", 409, "INVENTORY_LOT_REQUIRED");
+    }
     return {
         lotId,
-        inventoryLotId: relationId(inventoryLot.inventory_lot_id ?? inventoryLot.id, "inventory_lot_id"),
+        inventoryLotId,
         batchNo: text(inventoryLot.batch_no) || batchNo,
         expiryDate: text(inventoryLot.expiry_date) || null,
         uomId: await resolveProductUomId(input.productId)

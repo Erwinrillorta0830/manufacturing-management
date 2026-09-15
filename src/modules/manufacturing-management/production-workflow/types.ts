@@ -280,6 +280,7 @@ export interface MaterialCandidateLot {
     receipt_id: number | null;
     receipt_no?: string | null;
     source_type?: "RAW_MATERIAL" | "MANUFACTURING" | "INVENTORY" | string | null;
+    storage_lot_name?: string | null;
     mm_lot_id?: number | null;
     inventory_lot_id?: number | null;
     lot_no: string;
