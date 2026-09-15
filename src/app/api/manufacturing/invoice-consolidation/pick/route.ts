@@ -214,11 +214,11 @@ export async function POST(req: NextRequest) {
                 if (invoiceDetailIds.length > 0) {
                     const [soRes, siRes] = await Promise.all([
                         fetch(
-                            `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=reservation_id,id,inventory_lot_id,status`,
+                            `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=reservation_id,id,inventory_lot_id,status`,
                             { headers: directusHeaders, cache: "no-store" }
                         ),
                         fetch(
-                            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&limit=-1&fields=id,inventory_lot_id,status`,
+                            `${DIRECTUS_URL}/items/sales_invoice_reservation?filter[sales_invoice_detail_id][_in]=${invoiceDetailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1&fields=id,inventory_lot_id,status`,
                             { headers: directusHeaders, cache: "no-store" }
                         ),
                     ]);
@@ -427,7 +427,7 @@ export async function PATCH(req: NextRequest) {
 
                             if (detailIds.length > 0) {
                                 const soRes = await fetch(
-                                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&limit=-1`,
+                                    `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${detailIds.join(",")}&filter[status][_in]=Reserved,Picked&limit=-1`,
                                     { headers: directusHeaders, cache: "no-store" }
                                 );
                                 if (soRes.ok) {

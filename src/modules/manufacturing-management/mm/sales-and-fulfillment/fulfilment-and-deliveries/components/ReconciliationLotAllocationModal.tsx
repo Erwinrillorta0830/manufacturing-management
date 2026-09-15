@@ -12,8 +12,7 @@ import {
     CheckCircle2,
     AlertTriangle,
     Info,
-    RotateCcw,
-    Layers,
+ 
     ArrowDownToLine,
     ShieldAlert,
 } from "lucide-react";
@@ -106,31 +105,31 @@ export default function ReconciliationLotAllocationModal({
     const isOverAllocated = totalAllocated > requestedQuantity;
 
     // Auto-allocate action (prioritizes sequential originating batches)
-    const handleAutoAllocate = () => {
-        let remainingToFill = requestedQuantity;
-        const next = allocations.map((resv) => {
-            const maxPick = Number(resv.picked_quantity || resv.reserved_quantity || 0);
-            const alloc = Math.min(maxPick, remainingToFill);
-            remainingToFill = Math.max(0, remainingToFill - alloc);
-            return {
-                ...resv,
-                returned_quantity: alloc,
-            };
-        });
-        setAllocations(next);
-        toast.info(`Auto-allocated ${requestedQuantity} ${uomName} across originating batches.`);
-    };
+    // const handleAutoAllocate = () => {
+    //     let remainingToFill = requestedQuantity;
+    //     const next = allocations.map((resv) => {
+    //         const maxPick = Number(resv.picked_quantity || resv.reserved_quantity || 0);
+    //         const alloc = Math.min(maxPick, remainingToFill);
+    //         remainingToFill = Math.max(0, remainingToFill - alloc);
+    //         return {
+    //             ...resv,
+    //             returned_quantity: alloc,
+    //         };
+    //     });
+    //     setAllocations(next);
+    //     toast.info(`Auto-allocated ${requestedQuantity} ${uomName} across originating batches.`);
+    // };
 
-    // Reset action
-    const handleReset = () => {
-        setAllocations(
-            allocations.map((r) => ({
-                ...r,
-                returned_quantity: 0,
-            }))
-        );
-        toast.info("Cleared all batch return allocations.");
-    };
+    // // Reset action
+    // const handleReset = () => {
+    //     setAllocations(
+    //         allocations.map((r) => ({
+    //             ...r,
+    //             returned_quantity: 0,
+    //         }))
+    //     );
+    //     toast.info("Cleared all batch return allocations.");
+    // };
 
     // Quick fill max for a single batch
     const handleFillMax = (targetIndex: number) => {
@@ -280,7 +279,7 @@ export default function ReconciliationLotAllocationModal({
                         </div>
 
                         {/* Quick Strategy Actions */}
-                        <div className="flex items-center justify-between pt-1">
+                        {/* <div className="flex items-center justify-between pt-1">
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
@@ -302,7 +301,7 @@ export default function ReconciliationLotAllocationModal({
                             <span className="text-[11px] text-muted-foreground font-medium">
                                 Originating Batches: <strong className="text-foreground">{allocations.length}</strong>
                             </span>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* Multi-Lot & Batch List */}

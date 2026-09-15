@@ -1679,7 +1679,12 @@ export function LotBatchSelectionModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-6xl !w-[96vw] h-[92vh] max-h-[920px] p-0 flex flex-col bg-background shadow-2xl border-border overflow-hidden">
+      <DialogContent
+        showCloseButton={false}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="!max-w-6xl !w-[96vw] h-[92vh] max-h-[920px] p-0 flex flex-col bg-background shadow-2xl border-border overflow-hidden [&>button]:hidden"
+      >
         {/* HEADER */}
         <DialogHeader className="p-5 border-b border-border bg-card shrink-0 flex flex-row items-center justify-between">
           

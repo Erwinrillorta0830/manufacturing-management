@@ -1,15 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   X,
   Loader2,
   Plus,
   Trash2,
-  Copy,
   Printer,
   Save,
   AlertTriangle,
+  AlertCircle,
   CheckCircle,
   Link as LinkIcon,
   FileText,
@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Check,
   ChevronsUpDown,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -67,10 +68,14 @@ import {
   API_SalesReturnType,
   PriceTypeOption,
   SalesmanOption,
-  InvoiceLineItem,
   BranchOption,
   LotOption,
 } from "../types/sales-return.types";
+import {
+  LotBatchSelectionModal,
+  LotBatchSelectionResult,
+  FormSiblingAllocation,
+} from "./LotBatchSelectionModal";
 import { ProductLookupModal } from "./ProductLookupModal";
 import { SalesReturnPrintSlip } from "./SalesReturnPrintSlip";
 import { createRoot } from "react-dom/client";
@@ -79,6 +84,7 @@ interface SalesReturnGroup {
   key: string;
   code: string;
   description: string;
+  productType?: string;
   unit: string;
   returnType: string;
   unitPrice: number;
@@ -95,7 +101,7 @@ interface SalesReturnGroup {
 // OPTIMIZED SUB-COMPONENTS (PERFORMANCE FIX)
 // =============================================================================
 
-const RemarksInputSection = React.memo(({ value, onChange, disabled }: { value: string, onChange: (val: string) => void, disabled?: boolean }) => {
+const RemarksInputSection = React.memo(({ value, onChange, disabled, isLoading }: { value: string, onChange: (val: string) => void, disabled?: boolean, isLoading?: boolean }) => {
   const [localRemarks, setLocalRemarks] = useState(value);
 
   useEffect(() => {
@@ -107,14 +113,18 @@ const RemarksInputSection = React.memo(({ value, onChange, disabled }: { value: 
       <Label className="text-xs uppercase font-bold text-muted-foreground">
         Remarks
       </Label>
-      <Textarea
-        value={localRemarks}
-        onChange={(e) => setLocalRemarks(e.target.value)}
-        onBlur={() => onChange(localRemarks)}
-        disabled={disabled}
-        className="resize-none min-h-[120px] border-border focus:border-primary bg-background shadow-sm"
-        placeholder="Enter return remarks..."
-      />
+      {isLoading ? (
+        <Skeleton className="min-h-[120px] w-full rounded-md" />
+      ) : (
+        <Textarea
+          value={localRemarks}
+          onChange={(e) => setLocalRemarks(e.target.value)}
+          onBlur={() => onChange(localRemarks)}
+          disabled={disabled}
+          className="resize-none min-h-[120px] border-border focus:border-primary bg-background shadow-sm"
+          placeholder="Enter return remarks..."
+        />
+      )}
     </div>
   );
 });
@@ -271,21 +281,7 @@ export function UpdateSalesReturnModal({
   }, [prefillRemarks]);
 
   const [details, setDetails] = useState<SalesReturnItem[]>([]);
-  const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([]);
-
-  // 🟢 Track the ID for the junction table link
   const [appliedInvoiceId, setAppliedInvoiceId] = useState<number | null>(null);
-
-  // 🟢 NEW: Effect to fetch invoice line items
-  useEffect(() => {
-    if (appliedInvoiceId) {
-      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
-        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
-        .catch((err: unknown) => console.error("Failed to load invoice items", err));
-    } else {
-      setInvoiceLineItems([]);
-    }
-  }, [appliedInvoiceId]);
 
   const [statusCardData, setStatusCardData] =
     useState<SalesReturnStatusCard | null>(null);
@@ -331,6 +327,72 @@ export function UpdateSalesReturnModal({
 
   // RFID State
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  // Lot & Batch Modal State
+  const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
+  const [activeLotBatchIndex, setActiveLotBatchIndex] = useState<number | null>(null);
+
+  const handleOpenLotBatchModal = useCallback((index: number) => {
+    setActiveLotBatchIndex(index);
+    setLotBatchModalOpen(true);
+  }, []);
+
+  const handleApplyLotBatch = useCallback((result: LotBatchSelectionResult) => {
+    if (activeLotBatchIndex !== null && activeLotBatchIndex >= 0) {
+      setDetails((prev) => {
+        if (activeLotBatchIndex >= prev.length) return prev;
+        const updated = [...prev];
+        const targetItem = { ...updated[activeLotBatchIndex] };
+
+        const totalAllocQty = result.total_quantity || 
+          (result.lot_allocations?.reduce((sum, g) => 
+            sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0) ?? targetItem.quantity);
+
+        targetItem.lot_id = result.lot_id;
+        targetItem.lot_name = result.lot_name;
+        targetItem.inventory_lot_id = result.inventory_lot_id;
+        targetItem.batch = result.batch_no;
+        targetItem.manufacturing_date = result.manufacturing_date;
+        targetItem.expiry_date = result.expiry_date;
+        targetItem.qa_status = result.qa_status;
+        targetItem.lot_allocations = result.lot_allocations;
+
+        if (totalAllocQty > 0 && targetItem.quantity !== totalAllocQty) {
+          targetItem.quantity = totalAllocQty;
+          const agPrice = targetItem.agreedPrice !== undefined && targetItem.agreedPrice !== null ? targetItem.agreedPrice : targetItem.unitPrice;
+          const newGross = Math.round(totalAllocQty * agPrice * 100) / 100;
+          let newDiscountAmt = 0;
+          if (targetItem.discountType && targetItem.discountType !== "No Discount") {
+            const selectedOption = discountOptions.find(d => d.id.toString() === targetItem.discountType?.toString());
+            if (selectedOption) {
+              const percentage = parseFloat(selectedOption.total_percent) || 0;
+              newDiscountAmt = Math.round(newGross * (percentage / 100) * 100) / 100;
+            }
+          }
+          targetItem.grossAmount = newGross;
+          targetItem.discountAmount = newDiscountAmt;
+          targetItem.totalAmount = Math.round((newGross - newDiscountAmt) * 100) / 100;
+          targetItem.priceVariance = Math.round((targetItem.unitPrice - agPrice) * totalAllocQty * 100) / 100;
+        }
+
+        updated[activeLotBatchIndex] = targetItem;
+        return updated;
+      });
+    }
+  }, [activeLotBatchIndex, discountOptions]);
+
+  const formSiblingAllocations: FormSiblingAllocation[] = useMemo(() => {
+    return details.map((item) => ({
+      product_id: item.productId,
+      product_name: item.description,
+      product_code: item.code,
+      quantity: item.quantity,
+      lot_id: item.lot_id,
+      lot_name: item.lot_name,
+      lot_allocations: item.lot_allocations,
+      batch_no: item.batch,
+    }));
+  }, [details]);
 
   // 🟢 REVISED: Edit Permissions Logic
   const isPending = headerData.status === "Pending";
@@ -413,8 +475,7 @@ export function UpdateSalesReturnModal({
         prevDetails.map((item) => {
           const resolvedPt = priceTypeOptions.find(p => String(p.price_type_id) === String(headerData.priceType) || String(p.price_type_name) === String(headerData.priceType))?.price_type_name || headerData.priceType;
           const key = `price${resolvedPt}` as keyof SalesReturnItem;
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === Number(item.productId));
-          const basePrice = invoiceItem ? Number(invoiceItem.unit_price) : (Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0);
+          const basePrice = Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0;
 
           const newUnitPrice = basePrice;
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
@@ -446,7 +507,7 @@ export function UpdateSalesReturnModal({
         })
       );
     }
-  }, [headerData.priceType, discountOptions, invoiceLineItems, details.length, priceTypeOptions]);
+  }, [headerData.priceType, discountOptions, details.length, priceTypeOptions]);
 
   // Click outside handler for order/invoice dropdowns
   useEffect(() => {
@@ -566,32 +627,6 @@ export function UpdateSalesReturnModal({
     setDetails((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleDuplicateRow = (index: number) => {
-    setDetails((prev) => {
-      const original = prev[index];
-      if (!original) return prev;
-      
-      const price = Number(original.unitPrice || 0);
-      const gross = Math.round(1 * price * 100) / 100;
-      
-      const duplicate: SalesReturnItem = {
-        ...original,
-        id: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Required for backend to treat as new (matches service logic)
-        tempId: `added-${Date.now()}-${Math.floor(Math.random() * 10000)}`, // Keep tempId for React keys if needed
-        rfidTags: [], // Clear out RFIDs
-        quantity: 1, // Start with quantity 1
-        grossAmount: gross,
-        totalAmount: gross,
-        discountAmount: 0,
-        discountType: null // Reset discount to ensure accuracy
-      };
-
-      const updated = [...prev];
-      updated.splice(index + 1, 0, duplicate);
-      return updated;
-    });
-  };
-
   const handleAddProductsToEdit = (newItems: (Partial<SalesReturnItem> & { price?: number, product_name?: string })[]) => {
     if (!newItems || newItems.length === 0) return;
 
@@ -636,8 +671,7 @@ export function UpdateSalesReturnModal({
           }
           updated[existingIndex] = existing;
         } else {
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === productId);
-          const price = invoiceItem ? Number(invoiceItem.unit_price) : (Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100);
+          const price = Math.round((Number(item.unitPrice) || Number(item.price) || 0) * 100) / 100;
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : price;
           const gross = Math.round(agPrice * qty * 100) / 100;
           const incomingDiscountType = item.discountType || "";
@@ -677,6 +711,8 @@ export function UpdateSalesReturnModal({
             expiry_date: "",
             reason: "",
             returnType: "",
+            product_type: item.product_type || null,
+            product_type_name: item.product_type_name || (resultRecord.product_type_name as string) || null,
           });
         }
       });
@@ -713,10 +749,14 @@ export function UpdateSalesReturnModal({
     }
 
     const missingLotDetails = details.some(
-      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+      (item) => {
+        const hasAlloc = item.lot_allocations && item.lot_allocations.length > 0;
+        const hasPrimary = item.lot_id && item.batch && item.manufacturing_date && item.expiry_date;
+        return !hasAlloc && !hasPrimary;
+      }
     );
     if (missingLotDetails) {
-      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items.");
+      toast.error("Please assign Lot and Batch details for all items.");
       setLotDetailsError(true);
       return;
     }
@@ -769,6 +809,29 @@ export function UpdateSalesReturnModal({
     setOrderError(false);
     setInvoiceError(false);
 
+    if (loading) {
+      toast.error("Please wait for sales return details to finish loading.");
+      return;
+    }
+
+    if (details.length === 0) {
+      toast.error("Cannot receive an empty sales return. Please add products first.");
+      return;
+    }
+
+    const hasZeroQuantity = details.some(
+      (item) => !item.quantity || Number(item.quantity) <= 0,
+    );
+    if (hasZeroQuantity) {
+      toast.error("All product lines must have a quantity greater than 0 before receiving.");
+      return;
+    }
+
+    if (!totalNet || totalNet <= 0 || !totalGross || totalGross <= 0) {
+      toast.error("Cannot receive a sales return with zero or invalid total amount.");
+      return;
+    }
+
     if (!headerData.orderNo || !headerData.orderNo.toString().trim()) {
       toast.error("Order No. is required.");
       setOrderError(true);
@@ -791,28 +854,16 @@ export function UpdateSalesReturnModal({
     }
 
     const missingLotDetails = details.some(
-      (item) => !item.lot_id || !item.batch || !item.manufacturing_date || !item.expiry_date
+      (item) => {
+        const hasAlloc = item.lot_allocations && item.lot_allocations.length > 0;
+        const hasPrimary = item.lot_id && item.batch && item.manufacturing_date && item.expiry_date;
+        return !hasAlloc && !hasPrimary;
+      }
     );
     if (missingLotDetails) {
-      toast.error("Please fill in Lot, Batch, Mfg Date, and Exp Date for all items before receiving.");
+      toast.error("Please assign Lot and Batch details for all items before receiving.");
       setLotDetailsError(true);
       return;
-    }
-
-    for (const item of details) {
-      if (item.lot_id) {
-        const lot = lotOptions.find((l) => l.lot_id === item.lot_id);
-        const onhand = lotOnhandMap[item.lot_id] ?? 0;
-        const maxCap = lot?.max_batch_capacity ?? 0;
-        const incomingQty = Number(item.quantity) || 0;
-        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-        if (maxCap > 0 && incomingQty > availableCap) {
-          toast.error("Lot Capacity Exceeded", {
-            description: `Lot "${lot?.lot_name}" has only ${availableCap} available capacity (Max: ${maxCap}, Onhand: ${onhand}). Please select a different lot before receiving.`
-          });
-          return;
-        }
-      }
     }
 
     setIsReceiveConfirmOpen(true);
@@ -1007,7 +1058,12 @@ export function UpdateSalesReturnModal({
 
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="w-full max-w-[95vw] lg:max-w-7xl h-[90vh] flex flex-col p-0 overflow-hidden bg-background border-0 shadow-2xl rounded-xl [&>button]:hidden">
+      <DialogContent
+        showCloseButton={false}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="w-full max-w-[95vw] lg:max-w-7xl h-[90vh] flex flex-col p-0 overflow-hidden bg-background border-0 shadow-2xl rounded-xl [&>button]:hidden"
+      >
         {/* HEADER */}
         <div className="px-8 py-5 border-b border-border flex justify-between items-center bg-background shrink-0">
           <div>
@@ -1015,18 +1071,25 @@ export function UpdateSalesReturnModal({
               {isPending ? "Edit Sales Return" : "Return Details"}
             </DialogTitle>
             <div className="flex items-center gap-2 mt-1">
-              <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase tracking-wider">
-                {headerData.returnNo}
-              </span>
-              <span className="text-muted-foreground text-sm">|</span>
-              <span className="text-sm text-muted-foreground">
-                {headerData.returnDate}
-              </span>
+              {loading ? (
+                <Skeleton className="h-5 w-44 rounded" />
+              ) : (
+                <>
+                  <span className="px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-bold uppercase tracking-wider">
+                    {headerData.returnNo}
+                  </span>
+                  <span className="text-muted-foreground text-sm">|</span>
+                  <span className="text-sm text-muted-foreground">
+                    {headerData.returnDate}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button
             onClick={onClose}
-            className="bg-destructive hover:bg-destructive text-white p-2 rounded-md shadow-sm transition-all active:scale-95"
+            disabled={loading || isUpdating || isReceiving}
+            className="bg-destructive hover:bg-destructive text-white p-2 rounded-md shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="h-5 w-5" />
           </button>
@@ -1041,18 +1104,18 @@ export function UpdateSalesReturnModal({
             <ReadOnlyField label="Salesman" value={getSalesmanName(headerData.salesmanId)} isLoading={loading} />
             <ReadOnlyField label="Salesman Code" value={getSalesmanCode(headerData.salesmanId)} isLoading={loading} />
             <ReadOnlyField label="Customer" value={getCustomerName(headerData.customerCode)} isLoading={loading} />
-            <ReadOnlyField label="Customer Code" value={headerData.customerCode} />
+            <ReadOnlyField label="Customer Code" value={headerData.customerCode} isLoading={loading} />
 
             <ReadOnlyField label="Branch" value={getSalesmanBranch(headerData.salesmanId)} isLoading={loading} />
-            <ReadOnlyField label="Return Date" value={headerData.returnDate} />
-            <ReadOnlyField label="Received Date" value={headerData.status === "Received" && headerData.receivedAt ? headerData.receivedAt : "-"} />
-            <ReadOnlyField label="Price Type" value={getResolvedPriceType(headerData.priceType)} />
+            <ReadOnlyField label="Return Date" value={headerData.returnDate} isLoading={loading} />
+            <ReadOnlyField label="Received Date" value={headerData.status === "Received" && headerData.receivedAt ? headerData.receivedAt : "-"} isLoading={loading} />
+            <ReadOnlyField label="Price Type" value={getResolvedPriceType(headerData.priceType)} isLoading={loading} />
 
             <div className="flex items-center space-x-2 pt-2 col-span-2 lg:col-span-4">
               <Checkbox
                 id="isThirdParty"
                 checked={headerData.isThirdParty || false}
-                disabled={!canEditAll}
+                disabled={!canEditAll || loading}
                 onCheckedChange={(checked) =>
                   setHeaderData({
                     ...headerData,
@@ -1079,14 +1142,10 @@ export function UpdateSalesReturnModal({
               {/* 🟢 REVISED: Add Button hidden if not Pending */}
               {canEditAll && (
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground mr-1">
-                      {details.length} {details.length === 1 ? "item" : "items"} total
-                    </span>
-                  </div>
                   <Button
                     size="sm"
-                    className="bg-primary hover:bg-primary text-white gap-2 shadow-md shadow-primary/20"
+                    disabled={loading}
+                    className="bg-primary hover:bg-primary text-white gap-2 shadow-md shadow-primary/20 disabled:opacity-50"
                     onClick={() => setIsProductLookupOpen(true)}
                   >
                     <Plus className="h-4 w-4" /> Add Product
@@ -1097,14 +1156,20 @@ export function UpdateSalesReturnModal({
 
             <div className="border border-border rounded-xl overflow-hidden bg-background shadow-sm">
               <div className="overflow-x-auto pb-4">
-                <Table className="min-w-[1600px]">
+                <Table className="min-w-[1200px]">
                   <TableHeader>
                     <TableRow className="bg-primary hover:bg-primary! border-none">
                       <TableHead className="text-white font-semibold h-11 w-[120px] uppercase text-xs">
                         Code
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 min-w-[200px] uppercase text-xs">
                         Description
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[130px] uppercase text-xs">
+                        Product Type
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
+                        Lot &amp; Batch Allocation
                       </TableHead>
                       <TableHead className="text-white font-semibold h-11 w-[80px] uppercase text-xs">
                         Unit
@@ -1112,51 +1177,28 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 text-center min-w-[100px] uppercase text-xs">
                         Qty
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[120px] uppercase text-xs">
                         Unit Price
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[120px] uppercase text-xs">
                         Agreed Price
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[100px] uppercase text-xs">
                         Variance
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[130px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[120px] uppercase text-xs">
                         Gross
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 w-[150px] uppercase text-xs">
                         Disc. Type
                       </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[140px] uppercase text-xs">
-                        Disc. Amt
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 text-right min-w-[150px] uppercase text-xs">
-                        Total
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
-                        Lot
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[120px] text-center uppercase text-xs">
-                        Capacity
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[160px] uppercase text-xs">
-                        Batch
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
-                        Mfg Date
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[140px] uppercase text-xs">
-                        Exp Date
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 min-w-[180px] uppercase text-xs">
-                        Reason
-                      </TableHead>
-                      <TableHead className="text-white font-semibold h-11 w-[200px] uppercase text-xs">
+                      <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                         Return Type
                       </TableHead>
-                      {/* 🟢 REVISED: Delete Column hidden if not Pending */}
                       {canEditAll && (
-                        <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Actions</TableHead>
+                        <TableHead className="text-white font-semibold h-11 min-w-[90px] sticky right-0 bg-primary z-20 text-center shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                          Actions
+                        </TableHead>
                       )}
                     </TableRow>
                   </TableHeader>
@@ -1166,16 +1208,15 @@ export function UpdateSalesReturnModal({
                         <TableRow key={`skeleton-row-${rowIndex}`} className="border-b border-border">
                           <TableCell><Skeleton className="h-4 w-[80px]" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[180px]" /></TableCell>
+                          <TableCell><Skeleton className="h-4 w-[100px]" /></TableCell>
+                          <TableCell><Skeleton className="h-8 w-[140px]" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[40px]" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-[40px] mx-auto" /></TableCell>
+                          <TableCell><Skeleton className="h-8 w-[60px] mx-auto" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[60px] ml-auto" /></TableCell>
-                          <TableCell><Skeleton className="h-4 w-[60px] ml-auto" /></TableCell>
-                          <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[80px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[60px] ml-auto" /></TableCell>
+                          <TableCell><Skeleton className="h-4 w-[80px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
-                          <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
-                          <TableCell><Skeleton className="h-8 w-[120px]" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           {canEditAll && <TableCell><Skeleton className="h-8 w-8 rounded-md mx-auto" /></TableCell>}
                         </TableRow>
@@ -1183,7 +1224,7 @@ export function UpdateSalesReturnModal({
                     ) : details.length === 0 ? (
                       <TableRow>
                         <TableCell
-                          colSpan={12}
+                          colSpan={canEditAll ? 13 : 12}
                           className="h-24 text-center text-muted-foreground text-sm"
                         >
                           No products found.
@@ -1195,6 +1236,29 @@ export function UpdateSalesReturnModal({
                         {details.map((item, idx) => {
                           const isManual = !item.rfidTags || item.rfidTags.length === 0;
                           if (!isManual) return null;
+                          
+                          const hasAllocations = Boolean(
+                            (item.lot_allocations && item.lot_allocations.length > 0) ||
+                            (item.lot_id && item.batch)
+                          );
+
+                          const allocatedSum = item.lot_allocations && item.lot_allocations.length > 0
+                            ? item.lot_allocations.reduce((sum, g) => 
+                                sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0)
+                            : (item.lot_id && item.batch ? item.quantity : null);
+
+                          const hasQtyMismatch = allocatedSum !== null && allocatedSum !== Number(item.quantity);
+
+                          const displayInfo = item.lot_allocations && item.lot_allocations.length > 0
+                            ? (item.lot_allocations.length === 1
+                                ? `${item.lot_allocations[0].lot_name || `Lot #${item.lot_allocations[0].lot_id}`} • ${item.lot_allocations[0].batches.map(b => b.batch_no).filter(Boolean).join(', ')} (${allocatedSum} ${item.unit})`
+                                : `${item.lot_allocations.length} Lots • ${item.lot_allocations.reduce((acc, g) => acc + (g.batches?.length || 1), 0)} Batches (${allocatedSum} ${item.unit})`)
+                            : (item.lot_id && item.batch
+                                ? `${lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || `Lot #${item.lot_id}`} • ${item.batch}`
+                                : null);
+
+                          const isBadQA = item.qa_status && item.qa_status !== 'GOOD';
+
                           return (
                             <TableRow
                               key={item.id || idx}
@@ -1211,6 +1275,62 @@ export function UpdateSalesReturnModal({
                                   {item.description}
                                 </div>
                               </TableCell>
+
+                              {/* PRODUCT TYPE CELL */}
+                              <TableCell className="align-middle p-2">
+                                <span className="text-xs text-muted-foreground font-medium">
+                                  {item.product_type_name || "-"}
+                                </span>
+                              </TableCell>
+                              
+                              {/* LOT & BATCH ALLOCATION CELL */}
+                              <TableCell className="align-middle p-2">
+                                <div className="flex flex-col gap-1">
+                                  {hasAllocations && displayInfo ? (
+                                    <Badge
+                                      variant="outline"
+                                      onClick={() => handleOpenLotBatchModal(idx)}
+                                      className={cn(
+                                        "text-[11px] py-1 px-2 font-medium cursor-pointer transition-colors max-w-[280px] truncate justify-start gap-1.5 shadow-2xs hover:opacity-85",
+                                        isBadQA
+                                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                          : "bg-primary/10 text-primary border-primary/30"
+                                      )}
+                                      title={`Click to edit allocations:\n${displayInfo}`}
+                                    >
+                                      <Layers className="w-3.5 h-3.5 shrink-0" />
+                                      <span className="truncate">{displayInfo}</span>
+                                    </Badge>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenLotBatchModal(idx)}
+                                      className={cn(
+                                        "h-8 text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 justify-start gap-1.5 shadow-2xs",
+                                        lotDetailsError && !hasAllocations && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      )}
+                                    >
+                                      <Plus className="w-3.5 h-3.5 text-amber-600" />
+                                      Assign Lot &amp; Batch
+                                    </Button>
+                                  )}
+
+                                  {hasQtyMismatch && (
+                                    <Badge
+                                      variant="destructive"
+                                      onClick={() => handleOpenLotBatchModal(idx)}
+                                      className="text-[10px] py-0.5 px-1.5 font-bold cursor-pointer gap-1 shadow-2xs hover:bg-destructive/90 transition-colors w-fit"
+                                      title={`Quantity Mismatch: Table quantity is ${item.quantity}, but allocated batch sum is ${allocatedSum}. Click to balance batches.`}
+                                    >
+                                      <AlertCircle className="w-3 h-3" />
+                                      Mismatch ({allocatedSum} alloc)
+                                    </Badge>
+                                  )}
+                                </div>
+                              </TableCell>
+
                               <TableCell className="text-sm text-muted-foreground align-middle">
                                 <Badge
                                   variant="outline"
@@ -1299,156 +1419,59 @@ export function UpdateSalesReturnModal({
                                   </span>
                                 )}
                               </TableCell>
-                              <TableCell className="text-right align-middle p-2">
-                                <Input type="number" readOnly className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed" value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""} />
-                              </TableCell>
-                              <TableCell className="text-right font-bold text-sm text-foreground align-middle whitespace-nowrap">
-                                ₱{(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {canEditAll ? (
-                                  <LocalSearchableSelect
-                                    value={item.lot_id ? item.lot_id.toString() : ""}
-                                    onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
-                                    options={lotOptions
-                                      .filter(l => {
-                                        const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
-                                        if (!s || l.branch_id !== s.branchId || l.unit_id !== item.unit_id) return false;
-                                        const onhand = lotOnhandMap[l.lot_id] ?? 0;
-                                        const maxCap = l.max_batch_capacity ?? 0;
-                                        const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                        return maxCap === 0 || availableCap > 0 || l.lot_id === item.lot_id;
-                                      })
-                                      .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
-                                    placeholder="Select lot"
-                                    className={cn(
-                                      "h-9 text-xs",
-                                      lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* Capacity */}
-                              <TableCell className="align-middle p-2 text-center">
-                                {(() => {
-                                  if (!item.lot_id) return <span className="text-xs text-muted-foreground">— / —</span>;
-                                  const lot = lotOptions.find(l => l.lot_id === item.lot_id);
-                                  const maxCap = lot?.max_batch_capacity ?? 0;
-                                  const onhand = lotOnhandMap[item.lot_id] ?? 0;
-                                  const availableCap = maxCap > 0 ? Math.max(0, maxCap - onhand) : 0;
-                                  const isFull = maxCap > 0 && item.quantity > availableCap;
-                                  return (
-                                    <div className={`px-2 py-1 rounded text-xs font-mono whitespace-nowrap ${isFull ? 'bg-destructive/10 text-destructive font-bold' : 'text-foreground'}`}>
-                                      {item.quantity} / {availableCap}
-                                    </div>
-                                  );
-                                })()}
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {canEditAll ? (
-                                  <Input
-                                    type="text"
-                                    className={cn(
-                                      "h-9 w-full text-left text-sm border-border px-2",
-                                      lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.batch || ""}
-                                    onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
-                                    placeholder="Batch no."
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* MFG Date */}
-                              <TableCell className="align-middle p-2">
-                                {canEditAll ? (
-                                  <Input
-                                    type="date"
-                                    className={cn(
-                                      "h-9 w-full text-sm border-border px-2",
-                                      lotDetailsError && !item.manufacturing_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.manufacturing_date || ""}
-                                    onChange={(e) => handleDetailChange(idx, "manufacturing_date", e.target.value)}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.manufacturing_date || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* EXP Date */}
-                              <TableCell className="align-middle p-2">
-                                {canEditAll ? (
-                                  <Input
-                                    type="date"
-                                    className={cn(
-                                      "h-9 w-full text-sm border-border px-2",
-                                      lotDetailsError && !item.expiry_date && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                    )}
-                                    value={item.expiry_date || ""}
-                                    onChange={(e) => handleDetailChange(idx, "expiry_date", e.target.value)}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground">{item.expiry_date || "-"}</span>
-                                )}
-                              </TableCell>
-                              {/* Reason */}
-                              <TableCell className="align-middle p-2">
-                                {canEditAll ? (
-                                  <ReasonInputSection
-                                    value={item.reason || ""}
-                                    onChange={(val) => handleDetailChange(idx, "reason", val)}
-                                  />
-                                ) : (
-                                  <span className="text-sm text-muted-foreground italic truncate block max-w-[120px]" title={item.reason || ""}>
-                                    {item.reason || "-"}
-                                  </span>
-                                )}
-                              </TableCell>
+
+                              {/* Return Type */}
                               <TableCell className="align-middle p-2">
                                 {canEditAll ? (
                                   <LocalSearchableSelect
                                     value={item.returnType || ""}
-                                    onValueChange={(val) => {
-                                      handleDetailChange(idx, "returnType", val);
-                                      setReturnTypeError(false);
-                                    }}
-                                    options={returnTypeOptions.length > 0
-                                      ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
-                                      : [
-                                        { value: "Good Order", label: "Good Order" },
-                                        { value: "Bad Order", label: "Bad Order" }
-                                      ]
+                                    onValueChange={(val) => handleDetailChange(idx, "returnType", val)}
+                                    options={
+                                      returnTypeOptions.length > 0
+                                        ? returnTypeOptions.map((rt) => ({
+                                            value: rt.type_name,
+                                            label: rt.type_name,
+                                          }))
+                                        : [
+                                            { value: "Good Order", label: "Good Order" },
+                                            { value: "Bad Order", label: "Bad Order" },
+                                          ]
                                     }
-                                    placeholder="Select type"
+                                    placeholder="Select Return Type..."
                                     className={cn(
-                                      "h-9 text-xs",
-                                      returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
+                                      "h-9 w-full text-xs",
+                                      returnTypeError && !item.returnType && "border-destructive ring-1 ring-destructive/30 bg-destructive/5"
                                     )}
                                   />
                                 ) : (
-                                  <Badge variant="outline" className="font-normal">{item.returnType || "Unassigned"}</Badge>
+                                  <Badge variant="outline" className="font-normal text-xs">
+                                    {item.returnType || "-"}
+                                  </Badge>
                                 )}
                               </TableCell>
+
+                              {/* Actions */}
                               {canEditAll && (
-                              <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                <button onClick={() => handleDuplicateRow(idx)} className="text-primary/70 hover:text-primary transition-colors mr-3" title="Duplicate row">
-                                  <Copy className="h-4 w-4" />
-                                </button>
-                                <button onClick={() => handleDeleteRow(idx)} className="text-destructive/70 hover:text-destructive transition-colors" title="Remove row">
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </TableCell>
+                                <TableCell className="align-middle p-2 text-center whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteRow(idx)}
+                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md"
+                                    title="Remove Item"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
                               )}
                             </TableRow>
                           );
                         })}
 
+                        {/* 2. RENDER RFID GROUPED ITEMS */}
                         {Object.values(
                           details.filter(i => i.rfidTags && i.rfidTags.length > 0).reduce((acc, item) => {
-                            // Find the true index in details
                             const idx = details.findIndex(d => d === item);
                             const rType = item.returnType || "Unassigned";
                             const key = `${item.productId}-${item.unit}-${rType}`;
@@ -1457,6 +1480,7 @@ export function UpdateSalesReturnModal({
                                 key,
                                 code: item.code,
                                 description: item.description,
+                                productType: item.product_type_name || (typeof item.product_type === "string" ? item.product_type : undefined),
                                 unit: item.unit,
                                 returnType: rType,
                                 unitPrice: item.unitPrice,
@@ -1481,7 +1505,6 @@ export function UpdateSalesReturnModal({
                           <React.Fragment key={group.key}>
                             {/* Parent Summary Row */}
                             <TableRow className="bg-muted/10 font-semibold border-b border-border">
-                              {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
                               <TableCell className="text-sm text-foreground align-middle font-mono">
                                 <div className="flex items-center gap-2">
                                   {group.children.length > 0 ? (
@@ -1493,7 +1516,7 @@ export function UpdateSalesReturnModal({
                                       <ChevronDown className={`h-4 w-4 transition-transform ${expandedGroups[group.key] ? 'rotate-180' : ''}`} />
                                     </button>
                                   ) : (
-                                    <div className="w-6" /> // spacer
+                                    <div className="w-6" />
                                   )}
                                   <span>{group.code}</span>
                                 </div>
@@ -1505,6 +1528,18 @@ export function UpdateSalesReturnModal({
                                 >
                                   {group.description}
                                 </div>
+                              </TableCell>
+                              <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                                {group.productType ? (
+                                  <Badge variant="outline" className="font-normal text-[11px]">
+                                    {group.productType}
+                                  </Badge>
+                                ) : "-"}
+                              </TableCell>
+                              <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                                <Badge variant="outline" className="font-normal text-[11px]">
+                                  {group.children.length} RFID scan(s)
+                                </Badge>
                               </TableCell>
                               <TableCell className="text-sm text-muted-foreground align-middle">
                                 <Badge
@@ -1527,268 +1562,161 @@ export function UpdateSalesReturnModal({
                                 {(group.totalVariance || 0) > 0 ? "+" : ""}{(group.totalVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </TableCell>
                               <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
-                                {(
-                                  Number(group.totalGross)
-                                ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </TableCell>
-                              <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                                -
-                              </TableCell>
-                              <TableCell className="text-right align-middle p-2 text-muted-foreground font-mono">
-                                {group.totalDiscount.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right font-bold text-sm text-primary align-middle">
-                                {group.totalNet.toLocaleString()}
+                                {(Number(group.totalGross)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </TableCell>
                               <TableCell className="align-middle p-2 text-center text-muted-foreground">
                                 -
                               </TableCell>
                               <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                                -
+                                <Badge variant="outline" className="font-normal text-[11px]">
+                                  {group.returnType || "-"}
+                                </Badge>
                               </TableCell>
-                              <TableCell className="align-middle p-2 text-center text-muted-foreground">
-                                -
-                              </TableCell>
-                              <TableCell className="align-middle p-2">
-                                {group.returnType !== "Unassigned" ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="bg-primary/20 text-primary hover:bg-primary/20 hover:text-primary font-medium"
-                                  >
-                                    {group.returnType}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-muted-foreground/60 italic text-xs">Unassigned</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
+                              {canEditAll && (
+                                <TableCell className="sticky right-0 bg-muted/10 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]" />
+                              )}
                             </TableRow>
 
-                            {/* Child Rows (Individual Scans/Additions) */}
-                            {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => (
-                              <TableRow
-                                key={item.id || idx}
-                                className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
-                              >
-                                {/* 🟢 REVISED: All inputs disabled if not Pending (canEditAll) */}
-                                <TableCell colSpan={2} className="text-sm text-foreground font-bold align-middle pl-10 font-mono">
-                                  {item.rfidTags && item.rfidTags.length > 0 ? (
-                                    <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
-                                      <span className="text-primary truncate">{item.rfidTags[0]}</span>
-                                      <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
-                                    </div>
-                                  ) : null}
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground align-middle">
-                                </TableCell>
-                                <TableCell className="text-center align-middle p-2">
-                                  {canEditAll ? (
-                                    item.rfidTags && item.rfidTags.length > 0 ? (
-                                      <div className="text-center font-semibold text-sm">{item.quantity}</div>
+                            {/* Child Rows */}
+                            {expandedGroups[group.key] && group.children.map(({ item, idx }: { item: SalesReturnItem, idx: number }) => {
+                              const hasAllocations = Boolean(
+                                (item.lot_allocations && item.lot_allocations.length > 0) ||
+                                (item.lot_id && item.batch)
+                              );
+
+                              const allocatedSum = item.lot_allocations && item.lot_allocations.length > 0
+                                ? item.lot_allocations.reduce((sum, g) => 
+                                    sum + (g.batches?.reduce((bSum, b) => bSum + Number(b.quantity || 0), 0) || Number(g.allocated_quantity || 0)), 0)
+                                : (item.lot_id && item.batch ? item.quantity : null);
+
+                              const displayInfo = item.lot_allocations && item.lot_allocations.length > 0
+                                ? (item.lot_allocations.length === 1
+                                    ? `${item.lot_allocations[0].lot_name || `Lot #${item.lot_allocations[0].lot_id}`} • ${item.lot_allocations[0].batches.map(b => b.batch_no).filter(Boolean).join(', ')} (${allocatedSum} ${item.unit})`
+                                    : `${item.lot_allocations.length} Lots (${allocatedSum} ${item.unit})`)
+                                : (item.lot_id && item.batch ? `${item.batch}` : null);
+
+                              return (
+                                <TableRow
+                                  key={item.id || idx}
+                                  className="border-b border-border hover:bg-muted/20 transition-colors duration-200"
+                                >
+                                  <TableCell colSpan={2} className="text-sm text-foreground font-bold align-middle pl-10 font-mono">
+                                    {item.rfidTags && item.rfidTags.length > 0 ? (
+                                      <div className="flex items-center gap-1.5 bg-background border border-border pl-2.5 pr-2 py-1 rounded-md w-fit truncate max-w-[200px]" title={item.rfidTags[0]}>
+                                        <span className="text-primary truncate">{item.rfidTags[0]}</span>
+                                        <span className="text-[10px] text-muted-foreground font-sans uppercase">RFID</span>
+                                      </div>
+                                    ) : null}
+                                  </TableCell>
+                                  <TableCell className="align-middle p-2 text-xs text-muted-foreground">
+                                    {item.product_type_name || "-"}
+                                  </TableCell>
+                                  <TableCell className="align-middle p-2">
+                                    {hasAllocations && displayInfo ? (
+                                      <Badge
+                                        variant="outline"
+                                        onClick={() => handleOpenLotBatchModal(idx)}
+                                        className="text-[10px] py-0.5 px-1.5 font-medium cursor-pointer transition-colors bg-primary/10 text-primary border-primary/30 gap-1"
+                                      >
+                                        <Layers className="w-3 h-3 shrink-0" />
+                                        <span className="truncate">{displayInfo}</span>
+                                      </Badge>
                                     ) : (
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleOpenLotBatchModal(idx)}
+                                        className="h-7 text-[10px] font-semibold text-amber-700 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20"
+                                      >
+                                        Assign
+                                      </Button>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="text-sm text-muted-foreground align-middle">
+                                    {item.unit}
+                                  </TableCell>
+                                  <TableCell className="text-center align-middle p-2">
+                                    <div className="text-center font-semibold text-sm">{item.quantity}</div>
+                                  </TableCell>
+                                  <TableCell className="text-right align-middle p-2 bg-muted/10">
+                                    <span className="text-sm text-foreground">
+                                      {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="text-center align-middle p-2">
+                                    {canEditAll ? (
                                       <Input
                                         type="number"
-                                        className="h-9 w-full text-center text-sm border-border px-2"
-                                        value={item.quantity}
+                                        min="0"
+                                        step="0.01"
+                                        className="h-9 w-full text-right text-sm border-border px-2"
+                                        value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
                                         onChange={(e) =>
-                                          handleDetailChange(
-                                            idx,
-                                            "quantity",
-                                            e.target.value,
-                                          )
+                                          handleDetailChange(idx, "agreedPrice", e.target.value)
                                         }
                                       />
-                                    )
-                                  ) : (
-                                    <span className="text-sm font-semibold text-foreground">
-                                      {item.quantity}
-                                    </span>
-                                  )}
-                                </TableCell>
-                                {/* Unit Price */}
-                                <TableCell className="text-right align-middle p-2 bg-muted/10">
-                                  <span className="text-sm text-foreground">
-                                    {Number(item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                  </span>
-                                </TableCell>
-                                {/* Agreed Price */}
-                                <TableCell className="text-center align-middle p-2">
-                                  {canEditAll ? (
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      className="h-9 w-full text-right text-sm border-border px-2"
-                                      value={item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice}
-                                      onChange={(e) =>
-                                        handleDetailChange(
-                                          idx,
-                                          "agreedPrice",
-                                          e.target.value,
-                                        )
-                                      }
-                                    />
-                                  ) : (
-                                    <span className="text-sm text-foreground">
-                                      {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                    </span>
-                                  )}
-                                </TableCell>
-                                {/* Variance */}
-                                <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                                  {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </TableCell>
-                                {/* Gross */}
-                                <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
-                                  {(
-                                    Number(item.grossAmount) || 0
-                                  ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </TableCell>
-                                <TableCell className="align-middle p-2">
-                                  {canEditAll ? (
-                                    (() => {
-                                      const noDiscountOpt = discountOptions.find(o => o.discount_type === "No Discount");
-                                      const defaultVal = noDiscountOpt ? noDiscountOpt.id.toString() : "No Discount";
-                                      const currentDiscVal = item.discountType?.toString() ? (
-                                        discountOptions.some(o => o.id.toString() === item.discountType?.toString())
-                                          ? item.discountType.toString()
-                                          : defaultVal
-                                      ) : defaultVal;
-                                      return (
-                                        <LocalSearchableSelect
-                                          value={currentDiscVal}
-                                          onValueChange={(val) => handleDetailChange(idx, "discountType", val)}
-                                          options={discountOptions.map((opt) => ({
-                                            value: opt.id.toString(),
-                                            label: opt.discount_type,
-                                          }))}
-                                          placeholder="Select Discount..."
-                                          className="h-9 w-full text-xs"
-                                        />
-                                      );
-                                    })()
-                                  ) : (
-                                    <span className="text-sm text-muted-foreground">
-                                      {discountOptions.find(
-                                        (d) => d.id.toString() == item.discountType,
-                                      )?.discount_type || "None"}
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-right align-middle p-2">
-                                  <Input
-                                    type="number"
-                                    readOnly
-                                    className="h-9 w-full text-right text-sm bg-muted/30 text-muted-foreground cursor-not-allowed"
-                                    value={item.discountAmount ? Number(item.discountAmount).toFixed(2) : ""}
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right font-bold text-sm text-foreground align-middle">
-                                  {(Number(item.totalAmount) || 0).toLocaleString()}
-                                </TableCell>
-                                <TableCell className="align-middle p-2">
-                                  {canEditAll ? (
-                                    <LocalSearchableSelect
-                                      value={item.lot_id ? item.lot_id.toString() : ""}
-                                      onValueChange={(val) => handleDetailChange(idx, "lot_id", Number(val))}
-                                      options={lotOptions
-                                        .filter(l => {
-                                          const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
-                                          return s && l.branch_id === s.branchId && l.unit_id === item.unit_id;
-                                        })
-                                        .map(l => ({ value: l.lot_id.toString(), label: l.lot_name }))}
-                                      placeholder="Select lot"
-                                      className={cn(
-                                        "h-9 text-xs",
-                                        lotDetailsError && !item.lot_id && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                      )}
-                                    />
-                                  ) : (
-                                    <span className="text-sm text-muted-foreground">{lotOptions.find(l => l.lot_id === item.lot_id)?.lot_name || "-"}</span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="align-middle p-2">
-                                  {canEditAll ? (
-                                    <Input
-                                      type="text"
-                                      className={cn(
-                                        "h-9 w-full text-left text-sm border-border px-2",
-                                        lotDetailsError && !item.batch && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                      )}
-                                      value={item.batch || ""}
-                                      onChange={(e) => handleDetailChange(idx, "batch", e.target.value)}
-                                      placeholder="Batch no."
-                                    />
-                                  ) : (
-                                    <span className="text-sm text-muted-foreground">{item.batch || "-"}</span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="align-middle p-2">
-                                  {canEditAll ? (
-                                    <ReasonInputSection
-                                      value={item.reason || ""}
-                                      onChange={(val) => handleDetailChange(idx, "reason", val)}
-                                    />
-                                  ) : (
-                                    <span className="text-sm text-muted-foreground italic">
-                                      {item.reason || "-"}
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="align-middle p-2">
-                                  {canEditAll ? (
-                                    <LocalSearchableSelect
-                                      value={item.returnType || ""}
-                                      onValueChange={(val) => {
-                                        handleDetailChange(idx, "returnType", val);
-                                        setReturnTypeError(false);
-                                      }}
-                                      options={returnTypeOptions.length > 0
-                                        ? returnTypeOptions.map((type) => ({ value: type.type_name, label: type.type_name }))
-                                        : [
-                                          { value: "Good Order", label: "Good Order" },
-                                          { value: "Bad Order", label: "Bad Order" }
-                                        ]
-                                      }
-                                      placeholder="Select type"
-                                      className={cn(
-                                        "h-9 text-sm",
-                                        returnTypeError && (!item.returnType || item.returnType === "") && "border-destructive ring-1 ring-destructive/30 bg-destructive/5 text-destructive"
-                                      )}
-                                    />
-                                  ) : (
-                                    <Badge
-                                      variant="secondary"
-                                      className="text-[10px] font-normal"
-                                    >
-                                      {item.returnType as React.ReactNode}
-                                    </Badge>
-                                  )}
-                                </TableCell>
-                                {canEditAll && (
-                                  <TableCell className="text-center align-middle whitespace-nowrap">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-primary hover:text-white hover:bg-primary mr-1"
-                                      onClick={() => handleDuplicateRow(idx)}
-                                      title="Duplicate row"
-                                    >
-                                      <Copy className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
-                                      onClick={() => handleDeleteRow(idx)}
-                                      title="Remove row"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
+                                    ) : (
+                                      <span className="text-sm text-foreground">
+                                        {Number(item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                      </span>
+                                    )}
                                   </TableCell>
-                                )}
-                              </TableRow>
-                            ))}
+                                  <TableCell className={`text-right align-middle font-mono text-sm whitespace-nowrap ${(item.priceVariance || 0) > 0 ? "text-green-600" : (item.priceVariance || 0) < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                                    {(item.priceVariance || 0) > 0 ? "+" : ""}{(item.priceVariance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-right text-sm text-muted-foreground align-middle font-mono">
+                                    {(Number(item.grossAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="align-middle p-2">
+                                    <span className="text-xs text-muted-foreground">
+                                      {discountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="align-middle p-2">
+                                    {canEditAll ? (
+                                      <LocalSearchableSelect
+                                        value={item.returnType || ""}
+                                        onValueChange={(val) => handleDetailChange(idx, "returnType", val)}
+                                        options={
+                                          returnTypeOptions.length > 0
+                                            ? returnTypeOptions.map((rt) => ({
+                                                value: rt.type_name,
+                                                label: rt.type_name,
+                                              }))
+                                            : [
+                                                { value: "Good Order", label: "Good Order" },
+                                                { value: "Bad Order", label: "Bad Order" },
+                                              ]
+                                        }
+                                        placeholder="Select Return Type..."
+                                        className={cn(
+                                          "h-9 w-full text-xs",
+                                          returnTypeError && !item.returnType && "border-destructive ring-1 ring-destructive/30 bg-destructive/5"
+                                        )}
+                                      />
+                                    ) : (
+                                      <Badge variant="outline" className="font-normal text-xs">
+                                        {item.returnType || "-"}
+                                      </Badge>
+                                    )}
+                                  </TableCell>
+                                  {canEditAll && (
+                                    <TableCell className="text-center align-middle whitespace-nowrap sticky right-0 bg-background z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:text-white hover:bg-destructive"
+                                        onClick={() => handleDeleteRow(idx)}
+                                        title="Remove row"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </TableCell>
+                                  )}
+                                </TableRow>
+                              );
+                            })}
                           </React.Fragment>
                         ))}
                       </>
@@ -1808,7 +1736,9 @@ export function UpdateSalesReturnModal({
                     Order No. <span className="text-destructive">*</span>
                   </Label>
                   {/* Order No Dropdown */}
-                  {canEditAll ? (
+                  {loading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : canEditAll ? (
                     <div className="relative group">
                       <input
                         type="text"
@@ -1870,7 +1800,9 @@ export function UpdateSalesReturnModal({
                     Invoice No. <span className="text-destructive">*</span>
                   </Label>
                   {/* Invoice No Dropdown */}
-                  {canEditAll ? (
+                  {loading ? (
+                    <Skeleton className="h-9 w-full" />
+                  ) : canEditAll ? (
                     <div className="relative group">
                       <input
                         type="text"
@@ -1932,6 +1864,7 @@ export function UpdateSalesReturnModal({
                 value={headerData.remarks || ""}
                 onChange={(val) => setHeaderData({ ...headerData, remarks: val })}
                 disabled={!canEditLimited}
+                isLoading={loading}
               />
             </div>
 
@@ -2030,24 +1963,26 @@ export function UpdateSalesReturnModal({
 
         {/* FOOTER ACTIONS */}
         <div className="border-t border-border p-5 bg-background flex justify-end gap-3 shrink-0">
-          <Button variant="outline" onClick={handlePrintInNewTab}>
+          <Button variant="outline" onClick={handlePrintInNewTab} disabled={loading || isUpdating || isReceiving}>
             <Printer className="h-4 w-4 mr-2" /> Print Slip
           </Button>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={loading || isUpdating || isReceiving}>
             Close
           </Button>
           <Button
             className="min-w-[100px]"
             onClick={handleReceiveClick}
-            disabled={!isPending}
+            disabled={loading || !isPending || isReceiving || isUpdating || details.length === 0 || totalNet <= 0}
           >
+            {isReceiving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Receive
           </Button>
           <Button
             className="bg-primary hover:bg-primary text-white min-w-40"
             onClick={handleUpdateClick}
-            disabled={!canEditLimited}
+            disabled={loading || !canEditLimited || isUpdating || isReceiving}
           >
+            {isUpdating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
             Update Sales Return
           </Button>
         </div>
@@ -2277,6 +2212,39 @@ export function UpdateSalesReturnModal({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* LOT & BATCH SELECTION MODAL */}
+      {activeLotBatchIndex !== null && activeLotBatchIndex >= 0 && details[activeLotBatchIndex] && (
+        <LotBatchSelectionModal
+          open={lotBatchModalOpen}
+          onOpenChange={setLotBatchModalOpen}
+          branchId={(() => {
+            const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
+            return s?.branchId ? Number(s.branchId) : undefined;
+          })()}
+          productId={details[activeLotBatchIndex].productId}
+          productName={details[activeLotBatchIndex].description}
+          productCode={details[activeLotBatchIndex].code}
+          productUomId={details[activeLotBatchIndex].unit_id}
+          productUomName={details[activeLotBatchIndex].unit}
+          requestedQuantity={details[activeLotBatchIndex].quantity}
+          adjustmentType="IN"
+          initialValues={{
+            lot_id: details[activeLotBatchIndex].lot_id || undefined,
+            lot_name: details[activeLotBatchIndex].lot_name || undefined,
+            inventory_lot_id: details[activeLotBatchIndex].inventory_lot_id || undefined,
+            batch_no: details[activeLotBatchIndex].batch || "",
+            manufacturing_date: details[activeLotBatchIndex].manufacturing_date,
+            expiry_date: details[activeLotBatchIndex].expiry_date,
+            qa_status: details[activeLotBatchIndex].qa_status || "GOOD",
+            lot_allocations: details[activeLotBatchIndex].lot_allocations,
+            total_quantity: details[activeLotBatchIndex].quantity,
+          }}
+          initialLotAllocations={details[activeLotBatchIndex].lot_allocations}
+          existingFormAllocations={formSiblingAllocations.filter((_, idx) => idx !== activeLotBatchIndex)}
+          onConfirm={handleApplyLotBatch}
+        />
+      )}
     </Dialog>
   );
 }

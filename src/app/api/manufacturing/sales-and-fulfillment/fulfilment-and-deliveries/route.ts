@@ -818,6 +818,64 @@ export async function GET(req: NextRequest) {
             console.warn("[fulfilment-and-deliveries GET] Error fetching sales_return links:", err);
         }
 
+        // 10a. Fetch unfulfilled sales transactions and details for clearance auditing
+        interface DirectusUstRecord {
+            id: number;
+            sales_invoice_id: number;
+            nte?: string;
+            isCleared?: number;
+            checked_by?: number;
+            date_acknowledged?: string;
+            date_created?: string;
+            variance_amount?: number;
+        }
+        interface DirectusUstDetailRecord {
+            id: number;
+            unfulfilled_sales_transaction_id: number;
+            sales_invoice_detail_id?: number | null;
+            inventory_lot_id?: number | null;
+            product_id?: number | null;
+            returned_quantity?: number | string;
+            missing_quantity?: number;
+        }
+
+        const ustList: DirectusUstRecord[] = [];
+        const ustDetailList: DirectusUstDetailRecord[] = [];
+
+        if (allInvoiceIds.length > 0) {
+            try {
+                const chunkSize = 100;
+                for (let i = 0; i < allInvoiceIds.length; i += chunkSize) {
+                    const chunk = allInvoiceIds.slice(i, i + chunkSize);
+                    const ustRes = await fetch(
+                        `${DIRECTUS_URL}/items/unfulfilled_sales_transaction?filter[sales_invoice_id][_in]=${chunk.join(",")}&limit=-1&fields=id,sales_invoice_id,nte,isCleared,checked_by,date_acknowledged,date_created,variance_amount`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (ustRes.ok) {
+                        const data: DirectusUstRecord[] = (await ustRes.json()).data || [];
+                        ustList.push(...data);
+                    }
+                }
+
+                const ustIds = ustList.map((u) => u.id).filter(Boolean);
+                if (ustIds.length > 0) {
+                    for (let i = 0; i < ustIds.length; i += chunkSize) {
+                        const chunk = ustIds.slice(i, i + chunkSize);
+                        const ustdRes = await fetch(
+                            `${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details?filter[unfulfilled_sales_transaction_id][_in]=${chunk.join(",")}&limit=-1&fields=id,unfulfilled_sales_transaction_id,sales_invoice_detail_id,inventory_lot_id,product_id,returned_quantity,missing_quantity`,
+                            { headers: directusHeaders, cache: "no-store" }
+                        );
+                        if (ustdRes.ok) {
+                            const data: DirectusUstDetailRecord[] = (await ustdRes.json()).data || [];
+                            ustDetailList.push(...data);
+                        }
+                    }
+                }
+            } catch (ustErr) {
+                console.warn("[fulfilment-and-deliveries GET] Error fetching unfulfilled_sales_transaction:", ustErr);
+            }
+        }
+
         // 10b. Fetch sales_order_reservation, mm_inventory_lots, and mm_lots for all salesOrderDetails
         const allSodDetailIds = [...new Set(salesOrderDetails.map((s) => Number(s.detail_id)).filter(Boolean))];
         const sodReservationMap = new Map<number, LineItemReservation[]>();
@@ -957,6 +1015,7 @@ export async function GET(req: NextRequest) {
                         const conId = Number(con.id);
                         const branchId = Number(con.branch_id || 1);
                         const branchName = branchMap.get(branchId)?.branch_name || `Branch #${branchId}`;
+                        const isManifestCleared = con.status === "Completed" || con.status === "Delivered";
 
                         // Gather all order IDs associated with this consolidator
                         const conSodList = conSodMap.get(conId) || [];
@@ -1049,116 +1108,201 @@ export async function GET(req: NextRequest) {
                                     (so?.order_id ? salesReturnMap.get(String(so.order_id)) : null) ||
                                     null;
 
-                                const isCleared =
-                                    so?.order_status === "Delivered" ||
-                                    so?.order_status === "Partially Delivered" ||
-                                    so?.order_status === "Not Fulfilled" ||
-                                    so?.isDelivered === 1 ||
-                                    inv?.isDelivered === 1 ||
-                                    inv?.isDelivered === true;
+                                const conUpdatedAtMs = con.updated_at ? new Date(con.updated_at).getTime() : 0;
+                                const effectiveInvId = inv?.invoice_id || so?.invoice_id || null;
+
+                                // Check if an unfulfilled delivery transaction belongs to THIS manifest's clearance
+                                const matchingUst = isManifestCleared && effectiveInvId
+                                    ? ustList.find((u) => {
+                                          if (Number(u.sales_invoice_id) !== Number(effectiveInvId)) return false;
+                                          const ustDateMs = new Date(u.date_created || u.date_acknowledged || "").getTime();
+                                          return Math.abs(conUpdatedAtMs - ustDateMs) <= 300_000;
+                                      })
+                                    : null;
+
+                                const ustDetailsForMatching = matchingUst
+                                    ? ustDetailList.filter((d) => Number(d.unfulfilled_sales_transaction_id) === Number(matchingUst.id))
+                                    : [];
 
                                 // Build line items for this order in this consolidator
                                 const relevantSodDetails = salesOrderDetails.filter(
                                     (sod) => Number(sod.order_id) === orderId
                                 );
 
-                                const items = relevantSodDetails.map((sod) => {
-                                    const prod = productMap.get(Number(sod.product_id));
-                                    const prodName = prod?.description || prod?.product_name || `Product #${sod.product_id}`;
-                                    const prodCode = prod?.product_code || `SKU-${sod.product_id}`;
-                                    const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
-                                    const uom = "";
-
-                                    const ordered = Number(sod.ordered_quantity || 0);
-
-                                    // Check if quantity returned from linked Sales Return
-                                    const srReturned = linkedSr
-                                        ? returnItemQtyMap.get(`${linkedSr.return_number.toLowerCase()}:${sod.product_id}`) ||
-                                          returnItemQtyMap.get(`${linkedSr.return_number}:${sod.product_id}`) ||
-                                          returnItemQtyMap.get(`${String(linkedSr.return_id)}:${sod.product_id}`) ||
-                                          returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
-                                          returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
-                                          0
-                                        : returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
-                                          returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
-                                          0;
-
-                                    const lineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
-                                    const totalPickedFromRes = lineReservations.reduce((s, r) => s + (Number(r.picked_quantity) || 0), 0);
-                                    const conDetail = consolidatorDetails.find(
-                                        (cd) => Number(cd.consolidator_id) === conId && Number(cd.sales_order_detail_id) === Number(sod.detail_id)
-                                    );
-                                    const conPicked = conDetail ? Number(conDetail.picked_quantity !== undefined ? conDetail.picked_quantity : conDetail.applied_quantity || 0) : 0;
-                                    const sodAllocated = sod.allocated_quantity !== undefined && sod.allocated_quantity !== null ? Number(sod.allocated_quantity) : null;
-                                    const actualDispatched = totalPickedFromRes > 0
-                                        ? totalPickedFromRes
-                                        : conPicked > 0
-                                        ? conPicked
-                                        : sodAllocated !== null
-                                        ? sodAllocated
-                                        : 0;
-                                    const baseDeliverable = Math.min(ordered, actualDispatched);
-
-                                    let received = baseDeliverable;
-                                    let returned = 0;
-
-                                    if (srReturned > 0) {
-                                        returned = Math.min(baseDeliverable, srReturned);
-                                        received = Math.max(0, baseDeliverable - returned);
-                                    } else if (isCleared) {
-                                        received = so?.order_status === "Not Fulfilled" ? 0 : baseDeliverable;
-                                        returned = so?.order_status === "Not Fulfilled" ? baseDeliverable : 0;
-                                    } else {
-                                        received = baseDeliverable;
-                                        returned = 0;
-                                    }
-
-                                    let lineStatus: "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Fulfilled";
-                                    if (received === 0 && returned === ordered) {
-                                        lineStatus = "Unfulfilled / Returns";
-                                    } else if (returned > 0) {
-                                        lineStatus = "Fulfilled with Returns";
-                                    } else {
-                                        lineStatus = "Fulfilled";
-                                    }
-
-                                    return {
-                                        detail_id: Number(sod.detail_id),
-                                        product_id: Number(sod.product_id),
-                                        product_code: prodCode,
-                                        product_name: prodName,
-                                        product_description: prodDesc,
-                                        uom: uom,
-                                        ordered_quantity: ordered,
-                                        received_quantity: received,
-                                        returned_quantity: returned,
-                                        unit_price: Number(sod.unit_price || 0),
-                                        has_concern: false,
-                                        concern_notes: "",
-                                        line_status: lineStatus,
-                                        reservations: sodReservationMap.get(Number(sod.detail_id)) || [],
-                                    };
-                                });
-
-                                const hasAnyReturns = items.some((it) => it.returned_quantity > 0) || Boolean(linkedSr);
-                                const hasAnyConcerns = items.some((it) => it.has_concern || (it.concern_notes && it.concern_notes.trim().length > 0));
-                                const isAllUnfulfilled = items.length > 0 && items.every((it) => it.received_quantity === 0 && it.returned_quantity === it.ordered_quantity);
-
+                                let isCleared = false;
                                 let orderFulfillmentStatus:
                                     | "Pending"
                                     | "Fulfilled"
                                     | "Fulfilled with Concerns"
                                     | "Fulfilled with Returns"
                                     | "Unfulfilled / Returns" = "Pending";
+                                let orderRemarks = "";
+                                let linkedSrToReturn: typeof linkedSr | null = null;
+                                let items: Array<{
+                                    detail_id: number;
+                                    product_id: number;
+                                    product_code: string;
+                                    product_name: string;
+                                    product_description: string;
+                                    uom: string;
+                                    ordered_quantity: number;
+                                    received_quantity: number;
+                                    returned_quantity: number;
+                                    unit_price: number;
+                                    has_concern: boolean;
+                                    concern_notes: string;
+                                    line_status: "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns";
+                                    reservations: LineItemReservation[];
+                                }> = [];
 
-                                if (isAllUnfulfilled || so?.order_status === "Not Fulfilled") {
-                                    orderFulfillmentStatus = "Unfulfilled / Returns";
-                                } else if (hasAnyReturns || linkedSr || so?.order_status === "Partially Delivered") {
-                                    orderFulfillmentStatus = "Fulfilled with Returns";
-                                } else if (so?.order_status === "Delivered" || isCleared) {
-                                    orderFulfillmentStatus = hasAnyConcerns ? "Fulfilled with Concerns" : "Fulfilled";
-                                } else {
+                                if (!isManifestCleared) {
+                                    // New/current delivery attempt
+                                    isCleared = false;
                                     orderFulfillmentStatus = "Pending";
+
+                                    items = relevantSodDetails.map((sod) => {
+                                        const prod = productMap.get(Number(sod.product_id));
+                                        const prodName = prod?.description || prod?.product_name || `Product #${sod.product_id}`;
+                                        const prodCode = prod?.product_code || `SKU-${sod.product_id}`;
+                                        const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
+                                        const ordered = Number(sod.ordered_quantity || 0);
+
+                                        const lineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const totalPickedFromRes = lineReservations.reduce((s, r) => s + (Number(r.picked_quantity) || 0), 0);
+                                        const conDetail = consolidatorDetails.find(
+                                            (cd) => Number(cd.consolidator_id) === conId && Number(cd.sales_order_detail_id) === Number(sod.detail_id)
+                                        );
+                                        const conPicked = conDetail ? Number(conDetail.picked_quantity !== undefined ? conDetail.picked_quantity : conDetail.applied_quantity || 0) : 0;
+                                        const sodAllocated = sod.allocated_quantity !== undefined && sod.allocated_quantity !== null ? Number(sod.allocated_quantity) : null;
+                                        const actualDispatched = totalPickedFromRes > 0
+                                            ? totalPickedFromRes
+                                            : conPicked > 0
+                                            ? conPicked
+                                            : sodAllocated !== null
+                                            ? sodAllocated
+                                            : 0;
+                                        const baseDeliverable = Math.min(ordered, actualDispatched);
+
+                                        return {
+                                            detail_id: Number(sod.detail_id),
+                                            product_id: Number(sod.product_id),
+                                            product_code: prodCode,
+                                            product_name: prodName,
+                                            product_description: prodDesc,
+                                            uom: "",
+                                            ordered_quantity: ordered,
+                                            received_quantity: baseDeliverable,
+                                            returned_quantity: 0,
+                                            unit_price: Number(sod.unit_price || 0),
+                                            has_concern: false,
+                                            concern_notes: "",
+                                            line_status: "Fulfilled" as const,
+                                            reservations: lineReservations,
+                                        };
+                                    });
+
+                                    orderRemarks = "";
+                                    linkedSrToReturn = null;
+                                } else {
+                                    // Historical completed delivery attempt
+                                    isCleared = true;
+
+                                    // Read the clearance result belonging to THIS manifest.
+                                    // Do not derive it from current SO/invoice state.
+                                    items = relevantSodDetails.map((sod) => {
+                                        const prod = productMap.get(Number(sod.product_id));
+                                        const prodName = prod?.description || prod?.product_name || `Product #${sod.product_id}`;
+                                        const prodCode = prod?.product_code || `SKU-${sod.product_id}`;
+                                        const prodDesc = prod?.short_description || (prod?.description && prod?.description !== prod?.product_name ? prod?.description : "") || "";
+                                        const ordered = Number(sod.ordered_quantity || 0);
+
+                                        const lineReservations = sodReservationMap.get(Number(sod.detail_id)) || [];
+                                        const totalPickedFromRes = lineReservations.reduce((s, r) => s + (Number(r.picked_quantity) || 0), 0);
+                                        const conDetail = consolidatorDetails.find(
+                                            (cd) => Number(cd.consolidator_id) === conId && Number(cd.sales_order_detail_id) === Number(sod.detail_id)
+                                        );
+                                        const conPicked = conDetail ? Number(conDetail.picked_quantity !== undefined ? conDetail.picked_quantity : conDetail.applied_quantity || 0) : 0;
+                                        const sodAllocated = sod.allocated_quantity !== undefined && sod.allocated_quantity !== null ? Number(sod.allocated_quantity) : null;
+                                        const actualDispatched = totalPickedFromRes > 0
+                                            ? totalPickedFromRes
+                                            : conPicked > 0
+                                            ? conPicked
+                                            : sodAllocated !== null
+                                            ? sodAllocated
+                                            : 0;
+                                        const baseDeliverable = Math.min(ordered, actualDispatched);
+
+                                        const srReturned = linkedSr
+                                            ? returnItemQtyMap.get(`${linkedSr.return_number.toLowerCase()}:${sod.product_id}`) ||
+                                              returnItemQtyMap.get(`${linkedSr.return_number}:${sod.product_id}`) ||
+                                              returnItemQtyMap.get(`${String(linkedSr.return_id)}:${sod.product_id}`) ||
+                                              returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
+                                              returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
+                                              0
+                                            : returnItemQtyMap.get(`${invoiceNo.toLowerCase()}:${sod.product_id}`) ||
+                                              returnItemQtyMap.get(`${String(orderId)}:${sod.product_id}`) ||
+                                              0;
+
+                                        let received = baseDeliverable;
+                                        let returned = 0;
+
+                                        if (matchingUst) {
+                                            const matchingUstd = ustDetailsForMatching.find(
+                                                (d) => Number(d.product_id) === Number(sod.product_id) || Number(d.sales_invoice_detail_id) === Number(sod.detail_id)
+                                            );
+                                            const ustRet = matchingUstd ? Number(matchingUstd.returned_quantity || matchingUstd.missing_quantity || 0) : baseDeliverable;
+                                            returned = Math.min(baseDeliverable, ustRet > 0 ? ustRet : baseDeliverable);
+                                            received = Math.max(0, baseDeliverable - returned);
+                                        } else if (srReturned > 0) {
+                                            returned = Math.min(baseDeliverable, srReturned);
+                                            received = Math.max(0, baseDeliverable - returned);
+                                        } else {
+                                            received = baseDeliverable;
+                                            returned = 0;
+                                        }
+
+                                        let lineStatus: "Fulfilled" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Fulfilled";
+                                        if (received === 0 && returned >= baseDeliverable && baseDeliverable > 0) {
+                                            lineStatus = "Unfulfilled / Returns";
+                                        } else if (returned > 0) {
+                                            lineStatus = "Fulfilled with Returns";
+                                        } else {
+                                            lineStatus = "Fulfilled";
+                                        }
+
+                                        return {
+                                            detail_id: Number(sod.detail_id),
+                                            product_id: Number(sod.product_id),
+                                            product_code: prodCode,
+                                            product_name: prodName,
+                                            product_description: prodDesc,
+                                            uom: "",
+                                            ordered_quantity: ordered,
+                                            received_quantity: received,
+                                            returned_quantity: returned,
+                                            unit_price: Number(sod.unit_price || 0),
+                                            has_concern: false,
+                                            concern_notes: "",
+                                            line_status: lineStatus,
+                                            reservations: lineReservations,
+                                        };
+                                    });
+
+                                    const hasAnyReturns = items.some((it) => it.returned_quantity > 0) || Boolean(linkedSr);
+                                    const hasAnyConcerns = items.some((it) => it.has_concern || (it.concern_notes && it.concern_notes.trim().length > 0));
+                                    const isAllUnfulfilled = items.length > 0 && items.every((it) => it.received_quantity === 0 && it.returned_quantity > 0);
+
+                                    if (matchingUst || isAllUnfulfilled) {
+                                        orderFulfillmentStatus = "Unfulfilled / Returns";
+                                        orderRemarks = matchingUst?.nte || so?.remarks || inv?.remarks || "";
+                                    } else if (hasAnyReturns || linkedSr) {
+                                        orderFulfillmentStatus = "Fulfilled with Returns";
+                                        orderRemarks = so?.remarks || inv?.remarks || "";
+                                        linkedSrToReturn = linkedSr;
+                                    } else {
+                                        orderFulfillmentStatus = hasAnyConcerns ? "Fulfilled with Concerns" : "Fulfilled";
+                                        orderRemarks = "";
+                                    }
                                 }
 
                                 const custCode = so?.customer_code || inv?.customer_code || "";
@@ -1194,10 +1338,10 @@ export async function GET(req: NextRequest) {
                                     salesman_code: salesmanCode,
                                     salesman_name: salesmanName,
                                     amount: Number(so?.net_amount || so?.total_amount || inv?.net_amount || inv?.total_amount || 0),
-                                    remarks: so?.remarks || inv?.remarks || "",
+                                    remarks: orderRemarks,
                                     fulfillment_status: orderFulfillmentStatus,
                                     is_cleared: isCleared,
-                                    linked_sales_return: linkedSr,
+                                    linked_sales_return: linkedSrToReturn,
                                     items,
                                 };
                             })
@@ -1245,24 +1389,22 @@ export async function GET(req: NextRequest) {
                         const totalItemsCount = childOrders.reduce((sum, o) => sum + o.items.length, 0);
                         const totalAmount = childOrders.reduce((sum, o) => sum + o.amount, 0);
 
-                        const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
+                        // const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
                         const hasAnyReturns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Returns" || Boolean(o.linked_sales_return));
                         const hasAnyConcerns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Concerns");
                         const isAllUnfulfilled = childOrders.length > 0 && childOrders.every((o) => o.fulfillment_status === "Unfulfilled / Returns");
 
                         let conFulfillmentStatus: "Pending" | "Fulfilled" | "Fulfilled with Concerns" | "Fulfilled with Returns" | "Unfulfilled / Returns" = "Pending";
-                        if (isAllUnfulfilled) {
+                        if (!isManifestCleared) {
+                            conFulfillmentStatus = "Pending";
+                        } else if (isAllUnfulfilled) {
                             conFulfillmentStatus = "Unfulfilled / Returns";
                         } else if (hasAnyReturns) {
                             conFulfillmentStatus = "Fulfilled with Returns";
-                        } else if (con.status === "Completed" || con.status === "Delivered" || isAllDelivered) {
-                            if (hasAnyConcerns) {
-                                conFulfillmentStatus = "Fulfilled with Concerns";
-                            } else {
-                                conFulfillmentStatus = "Fulfilled";
-                            }
+                        } else if (hasAnyConcerns) {
+                            conFulfillmentStatus = "Fulfilled with Concerns";
                         } else {
-                            conFulfillmentStatus = "Pending";
+                            conFulfillmentStatus = "Fulfilled";
                         }
 
                         return {
@@ -1276,7 +1418,7 @@ export async function GET(req: NextRequest) {
                             total_items: totalItemsCount,
                             total_amount: totalAmount,
                             fulfillment_status: conFulfillmentStatus,
-                            is_cleared: con.status === "Completed" || con.status === "Delivered" || isAllDelivered,
+                            is_cleared: isManifestCleared,
                             orders: childOrders,
                         };
                     })
@@ -1692,10 +1834,13 @@ export async function POST(req: NextRequest) {
             const isOrderDelivered = targetSoStatus === "Delivered" || targetSoStatus === "Partially Delivered";
             const isOrderUnfulfilled = targetSoStatus === "Not Fulfilled" || derivedStatus === "Unfulfilled / Returns";
 
+            // If unfulfilled: sales order transitions back to "For Consolidation" to re-enter consolidation planning
+            const finalOrderStatus = isOrderUnfulfilled ? "For Consolidation" : targetSoStatus;
+
             // Update sales order
             if (targetOrderId) {
                 const soPayload: Record<string, unknown> = {
-                    order_status: targetSoStatus,
+                    order_status: finalOrderStatus,
                     isDelivered: isOrderDelivered ? 1 : 0,
                     modified_by: userId,
                     modified_date: phNow,
@@ -1704,6 +1849,8 @@ export async function POST(req: NextRequest) {
                 };
                 if (isOrderDelivered) {
                     soPayload.delivered_at = phNow;
+                    soPayload.not_fulfilled_at = null;
+                    soPayload.remarks = "";
                 } else if (isOrderUnfulfilled) {
                     soPayload.not_fulfilled_at = phNow;
                     if (orderRemarks && typeof orderRemarks === "string" && orderRemarks.trim()) {
@@ -1718,8 +1865,27 @@ export async function POST(req: NextRequest) {
                 }).catch((err) => console.warn(`[POST] Failed to update sales_order #${targetOrderId}:`, err));
             }
 
-            // Update sales invoice if present
-            if (invoice_id) {
+            // Resolve effective invoice ID (look up from sales_invoice by order_id if invoice_id is not directly passed)
+            let effectiveInvoiceId = Number(invoice_id || 0);
+            if (!effectiveInvoiceId && targetOrderId) {
+                try {
+                    const invLookupRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_invoice?filter[order_id][_eq]=${targetOrderId}&filter[transaction_status][_neq]=Cancelled&fields=invoice_id&limit=1`,
+                        { headers: directusHeaders, cache: "no-store" }
+                    );
+                    if (invLookupRes.ok) {
+                        const invLookupData = (await invLookupRes.json()).data;
+                        if (invLookupData && invLookupData.length > 0) {
+                            effectiveInvoiceId = Number(invLookupData[0].invoice_id);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("[POST] Failed to lookup invoice_id for order:", e);
+                }
+            }
+
+            // Update sales invoice if present: when unfulfilled, reset flags to allow re-dispatch reuse
+            if (effectiveInvoiceId) {
                 const invoicePayload: Record<string, unknown> = {
                     isDelivered: isOrderDelivered ? 1 : 0,
                     isDispatched: isOrderUnfulfilled ? 0 : 1,
@@ -1736,11 +1902,11 @@ export async function POST(req: NextRequest) {
                     invoicePayload.transaction_status = "Completed with Returns";
                 }
 
-                await fetch(`${DIRECTUS_URL}/items/sales_invoice/${invoice_id}`, {
+                await fetch(`${DIRECTUS_URL}/items/sales_invoice/${effectiveInvoiceId}`, {
                     method: "PATCH",
                     headers: directusHeaders,
                     body: JSON.stringify(invoicePayload),
-                }).catch((err) => console.warn(`[POST] Failed to update sales_invoice #${invoice_id}:`, err));
+                }).catch((err) => console.warn(`[POST] Failed to update sales_invoice #${effectiveInvoiceId}:`, err));
             }
 
             // Update sales_order_reservation status for lot-level inventory movement reflection
@@ -1854,22 +2020,57 @@ export async function POST(req: NextRequest) {
                 derivedStatus === "Fulfilled with Concerns"
             ) {
                 try {
-                    const unfulfilledRes = await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction`, {
-                        method: "POST",
-                        headers: directusHeaders,
-                        body: JSON.stringify({
-                            sales_invoice_id: Number(invoice_id || targetOrderId),
-                            nte: typeof orderRemarks === "string" ? orderRemarks.trim() : "",
-                            isCleared: 1,
-                            checked_by: userId,
-                            date_acknowledged: phNow,
-                            date_created: phNow,
-                            variance_amount: totalReturned + totalMissing,
-                        }),
-                    });
-                    if (unfulfilledRes.ok) {
-                        const unfulfilledHeader = (await unfulfilledRes.json()).data;
-                        const unfulfilledId = unfulfilledHeader?.id;
+                    let unfulfilledId: number | null = null;
+                    const finalUstInvoiceId = effectiveInvoiceId || Number(invoice_id || targetOrderId);
+
+                    // Check if an unfulfilled_sales_transaction already exists for this sales_invoice_id (to avoid unique key constraint violation)
+                    if (finalUstInvoiceId) {
+                        try {
+                            const existingUstRes = await fetch(
+                                `${DIRECTUS_URL}/items/unfulfilled_sales_transaction?filter[sales_invoice_id][_eq]=${finalUstInvoiceId}&limit=1&fields=id`,
+                                { headers: directusHeaders, cache: "no-store" }
+                            );
+                            if (existingUstRes.ok) {
+                                const existingUstData = (await existingUstRes.json()).data;
+                                if (existingUstData && existingUstData.length > 0) {
+                                    unfulfilledId = Number(existingUstData[0].id);
+                                    await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction/${unfulfilledId}`, {
+                                        method: "PATCH",
+                                        headers: directusHeaders,
+                                        body: JSON.stringify({
+                                            nte: typeof orderRemarks === "string" ? orderRemarks.trim() : "",
+                                            isCleared: 1,
+                                            checked_by: userId,
+                                            date_acknowledged: phNow,
+                                            variance_amount: totalReturned + totalMissing,
+                                        }),
+                                    }).catch(() => null);
+                                }
+                            }
+                        } catch (checkErr) {
+                            console.warn("[POST] Error checking existing unfulfilled_sales_transaction:", checkErr);
+                        }
+                    }
+
+                    if (!unfulfilledId) {
+                        const unfulfilledRes = await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction`, {
+                            method: "POST",
+                            headers: directusHeaders,
+                            body: JSON.stringify({
+                                sales_invoice_id: finalUstInvoiceId,
+                                nte: typeof orderRemarks === "string" ? orderRemarks.trim() : "",
+                                isCleared: 1,
+                                checked_by: userId,
+                                date_acknowledged: phNow,
+                                date_created: phNow,
+                                variance_amount: totalReturned + totalMissing,
+                            }),
+                        });
+                        if (unfulfilledRes.ok) {
+                            const unfulfilledHeader = (await unfulfilledRes.json()).data;
+                            unfulfilledId = unfulfilledHeader?.id ? Number(unfulfilledHeader.id) : null;
+                        }
+                    }
                         if (unfulfilledId) {
                             if (isOrderUnfulfilled && allLotReservations.length > 0) {
                                 // Unfulfilled: insert one detail row per lot/reservation.
@@ -1926,7 +2127,6 @@ export async function POST(req: NextRequest) {
                                 }
                             }
                         }
-                    }
                 } catch (e) {
                     console.warn("[POST] Error logging unfulfilled transaction:", e);
                 }
