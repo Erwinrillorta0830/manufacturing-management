@@ -795,6 +795,7 @@ export async function handleGET(request: Request) {
                             receipt_id: lot.purchaseOrderReceivingId,
                             receipt_no: lot.purchaseOrderReceivingId ? "Receiving" : "Inventory Movement",
                             source_type: lot.purchaseOrderReceivingId ? "RAW_MATERIAL" : "INVENTORY",
+                            storage_lot_name: lot.storageLotName,
                             mm_lot_id: lot.mmLotId,
                             inventory_lot_id: lot.inventoryLotId,
                             lot_no: lotNum,

@@ -18,6 +18,7 @@ const ACTIVE_JOB_ORDER_STATUSES = [
 
 export interface AvailableInventoryLot {
     batchNo: string;
+    storageLotName: string | null;
     mmLotId: number | null;
     inventoryLotId: number | null;
     purchaseOrderReceivingId: number | null;
@@ -119,6 +120,12 @@ export async function getAvailableInventoryLots(
             .map((lot) => mmLotId(lot.lot_id))
             .filter((lotId): lotId is number => lotId !== null)
     );
+    const storageLotNamesById = new Map<number, string>();
+    eligibleStorageLots.forEach((lot) => {
+        const storageLotId = mmLotId(lot.lot_id);
+        const storageLotName = String(lot.lot_name || "").trim();
+        if (storageLotId !== null && storageLotName) storageLotNamesById.set(storageLotId, storageLotName);
+    });
 
     const receipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
     const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
@@ -328,6 +335,7 @@ export async function getAvailableInventoryLots(
 
             availableLots.push({
                 batchNo: lot.batchNo,
+                storageLotName: lot.mmLotId ? storageLotNamesById.get(lot.mmLotId) || null : null,
                 mmLotId: lot.mmLotId,
                 inventoryLotId: lot.inventoryLotId,
                 purchaseOrderReceivingId: lot.mmLotId
