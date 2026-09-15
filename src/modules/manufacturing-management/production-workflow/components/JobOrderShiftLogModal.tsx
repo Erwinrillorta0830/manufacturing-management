@@ -285,6 +285,10 @@ export function JobOrderShiftLogModal({
         );
     };
 
+    const totalOutputQuantity = (Number(shiftYieldQty) || 0)
+        + (Number(rejectedQty) || 0)
+        + (Number(scrapQty) || 0);
+
     const handleShiftLogSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const newYield = Number(shiftYieldQty) || 0;
@@ -413,7 +417,7 @@ export function JobOrderShiftLogModal({
             ? "<tr><td colspan='4' style='text-align: center; font-style: italic; padding: 12px;'>No raw materials consumed.</td></tr>"
             : shiftMaterials.map(m => {
                 const stdQty = Number(m.allocated_quantity || 0) / (Number(selectedJobOrder.quantity) || 1);
-                const theoretical = stdQty * (Number(shiftYieldQty) || 0);
+                const theoretical = stdQty * totalOutputQuantity;
                 const actual = Number(m.actual_qty || 0);
                 const deviation = actual - theoretical;
                 return `
@@ -833,7 +837,7 @@ export function JobOrderShiftLogModal({
                                             {shiftMaterials.map((m, index) => {
                                                  const plannedQty = Number(m.issued_to_wip_quantity || m.reserved_quantity || m.staged_quantity || m.allocated_quantity || 0);
                                                  const stdQty = plannedQty / (Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity) || 1);
-                                                 const theoretical = stdQty * (Number(shiftYieldQty) || 0);
+                                                 const theoretical = stdQty * totalOutputQuantity;
                                                  const actual = Number(m.actual_qty || 0);
                                                  const isExceeded = actual > theoretical * 1.05;
                                                  const isInsufficient = actual > Number(m.available_stock || 0);

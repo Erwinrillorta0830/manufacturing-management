@@ -864,6 +864,185 @@ export async function handleGET(request: Request) {
             return NextResponse.json(enriched);
         }
 
+        if (action === "job-order-progress") {
+            const joId = searchParams.get("joId");
+            const numericJoId = Number(joId);
+            if (!joId || !Number.isFinite(numericJoId) || numericJoId <= 0) {
+                return NextResponse.json({ error: "A valid Job Order ID is required", code: "JOB_PROGRESS_INVALID_ID" }, { status: 400 });
+            }
+
+            const round6 = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 1_000_000) / 1_000_000;
+
+            const joRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${encodeURIComponent(String(numericJoId))}?fields=job_order_id,job_order_no,status,target_quantity,completed_quantity,actual_quantity_produced`,
+                { headers, cache: "no-store" }
+            );
+            if (!joRes.ok) {
+                console.error("Job Order progress context lookup failed:", joRes.status);
+                return NextResponse.json(
+                    { error: "Job Order context is temporarily unavailable.", code: "JOB_ORDER_CONTEXT_UNAVAILABLE" },
+                    { status: 502 }
+                );
+            }
+            const jobOrder = (await joRes.json())?.data;
+            if (!jobOrder) {
+                return NextResponse.json({ error: `Job Order ${numericJoId} was not found`, code: "JOB_ORDER_NOT_FOUND" }, { status: 404 });
+            }
+
+            const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
+            const producedQuantity = Number(jobOrder.actual_quantity_produced || 0) > 0
+                ? Number(jobOrder.actual_quantity_produced)
+                : Math.max(0, Number(jobOrder.completed_quantity || 0));
+
+            // Raw materials and their WIP reservations.
+            const materialsRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${numericJoId}&fields=jo_material_id,product_id,allocated_quantity,reserved_quantity,actual_consumed_quantity&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            const materials: any[] = materialsRes.ok ? ((await materialsRes.json()).data || []) : [];
+            const materialIds = materials.map((material: any) => Number(material.jo_material_id || material.id)).filter(Boolean);
+
+            let reservations: any[] = [];
+            if (materialIds.length > 0) {
+                const reservationsRes = await fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,reserved_quantity,staged_quantity,issued_to_wip_quantity,actual_used_quantity,returned_quantity,remaining_wip_quantity&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                if (reservationsRes.ok) {
+                    reservations = (await reservationsRes.json()).data || [];
+                }
+            }
+
+            const productIds = [...new Set(
+                materials
+                    .map((material: any) => Number(material.product_id?.product_id || material.product_id))
+                    .filter(Boolean)
+            )];
+            const productMap = new Map<number, any>();
+            if (productIds.length > 0) {
+                const productsRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${productIds.join(",")}&fields=product_id,product_name,unit_of_measurement.unit_shortcut&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                if (productsRes.ok) {
+                    ((await productsRes.json()).data || []).forEach((product: any) => {
+                        productMap.set(Number(product.product_id), product);
+                    });
+                }
+            }
+
+            const rawMaterialLines = materials.map((material: any) => {
+                const materialId = Number(material.jo_material_id || material.id);
+                const materialReservations = reservations.filter((reservation: any) => Number(reservation.jo_material_id) === materialId);
+                const sumReservations = (key: string) => round6(materialReservations.reduce(
+                    (total: number, row: any) => total + Math.max(0, Number(row[key] || 0)),
+                    0
+                ));
+
+                const reservedIssued = sumReservations("issued_to_wip_quantity");
+                const reservedStaged = sumReservations("staged_quantity");
+                const reservedRaw = sumReservations("reserved_quantity");
+                const reserved = reservedIssued > 0 ? reservedIssued : (reservedStaged > 0 ? reservedStaged : reservedRaw);
+
+                const reservationConsumed = sumReservations("actual_used_quantity");
+                const consumed = reservationConsumed > 0
+                    ? reservationConsumed
+                    : round6(Math.max(0, Number(material.actual_consumed_quantity || 0)));
+                const returned = sumReservations("returned_quantity");
+
+                const productId = Number(material.product_id?.product_id || material.product_id);
+                const product = productMap.get(productId);
+
+                return {
+                    materialId,
+                    productName: product?.product_name || `Product #${productId || "?"}`,
+                    unitShortcut: product?.unit_of_measurement?.unit_shortcut || "units",
+                    reserved,
+                    consumed,
+                    remaining: round6(Math.max(0, reserved - consumed - returned))
+                };
+            });
+
+            const uniformUnit = rawMaterialLines.length > 0
+                && rawMaterialLines.every((line: any) => line.unitShortcut === rawMaterialLines[0].unitShortcut);
+            const rawMaterialsTotal = uniformUnit
+                ? {
+                    unitShortcut: rawMaterialLines[0].unitShortcut,
+                    reserved: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.reserved, 0)),
+                    consumed: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.consumed, 0)),
+                    remaining: round6(rawMaterialLines.reduce((total: number, line: any) => total + line.remaining, 0))
+                }
+                : null;
+
+            // Finished goods credited to each linked Sales Order, proportional
+            // to this Job Order's allocation and actual produced quantity.
+            const allocationsRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${numericJoId}&fields=sales_order_detail_id,allocated_quantity&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            const allocations: any[] = (allocationsRes.ok ? ((await allocationsRes.json()).data || []) : [])
+                .filter((allocation: any) => Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id) > 0);
+
+            const detailMap = new Map<number, any>();
+            const orderMap = new Map<number, any>();
+            const detailIds = [...new Set(allocations.map((allocation: any) => Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id)))];
+            if (detailIds.length > 0) {
+                const detailsRes = await fetch(
+                    `${DIRECTUS_URL}/items/sales_order_details?filter[detail_id][_in]=${detailIds.join(",")}&fields=detail_id,order_id,ordered_quantity&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                const details: any[] = detailsRes.ok ? ((await detailsRes.json()).data || []) : [];
+                details.forEach((detail: any) => detailMap.set(Number(detail.detail_id), detail));
+
+                const orderIds = [...new Set(details.map((detail: any) => Number(detail.order_id?.order_id || detail.order_id)).filter(Boolean))];
+                if (orderIds.length > 0) {
+                    const ordersRes = await fetch(
+                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${orderIds.join(",")}&fields=order_id,order_no&limit=-1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (ordersRes.ok) {
+                        ((await ordersRes.json()).data || []).forEach((order: any) => orderMap.set(Number(order.order_id), order));
+                    }
+                }
+            }
+
+            const finishedGoods = allocations.length > 0
+                ? allocations.map((allocation: any) => {
+                    const detailId = Number(allocation.sales_order_detail_id?.detail_id || allocation.sales_order_detail_id);
+                    const detail = detailMap.get(detailId);
+                    const orderId = Number(detail?.order_id?.order_id || detail?.order_id) || null;
+                    const order = orderId ? orderMap.get(orderId) : null;
+                    const ordered = Math.max(0, Number(detail?.ordered_quantity || 0));
+                    const allocated = Math.max(0, Number(allocation.allocated_quantity || 0));
+                    const produced = targetQuantity > 0 ? round6(producedQuantity * (allocated / targetQuantity)) : 0;
+
+                    return {
+                        orderNo: order?.order_no || (orderId ? `SO-${orderId}` : `Detail #${detailId}`),
+                        targetQuantity: ordered,
+                        produced,
+                        remaining: round6(Math.max(0, ordered - produced))
+                    };
+                })
+                : [{
+                    orderNo: "Buffer Stock",
+                    targetQuantity,
+                    produced: round6(producedQuantity),
+                    remaining: round6(Math.max(0, targetQuantity - producedQuantity))
+                }];
+
+            return NextResponse.json({
+                jobOrder: {
+                    jobOrderId: Number(jobOrder.job_order_id || numericJoId),
+                    jobOrderNo: jobOrder.job_order_no || `JO-${numericJoId}`,
+                    status: jobOrder.status || null,
+                    targetQuantity,
+                    producedQuantity: round6(producedQuantity)
+                },
+                rawMaterials: { lines: rawMaterialLines, total: rawMaterialsTotal },
+                finishedGoods
+            });
+        }
+
         if (action === "step-materials") {
             const joId = searchParams.get("joId");
             const joRouteId = searchParams.get("joRouteId");

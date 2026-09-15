@@ -888,8 +888,9 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             const materialActualAfter = roundedQuantity(materialActualBefore + line.actualQty);
             const materialReservedAfter = roundedQuantity(Math.max(0, materialReservedBefore - line.actualQty));
             const baseQuantity = Math.max(0, finiteNumber(material.allocated_quantity ?? material.required_quantity ?? 0));
+            const totalOutputQuantity = input.goodQty + input.rejectedQty + input.scrapQty;
             const theoreticalQuantity = targetQuantity > EPSILON
-                ? roundedQuantity((baseQuantity / targetQuantity) * input.goodQty)
+                ? roundedQuantity((baseQuantity / targetQuantity) * totalOutputQuantity)
                 : 0;
             const plan: MaterialPlan = {
                 line,

@@ -27,6 +27,7 @@ import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
 import { RoutingSequence } from "./components/RoutingSequence";
 import OperatorPanel from "./components/OperatorPanel";
 import { OperationStepTracker } from "./components/OperationStepTracker";
+import { JobOrderProgressSummary } from "./components/JobOrderProgressSummary";
 import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
@@ -483,6 +484,11 @@ export default function ProductionWorkflowModule() {
                                 </Button>
                             </div>
                         )}
+                        {/* Job Order progress summary above the operation tracker */}
+                        {selectedJobOrder && (
+                            <JobOrderProgressSummary jobOrder={selectedJobOrder} />
+                        )}
+
                         {/* Operation Step Tracker Section */}
                         {selectedJobOrder && (
                             <OperationStepTracker
