@@ -14,6 +14,7 @@ import {
     Branch
 } from "../types";
 import { commitMaterialStaging, fetchAllocationPreview, fetchStagingJobOrders } from "../services/staging-api";
+import { createMaterialStagingOperationId } from "../utils/operation-id";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
@@ -218,7 +219,7 @@ export function useMaterialStaging() {
                 material_ids: materialIds,
                 lines: preview.proposed_allocations,
                 source_bin: "MAIN-STORE",
-                operation_id: crypto.randomUUID(),
+                operation_id: createMaterialStagingOperationId(),
                 preview_token: preview.preview_token,
                 remarks: `Auto FEFO staging for JO #${jobOrder.job_order_no}`
             });
