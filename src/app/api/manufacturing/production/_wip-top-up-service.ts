@@ -381,17 +381,11 @@ async function computeLotBalance(
             "Load inventory movements for WIP top-up"
         )
     ]);
-    const springMovementIds = new Set(
-        springMovements
-            .map(movement => Number(movement.movement_id || 0))
-            .filter(movementId => movementId > 0)
-    );
-    const movements: Array<NormalizedMmInventoryMovement | ReturnType<typeof normalizeDirectusStagingMovement>> = [
-        ...springMovements,
-        ...directusMovementRows
-            .map(normalizeDirectusStagingMovement)
-            .filter(movement => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
-    ];
+    const normalizedDirectusMovements = directusMovementRows.map(normalizeDirectusStagingMovement);
+    // Keep the Spring ledger authoritative when it has data, matching the
+    // on-hand source used by Lot Management. Directus is only a fallback.
+    const movements: Array<NormalizedMmInventoryMovement | ReturnType<typeof normalizeDirectusStagingMovement>> =
+        springMovements.length > 0 ? springMovements : normalizedDirectusMovements;
     const balance = movements
         .filter(movement => {
             const movementInventoryLotId = movementInventoryLotReference(movement);
