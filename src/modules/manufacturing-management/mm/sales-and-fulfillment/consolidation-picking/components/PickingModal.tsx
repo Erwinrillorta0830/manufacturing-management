@@ -51,6 +51,16 @@ export function getLotOrderLabels(
     allocations: LotAllocation[],
     allocIdx: number
 ): Array<{ orderNo: string; customer: string; qty: number }> {
+    const alloc = allocations[allocIdx];
+    if (alloc?.orderNo) {
+        const matchedCust = alloc.customerName || (orders.find((o) => o.invoiceNo === alloc.orderNo)?.customerName || "Customer");
+        return [{
+            orderNo: alloc.orderNo,
+            customer: matchedCust,
+            qty: Number(alloc.quantity || 0),
+        }];
+    }
+
     if (!orders || orders.length === 0) return [];
 
     let orderPos = 0;
@@ -373,14 +383,16 @@ export default function PickingModal({ isOpen, batch, onClose, onSuccess }: Prop
     const getLotPickedItems = (): import("../../shared/consolidation-types").LotPickedItem[] => {
         if (!activeBatch) return [];
         const items: import("../../shared/consolidation-types").LotPickedItem[] = [];
-        for (const d of activeBatch.details || []) {
-            const prodAllocs = allocationsByProduct.get(d.productId) || [];
+        const seenKeys = new Set<string>();
+        for (const [pId, prodAllocs] of allocationsByProduct.entries()) {
             for (let i = 0; i < prodAllocs.length; i++) {
                 const alloc = prodAllocs[i];
-                const key = getLotKey(d.productId, alloc, i);
+                const key = getLotKey(pId, alloc, i);
+                if (seenKeys.has(key)) continue;
+                seenKeys.add(key);
                 const pickedQty = Number(lotPickedQtys[key] ?? 0);
                 items.push({
-                    productId: d.productId,
+                    productId: pId,
                     inventoryLotId: alloc.inventoryLotId,
                     lotId: alloc.lotId,
                     batchNo: alloc.batchNo,

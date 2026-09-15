@@ -21,6 +21,7 @@ export interface LotAllocationDetail {
     salesOrderDetailId?: number;
     orderId?: number;
     orderNo?: string;
+    customerName?: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -117,15 +118,19 @@ export async function GET(req: NextRequest) {
         ].filter(Boolean))];
 
         const orderNoMap = new Map<number, string>();
+        const customerMap = new Map<number, string>();
         if (allOrderIds.length > 0) {
             try {
                 const soRes = await fetch(
-                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allOrderIds.join(",")}&fields=order_id,order_no&limit=-1`,
+                    `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${allOrderIds.join(",")}&fields=order_id,order_no,customer_code&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 );
                 if (soRes.ok) {
-                    const soData: { order_id: number; order_no: string }[] = (await soRes.json()).data || [];
-                    for (const s of soData) orderNoMap.set(Number(s.order_id), String(s.order_no));
+                    const soData: { order_id: number; order_no: string; customer_code?: string }[] = (await soRes.json()).data || [];
+                    for (const s of soData) {
+                        orderNoMap.set(Number(s.order_id), String(s.order_no));
+                        if (s.customer_code) customerMap.set(Number(s.order_id), String(s.customer_code));
+                    }
                 }
             } catch (err) {
                 console.warn("[allocations] Warning fetching sales orders:", err);
@@ -375,6 +380,7 @@ export async function GET(req: NextRequest) {
 
                 const orderId = detailId ? orderByDetail.get(detailId) : undefined;
                 const orderNo = orderId ? orderNoMap.get(orderId) : undefined;
+                const customerName = orderId ? customerMap.get(orderId) : undefined;
 
                 const rawInvId = typeof reservation.inventory_lot_id === "object" && reservation.inventory_lot_id !== null
                     ? (reservation.inventory_lot_id.inventory_lot_id || reservation.inventory_lot_id.id || 0)
@@ -434,6 +440,7 @@ export async function GET(req: NextRequest) {
                         salesOrderDetailId: detailId || undefined,
                         orderId: orderId || undefined,
                         orderNo: orderNo || undefined,
+                        customerName,
                     });
                 }
             }

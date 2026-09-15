@@ -908,7 +908,7 @@ export async function GET(req: NextRequest) {
                 for (let i = 0; i < allSodDetailIds.length; i += chunkSize) {
                     const chunk = allSodDetailIds.slice(i, i + chunkSize);
                     const resvRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${chunk.join(",")}&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter[sales_order_detail_id][_in]=${chunk.join(",")}&filter[status][_neq]=Cancelled&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     );
                     if (resvRes.ok) {
@@ -2069,64 +2069,130 @@ export async function POST(req: NextRequest) {
                         if (unfulfilledRes.ok) {
                             const unfulfilledHeader = (await unfulfilledRes.json()).data;
                             unfulfilledId = unfulfilledHeader?.id ? Number(unfulfilledHeader.id) : null;
+                        } else {
+                            const errText = await unfulfilledRes.text();
+                            console.error(`[POST] Failed to create unfulfilled_sales_transaction: ${unfulfilledRes.status} ${errText}`);
                         }
                     }
-                        if (unfulfilledId) {
-                            if (isOrderUnfulfilled && allLotReservations.length > 0) {
-                                // Unfulfilled: insert one detail row per lot/reservation.
-                                // inventory_lot_id + returned_quantity feed the MM-UST-IN UNION branch in v_mm_inventory_movements.
-                                for (const resv of allLotReservations) {
-                                    const qty = Math.max(
-                                        0,
-                                        Number(resv.picked_quantity) || Number(resv.reserved_quantity) || 0
-                                    );
-                                    if (qty <= 0 || !resv.inventory_lot_id) continue;
-                                    await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details`, {
-                                        method: "POST",
-                                        headers: directusHeaders,
-                                        body: JSON.stringify({
-                                            unfulfilled_sales_transaction_id: unfulfilledId,
-                                            sales_invoice_detail_id: null,
-                                            inventory_lot_id: resv.inventory_lot_id,
-                                            product_id: resv.product_id || null,
-                                            returned_quantity: qty,
-                                            missing_quantity: qty,
-                                            invoice_quantity: qty,
-                                            total_amount: 0,
-                                        }),
-                                    }).catch(() => null);
-                                }
-                            } else {
-                                // Fulfilled with Concerns / Fulfilled with Returns: item-level detail for audit
-                                for (const item of items) {
-                                    const sodId = Number(item.detail_id);
-                                    const dbItem = dbDetailMap.get(sodId);
-                                    const rec = Number(item.received_quantity);
-                                    const ret = Number(item.returned_quantity);
-                                    const dbOrdered = dbItem ? Number(dbItem.ordered_quantity || 0) : rec + ret;
-                                    const missing = Math.max(0, dbOrdered - (rec + ret));
 
-                                    if (
-                                        ret > 0 ||
-                                        missing > 0 ||
-                                        item.has_concern ||
-                                        derivedStatus === "Fulfilled with Concerns"
-                                    ) {
-                                        await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details`, {
-                                            method: "POST",
+                    if (unfulfilledId) {
+                        // Lookup real sales_invoice_details by invoice_no to map product_id -> sales_invoice_detail_id
+                        const invoiceDetailMap = new Map<number, number>();
+                        if (finalUstInvoiceId) {
+                            try {
+                                const sidRes = await fetch(
+                                    `${DIRECTUS_URL}/items/sales_invoice_details?filter[invoice_no][_eq]=${finalUstInvoiceId}&limit=-1&fields=detail_id,product_id`,
+                                    { headers: directusHeaders, cache: "no-store" }
+                                );
+                                if (sidRes.ok) {
+                                    const sidData: Array<{ detail_id: number; product_id: number }> = (await sidRes.json()).data || [];
+                                    for (const sid of sidData) {
+                                        if (sid.product_id && sid.detail_id) {
+                                            invoiceDetailMap.set(Number(sid.product_id), Number(sid.detail_id));
+                                        }
+                                    }
+                                }
+                            } catch (sidErr) {
+                                console.warn("[POST] Error fetching sales_invoice_details for UST mapping:", sidErr);
+                            }
+                        }
+
+                        // Clean up existing details for this unfulfilled_sales_transaction_id to prevent duplicates on repeated clearance
+                        try {
+                            const existingDetailsRes = await fetch(
+                                `${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details?filter[unfulfilled_sales_transaction_id][_eq]=${unfulfilledId}&limit=-1&fields=id`,
+                                { headers: directusHeaders, cache: "no-store" }
+                            );
+                            if (existingDetailsRes.ok) {
+                                const existingDetails = (await existingDetailsRes.json()).data || [];
+                                for (const det of existingDetails) {
+                                    if (det.id) {
+                                        await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details/${det.id}`, {
+                                            method: "DELETE",
                                             headers: directusHeaders,
-                                            body: JSON.stringify({
-                                                unfulfilled_sales_transaction_id: unfulfilledId,
-                                                sales_invoice_detail_id: item.detail_id,
-                                                missing_quantity: ret + missing,
-                                                invoice_quantity: dbOrdered,
-                                                total_amount: 0,
-                                            }),
                                         }).catch(() => null);
                                     }
                                 }
                             }
+                        } catch (cleanErr) {
+                            console.warn("[POST] Error cleaning up old unfulfilled details:", cleanErr);
                         }
+
+                        for (const item of items) {
+                            const sodId = Number(item.detail_id);
+                            const prodId = Number(item.product_id);
+                            const dbItem = dbDetailMap.get(sodId);
+                            const rec = Number(item.received_quantity);
+                            const ret = Number(item.returned_quantity);
+                            const dbOrdered = dbItem ? Number(dbItem.ordered_quantity || 0) : rec + ret;
+                            const missing = Math.max(0, dbOrdered - (rec + ret));
+
+                            // If this item line has 0 returned, 0 missing, and no concerns, strictly skip detail insertion
+                            if (ret <= 0 && missing <= 0 && !item.has_concern && derivedStatus !== "Fulfilled with Concerns") {
+                                continue;
+                            }
+
+                            // Foreign key requires matching sales_invoice_details.detail_id or null
+                            const validInvoiceDetailId = (prodId && invoiceDetailMap.get(prodId)) || null;
+
+                            // 1. Check if client sent per-batch allocations in item.reservations
+                            const clientReservations: Array<{
+                                inventory_lot_id?: number;
+                                returned_quantity?: number | string;
+                                picked_quantity?: number | string;
+                                product_id?: number;
+                            }> = Array.isArray(item.reservations) ? item.reservations : [];
+                            const allocatedClientResvs = clientReservations.filter(
+                                (r) => Number(r.returned_quantity || 0) > 0 && r.inventory_lot_id
+                            );
+
+                            if (allocatedClientResvs.length > 0) {
+                                // Insert detail rows using exact allocated returned_quantity per batch
+                                for (const resv of allocatedClientResvs) {
+                                    const allocQty = Number(resv.returned_quantity);
+                                    if (allocQty <= 0) continue;
+                                    const detailRes = await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details`, {
+                                        method: "POST",
+                                        headers: directusHeaders,
+                                        body: JSON.stringify({
+                                            unfulfilled_sales_transaction_id: unfulfilledId,
+                                            sales_invoice_detail_id: validInvoiceDetailId,
+                                            inventory_lot_id: resv.inventory_lot_id,
+                                            product_id: resv.product_id || prodId || null,
+                                            returned_quantity: allocQty,
+                                            missing_quantity: allocQty,
+                                            invoice_quantity: Number(resv.picked_quantity) || dbOrdered,
+                                            total_amount: 0,
+                                        }),
+                                    });
+                                    if (!detailRes.ok) {
+                                        const errText = await detailRes.text();
+                                        console.error(`[POST] Failed to insert unfulfilled detail: ${detailRes.status} ${errText}`);
+                                    }
+                                }
+                            } else if (ret > 0 || missing > 0 || item.has_concern || derivedStatus === "Fulfilled with Concerns") {
+                                // Item-level variance without batch allocation or non-lot item
+                                const detailRes = await fetch(`${DIRECTUS_URL}/items/unfulfilled_sales_transaction_details`, {
+                                    method: "POST",
+                                    headers: directusHeaders,
+                                    body: JSON.stringify({
+                                        unfulfilled_sales_transaction_id: unfulfilledId,
+                                        sales_invoice_detail_id: validInvoiceDetailId,
+                                        inventory_lot_id: null,
+                                        product_id: prodId || null,
+                                        returned_quantity: ret,
+                                        missing_quantity: ret + missing,
+                                        invoice_quantity: dbOrdered,
+                                        total_amount: 0,
+                                    }),
+                                });
+                                if (!detailRes.ok) {
+                                    const errText = await detailRes.text();
+                                    console.error(`[POST] Failed to insert non-lot unfulfilled detail: ${detailRes.status} ${errText}`);
+                                }
+                            }
+                        }
+                    }
                 } catch (e) {
                     console.warn("[POST] Error logging unfulfilled transaction:", e);
                 }
