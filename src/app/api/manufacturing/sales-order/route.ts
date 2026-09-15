@@ -598,7 +598,7 @@ export async function GET(request: Request) {
         const filters = {
             search,
             status: forProductionQueue
-                ? "For Production"
+                ? "For Production,In Production"
                 : excludeHasJo
                 ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
                 : status,
@@ -654,19 +654,21 @@ export async function GET(request: Request) {
                         const detailId = Number(detail.detail_id || detail.id);
                         const plannedQuantity = chunkPlannedQuantities.get(detailId) || 0;
                         const isScheduled = detailRemainingQuantity(detail, plannedQuantity) <= 0;
-                        const hasActiveJobOrder = forProductionQueue && plannedQuantity > 0;
                         return isPlanningVisibleDetail(
                             detail,
                             candidate.order_status,
                             isScheduled,
                             plannedQuantity,
-                            includeAllStatuses,
-                            hasActiveJobOrder
+                            includeAllStatuses
                         );
                     });
                     if (eligibleOrderDetails.length > 0) {
                         eligibleOrders.push(candidate);
-                        eligibleDetails.push(...eligibleOrderDetails);
+                        // Keep every detail for a qualifying Sales Order in the
+                        // response. The grouped planning row uses scheduled or
+                        // fulfilled details as read-only tracking entries while
+                        // selection remains limited to eligible details.
+                        eligibleDetails.push(...orderDetails);
                     }
                 }
                 inspectedCount += candidates.length;
@@ -718,21 +720,21 @@ export async function GET(request: Request) {
             : await fetchDetailsForOrders(read, [...orderIdsToFetch]);
         if (excludeHasJo) {
             plannedQuantities = await findPlannedQuantities(read, details);
-            const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
-            details = details.filter((detail: any) => {
-                const order = orderById.get(Number(detail.order_id));
-                const detailId = Number(detail.detail_id || detail.id);
-                const plannedQuantity = plannedQuantities.get(detailId) || 0;
-                const hasActiveJobOrder = forProductionQueue && plannedQuantity > 0;
-                return isPlanningVisibleDetail(
-                    detail,
-                    order?.order_status,
-                    detailRemainingQuantity(detail, plannedQuantity) <= 0,
-                    plannedQuantity,
-                    includeAllStatuses,
-                    hasActiveJobOrder
-                );
-            });
+            if (!forProductionQueue) {
+                const orderById = new Map(contextOrders.map((order: any) => [Number(order.order_id), order]));
+                details = details.filter((detail: any) => {
+                    const order = orderById.get(Number(detail.order_id));
+                    const detailId = Number(detail.detail_id || detail.id);
+                    const plannedQuantity = plannedQuantities.get(detailId) || 0;
+                    return isPlanningVisibleDetail(
+                        detail,
+                        order?.order_status,
+                        detailRemainingQuantity(detail, plannedQuantity) <= 0,
+                        plannedQuantity,
+                        includeAllStatuses
+                    );
+                });
+            }
         }
         const detailsMap = await enrichSalesOrderReadModel(
             read,

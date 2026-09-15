@@ -101,7 +101,9 @@ export default function PlanningEngineeringModule() {
         setJoNumber,
         loadInitialData,
         salesOrderLines,
+        salesOrderGroups,
         selectedLines,
+        releaseGroups,
         mergeValidation,
         handleSelectLine,
         handleInitiateRelease,
@@ -758,7 +760,7 @@ export default function PlanningEngineeringModule() {
         <div className="space-y-6 p-1 sm:p-2">
             {/* Summary Cards */}
             <PlanningSummaryCards
-                demandLinesCount={salesOrderLines.length}
+                demandLinesCount={salesOrderGroups.length}
                 shortfallItemsCount={shortfallCount}
                 unreleasedJobsCount={unreleasedJobs.length}
                 familyGroupsCount={familyGroups.filter((group) => group.isFamily).length}
@@ -862,7 +864,7 @@ export default function PlanningEngineeringModule() {
                         <ClipboardList className="h-4 w-4 text-primary" />
                         <span>Sales Order Demand</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
-                            {salesOrderLines.length}
+                            {salesOrderGroups.length}
                         </Badge>
                     </TabsTrigger>
                     <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
@@ -891,7 +893,7 @@ export default function PlanningEngineeringModule() {
                         <div className="lg:col-span-8">
                             <DemandLinesTable
                                 loadingOrders={loadingOrders}
-                                salesOrderLines={salesOrderLines}
+                                salesOrderGroups={salesOrderGroups}
                                 selectedDetailIds={selectedDetailIds}
                                 handleSelectLine={handleSelectLine}
                             />
@@ -900,10 +902,12 @@ export default function PlanningEngineeringModule() {
                         <div className="lg:col-span-4">
                             <ConsolidationPanel
                                 selectedLines={selectedLines}
+                                releaseGroups={releaseGroups}
                                 mergeValidation={mergeValidation}
                                 handleInitiateRelease={handleInitiateRelease}
                                 versionStock={versionStock}
                                 loadingVersionStock={loadingVersionStock}
+                                canDirectAllocate={releaseGroups.length === 1}
                                 handleInitiateDirectAllocate={() => setIsDirectAllocDialogOpen(true)}
                             />
                         </div>
@@ -969,6 +973,7 @@ export default function PlanningEngineeringModule() {
                 isConfirmOpen={isConfirmOpen}
                 setIsConfirmOpen={setIsConfirmOpen}
                 selectedLines={selectedLines}
+                releaseGroups={releaseGroups}
                 branches={branches}
                 selectedBranchId={selectedBranchId}
                 joNumber={joNumber}

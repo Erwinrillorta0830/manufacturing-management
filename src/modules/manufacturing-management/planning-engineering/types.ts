@@ -49,6 +49,24 @@ export interface SalesOrderDetail {
     id?: number;
 }
 
+export interface SalesOrderDemandGroup {
+    order: SalesOrder;
+    lines: SalesOrderDetail[];
+    selectableLines: SalesOrderDetail[];
+}
+
+export interface SalesOrderReleaseGroup {
+    key: string;
+    productId: number;
+    productName: string;
+    bomVersionId: number;
+    bomVersionName: string;
+    lines: SalesOrderDetail[];
+    totalRemainingQuantity: number;
+    salesOrderIds: number[];
+    salesOrderDetailIds: number[];
+}
+
 export interface SalesOrder {
     order_id: number;
     order_no: string;

@@ -416,9 +416,9 @@ export function StagingPickList({
                                                 {isHard ? (
                                                     <Badge
                                                         title="HARD: all required quantity for this component is staged on the floor."
-                                                        className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold"
+                                                        className="bg-emerald-600 text-white border border-emerald-600 text-[10px] font-semibold"
                                                     >
-                                                        Floor ready
+                                                        Floor Ready
                                                     </Badge>
                                                 ) : isPartial ? (
                                                     <Badge
