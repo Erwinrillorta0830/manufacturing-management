@@ -62,7 +62,7 @@ export function ReleasedJobQueue({
         const parentJo = isChild ? jobOrders.find((j) => Number(j.order_id) === Number(jo.parentJobOrderId)) : null;
         const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
 
-        const producedQty = jo.producedQty ?? jo.completed_quantity ?? 0;
+        const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
         const needsWorkstation = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED) && !jo.primary_work_center_id;
         const workstationLabel = jo.primary_work_center_name
             || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+    closeJobOrder,
     fetchJobOrderDailyYieldDetails,
     fetchJobOrderDailyYieldSummaries,
     moveSalesOrderToConsolidation,
@@ -19,6 +20,8 @@ export function useJobOrderInspectionQA() {
     const [detailsLoading, setDetailsLoading] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [consolidatingOrderId, setConsolidatingOrderId] = useState<number | null>(null);
+    const [closingJobOrderId, setClosingJobOrderId] = useState<number | null>(null);
+    const closeIdempotencyKeys = useRef(new Map<number, string>());
 
     const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
         setLoading(true);
@@ -102,6 +105,35 @@ export function useJobOrderInspectionQA() {
         }
     }, [refresh]);
 
+    const handleCloseJobOrder = useCallback(async (jobOrderId: number) => {
+        setClosingJobOrderId(jobOrderId);
+        const idempotencyKey = closeIdempotencyKeys.current.get(jobOrderId)
+            || `jo-close:${jobOrderId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+        closeIdempotencyKeys.current.set(jobOrderId, idempotencyKey);
+
+        try {
+            const result = await closeJobOrder(jobOrderId, idempotencyKey);
+            setJobOrders((current) => current.map((jobOrder) => jobOrder.jobOrderId === jobOrderId
+                ? { ...jobOrder, status: result.status }
+                : jobOrder));
+            setSelectedJobOrder((current) => current?.jobOrderId === jobOrderId
+                ? { ...current, status: result.status }
+                : current);
+            setSelectedDetails((current) => current?.jobOrderId === jobOrderId
+                ? { ...current, status: result.status }
+                : current);
+            toast.success(`Job Order ${jobOrderId} is now Closed.`);
+            await refresh();
+        } catch (actionError) {
+            const message = actionError instanceof Error
+                ? actionError.message
+                : "Failed to close the Job Order.";
+            toast.error(message);
+        } finally {
+            setClosingJobOrderId(null);
+        }
+    }, [refresh]);
+
     return {
         jobOrders,
         loading,
@@ -111,9 +143,11 @@ export function useJobOrderInspectionQA() {
         detailsLoading,
         detailsError,
         consolidatingOrderId,
+        closingJobOrderId,
         openDetails,
         closeDetails,
         refresh,
         handleMoveToConsolidation,
+        handleCloseJobOrder,
     };
 }
