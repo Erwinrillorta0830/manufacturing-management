@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { createJobOrder } from "../planning-helper";
+import { createJobOrder, deleteJobOrder, transitionLinkedSalesOrdersToInProduction } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
@@ -135,7 +135,12 @@ async function fetchSchedulingAllocations(detailIds: number[]): Promise<any[]> {
     return (await legacyResponse.json()).data || [];
 }
 
-async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailIds: unknown, rawSalesOrderIds: unknown) {
+async function validateSalesOrderScheduling(
+    jo: Record<string, any>,
+    rawDetailIds: unknown,
+    rawSalesOrderIds: unknown,
+    options: { requireFullQuantity?: boolean } = {}
+) {
     const jobOrderNo = String(jo.jo_id || "").trim();
     const existingJobOrderResponse = await fetchWithTimeout(
         `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(jobOrderNo)}&fields=job_order_id,job_order_no,status&limit=1`,
@@ -310,6 +315,11 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     }
 
     const totalAvailableQuantity = availableLines.reduce((sum, line) => sum + line.availableQuantity, 0);
+    if (options.requireFullQuantity && Math.abs(requestedQuantity - totalAvailableQuantity) > 0.000001) {
+        throw new PlanningConflictError(
+            `The Job Order quantity must equal the full remaining quantity for this product/BOM group (${totalAvailableQuantity}). Refresh the demand list and try again.`
+        );
+    }
     if (requestedQuantity > totalAvailableQuantity + 0.000001) {
         throw new PlanningConflictError(
             `The requested Job Order quantity (${requestedQuantity}) exceeds the currently available Sales Order quantity (${totalAvailableQuantity}). Refresh the demand list and try again.`
@@ -348,11 +358,227 @@ async function validateSalesOrderScheduling(jo: Record<string, any>, rawDetailId
     };
 }
 
+async function resolvePlanningEncoderId(): Promise<number | null> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value;
+        if (!token) return null;
+        const parts = token.split(".");
+        if (parts.length < 2) return null;
+        let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (base64.length % 4) base64 += "=";
+        const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+        const rawId = payload?.id || payload?.user_id || payload?.sub;
+        const parsed = Number(rawId);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    } catch (error) {
+        console.error("Error decoding user token in multi-JO creation:", error);
+        return null;
+    }
+}
+
+function buildSchedulingDbPayload(
+    jo: Record<string, any>,
+    schedulingPlan: SalesOrderSchedulingPlan,
+    encoderId: number | null,
+    createdAt: string
+) {
+    return {
+        jo_id: jo.jo_id,
+        order_id: jo.order_id || null,
+        order_no: jo.order_no || null,
+        product_id: schedulingPlan.productId,
+        product_name: jo.product_name,
+        quantity: schedulingPlan.totalQuantity,
+        due_date: jo.due_date || null,
+        status: assertJobOrderStatus(jo.status || JOB_ORDER_STATUS.RELEASED),
+        is_batched: !!jo.is_batched,
+        bom: { version_id: schedulingPlan.bomVersionId },
+        components: jo.components || null,
+        routings: jo.routings || null,
+        allocation_results: jo.allocationResults || null,
+        procurement_status: jo.procurementStatus || "Idle",
+        branch_id: jo.branch_id,
+        shift_option: jo.shiftOption || "8",
+        daily_breakdown: jo.dailyBreakdown || null,
+        remarks: jo.remarks || null,
+        created_at: createdAt,
+        created_by: encoderId,
+        parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
+        sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,
+        assignments: jo.assignments || null,
+        products: [{
+            product_id: schedulingPlan.productId,
+            product_name: jo.product_name,
+            quantity: schedulingPlan.totalQuantity,
+            bom: { version_id: schedulingPlan.bomVersionId },
+            components: jo.components || null,
+            routings: jo.routings || null,
+            allocation_results: jo.allocationResults || null
+        }]
+    };
+}
+
+async function deleteJobOrderTree(jobOrderNo: string): Promise<boolean> {
+    const headerResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(jobOrderNo)}&fields=job_order_id,job_order_no&limit=1`,
+        { headers, cache: "no-store" }
+    );
+    if (!headerResponse.ok) return false;
+    const header = ((await headerResponse.json()).data || [])[0];
+    if (!header) return true;
+
+    const childrenResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[parent_job_order_id][_eq]=${Number(header.job_order_id)}&fields=job_order_no&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!childrenResponse.ok) return false;
+    for (const child of ((await childrenResponse.json()).data || []) as any[]) {
+        if (!await deleteJobOrderTree(String(child.job_order_no || ""))) return false;
+    }
+    return deleteJobOrder(String(header.job_order_no || jobOrderNo));
+}
+
+async function handleReleaseMultiple(body: Record<string, any>): Promise<Response> {
+    const baseJoNumber = String(body.baseJoNumber || "").trim();
+    const shared = body.shared || {};
+    const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+    const branchId = Number(shared.branchId);
+    if (!baseJoNumber || !Number.isInteger(branchId) || branchId <= 0 || jobs.length < 2) {
+        throw new PlanningConflictError("Multi-product release requires a base Job Order number, a valid branch, and at least two product groups.");
+    }
+
+    const generatedJobOrderNos = jobs.map((_: any, index: number) => `${baseJoNumber}-${String(index + 1).padStart(2, "0")}`);
+    if (new Set(generatedJobOrderNos).size !== generatedJobOrderNos.length) {
+        throw new PlanningConflictError("The generated Job Order references are not unique. Choose a different base number.");
+    }
+
+    const duplicateJobOrderResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_no][_in]=${generatedJobOrderNos.map(encodeURIComponent).join(",")}&fields=job_order_no&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!duplicateJobOrderResponse.ok) {
+        throw new Error(`Unable to validate generated Job Order references (${duplicateJobOrderResponse.status}).`);
+    }
+    const duplicateJobOrders = ((await duplicateJobOrderResponse.json()).data || []) as any[];
+    if (duplicateJobOrders.length > 0) {
+        throw new PlanningConflictError(`Job Order ${duplicateJobOrders[0].job_order_no} already exists. Choose a different base number.`);
+    }
+
+    const seenDetailIds = new Set<number>();
+    const validationResults: Array<{
+        job: Record<string, any>;
+        schedulingPlan: SalesOrderSchedulingPlan;
+        detailIds: number[];
+        parentOrderIds: number[];
+    }> = [];
+    const parentOrderIds = new Set<number>();
+    const previousParentStatuses = new Map<number, string>();
+
+    for (const [index, job] of jobs.entries()) {
+        const productId = Number(job?.productId);
+        const bomVersionId = Number(job?.bomVersionId);
+        const quantity = Number(job?.quantity);
+        const detailIds: number[] = Array.isArray(job?.salesOrderDetailIds)
+            ? [...new Set(job.salesOrderDetailIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0))] as number[]
+            : [];
+        if (!Number.isInteger(productId) || productId <= 0 || !Number.isInteger(bomVersionId) || bomVersionId <= 0 || !Number.isFinite(quantity) || quantity <= 0 || detailIds.length === 0) {
+            throw new PlanningConflictError(`Product group ${index + 1} is missing a valid product, BOM version, quantity, or Sales Order detail lines.`);
+        }
+        const duplicateDetailId = detailIds.find((detailId) => seenDetailIds.has(detailId));
+        if (duplicateDetailId) {
+            throw new PlanningConflictError(`Sales Order detail ${duplicateDetailId} was submitted in more than one product group.`);
+        }
+        detailIds.forEach((detailId) => seenDetailIds.add(detailId));
+
+        const jobConfig = {
+            jo_id: generatedJobOrderNos[index],
+            product_id: productId,
+            product_name: String(job?.productName || ""),
+            quantity,
+            due_date: String(shared.dueDate || "") || null,
+            status: JOB_ORDER_STATUS.RELEASED,
+            is_batched: detailIds.length > 1,
+            branch_id: branchId,
+            shiftOption: String(shared.shiftOption || "8"),
+            remarks: String(shared.remarks || ""),
+            bom: { version_id: bomVersionId },
+            subAssemblyVersionMap: job?.subAssemblyVersionMap || {},
+            assignments: job?.assignments || {},
+            products: [{ product_id: productId, product_name: String(job?.productName || ""), quantity, bom: { version_id: bomVersionId } }]
+        };
+        const suppliedSalesOrderIds = Array.isArray(job?.salesOrderIds) ? job.salesOrderIds : [];
+        const validation = await validateSalesOrderScheduling(jobConfig, detailIds, suppliedSalesOrderIds, { requireFullQuantity: true });
+        if (!validation.schedulingPlan) {
+            throw new PlanningConflictError(`Product group ${index + 1} could not be converted into a Sales Order allocation plan.`);
+        }
+        validation.parentOrderIds.forEach((parentOrderId) => parentOrderIds.add(parentOrderId));
+        validationResults.push({ job: jobConfig, schedulingPlan: validation.schedulingPlan, detailIds: validation.detailIds, parentOrderIds: validation.parentOrderIds });
+    }
+
+    for (const parentOrderId of parentOrderIds) {
+        const response = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}?fields=order_id,order_status`, { headers, cache: "no-store" });
+        if (!response.ok) throw new Error(`Unable to snapshot Sales Order ${parentOrderId} before multi-JO release (${response.status}).`);
+        const order = (await response.json()).data;
+        previousParentStatuses.set(parentOrderId, String(order?.order_status || ""));
+    }
+
+    const encoderId = await resolvePlanningEncoderId();
+    const createdJobOrderNos: string[] = [];
+    const createdResults: any[] = [];
+    try {
+        for (const validation of validationResults) {
+            const dbPayload = buildSchedulingDbPayload(
+                validation.job,
+                validation.schedulingPlan,
+                encoderId,
+                await getISOStringInConfiguredTimezone()
+            );
+            const result = await createJobOrder(
+                dbPayload,
+                validation.parentOrderIds,
+                validation.detailIds,
+                validation.schedulingPlan,
+                { deferSalesOrderTransition: true }
+            );
+            createdJobOrderNos.push(String(validation.job.jo_id));
+            createdResults.push({ ...result, jo_id: result.jo_id || validation.job.jo_id });
+        }
+        await transitionLinkedSalesOrdersToInProduction(parentOrderIds, previousParentStatuses);
+        return NextResponse.json({ success: true, data: { jobs: createdResults } });
+    } catch (error) {
+        const cleanupFailures: string[] = [];
+        for (const jobOrderNo of [...createdJobOrderNos].reverse()) {
+            if (!await deleteJobOrderTree(jobOrderNo)) cleanupFailures.push(jobOrderNo);
+        }
+        for (const [parentOrderId, previousStatus] of previousParentStatuses) {
+            if (!previousStatus) continue;
+            const response = await fetch(`${DIRECTUS_URL}/items/sales_order/${parentOrderId}`, {
+                method: "PATCH",
+                headers,
+                body: JSON.stringify({ order_status: previousStatus })
+            });
+            if (!response.ok) cleanupFailures.push(`SO-${parentOrderId}`);
+        }
+        if (cleanupFailures.length > 0) {
+            return NextResponse.json({
+                error: `Multi-JO release failed and cleanup requires reconciliation: ${cleanupFailures.join(", ")}.`,
+                cleanupRequired: true
+            }, { status: 500 });
+        }
+        throw error;
+    }
+}
+
 
 export async function handlePOST(request: Request) {
     try {
         const body = await request.json();
         const { action } = body;
+
+        if (action === "release-multiple") {
+            return handleReleaseMultiple(body);
+        }
 
         if (action === "release-draft") {
             const { joId } = body;

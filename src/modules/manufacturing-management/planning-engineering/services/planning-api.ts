@@ -92,6 +92,8 @@ export interface ReleaseJOPayload {
                 version_id: number | null | undefined;
             };
         }>;
+        subAssemblyVersionMap?: Record<number, number>;
+        assignments?: Record<number, number[]>;
     };
     salesOrderIds: number[];
     salesOrderDetailIds: number[];
@@ -101,6 +103,33 @@ export interface ReleaseJOResult {
     jo_id?: string | null;
     status?: string;
     shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
+}
+
+export interface ReleaseMultipleJob {
+    productId: number;
+    productName: string;
+    bomVersionId: number;
+    quantity: number;
+    salesOrderIds: number[];
+    salesOrderDetailIds: number[];
+    subAssemblyVersionMap?: Record<number, number>;
+    assignments?: Record<number, number[]>;
+}
+
+export interface ReleaseMultiplePayload {
+    action: "release-multiple";
+    baseJoNumber: string;
+    shared: {
+        branchId: number;
+        dueDate: string;
+        shiftOption: string;
+        remarks: string;
+    };
+    jobs: ReleaseMultipleJob[];
+}
+
+export interface ReleaseMultipleResult {
+    jobs?: ReleaseJOResult[];
 }
 
 export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<ReleaseJOResult> {
@@ -115,6 +144,19 @@ export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<Releas
     }
     const json = await res.json().catch(() => null);
     return json?.data ?? {};
+}
+
+export async function releaseMultipleJobOrders(payload: ReleaseMultiplePayload): Promise<ReleaseMultipleResult> {
+    const res = await fetch("/api/manufacturing/planning-engineering", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(json?.error || "Failed to release the Job Orders.");
+    }
+    return json?.data ?? { jobs: [] };
 }
 
 export async function directAllocate(payload: {

@@ -34,6 +34,10 @@ export interface SalesOrderSchedulingPlan {
     }>;
 }
 
+export interface CreateJobOrderOptions {
+    deferSalesOrderTransition?: boolean;
+}
+
 function relationId(value: unknown): number {
     if (value && typeof value === "object") {
         const relation = value as Record<string, unknown>;
@@ -108,7 +112,7 @@ async function assertFreshAllocationCapacity(
     }
 }
 
-async function transitionLinkedSalesOrdersToInProduction(
+export async function transitionLinkedSalesOrdersToInProduction(
     parentOrderIds: Set<number>,
     previousParentStatuses: Map<number, string>
 ) {
@@ -144,7 +148,8 @@ export async function createJobOrder(
     joData: Partial<DirectusJobOrder>,
     salesOrderIds: number[] = [],
     salesOrderDetailIds: number[] = [],
-    schedulingPlan?: SalesOrderSchedulingPlan | null
+    schedulingPlan?: SalesOrderSchedulingPlan | null,
+    options: CreateJobOrderOptions = {}
 ): Promise<{ jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
     const previousParentStatuses = new Map<number, string>();
@@ -872,7 +877,9 @@ export async function createJobOrder(
 
             // A regular JO puts its linked parent orders into production only
             // after every requested allocation has been persisted.
-            await transitionLinkedSalesOrdersToInProduction(affectedOrderIds, previousParentStatuses);
+            if (!options.deferSalesOrderTransition) {
+                await transitionLinkedSalesOrdersToInProduction(affectedOrderIds, previousParentStatuses);
+            }
         }
 
         return { jo_id: joNoStr, status: initialStatus, shortfalls };
