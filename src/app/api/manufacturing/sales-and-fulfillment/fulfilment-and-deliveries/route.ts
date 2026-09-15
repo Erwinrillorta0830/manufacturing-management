@@ -1868,7 +1868,6 @@ export async function POST(req: NextRequest) {
 
             let totalReceived = 0;
             let totalReturned = 0;
-            let totalOrdered = 0;
             let totalExpected = 0;
             let totalMissing = 0;
 
@@ -1895,7 +1894,6 @@ export async function POST(req: NextRequest) {
                 totalReceived += rec;
                 totalReturned += ret;
                 totalExpected += expectedQty;
-                totalOrdered += dbOrdered;
             }
 
             // Derive order status based on authoritative expected units
