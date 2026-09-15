@@ -59,7 +59,15 @@ function numberValue(value: unknown): number {
     let rawValue = value;
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
-        rawValue = record.id ?? record.job_order_id ?? record.unit_id ?? value;
+        rawValue = record.id
+            ?? record.job_order_id
+            ?? record.unit_id
+            ?? record.product_id
+            ?? record.branch_id
+            ?? record.lot_id
+            ?? record.mm_lot_id
+            ?? record.inventory_lot_id
+            ?? value;
     }
     const parsed = Number(rawValue);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -315,16 +323,64 @@ async function assertMaterialReservations(jobOrderId: number): Promise<void> {
 }
 
 async function assertFullStaging(jobOrderId: number): Promise<void> {
+    const jobOrder = await loadJobOrder(jobOrderId);
+    const branchId = numberValue(jobOrder.branch_id);
+    if (!branchId) {
+        throw new JobOrderWorkflowError(
+            "The Job Order cannot start production without a branch assigned.",
+            422,
+            "JOB_ORDER_BRANCH_REQUIRED"
+        );
+    }
+
     const materials = await loadMaterials(jobOrderId);
     if (materials.length === 0) {
         throw new JobOrderWorkflowError("Job Order has no material requirements to stage.", 422, "MATERIAL_REQUIREMENTS_MISSING");
     }
     const reservations = await loadReservations(materials.map(materialId).filter((id) => id > 0));
+    const materialById = new Map(materials.map((material) => [materialId(material), material]));
     const stagedByMaterial = new Map<number, number>();
+    const invalidReservations: Array<Record<string, unknown>> = [];
     for (const reservation of reservations) {
         if (!isLiveReservation(reservation)) continue;
         const id = reservationMaterialId(reservation);
+        const material = materialById.get(id);
         stagedByMaterial.set(id, (stagedByMaterial.get(id) || 0) + reservationQuantity(reservation, "staged_quantity"));
+        if (reservationQuantity(reservation, "staged_quantity") <= QUANTITY_EPSILON) continue;
+
+        const expectedProductId = material ? materialProductId(material) : 0;
+        const expectedUomId = material ? numberValue(material.uom_id) : 0;
+        const reservationProductId = numberValue(reservation.product_id);
+        const reservationBranchId = numberValue(reservation.branch_id);
+        const reservationUomId = numberValue(reservation.uom_id);
+        const reservationMmLotId = numberValue(reservation.mm_lot_id);
+        const reservationInventoryLotId = numberValue(reservation.inventory_lot_id);
+        const reservationBatchNo = text(reservation.batch_no);
+        const identityErrors = [
+            !material ? "material" : "",
+            !expectedProductId || reservationProductId !== expectedProductId ? "product" : "",
+            reservationBranchId !== branchId ? "branch" : "",
+            !expectedUomId || !reservationUomId || reservationUomId !== expectedUomId ? "uom" : "",
+            !reservationMmLotId ? "mm_lot" : "",
+            !reservationInventoryLotId ? "inventory_lot" : "",
+            !reservationBatchNo ? "batch" : ""
+        ].filter(Boolean);
+        if (identityErrors.length > 0) {
+            invalidReservations.push({
+                reservationId: numberValue(reservation.jo_materials_reservation_id ?? reservation.id),
+                joMaterialId: id,
+                errors: identityErrors,
+                stagedQuantity: reservationQuantity(reservation, "staged_quantity")
+            });
+        }
+    }
+    if (invalidReservations.length > 0) {
+        throw new JobOrderWorkflowError(
+            "The Job Order has staged material reservations with incomplete or mismatched branch, product, UOM, lot, inventory-lot, or batch identity.",
+            422,
+            "MATERIAL_STAGING_IDENTITY_MISMATCH",
+            { reservations: invalidReservations }
+        );
     }
     const incomplete = materials.map((material) => {
         const required = materialQuantity(material);

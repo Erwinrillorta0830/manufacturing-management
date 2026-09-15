@@ -60,7 +60,7 @@ export function JobOrderCancellationModal({
 
     const handleConfirm = () => {
         if (confirmDisabled || !preview) return;
-        onConfirm(isReturnMode ? (reason.trim() || "Return raw materials from cancelled Job Order") : reason.trim());
+        onConfirm(isReturnMode ? (reason.trim() || "Return raw materials from Job Order") : reason.trim());
     };
 
     return (
