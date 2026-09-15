@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     CANCELLABLE_JOB_ORDER_STATUSES,
     normalizeJobOrderStatus,
@@ -569,7 +569,7 @@ async function writeTransition(
 ): Promise<JobOrderWorkflowResult> {
     const jobOrderId = numberValue(jobOrder.job_order_id);
     const jobOrderNo = text(jobOrder.job_order_no) || `JO-${jobOrderId}`;
-    const now = new Date().toISOString();
+    const now = formatPhtDateTime();
     const suppliedRemarks = command.remarks?.trim() || "";
     const transitionRemarks = command.action === "start-production" && suppliedRemarks
         ? suppliedRemarks
@@ -608,6 +608,7 @@ async function writeTransition(
             method: "PATCH",
             body: JSON.stringify({
                 status: nextStatus,
+                modified_at: jobOrder.modified_at ?? null,
                 ...lifecycleFields,
                 ...(command.action === "start-production" && command.workCenterId ? { primary_work_center_id: command.workCenterId } : {}),
                 ...(command.action === "place-on-hold" || command.action === "resume-production" || command.action === "terminate-production" ? { remarks: transitionRemarks } : {})

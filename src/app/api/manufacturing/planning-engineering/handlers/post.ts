@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { createJobOrder, deleteJobOrder, transitionLinkedSalesOrdersToInProduction } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import {
@@ -571,7 +571,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
                 validation.job,
                 validation.schedulingPlan,
                 encoderId,
-                await getISOStringInConfiguredTimezone()
+                formatPhtDateTime()
             );
             const result = await createJobOrder(
                 dbPayload,
@@ -1545,7 +1545,7 @@ export async function handlePOST(request: Request) {
             shift_option: jo.shiftOption || "8",
             daily_breakdown: jo.dailyBreakdown || null,
             remarks: jo.remarks || null,
-            created_at: await getISOStringInConfiguredTimezone(),
+            created_at: formatPhtDateTime(),
             created_by: encoderId,
             parent_job_order_id: jo.parentJobOrderId || jo.parent_job_order_id || null,
             sub_assembly_version_map: jo.subAssemblyVersionMap || jo.sub_assembly_version_map || null,

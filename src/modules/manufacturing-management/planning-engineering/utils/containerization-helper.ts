@@ -43,28 +43,82 @@ export function calculateContainerizationMetrics(
     versionCuttingWeightGrams?: number,
     versionCasesPerPallet?: number,
     sacksPerMixParam?: number,
-    baseBatchWeightPerSackParam?: number
+    baseBatchWeightPerSackParam?: number,
+    components?: any[],
+    bomBaseQty?: number
 ): ContainerizationMetrics {
-    // Pure parameter-driven calculations (no hardcoded product names or IDs)
-    const sacksPerMix = Math.max(1, sacksPerMixParam || 4);
-    const baseBatchWeightPerSack = Math.max(1, baseBatchWeightPerSackParam || 32892.5); // grams
-    const cuttingUnitWeightGrams = Math.max(1, versionCuttingWeightGrams || 500); // grams
-    const expectedYieldPercentage = (versionExpectedYieldPercent && versionExpectedYieldPercent > 0 && versionExpectedYieldPercent <= 100)
-        ? versionExpectedYieldPercent
+    const sacksPerMix = Math.max(1, Number(sacksPerMixParam) || 4);
+    const baseBatchWeightPerSack = Math.max(1, Number(baseBatchWeightPerSackParam) || 32892.5); // grams
+    const cuttingUnitWeightGrams = Math.max(1, Number(versionCuttingWeightGrams) || 500); // grams
+    const expectedYieldPercentage = (versionExpectedYieldPercent !== undefined && versionExpectedYieldPercent !== null && Number(versionExpectedYieldPercent) > 0 && Number(versionExpectedYieldPercent) <= 100)
+        ? Number(versionExpectedYieldPercent)
         : 100.0;
     const yieldFactor = expectedYieldPercentage / 100;
-    const scrapRate = Math.max(0, versionScrapRate || 0.0500); // 5% default scrap rate
-    const pcsPerCaseBundle = Math.max(1, uomCount || 1); // Uses existing product.unit_of_measurement_count
-    const casesBundlesPerPallet = Math.max(1, versionCasesPerPallet || 50); // Pallet capacity
 
-    // Estimate total net output and mixes required
-    const netPcsPerSack = (baseBatchWeightPerSack / cuttingUnitWeightGrams * yieldFactor) * (1 - scrapRate);
-    const targetNetPcs = Math.max(1, targetQuantity);
-    const totalSacksNeeded = Math.ceil(targetNetPcs / Math.max(0.001, netPcsPerSack));
-    const mixCount = Math.ceil(totalSacksNeeded / sacksPerMix);
-    const sackCount = mixCount * sacksPerMix;
+    // Determine scrap rate: from versionScrapRate, or from components average wastage factor, or default 0.05
+    let scrapRate = 0.0500;
+    if (versionScrapRate !== undefined && versionScrapRate !== null && !isNaN(Number(versionScrapRate))) {
+        const rawScrap = Number(versionScrapRate);
+        scrapRate = rawScrap > 1 ? rawScrap / 100 : Math.max(0, rawScrap);
+    } else if (Array.isArray(components) && components.length > 0) {
+        const wastages = components
+            .map((c) => Number(c.wastage_factor_percentage || c.scrap_percentage || 0))
+            .filter((w) => w > 0);
+        if (wastages.length > 0) {
+            const avgWastage = wastages.reduce((sum, w) => sum + w, 0) / wastages.length;
+            scrapRate = avgWastage > 1 ? avgWastage / 100 : avgWastage;
+        }
+    }
 
-    const flourGramsTotal = sackCount * 25000;
+    const pcsPerCaseBundle = Math.max(1, Number(uomCount) || 1); // Uses product uom count
+    const casesBundlesPerPallet = Math.max(1, Number(versionCasesPerPallet) || 50); // Pallet capacity
+
+    const targetNetPcs = Math.max(1, Number(targetQuantity) || 0);
+
+    // Dynamic BOM Flour calculation if flour/grain component is present in BOM
+    let flourGramsTotal = 0;
+    let sackCount = 0;
+    let mixCount = 0;
+
+    const baseQty = Math.max(1, Number(bomBaseQty) || 1);
+    if (Array.isArray(components) && components.length > 0) {
+        const flourComp = components.find((c) => {
+            const name = String(c.product_name || c.component_product_id?.product_name || c.title || "").toLowerCase();
+            return name.includes("flour") || name.includes("harina") || name.includes("wheat") || name.includes("starch") || name.includes("rice");
+        });
+
+        if (flourComp) {
+            const qtyReqPerBase = Number(flourComp.quantity_required || 0);
+            const uomStr = String(flourComp.unit_of_measurement || flourComp.uom_shortcut || "").toUpperCase();
+
+            // Convert to grams
+            let gramsPerBase = qtyReqPerBase;
+            if (uomStr.includes("KG") || uomStr.includes("KILO")) {
+                gramsPerBase = qtyReqPerBase * 1000;
+            } else if (uomStr.includes("SACK") || uomStr.includes("BAG")) {
+                gramsPerBase = qtyReqPerBase * 25000;
+            } else if (uomStr.includes("G") || uomStr.includes("GRAM")) {
+                gramsPerBase = qtyReqPerBase;
+            }
+
+            const totalFlourGramsNeeded = (gramsPerBase / baseQty) * targetNetPcs;
+            if (totalFlourGramsNeeded > 0) {
+                flourGramsTotal = Math.round(totalFlourGramsNeeded);
+                sackCount = Math.ceil(flourGramsTotal / 25000);
+                mixCount = Math.ceil(sackCount / sacksPerMix);
+            }
+        }
+    }
+
+    // Fallback if no specific flour component was identified
+    if (mixCount <= 0) {
+        const netPcsPerSack = (baseBatchWeightPerSack / cuttingUnitWeightGrams * yieldFactor) * (1 - scrapRate);
+        const totalSacksNeeded = Math.ceil(targetNetPcs / Math.max(0.001, netPcsPerSack));
+        mixCount = Math.ceil(totalSacksNeeded / sacksPerMix);
+        sackCount = mixCount * sacksPerMix;
+        flourGramsTotal = sackCount * 25000;
+    }
+
     const totalBaseWeightGrams = sackCount * baseBatchWeightPerSack;
     const grossPieces = (totalBaseWeightGrams / cuttingUnitWeightGrams) * yieldFactor;
     const wastePieces = grossPieces * scrapRate;
@@ -82,7 +136,7 @@ export function calculateContainerizationMetrics(
 
     return {
         productName,
-        targetQuantity,
+        targetQuantity: targetNetPcs,
         mixCount,
         sackCount,
         flourGramsTotal,
@@ -105,3 +159,4 @@ export function calculateContainerizationMetrics(
         remainingCasesBundles
     };
 }
+

@@ -403,10 +403,17 @@ export function CreateBufferJODialog({
         return calculateContainerizationMetrics(
             (selectedProdObj as any).product_name || selectedProdObj.title || selectedProdObj.sku || "Product",
             targetQuantity,
-            selectedProdObj.unit_of_measurement_count,
-            verObj?.expected_yield_percentage
+            selectedProdObj.unit_of_measurement_count || (selectedProdObj as any).pcs_per_bundle || (selectedProdObj as any).pcs_per_case || (selectedProdObj as any).uom_count,
+            verObj?.expected_yield_percentage || (verObj as any)?.yield_percentage,
+            (verObj as any)?.scrap_rate || (verObj as any)?.scrap_percentage || (verObj as any)?.wastage_factor_percentage,
+            (verObj as any)?.cutting_unit_weight_grams || (verObj as any)?.unit_weight_grams || (selectedProdObj as any)?.net_weight_grams || (selectedProdObj as any)?.piece_weight_grams,
+            (verObj as any)?.cases_per_pallet || (selectedProdObj as any)?.cases_per_pallet || (selectedProdObj as any)?.bundles_per_pallet,
+            (verObj as any)?.sacks_per_mix || (verObj as any)?.sacks_per_batch,
+            (verObj as any)?.batch_weight_per_sack || (verObj as any)?.base_batch_weight_grams,
+            components,
+            bomBaseQty
         );
-    }, [selectedProdObj, versions, selectedVersionId, targetQuantity]);
+    }, [selectedProdObj, versions, selectedVersionId, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = useMemo(() => {
         if (!selectedProdObj) return null;

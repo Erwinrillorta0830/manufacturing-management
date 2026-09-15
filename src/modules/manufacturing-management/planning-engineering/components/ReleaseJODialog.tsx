@@ -313,15 +313,24 @@ export function ReleaseJODialog({
 
     const containerMetrics = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
-        const first = selectedLines[0];
-        const prodObj = first.product_id as any;
+        const first = selectedLines[0] as any;
+        const prodObj = first?.product_id;
         if (!prodObj) return null;
+        const verObj = first?.version_id || first?.bom_version_id || first?.version;
         return calculateContainerizationMetrics(
             prodObj.product_name || prodObj.product_code || "Product",
             targetQuantity,
-            prodObj.unit_of_measurement_count
+            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
+            verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
+            verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
+            verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
+            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
+            verObj?.sacks_per_mix || verObj?.sacks_per_batch,
+            verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
+            components,
+            bomBaseQty
         );
-    }, [selectedLines, targetQuantity]);
+    }, [selectedLines, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
@@ -682,22 +691,7 @@ export function ReleaseJODialog({
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                                Priority
-                                            </label>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="1"
-                                                value={priority}
-                                                onChange={(e) => setPriority(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                                                className="h-9 font-semibold bg-card border-input text-foreground"
-                                                required
-                                            />
-                                        </div>
-
+                                    <div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Shift Option (Hours)
@@ -1217,10 +1211,6 @@ export function ReleaseJODialog({
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Quantity:</span>
                                         <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Priority:</span>
-                                        <span className="font-mono font-bold text-foreground">{priority}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Due Date:</span>
