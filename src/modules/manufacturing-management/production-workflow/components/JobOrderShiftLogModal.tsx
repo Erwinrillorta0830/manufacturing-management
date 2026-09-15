@@ -9,7 +9,6 @@ import {
     Printer,
     Tag,
     MapPin,
-    Calendar,
     Layers,
     ShieldAlert,
     Trash2,
@@ -25,8 +24,6 @@ import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
-import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
-import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { toast } from "sonner";
 
 interface JobOrderShiftLogModalProps {
@@ -60,12 +57,6 @@ export function JobOrderShiftLogModal({
     const [rejectionReasons, setRejectionReasons] = useState<RejectionReason[]>([]);
     const [selectedReasonId, setSelectedReasonId] = useState<string>("");
     const [rejectionRemarks, setRejectionRemarks] = useState("");
-    const [batchNo, setBatchNo] = useState("");
-    const [expiryDate, setExpiryDate] = useState("");
-    const [manufacturingDate, setManufacturingDate] = useState("");
-    const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
-    const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
-    const [selectedLotId, setSelectedLotId] = useState<string>("");
     const [remarks, setRemarks] = useState("");
     const [varianceReason, setVarianceReason] = useState("");
     const [approveVariance, setApproveVariance] = useState(false);
@@ -195,29 +186,10 @@ export function JobOrderShiftLogModal({
             setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                 ? crypto.randomUUID()
                 : `production-session-${Date.now()}`);
-            setManufacturingDate(todayStr);
-            setBatchNo(`${selectedJobOrder.order_no || selectedJobOrder.jo_id || "JO"}-YLD-${todayStr.replace(/-/g, "")}`);
-            setExpiryDate("");
 
             const available = getAvailableShifts();
             if (available.length > 0) {
                 setShiftName(available[0].value);
-            }
-
-            // Load eligible finished-goods storage lots for the JO branch + UOM
-            const eligibleBranchId = Number(selectedJobOrder.branch_id || 0);
-            const eligibleProductId = Number(selectedJobOrder.product_id || 0);
-            setEligibleLots([]);
-            setSelectedLotId("");
-            if (eligibleBranchId > 0 && eligibleProductId > 0) {
-                setLoadingEligibleLots(true);
-                fetchEligibleFinishedGoodsLots(eligibleBranchId, eligibleProductId)
-                    .then((response) => {
-                        setEligibleLots(response.lots);
-                        setSelectedLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
-                    })
-                    .catch((err) => console.error("Error loading eligible finished-goods lots:", err))
-                    .finally(() => setLoadingEligibleLots(false));
             }
 
             // Fetch rejection reasons
@@ -309,27 +281,11 @@ export function JobOrderShiftLogModal({
             return;
         }
 
-        // The API owns accumulated-yield validation and can distinguish a
-        // replay of the same batch from a new over-target run. Avoid blocking
-        // an idempotent retry when a prior request persisted only part of its
-        // material backflush before failing.
-        if (!batchNo.trim()) {
-            toast.error("Please enter a valid batch/lot number.");
-            return;
-        }
-        if (!manufacturingDate) {
-            toast.error("Please select a manufacturing date.");
-            return;
-        }
         if (!productionDate) {
             toast.error("Please select a production date.");
             return;
         }
 
-        if (newYield > 0 && !selectedLotId) {
-            toast.error("Select an existing storage lot for the finished-goods output.");
-            return;
-        }
         if (shiftMaterials.some((material) => !material.reservation_id)) {
             toast.error("Every required material must have an exact WIP reservation before recording production.");
             return;
@@ -378,10 +334,6 @@ export function JobOrderShiftLogModal({
                     uomId: Number(m.uom_id),
                     actualQty: Number(m.actual_qty || 0)
                 })),
-                batchNo,
-                expiryDate: expiryDate || undefined,
-                manufacturingDate,
-                targetLotId: selectedLotId ? Number(selectedLotId) : undefined
             };
 
             const res = await submitShiftRunLog(payload);
@@ -471,7 +423,7 @@ export function JobOrderShiftLogModal({
                     <div>
                         <div><strong>Shift Run:</strong> ${fullShiftName}</div>
                         <div><strong>Good Yield:</strong> ${Number(shiftYieldQty).toLocaleString()} pcs • <strong>Scrap:</strong> ${Number(scrapQty).toLocaleString()} pcs</div>
-                        <div><strong>Output Batch:</strong> ${batchNo}</div>
+                        <div><strong>Output Traceability:</strong> Assigned during In-Process QA</div>
                     </div>
                 </div>
                 <h3>Personnel Present on Shift</h3>
@@ -566,7 +518,6 @@ export function JobOrderShiftLogModal({
     const missingVarianceApproval = hasVarianceException && (!varianceReason.trim() || !approveVariance);
     const isSubmitDisabled = submittingShiftLog
         || loadingShiftMaterials
-        || loadingEligibleLots
         || Boolean(materialsLoadError)
         || hasInsufficiency
         || hasIncompleteMaterialLine
@@ -576,8 +527,7 @@ export function JobOrderShiftLogModal({
         || !sessionKey
         || !productionDate
         || !stationId
-        || !shiftName.trim()
-        || (Number(shiftYieldQty || 0) > 0 && !selectedLotId);
+        || !shiftName.trim();
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
 
     return (
@@ -784,78 +734,6 @@ export function JobOrderShiftLogModal({
                                          </div>
                                     </div>
 
-                                    {/* Batch & Expiry Management */}
-                                    <div className="bg-emerald-500/[0.015] dark:bg-emerald-500/[0.005] border border-emerald-500/20 rounded-xl p-4 space-y-4 shadow-sm">
-                                        <div className="flex items-center gap-2 pb-2 border-b border-emerald-500/10">
-                                            <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-600 dark:text-emerald-400">
-                                                <Tag className="h-4 w-4" />
-                                            </div>
-                                            <div>
-                                                <h4 className="font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[10px]">
-                                                    Batch & Lot Traceability Log (WIP Output)
-                                                </h4>
-                                                <p className="text-[9px] text-muted-foreground mt-0.5">Tracking metadata for finished goods batch output</p>
-                                            </div>
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            <div className="space-y-1.5">
-                                                <Label htmlFor="batchNo" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <Tag className="h-3.5 w-3.5 text-emerald-500" /> Output Batch / Lot No
-                                                </Label>
-                                                <Input
-                                                    id="batchNo"
-                                                    type="text"
-                                                    value={batchNo}
-                                                    onChange={(e) => setBatchNo(e.target.value)}
-                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
-                                                    placeholder="e.g. JO-2026-YLD"
-                                                    required
-                                                />
-                                            </div>
-
-                                            <div className="space-y-1.5">
-                                                <Label htmlFor="targetLotSelect" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Location <span className="text-destructive">*</span>
-                                                </Label>
-                                                <FinishedGoodsLotSelect
-                                                    lots={eligibleLots}
-                                                    value={selectedLotId}
-                                                    onValueChange={setSelectedLotId}
-                                                    loading={loadingEligibleLots}
-                                                    disabled={submittingShiftLog}
-                                                    placeholder="Select storage lot..."
-                                                    className="h-10 w-full justify-between rounded-xl border-border/80 text-xs font-semibold"
-                                                />
-                                            </div>
-
-                                            <div className="space-y-1.5">
-                                                <Label htmlFor="mfgDate" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Mfg Date
-                                                </Label>
-                                                <Input
-                                                    id="mfgDate"
-                                                    type="date"
-                                                    value={manufacturingDate}
-                                                    onChange={(e) => setManufacturingDate(e.target.value)}
-                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
-                                                    required
-                                                />
-                                            </div>
-
-                                            <div className="space-y-1.5">
-                                                <Label htmlFor="expDate" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
-                                                    <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Expiry Date
-                                                </Label>
-                                                <Input
-                                                    id="expDate"
-                                                    type="date"
-                                                    value={expiryDate}
-                                                    onChange={(e) => setExpiryDate(e.target.value)}
-                                                    className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
 

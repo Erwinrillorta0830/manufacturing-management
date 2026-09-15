@@ -45,6 +45,7 @@ import {
     postFinalizeHaltedJob
 } from "../services/qa-api";
 import type { FinalQACoa } from "../services/qa-api";
+import type { DailyQAInspectionRequest } from "../services/qa-api";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 function relationNumber(value: any, keys: string[] = ["id"]): number {
@@ -444,6 +445,7 @@ export function useManufacturingQA() {
     const [expiryDate, setExpiryDate] = useState("");
     const [unitCost, setUnitCost] = useState("");
     const [selectedYieldLedgerId, setSelectedYieldLedgerId] = useState<number | null>(null);
+    const [yieldTraceabilityReady, setYieldTraceabilityReady] = useState(false);
     const [yieldMaterials, setYieldMaterials] = useState<YieldJobOrderMaterial[]>([]);
     const [yieldMaterialsLoading, setYieldMaterialsLoading] = useState(false);
     const [yieldMaterialsError, setYieldMaterialsError] = useState<string | null>(null);
@@ -453,7 +455,7 @@ export function useManufacturingQA() {
     const [newPostingBranchCode, setNewPostingBranchCode] = useState("");
     const [branchActionLoading, setBranchActionLoading] = useState(false);
 
-    const loadEligibleLotsFor = useCallback(async (branchId: number, productId: number) => {
+    const loadEligibleLotsFor = useCallback(async (branchId: number, productId: number, preferredLotId?: number | null) => {
         if (!Number.isSafeInteger(branchId) || branchId <= 0 || !Number.isSafeInteger(productId) || productId <= 0) {
             setEligibleLots([]);
             setSelectedMmLotId("");
@@ -467,7 +469,12 @@ export function useManufacturingQA() {
         try {
             const response = await fetchEligibleFinishedGoodsLots(branchId, productId);
             setEligibleLots(response.lots);
-            setSelectedMmLotId(response.lots.length === 1 ? String(response.lots[0].lotId) : "");
+            const preferredLot = preferredLotId && response.lots.some((lot) => Number(lot.lotId) === preferredLotId)
+                ? String(preferredLotId)
+                : response.lots.length === 1
+                    ? String(response.lots[0].lotId)
+                    : "";
+            setSelectedMmLotId(preferredLot || "");
         } finally {
             setLoadingEligibleLots(false);
         }
@@ -530,8 +537,53 @@ export function useManufacturingQA() {
     const [dailyLabStatus, setDailyLabStatus] = useState<"Pending" | "Passed" | "Failed">("Passed");
     const [dailyActionTaken, setDailyActionTaken] = useState<"Released" | "Quarantined" | "Scrapped">("Released");
     const [dailyRemarks, setDailyRemarks] = useState("");
+    const [dailyOutputBatchNo, setDailyOutputBatchNo] = useState("");
+    const [dailyOutputMmLotId, setDailyOutputMmLotId] = useState("");
+    const [dailyOutputManufacturingDate, setDailyOutputManufacturingDate] = useState("");
+    const [dailyOutputExpiryDate, setDailyOutputExpiryDate] = useState("");
+    const [dailyOutputEligibleLots, setDailyOutputEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
+    const [dailyOutputLotsLoading, setDailyOutputLotsLoading] = useState(false);
+    const [dailyOutputLotsError, setDailyOutputLotsError] = useState<string | null>(null);
     const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
     const [routes, setRoutes] = useState<any[]>([]);
+
+    const loadDailyOutputLots = useCallback(async (ledgerEntry: any, jobOrder: any | null) => {
+        const branchId = relationNumber(ledgerEntry?.branch_id, ["branch_id", "id"])
+            || relationNumber(jobOrder?.branch_id, ["branch_id", "id"]);
+        const productId = relationNumber(ledgerEntry?.product_id, ["product_id", "id"])
+            || relationNumber(jobOrder?.product_id, ["product_id", "id"]);
+
+        setDailyOutputLotsLoading(true);
+        setDailyOutputLotsError(null);
+        setDailyOutputEligibleLots([]);
+
+        if (branchId <= 0 || productId <= 0) {
+            setDailyOutputLotsLoading(false);
+            setDailyOutputLotsError("The Job Order branch or finished-good product is unavailable.");
+            return;
+        }
+
+        try {
+            const response = await fetchEligibleFinishedGoodsLots(branchId, productId);
+            setDailyOutputEligibleLots(response.lots);
+            const persistedLotId = relationNumber(ledgerEntry?.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+            if (persistedLotId > 0 && !response.lots.some((lot) => Number(lot.lotId) === persistedLotId)) {
+                setDailyOutputMmLotId("");
+                setDailyOutputLotsError("The previously assigned storage lot is no longer active or eligible for this finished good.");
+            } else if (persistedLotId > 0) {
+                setDailyOutputMmLotId(String(persistedLotId));
+            } else {
+                setDailyOutputMmLotId("");
+            }
+            if (response.lots.length === 0 && persistedLotId <= 0) {
+                setDailyOutputLotsError("No active finished-goods storage lots are available for this Job Order branch and product.");
+            }
+        } catch (error) {
+            setDailyOutputLotsError(error instanceof Error ? error.message : "Failed to load eligible finished-goods storage lots.");
+        } finally {
+            setDailyOutputLotsLoading(false);
+        }
+    }, []);
 
     // Final QA release Dialog states
     const [isFinalReleaseOpen, setIsFinalReleaseOpen] = useState(false);
@@ -1044,23 +1096,35 @@ export function useManufacturingQA() {
             .filter((id: number, index: number, ids: number[]) => id > 0 && ids.indexOf(id) === index);
         setSelectedYieldLedgerId(ledgerIds.length === 1 ? ledgerIds[0] : null);
         const joNo = jo.job_order_no || jo.jo_id;
-        
-        if (firstLog) {
-            setLotNumber(firstLog.lot_number || firstLog.lot_no || firstLog.batch_no || "");
-            setManufacturingDate(firstLog.manufacturing_date || firstLog.mfg_date || "");
-            setExpiryDate(firstLog.expiry_date || "");
-        } else {
-            setLotNumber("");
-            setManufacturingDate("");
-            setExpiryDate("");
-        }
+
+        const persistedMmLotId = relationNumber(firstLog?.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+        const persistedBatchNo = persistedMmLotId > 0
+            ? String(firstLog?.lot_number || firstLog?.lot_no || firstLog?.batch_no || "").trim()
+            : "";
+        const persistedManufacturingDate = persistedMmLotId > 0
+            ? String(firstLog?.manufacturing_date || firstLog?.mfg_date || "").slice(0, 10)
+            : "";
+        const persistedExpiryDate = persistedMmLotId > 0
+            ? String(firstLog?.expiry_date || "").slice(0, 10)
+            : "";
+        const hasPersistedTraceability = Boolean(
+            ledgerIds.length === 1
+            && persistedMmLotId > 0
+            && persistedBatchNo
+            && persistedManufacturingDate
+            && persistedExpiryDate
+        );
+        setYieldTraceabilityReady(hasPersistedTraceability);
+        setLotNumber(persistedBatchNo);
+        setManufacturingDate(persistedManufacturingDate);
+        setExpiryDate(persistedExpiryDate);
         
         setUnitCost("0");
         setEligibleLots([]);
-        setSelectedMmLotId("");
+        setSelectedMmLotId(persistedMmLotId > 0 ? String(persistedMmLotId) : "");
         const eligibleBranchId = Number(jo.branch_id || 0);
         const eligibleProductId = Number(jo.product_id || 0);
-        void loadEligibleLotsFor(eligibleBranchId, eligibleProductId).catch((error) => {
+        void loadEligibleLotsFor(eligibleBranchId, eligibleProductId, persistedMmLotId || null).catch((error) => {
             console.error("Error loading eligible finished-goods lots:", error);
         });
         setIsYieldDialogOpen(true);
@@ -1262,25 +1326,29 @@ export function useManufacturingQA() {
             toast.error("Please enter a valid yield quantity.");
             return;
         }
-        if (!manufacturingDate) {
-            toast.error("Please select a manufacturing date.");
-            return;
-        }
-        if (!expiryDate) {
-            toast.error("Please select an expiration date.");
-            return;
-        }
-        if (!lotNumber.trim()) {
-            toast.error("Please enter a batch number.");
-            return;
-        }
-        if (!selectedMmLotId) {
-            toast.error("Please select an existing storage lot for the finished-goods output.");
+
+        const yieldLogs = Array.isArray(selectedJO.yield_logs) ? selectedJO.yield_logs : [];
+        const selectedYieldLog = yieldLogs.find((log: any) =>
+            Number(log.ledger_id ?? log.id ?? 0) === selectedYieldLedgerId
+        );
+        const persistedMmLotId = relationNumber(selectedYieldLog?.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+        const persistedLotNumber = persistedMmLotId > 0
+            ? String(selectedYieldLog?.lot_number || selectedYieldLog?.lot_no || selectedYieldLog?.batch_no || "").trim()
+            : "";
+        const persistedManufacturingDate = persistedMmLotId > 0
+            ? String(selectedYieldLog?.manufacturing_date || selectedYieldLog?.mfg_date || "").slice(0, 10)
+            : "";
+        const persistedExpiryDate = persistedMmLotId > 0
+            ? String(selectedYieldLog?.expiry_date || "").slice(0, 10)
+            : "";
+
+        if (!selectedYieldLog || !persistedMmLotId || !persistedLotNumber || !persistedManufacturingDate || !persistedExpiryDate) {
+            toast.error("Complete the Batch & Lot Traceability Log in the In-Process QA audit before closing this yield.");
             return;
         }
 
-        const parsedManufacturingDate = new Date(`${manufacturingDate}T00:00:00`);
-        const parsedExpiryDate = new Date(`${expiryDate}T00:00:00`);
+        const parsedManufacturingDate = new Date(`${persistedManufacturingDate}T00:00:00`);
+        const parsedExpiryDate = new Date(`${persistedExpiryDate}T00:00:00`);
         if (Number.isNaN(parsedManufacturingDate.getTime()) || Number.isNaN(parsedExpiryDate.getTime())) {
             toast.error("Please enter valid manufacturing and expiration dates.");
             return;
@@ -1322,21 +1390,17 @@ export function useManufacturingQA() {
                 };
             });
 
-            const selectedYieldLog = selectedJO.yield_logs?.find((log: any) =>
-                Number(log.ledger_id ?? log.id ?? 0) === selectedYieldLedgerId
-                && String(log.lot_number || log.lot_no || log.batch_no || "").trim() === lotNumber.trim()
-            );
             const closeResult = await postFinishedGoodsReceipt({
                 joId: joNo,
-                yieldLedgerId: selectedYieldLog ? selectedYieldLedgerId : null,
-                mmLotId: Number(selectedMmLotId),
+                yieldLedgerId: selectedYieldLedgerId,
+                mmLotId: persistedMmLotId,
                 productId: selectedJO.product_id,
                 productName: selectedJO.product_name,
                 quantityProduced: Number(yieldQty),
                 branchId: selectedPostingBranchId,
-                lotNumber: lotNumber.trim(),
-                expirationDate: expiryDate,
-                manufacturingDate,
+                lotNumber: persistedLotNumber,
+                expirationDate: persistedExpiryDate,
+                manufacturingDate: persistedManufacturingDate,
                 unitCost: Number(unitCost || 0),
                 componentsConsumed: componentsConsumed,
                 completeJobOrder: true,
@@ -1467,6 +1531,13 @@ export function useManufacturingQA() {
         setDailyLabStatus("Passed");
         setDailyActionTaken("Released");
         setDailyRemarks("");
+        setDailyOutputBatchNo(String(ledgerEntry?.lot_number || ledgerEntry?.batch_no || "").trim());
+        setDailyOutputMmLotId("");
+        setDailyOutputManufacturingDate(String(ledgerEntry?.manufacturing_date || "").slice(0, 10));
+        setDailyOutputExpiryDate(String(ledgerEntry?.expiry_date || "").slice(0, 10));
+        setDailyOutputEligibleLots([]);
+        setDailyOutputLotsLoading(false);
+        setDailyOutputLotsError(null);
         setQaParamValues({});
 
         const jo = jobOrders.find(
@@ -1476,6 +1547,8 @@ export function useManufacturingQA() {
         );
         const tasks = jo ? (jo.routing_tasks || jo.routingTasks || []) : [];
         setRoutes(tasks);
+
+        void loadDailyOutputLots(ledgerEntry, jo);
 
         const audits = dailyInspections.filter((ins: any) => Number(ins.ledger_id) === Number(ledgerEntry.ledger_id || ledgerEntry.id));
         const pendingTask = tasks.find((t: any) => !audits.some((a: any) => Number(a.jo_route_id) === Number(t.id)));
@@ -1487,6 +1560,56 @@ export function useManufacturingQA() {
     // Submit Daily QA Inspection
     const handleSubmitDailyAudit = async () => {
         if (!selectedLedgerEntry) return;
+
+        const ledgerId = Number(selectedLedgerEntry.ledger_id || selectedLedgerEntry.id || 0);
+        const jobOrderId = Number(selectedLedgerEntry.job_order_id || 0);
+        const goodOutputQuantity = Number(selectedLedgerEntry.yield_quantity || 0);
+        if (!Number.isSafeInteger(ledgerId) || ledgerId <= 0 || !Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+            toast.error("This yield record is missing a valid Job Order or ledger reference.");
+            return;
+        }
+
+        let outputMetadata: DailyQAInspectionRequest["outputMetadata"] = null;
+        if (goodOutputQuantity > 0) {
+            if (dailyOutputLotsLoading) {
+                toast.error("Wait for the eligible finished-goods storage lots to finish loading.");
+                return;
+            }
+            if (dailyOutputLotsError) {
+                toast.error("Resolve the finished-goods storage-lot lookup before saving this audit.");
+                return;
+            }
+            if (!dailyOutputMmLotId) {
+                toast.error("Select the finished-goods storage lot for this output.");
+                return;
+            }
+            if (!dailyOutputEligibleLots.some((lot) => String(lot.lotId) === dailyOutputMmLotId)) {
+                toast.error("The selected finished-goods storage lot is no longer eligible. Refresh the lot list and try again.");
+                return;
+            }
+            if (!dailyOutputBatchNo.trim()) {
+                toast.error("Enter the output batch or lot number.");
+                return;
+            }
+            if (dailyOutputBatchNo.trim().length > 100) {
+                toast.error("The output batch or lot number cannot exceed 100 characters.");
+                return;
+            }
+            if (!dailyOutputManufacturingDate || !dailyOutputExpiryDate) {
+                toast.error("Enter both the manufacturing date and expiry date for the finished-goods output.");
+                return;
+            }
+            if (dailyOutputExpiryDate < dailyOutputManufacturingDate) {
+                toast.error("The expiry date cannot be earlier than the manufacturing date.");
+                return;
+            }
+            outputMetadata = {
+                mmLotId: Number(dailyOutputMmLotId),
+                batchNo: dailyOutputBatchNo.trim(),
+                manufacturingDate: dailyOutputManufacturingDate,
+                expiryDate: dailyOutputExpiryDate
+            };
+        }
 
         const jo = jobOrders.find(
             (j) => 
@@ -1552,9 +1675,9 @@ export function useManufacturingQA() {
             const stepLabStatus = stepHasFailure ? "Failed" : dailyLabStatus;
 
             return {
-                jobOrderId: selectedLedgerEntry.job_order_id,
+                jobOrderId,
                 joRouteId: task?.id ?? null,
-                ledgerId: selectedLedgerEntry.id || selectedLedgerEntry.ledger_id,
+                ledgerId,
                 inspectorId: 1,
                 moisturePercentage: resolvedMoisture,
                 acidityPh: resolvedAcidity,
@@ -1569,7 +1692,12 @@ export function useManufacturingQA() {
 
         setActionLoading(true);
         try {
-            await postDailyQAInspection(inspectionsPayload);
+            await postDailyQAInspection({
+                jobOrderId,
+                ledgerId,
+                outputMetadata,
+                inspections: inspectionsPayload
+            });
             toast.success("Daily yield QA checklist signed off successfully.");
             setIsDailyAuditOpen(false);
             refreshAll();
@@ -1907,11 +2035,11 @@ export function useManufacturingQA() {
         yieldQty,
         setYieldQty,
         lotNumber,
-        setLotNumber,
         eligibleLots,
         selectedMmLotId,
         setSelectedMmLotId,
         loadingEligibleLots,
+        yieldTraceabilityReady,
         postingBranchMode,
         postingBranchId,
         newPostingBranchName,
@@ -1923,9 +2051,7 @@ export function useManufacturingQA() {
         handlePostingBranchChange,
         handleCreatePostingBranch,
         manufacturingDate,
-        setManufacturingDate,
         expiryDate,
-        setExpiryDate,
         unitCost,
         setUnitCost,
         yieldMaterials,
@@ -1975,6 +2101,18 @@ export function useManufacturingQA() {
         setDailyActionTaken,
         dailyRemarks,
         setDailyRemarks,
+        dailyOutputBatchNo,
+        setDailyOutputBatchNo,
+        dailyOutputMmLotId,
+        setDailyOutputMmLotId,
+        dailyOutputManufacturingDate,
+        setDailyOutputManufacturingDate,
+        dailyOutputExpiryDate,
+        setDailyOutputExpiryDate,
+        dailyOutputEligibleLots,
+        dailyOutputLotsLoading,
+        dailyOutputLotsError,
+        loadDailyOutputLots,
         handleOpenDailyAuditDialog,
         handleSubmitDailyAudit,
         selectedRouteId,
