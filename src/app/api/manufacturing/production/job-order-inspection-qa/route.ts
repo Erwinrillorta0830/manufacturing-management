@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
-import { areSalesOrderDetailsFullyFulfilled } from "../../sales-order/_fulfillment";
-import { deriveDailyQAOutcome } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
+import {
+    acceptedQuantityByJobOrder,
+    buildQAYieldAssessments,
+    loadSalesOrderQACoverage,
+} from "../_qa-accepted-output";
 import {
     isCancelledJobOrderStatus,
     normalizeJobOrderStatus,
@@ -151,7 +154,7 @@ function isCancelledAllocation(row: DirectusRow): boolean {
 }
 
 async function loadJobOrderSummaries() {
-    const [jobOrders, yields, products] = await Promise.all([
+    const [jobOrders, yields, products, routes, inspections] = await Promise.all([
         readRows(
             "/items/manufacturing_job_orders?limit=-1&sort=-job_order_id",
             "Job Order lookup"
@@ -163,6 +166,14 @@ async function loadJobOrderSummaries() {
         readRows(
             "/items/products?limit=-1&fields=product_id,product_name,product_code",
             "Product lookup"
+        ),
+        readRows(
+            "/items/manufacturing_job_order_routes?limit=-1&fields=*",
+            "Job Order routing lookup"
+        ),
+        readRows(
+            "/items/manufacturing_daily_qa_inspections?limit=-1&fields=*",
+            "Daily QA inspection lookup"
         )
     ]);
 
@@ -180,6 +191,9 @@ async function loadJobOrderSummaries() {
         current.push(yieldRow);
         yieldsByJobOrder.set(id, current);
     });
+    const acceptedByJobOrder = acceptedQuantityByJobOrder(
+        buildQAYieldAssessments(yields, inspections, routes)
+    );
 
     const rows = jobOrders
         .map((jobOrder) => {
@@ -194,10 +208,7 @@ async function loadJobOrderSummaries() {
             const latest = ledgerRows
                 .slice()
                 .sort((left, right) => sortTimestamp(right.logged_at || right.production_date) - sortTimestamp(left.logged_at || left.production_date))[0];
-            const producedQuantity = ledgerRows.reduce(
-                (sum, row) => sum + Math.max(0, numberValue(row.yield_quantity)),
-                0
-            );
+            const producedQuantity = acceptedByJobOrder.get(id) || 0;
 
             return {
                 jobOrderId: id,
@@ -285,20 +296,21 @@ async function loadJobOrderDetails(id: number) {
         .filter((route) => route.id > 0)
         .sort((left, right) => left.sequenceOrder - right.sequenceOrder || left.id - right.id);
 
-    const inspectionsByLedger = new Map<number, DirectusRow[]>();
-    inspections.forEach((inspection) => {
-        const id = relationId(inspection.ledger_id, ["ledger_id", "id"]);
-        if (!id) return;
-        const current = inspectionsByLedger.get(id) || [];
-        current.push(inspection);
-        inspectionsByLedger.set(id, current);
-    });
+    const assessmentsByLedger = new Map(
+        buildQAYieldAssessments(yields, inspections, routes)
+            .map((assessment) => [assessment.ledgerId, assessment] as const)
+    );
 
     const yieldRows = yields
         .map((yieldRow) => {
             const currentLedgerId = ledgerId(yieldRow);
-            const audits = inspectionsByLedger.get(currentLedgerId) || [];
-            const outcome = deriveDailyQAOutcome(audits, routeModels.map((route) => route.id));
+            const assessment = assessmentsByLedger.get(currentLedgerId);
+            const audits = assessment?.audits || [];
+            const outcome = assessment?.outcome || {
+                status: "Pending" as const,
+                hasFailure: false,
+                isComplete: false
+            };
             const goodQuantity = Math.max(0, numberValue(yieldRow.yield_quantity));
             const rejectedQuantity = Math.max(0, numberValue(yieldRow.rejected_quantity));
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
@@ -319,8 +331,8 @@ async function loadJobOrderDetails(id: number) {
                 batchNo: textValue(yieldRow.lot_number || yieldRow.batch_no) || null,
                 manufacturingDate: dateValue(yieldRow.manufacturing_date),
                 expiryDate: dateValue(yieldRow.expiry_date),
-                qaStatus: outcome.status,
-                processQaStatus: outcome.status,
+                qaStatus: assessment?.qaStatus || outcome.status,
+                processQaStatus: assessment?.qaStatus || outcome.status,
                 outcome,
                 audits
             };
@@ -395,21 +407,17 @@ async function loadJobOrderDetails(id: number) {
         if (orderId) linkedOrderIds.add(orderId);
     });
 
-    const linkedSalesOrders = Array.from(linkedOrderIds)
-        .map((orderId) => {
+    const linkedSalesOrders = (await Promise.all(Array.from(linkedOrderIds)
+        .map(async (orderId) => {
             const order = salesOrdersById.get(orderId);
             const details = allDetailsByOrder.get(orderId) || [];
             const orderedQuantity = details.reduce(
                 (sum, detail) => sum + Math.max(0, numberValue(detail.ordered_quantity ?? detail.quantity)),
                 0
             );
-            const producedQuantity = details.reduce((sum, detail) => {
-                const ordered = Math.max(0, numberValue(detail.ordered_quantity ?? detail.quantity));
-                const allocated = Math.max(0, numberValue(detail.allocated_quantity));
-                const served = Math.max(0, numberValue(detail.served_quantity));
-                return sum + Math.min(ordered, Math.max(allocated, served));
-            }, 0);
-            const fulfilled = areSalesOrderDetailsFullyFulfilled(details);
+            const coverage = await loadSalesOrderQACoverage(orderId, details);
+            const producedQuantity = coverage.producedQuantity;
+            const fulfilled = coverage.fulfilled;
             const status = textValue(order?.order_status) || "Unknown";
             const alreadyConsolidated = status === "For Consolidation";
             const canMoveToConsolidation = status === "In Production" && fulfilled;
@@ -428,10 +436,10 @@ async function loadJobOrderDetails(id: number) {
                     : status !== "In Production"
                         ? `Sales Order is ${status}.`
                         : !fulfilled
-                            ? "Every Sales Order line must be fully fulfilled."
+                            ? "Every Sales Order line must have enough QA-passed output."
                             : null
             };
-        })
+        })))
         .sort((left, right) => left.orderNo.localeCompare(right.orderNo, undefined, { numeric: true }));
 
     return {
@@ -444,7 +452,9 @@ async function loadJobOrderDetails(id: number) {
         branchId: relationId(jobOrder.branch_id, ["branch_id", "id"]) || null,
         targetQuantity: numberValue(jobOrder.target_quantity ?? jobOrder.quantity),
         completedQuantity: numberValue(jobOrder.completed_quantity),
-        producedQuantity: dailyYields.reduce((sum, row) => sum + row.goodQuantity, 0),
+        producedQuantity: dailyYields.reduce((sum, row) => (
+            sum + (row.qaStatus === "Passed" ? row.goodQuantity + row.rejectedQuantity : 0)
+        ), 0),
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
         routes: routeModels,
         dailyYields,

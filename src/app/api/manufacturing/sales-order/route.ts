@@ -23,6 +23,7 @@ import {
     mapStatus,
 } from "./_status";
 import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
+import { loadSalesOrderQACoverage } from "../production/_qa-accepted-output";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -1271,10 +1272,17 @@ export async function PATCH(request: Request) {
                     throw new ApiError(409, "Sales order cannot move to For Invoicing until every detail line is fully fulfilled.");
                 }
 
-                if (target === "For Consolidation"
-                    && current === "In Production"
-                    && !areSalesOrderDetailsFullyFulfilled(allDetails)) {
-                    throw new ApiError(409, "Sales order cannot move to For Consolidation until every detail line is fully fulfilled.");
+                if (target === "For Consolidation" && current === "In Production") {
+                    let qaCoverage;
+                    try {
+                        qaCoverage = await loadSalesOrderQACoverage(orderId, allDetails);
+                    } catch (error) {
+                        console.error(`Unable to verify QA-passed output for sales order ${orderId}.`, error);
+                        throw new ApiError(503, "Unable to verify QA-passed production output for this sales order.");
+                    }
+                    if (!qaCoverage.fulfilled) {
+                        throw new ApiError(409, "Sales order cannot move to For Consolidation until every detail line has enough QA-passed output.");
+                    }
                 }
 
                 const isApprovalDecision = (current === "For Approval" || current === "On Hold")
