@@ -58,33 +58,53 @@ function getMaterialId(material: BreakdownMaterial): number | null {
     return getPositiveNumericId(material.jo_material_id ?? material.id);
 }
 
-// Live ticking timer component for clocked-in operators
-function RunningTimer({ startedAt }: { startedAt: string }) {
-    const [elapsed, setElapsed] = useState("");
+// Live countdown component for clocked-in operators.
+function getRemainingSeconds(startedAt: string, durationHours: number): number {
+    const normalizedStartedAt = startedAt.trim().includes("T")
+        ? startedAt.trim()
+        : startedAt.trim().replace(" ", "T");
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalizedStartedAt);
+    const startedAtMs = Date.parse(hasTimezone ? normalizedStartedAt : `${normalizedStartedAt}Z`);
+    const elapsedSeconds = Number.isFinite(startedAtMs)
+        ? Math.max(0, (Date.now() - startedAtMs) / 1000)
+        : 0;
+    return Math.max(0, Math.ceil((durationHours * 60 * 60) - elapsedSeconds));
+}
+
+function formatTimerSeconds(totalSeconds: number): string {
+    const safeSeconds = Math.max(0, totalSeconds);
+    const hours = Math.floor(safeSeconds / 3600);
+    const mins = Math.floor((safeSeconds % 3600) / 60);
+    const secs = safeSeconds % 60;
+    return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function RunningTimer({ startedAt, durationHours }: { startedAt: string; durationHours: number }) {
+    const [remainingSeconds, setRemainingSeconds] = useState(() => getRemainingSeconds(startedAt, durationHours));
 
     useEffect(() => {
         const updateTimer = () => {
-            const diffMs = new Date().getTime() - new Date(startedAt).getTime();
-            if (diffMs <= 0) {
-                setElapsed("00:00:00");
-                return;
-            }
-            const hours = Math.floor(diffMs / 3600000);
-            const mins = Math.floor((diffMs % 3600000) / 60000);
-            const secs = Math.floor((diffMs % 60000) / 1000);
-            setElapsed(
-                `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
-            );
+            setRemainingSeconds(getRemainingSeconds(startedAt, durationHours));
         };
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
         return () => clearInterval(interval);
-    }, [startedAt]);
+    }, [startedAt, durationHours]);
+
+    const isExpired = remainingSeconds === 0;
 
     return (
-        <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px] inline-flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-            {elapsed}
+        <span
+            className={`font-mono font-bold px-2 py-0.5 rounded border text-[10px] inline-flex items-center gap-1 ${isExpired
+                ? "text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/20"
+                : "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                }`}
+            aria-label={isExpired ? "Shift time complete" : `${formatTimerSeconds(remainingSeconds)} shift time remaining`}
+            title={isExpired ? "Shift time complete; stop the timer to save actual hours." : "Remaining shift time"}
+        >
+            <span className={`w-1.5 h-1.5 rounded-full ${isExpired ? "bg-amber-500" : "bg-emerald-500 animate-ping"}`} />
+            {formatTimerSeconds(remainingSeconds)}
+            {isExpired && <span className="font-sans text-[9px]">Shift complete</span>}
         </span>
     );
 }
@@ -302,6 +322,10 @@ export default function OperatorPanel({
     }, [routeOperators, users]);
 
     const isJobOnHold = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.CANCELLED);
+    const configuredShiftHours = Number(selectedJobOrder.shiftOption ?? selectedJobOrder.shift_option ?? 8);
+    const shiftDurationHours = Number.isFinite(configuredShiftHours) && configuredShiftHours > 0
+        ? configuredShiftHours
+        : 8;
 
     return (
         <Card className="border border-border bg-card shadow-sm rounded-xl overflow-hidden">
@@ -443,7 +467,10 @@ export default function OperatorPanel({
                                         <div className="flex items-center justify-between sm:justify-end gap-4 flex-1">
                                             <div className="flex items-center gap-2 shrink-0">
                                                 {isTimerActive ? (
-                                                    <RunningTimer startedAt={gop.active_session.started_at} />
+                                                    <RunningTimer
+                                                        startedAt={gop.active_session.started_at}
+                                                        durationHours={shiftDurationHours}
+                                                    />
                                                 ) : (
                                                     <span className="text-[9px] text-muted-foreground font-semibold px-1.5 py-0.5 rounded bg-muted/40 border border-border/30">
                                                         Clocked Out
@@ -503,7 +530,6 @@ export default function OperatorPanel({
                                                                 size="xs"
                                                                 className="h-6.5 text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-900/50 dark:hover:bg-amber-950/40 px-2 text-[10px] font-medium"
                                                                 onClick={() => handleStopTimer(selectedTask.id, gop.user_id)}
-                                                                disabled={readOnly}
                                                             >
                                                                 <Square className="mr-1 h-3 w-3 fill-current" /> Stop
                                                             </Button>

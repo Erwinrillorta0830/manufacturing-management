@@ -18,7 +18,8 @@ import {
     CheckCircle,
     XCircle,
     Undo2,
-    AlertTriangle
+    AlertTriangle,
+    PauseCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -27,6 +28,7 @@ import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
 import { RoutingSequence } from "./components/RoutingSequence";
 import OperatorPanel from "./components/OperatorPanel";
 import { OperationStepTracker } from "./components/OperationStepTracker";
+import { JobOrderProgressSummary } from "./components/JobOrderProgressSummary";
 import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
@@ -34,6 +36,7 @@ import { StationStartScanner } from "./components/StationStartScanner";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
+import { JobOrderWorkflowActionModal, type ProductionWorkflowAction } from "./components/JobOrderWorkflowActionModal";
 import { StationScanResponse } from "./types";
 import { toast } from "sonner";
 import { isCancellableJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
@@ -104,17 +107,21 @@ export default function ProductionWorkflowModule() {
         submittingCancellation,
         cancellationError,
         openCancellationModal,
-        handleConfirmCancellation
+        handleConfirmCancellation,
+        workflowSubmitting,
+        handleWorkflowAction
     } = useProductionWorkflow();
 
     // UI state
     const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
+    const [scannerJobOrder, setScannerJobOrder] = useState<any | null>(null);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isKioskMode, setIsKioskMode] = useState(false);
     const [viewMode, setViewMode] = useState<"queue" | "tracker">("queue");
+    const [workflowAction, setWorkflowAction] = useState<ProductionWorkflowAction | null>(null);
 
     const isMountedRef = React.useRef(true);
 
@@ -154,6 +161,14 @@ export default function ProductionWorkflowModule() {
     const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
     const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
     const isSelectedJobOrderHeld = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+    const isSelectedJobOrderProductionCompleted = isJobOrderStatus(
+        selectedJobOrderStatus,
+        JOB_ORDER_STATUS.PRODUCTION_COMPLETED,
+        JOB_ORDER_STATUS.FOR_QA_RECONCILIATION,
+        JOB_ORDER_STATUS.CLOSED
+    );
+    const isProductionReadOnly = isSelectedJobOrderCancelled || isSelectedJobOrderHeld || isSelectedJobOrderProductionCompleted;
+    const canReturnProductionMaterials = isProductionReadOnly;
     const selectedJobOrderJourney = selectedJobOrder
         ? resolveJobOrderJourney({
             status: selectedJobOrderStatus,
@@ -170,7 +185,7 @@ export default function ProductionWorkflowModule() {
     )
         ? {
             label: "Log shift run",
-            description: "Record this shift's good output, scrap, and material backflushing."
+            description: "Record this session's output, traceability details, and exact WIP consumption."
         }
         : null;
     const selectedCalloutAction = onBenchNextAction || selectedJobOrderJourney?.nextAction || null;
@@ -204,6 +219,11 @@ export default function ProductionWorkflowModule() {
         fetchClockedIn();
     };
 
+    const openStationScanner = (jobOrder?: any | null) => {
+        setScannerJobOrder(jobOrder || null);
+        setIsScannerOpen(true);
+    };
+
     return (
         <div className={`flex flex-col space-y-6 max-w-7xl mx-auto p-1 sm:p-2 transition-all ${isKioskMode ? "fixed inset-0 z-50 bg-background p-4 overflow-y-auto max-w-none" : ""}`}>
             
@@ -226,7 +246,7 @@ export default function ProductionWorkflowModule() {
                             Shop Floor Execution Terminal
                         </h1>
                         <p className="text-xs sm:text-sm text-muted-foreground max-w-xl">
-                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, point-of-use backflushing, and QA gates.
+                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, exact WIP consumption, and QA gates.
                         </p>
                     </div>
 
@@ -234,7 +254,7 @@ export default function ProductionWorkflowModule() {
                     <div className="flex flex-wrap gap-2 w-full md:w-auto shrink-0">
                         <StatusLegendPopover />
                         <Button 
-                            onClick={() => setIsScannerOpen(true)}
+                            onClick={() => openStationScanner(null)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold shadow-md shadow-emerald-500/20 h-10 text-xs px-4"
                         >
                             <Scan className="mr-2 h-4 w-4" /> Station Start Scanner
@@ -328,6 +348,7 @@ export default function ProductionWorkflowModule() {
                         setStatusFilter("Active");
                         setSelectedBranchFilter("All");
                     }}
+                    onAssignWorkstation={(jo) => openStationScanner(jo)}
                 />
             </div>
 
@@ -364,7 +385,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedJobOrder?.producedQty || selectedJobOrder?.completed_quantity || 0} pcs</span>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedJobOrder?.producedQty || selectedJobOrder?.completed_quantity || 0} pcs</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
@@ -399,7 +420,7 @@ export default function ProductionWorkflowModule() {
                                         <XCircle className="mr-1.5 h-4 w-4" /> Cancel Job Order
                                     </Button>
                                 )}
-                                {isSelectedJobOrderCancelled && (
+                                {canReturnProductionMaterials && (
                                     <Button
                                         variant="outline"
                                         size="sm"
@@ -407,6 +428,14 @@ export default function ProductionWorkflowModule() {
                                         className="h-10 text-xs font-bold border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600"
                                     >
                                         <Undo2 className="mr-1.5 h-4 w-4" /> Return Raw Materials
+                                    </Button>
+                                )}
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.PICKED) && !selectedJobOrder?.primary_work_center_id && (
+                                    <Button
+                                        onClick={() => openStationScanner(selectedJobOrder)}
+                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
+                                    >
+                                        <Building2 className="mr-1.5 h-4 w-4" /> Assign Workstation
                                     </Button>
                                 )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
@@ -418,12 +447,55 @@ export default function ProductionWorkflowModule() {
                                         <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> {releasingDraft ? "Initializing..." : "Initialize Job Order"}
                                     </Button>
                                 ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
-                                    <Button
-                                        onClick={() => setIsShiftLogOpen(true)}
-                                        className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"
-                                    >
-                                        <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> End-of-Shift / Step Progress
-                                    </Button>
+                                    <>
+                                        <Button
+                                            onClick={() => setIsShiftLogOpen(true)}
+                                            className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"
+                                        >
+                                            <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> End-of-Shift / Step Progress
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setWorkflowAction("place-on-hold")}
+                                            className="h-10 text-xs font-bold border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                                        >
+                                            <PauseCircle className="mr-1.5 h-4 w-4" /> Place on Hold
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            onClick={() => setWorkflowAction("complete-production")}
+                                            className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
+                                        >
+                                            <CheckCircle className="mr-1.5 h-4 w-4" /> Complete Production
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setWorkflowAction("terminate-production")}
+                                            className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                        >
+                                            <XCircle className="mr-1.5 h-4 w-4" /> Terminate
+                                        </Button>
+                                    </>
+                                ) : isSelectedJobOrderHeld ? (
+                                    <>
+                                        <Button
+                                            size="sm"
+                                            onClick={() => setWorkflowAction("resume-production")}
+                                            className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
+                                        >
+                                            <CheckCircle className="mr-1.5 h-4 w-4" /> Resume Production
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setWorkflowAction("terminate-production")}
+                                            className="h-10 text-xs font-bold border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                        >
+                                            <XCircle className="mr-1.5 h-4 w-4" /> Terminate
+                                        </Button>
+                                    </>
                                 ) : null}
                             </div>
                         </div>
@@ -459,15 +531,25 @@ export default function ProductionWorkflowModule() {
                             <div className="flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400 sm:flex-row sm:items-center sm:justify-between">
                                 <span className="flex items-start gap-2">
                                     <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                                    This Job Order is on hold. Resolve the hold in the QA console before continuing production.
+                                    This Job Order is on hold. Resolve the issue and record resolution remarks before continuing production.
                                 </span>
-                                <Button asChild size="sm" variant="outline" className="h-8 shrink-0 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
-                                    <Link href={`/mm/manufacturing-qa?jo=${encodeURIComponent(selectedJobOrder?.jo_id || "")}`}>
-                                        Open QA Console
-                                    </Link>
-                                </Button>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <Button size="sm" variant="outline" onClick={() => setWorkflowAction("resume-production")} className="h-8 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
+                                        Resume Production
+                                    </Button>
+                                    <Button asChild size="sm" variant="outline" className="h-8 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400">
+                                        <Link href={`/mm/manufacturing-qa?jo=${encodeURIComponent(selectedJobOrder?.jo_id || "")}`}>
+                                            Open QA Console
+                                        </Link>
+                                    </Button>
+                                </div>
                             </div>
                         )}
+                        {/* Job Order progress summary above the operation tracker */}
+                        {selectedJobOrder && (
+                            <JobOrderProgressSummary jobOrder={selectedJobOrder} />
+                        )}
+
                         {/* Operation Step Tracker Section */}
                         {selectedJobOrder && (
                             <OperationStepTracker
@@ -479,7 +561,7 @@ export default function ProductionWorkflowModule() {
                                 users={users}
                                 onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
                                 onOpenQAModal={(taskId) => handleCompleteStepClick(taskId)}
-                                readOnly={isSelectedJobOrderCancelled}
+                                readOnly={isProductionReadOnly}
                             />
                         )}
 
@@ -504,7 +586,7 @@ export default function ProductionWorkflowModule() {
                                         handleStopTimer={handleStopTimer}
                                         handleSaveManualHours={handleSaveManualHours}
                                         handleCompleteStepClick={handleCompleteStepClick}
-                                        readOnly={isSelectedJobOrderCancelled}
+                                        readOnly={isProductionReadOnly}
                                     />
                                 );
                             })()}
@@ -516,8 +598,12 @@ export default function ProductionWorkflowModule() {
             {/* --- STATION START SCANNER MODAL --- */}
             <StationStartScanner
                 open={isScannerOpen}
-                onOpenChange={setIsScannerOpen}
+                onOpenChange={(open) => {
+                    setIsScannerOpen(open);
+                    if (!open) setScannerJobOrder(null);
+                }}
                 jobOrders={jobOrders}
+                initialJobOrder={scannerJobOrder}
                 onStationStarted={handleStationStarted}
             />
 
@@ -585,6 +671,19 @@ export default function ProductionWorkflowModule() {
                 submitting={submittingCancellation}
                 error={cancellationError}
                 onConfirm={handleConfirmCancellation}
+            />
+
+            <JobOrderWorkflowActionModal
+                key={workflowAction ?? "closed"}
+                open={workflowAction !== null}
+                onOpenChange={(open) => {
+                    if (!open) setWorkflowAction(null);
+                }}
+                action={workflowAction}
+                loading={workflowSubmitting}
+                onSubmit={(input) => workflowAction
+                    ? handleWorkflowAction(workflowAction, input)
+                    : Promise.resolve(false)}
             />
 
         </div>

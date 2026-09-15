@@ -1042,7 +1042,10 @@ export async function previewJobOrderCancellation(joId: string | number): Promis
     const productName = await resolveJobOrderProductName(jobOrder.productId);
     const status = jobOrder.status;
     const cancellable = isCancellableJobOrderStatus(status) && !computed.reconciliationError;
-    const canReturnMaterials = isCancelledJobOrderStatus(status)
+    const canReturnMaterials = (
+        isCancelledJobOrderStatus(status)
+        || isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION)
+    )
         && computed.totals.returnableQuantity > QUANTITY_EPSILON
         && !computed.reconciliationError;
 
@@ -1170,7 +1173,7 @@ export async function returnJobOrderMaterialLeftovers(input: ReturnLeftoverMater
     const jobOrder = await fetchJobOrder(input.joId);
     const returnableStatus = isCancelledJobOrderStatus(jobOrder.status)
         || isTerminalJobOrderStatus(jobOrder.status)
-        || isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+        || isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION);
     if (!returnableStatus) {
         throw new JobOrderCancellationError(
             `Job Order ${jobOrder.jobOrderNo} is in status "${jobOrder.status}" and cannot return leftover material through this flow.`,

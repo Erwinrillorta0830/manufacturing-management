@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import {
     cancelJobOrderAndReturnMaterials,
     previewJobOrderCancellation,
-    returnCancelledJobOrderMaterials,
+    returnJobOrderMaterialLeftovers,
     JobOrderCancellationError
 } from "./_cancellation-service";
 
@@ -89,10 +89,11 @@ export async function POST(request: Request) {
         }
 
         if (action === "return-materials") {
-            const execution = await returnCancelledJobOrderMaterials({
+            const execution = await returnJobOrderMaterialLeftovers({
                 joId: String(joId),
                 reason: typeof reason === "string" ? reason : undefined,
-                actorUserId: actor
+                actorUserId: actor,
+                destinations: Array.isArray(body.destinations) ? body.destinations : undefined
             });
             return NextResponse.json({ success: true, data: execution.response });
         }

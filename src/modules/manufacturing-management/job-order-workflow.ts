@@ -12,6 +12,7 @@ export const JOB_ORDER_WORKFLOW_ACTIONS = [
     "place-on-hold",
     "resume-production",
     "complete-production",
+    "terminate-production",
     "begin-qa-reconciliation",
     "close",
     "cancel"

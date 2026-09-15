@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React from "react";
-import { Loader2, ClipboardCheck, AlertCircle, CheckCircle2, ChevronRight } from "lucide-react";
+import { Loader2, ClipboardCheck, AlertCircle, CheckCircle2, ChevronRight, Tag, MapPin, Calendar } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { deriveDailyQAOutcome, getDailyQAAuditStatus } from "../daily-qa-outcome";
 import { ResponsiveDataView } from "./ResponsiveDataView";
+import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
+import type { EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 
 interface DailyQAQueueProps {
     yieldLedger: any[];
@@ -32,6 +34,18 @@ interface DailyQAQueueProps {
     setDailyActionTaken: (val: "Released" | "Quarantined" | "Scrapped") => void;
     dailyRemarks: string;
     setDailyRemarks: (val: string) => void;
+    dailyOutputBatchNo: string;
+    setDailyOutputBatchNo: (val: string) => void;
+    dailyOutputMmLotId: string;
+    setDailyOutputMmLotId: (val: string) => void;
+    dailyOutputManufacturingDate: string;
+    setDailyOutputManufacturingDate: (val: string) => void;
+    dailyOutputExpiryDate: string;
+    setDailyOutputExpiryDate: (val: string) => void;
+    dailyOutputEligibleLots: EligibleFinishedGoodsLot[];
+    dailyOutputLotsLoading: boolean;
+    dailyOutputLotsError: string | null;
+    onRetryDailyOutputLots: () => void;
     handleOpenDailyAuditDialog: (entry: any) => void;
     handleSubmitDailyAudit: () => void;
     actionLoading: boolean;
@@ -67,6 +81,18 @@ export function DailyQAQueue({
     setDailyActionTaken,
     dailyRemarks,
     setDailyRemarks,
+    dailyOutputBatchNo,
+    setDailyOutputBatchNo,
+    dailyOutputMmLotId,
+    setDailyOutputMmLotId,
+    dailyOutputManufacturingDate,
+    setDailyOutputManufacturingDate,
+    dailyOutputExpiryDate,
+    setDailyOutputExpiryDate,
+    dailyOutputEligibleLots,
+    dailyOutputLotsLoading,
+    dailyOutputLotsError,
+    onRetryDailyOutputLots,
     handleOpenDailyAuditDialog,
     handleSubmitDailyAudit,
     actionLoading,
@@ -81,6 +107,7 @@ export function DailyQAQueue({
     onFiltersChange
 }: DailyQAQueueProps) {
     const [searchQuery, setSearchQuery] = React.useState("");
+    const requiresOutputTraceability = Number(selectedLedgerEntry?.yield_quantity || 0) > 0;
     const visibleYieldLedger = React.useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return yieldLedger;
@@ -404,6 +431,107 @@ export function DailyQAQueue({
                                     )}
                                 </div>
                             </details>
+                        </div>
+
+                        {/* Finished-goods traceability is captured at the QA gate. */}
+                        <div className="bg-emerald-500/[0.015] dark:bg-emerald-500/[0.005] border border-emerald-500/20 rounded-xl p-4 space-y-4 shadow-sm">
+                            <div className="flex items-center gap-2 pb-2 border-b border-emerald-500/10">
+                                <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-600 dark:text-emerald-400">
+                                    <Tag className="h-4 w-4" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider text-[10px]">
+                                        Batch &amp; Lot Traceability Log (WIP Output)
+                                    </h4>
+                                    <p className="text-[9px] text-muted-foreground mt-0.5">
+                                        Assign finished-goods identity before authorizing this in-process QA result.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {requiresOutputTraceability && dailyOutputLotsError && (
+                                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive flex items-start gap-2 text-xs" role="alert">
+                                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                    <div className="space-y-2">
+                                        <p className="font-semibold">Finished-goods storage lots are unavailable.</p>
+                                        <p>{dailyOutputLotsError}</p>
+                                        <Button type="button" size="sm" variant="outline" onClick={onRetryDailyOutputLots} disabled={dailyOutputLotsLoading || actionLoading}>
+                                            Retry Storage Lot Lookup
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="daily-output-batch" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                        <Tag className="h-3.5 w-3.5 text-emerald-500" /> Output Batch / Lot No <span className="text-destructive">*</span>
+                                    </Label>
+                                    <Input
+                                        id="daily-output-batch"
+                                        type="text"
+                                        maxLength={100}
+                                        value={dailyOutputBatchNo}
+                                        onChange={(event) => setDailyOutputBatchNo(event.target.value)}
+                                        className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
+                                        placeholder="e.g. JO-2026-YLD-001"
+                                        disabled={actionLoading || !requiresOutputTraceability}
+                                        required={requiresOutputTraceability}
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="daily-output-storage-lot" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                        <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Storage Lot <span className="text-destructive">*</span>
+                                    </Label>
+                                    <FinishedGoodsLotSelect
+                                        lots={dailyOutputEligibleLots}
+                                        value={dailyOutputMmLotId}
+                                        onValueChange={setDailyOutputMmLotId}
+                                        loading={dailyOutputLotsLoading}
+                                        disabled={actionLoading || !requiresOutputTraceability}
+                                        placeholder="Select storage lot..."
+                                        className="h-10 w-full justify-between rounded-xl border-border/80 text-xs font-semibold"
+                                        showBatchSummary
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="daily-output-manufacturing-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                        <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Manufacturing Date <span className="text-destructive">*</span>
+                                    </Label>
+                                    <Input
+                                        id="daily-output-manufacturing-date"
+                                        type="date"
+                                        value={dailyOutputManufacturingDate}
+                                        onChange={(event) => setDailyOutputManufacturingDate(event.target.value)}
+                                        className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
+                                        disabled={actionLoading || !requiresOutputTraceability}
+                                        required={requiresOutputTraceability}
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="daily-output-expiry-date" className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px]">
+                                        <Calendar className="h-3.5 w-3.5 text-emerald-500" /> Expiry Date <span className="text-destructive">*</span>
+                                    </Label>
+                                    <Input
+                                        id="daily-output-expiry-date"
+                                        type="date"
+                                        value={dailyOutputExpiryDate}
+                                        onChange={(event) => setDailyOutputExpiryDate(event.target.value)}
+                                        className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
+                                        disabled={actionLoading || !requiresOutputTraceability}
+                                        required={requiresOutputTraceability}
+                                    />
+                                </div>
+                            </div>
+
+                            {!requiresOutputTraceability && (
+                                <p className="text-[11px] text-muted-foreground italic">
+                                    No good output was recorded for this ledger entry, so a finished-goods storage lot is not required.
+                                </p>
+                            )}
                         </div>
 
                         {/* Full Paper-Based QA Checklist */}

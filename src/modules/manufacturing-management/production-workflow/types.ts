@@ -74,6 +74,7 @@ export interface JobOrder {
     priority?: number;
     start_date?: string | null;
     primary_work_center_id?: number | null;
+    primary_work_center_name?: string | null;
     work_center_name?: string | null;
     routing_tasks?: RoutingTask[];
     routingTasks?: RoutingTask[];
@@ -319,16 +320,112 @@ export interface StationScanResponse {
     error?: string;
 }
 
+export interface MaterialCandidateLot {
+    receipt_id: number | null;
+    receipt_no?: string | null;
+    lot_no: string;
+    received_quantity?: number;
+    physical_quantity?: number;
+    available: number;
+    expiry_date?: string | null;
+    reservation_id?: number | string | null;
+    reserved_qty_for_this_lot?: number;
+}
+
+export interface ProductionMaterialReservation {
+    reservation_id: number | null;
+    jo_material_id: number;
+    product_id: number;
+    product_name: string;
+    product_code?: string;
+    uom_id: number | null;
+    unit_shortcut: string;
+    mm_lot_id: number | null;
+    inventory_lot_id: number | null;
+    batch_no: string | null;
+    reservation_status: string | null;
+    allocated_quantity?: number;
+    required_quantity?: number;
+    reserved_quantity: number;
+    staged_quantity: number;
+    issued_to_wip_quantity: number;
+    actual_used_quantity: number;
+    returned_quantity: number;
+    remaining_wip_quantity: number;
+    available_stock: number;
+    actual_qty: string;
+    theoretical_quantity?: number;
+    material_consumption_variance_tolerance_pct?: number | string | null;
+    variance_quantity?: number | null;
+    variance_reason?: string | null;
+    variance_approved_by?: number | null;
+    variance_approved_at?: string | null;
+    is_sub_assembly?: boolean;
+    candidate_lots?: MaterialCandidateLot[];
+}
+
+export interface WipTopUpPayload {
+    jobOrderId: number;
+    joMaterialId: number;
+    productId: number;
+    sourceType: "RAW_MATERIAL" | "MANUFACTURING";
+    receiptId?: number | null;
+    mmLotId?: number | null;
+    batchNo?: string;
+    uomId?: number | null;
+    quantity: number;
+    idempotencyKey: string;
+    remarks?: string;
+}
+
+export interface WipTopUpResponse {
+    success: boolean;
+    idempotent?: boolean;
+    message?: string;
+    error?: string;
+    code?: string;
+    reservation?: {
+        reservationId: number | null;
+        mmLotId: number;
+        inventoryLotId: number;
+        batchNo: string;
+        uomId?: number | null;
+        addedQuantity: number;
+        reservedQuantity: number;
+        stagedQuantity: number;
+        issuedToWipQuantity: number;
+        remainingWipQuantity: number;
+    } | null;
+}
+
+export interface ShiftRunMaterialConsumption {
+    joMaterialId: number;
+    reservationId: number;
+    productId: number;
+    mmLotId: number;
+    inventoryLotId: number;
+    batchNo: string;
+    uomId: number;
+    actualQty: number;
+}
+
 export interface ShiftRunLogPayload {
+    sessionKey: string;
     taskId: number;
     joId: string | number;
+    workCenterId: number;
     shiftName: string;
+    productionDate: string;
     yieldQty: number;
-    scrapQty?: number;
+    rejectedQty: number;
+    scrapQty: number;
+    remarks?: string | null;
     rejectionReasonId?: number | string | null;
     rejectionRemarks?: string | null;
-    inspectorId: number | null;
-    qaStatus: "Passed" | "QA Hold" | "Pending";
+    /** @deprecated The API resolves the operator from the authenticated session. */
+    inspectorId?: number | null;
+    /** @deprecated Production sessions always start Pending QA. */
+    qaStatus?: "Passed" | "QA Hold" | "Pending";
     qaParameters?: Array<{
         parameter_id: number;
         test_name: string;
@@ -336,14 +433,7 @@ export interface ShiftRunLogPayload {
         is_failed: boolean;
         remarks?: string;
     }>;
-    materialsConsumed?: Array<{
-        product_id: number;
-        actual_qty: number;
-        lot_id?: number;
-        batch_no?: string;
-    }>;
-    batchNo?: string;
-    expiryDate?: string;
-    manufacturingDate?: string;
-    targetLotId?: number;
+    materialsConsumed: ShiftRunMaterialConsumption[];
+    varianceReason?: string | null;
+    approveVariance?: boolean;
 }
