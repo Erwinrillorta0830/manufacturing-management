@@ -569,7 +569,7 @@ export async function handleGET(request: Request) {
             const reservationsMap = new Map<number, any[]>();
             if (jomIds.length > 0) {
                 try {
-                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,product_id,branch_id,batch_no,reserved_quantity&limit=-1`;
+                    const reservationsUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${jomIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,product_id,branch_id,batch_no,mm_lot_id,inventory_lot_id,uom_id,reservation_status,reserved_quantity,staged_quantity,issued_to_wip_quantity,actual_used_quantity,returned_quantity,remaining_wip_quantity,staging_bin,expiry_date&limit=-1`;
                     const resRes = await fetch(reservationsUrl, { headers });
                     if (resRes.ok) {
                         const reservations = (await resRes.json()).data || [];
@@ -689,6 +689,45 @@ export async function handleGET(request: Request) {
                 
                 const jomId = Number(d.jo_material_id || d.id);
                 const matReservations = reservationsMap.get(jomId) || [];
+                const reservationDetails = matReservations.map((reservation: any) => {
+                    const reservationId = Number(reservation.jo_materials_reservation_id || reservation.id || 0);
+                    const reservationProductId = Number(reservation.product_id?.product_id || reservation.product_id || compProductId);
+                    const mmLotIdValue = Number(reservation.mm_lot_id?.lot_id || reservation.mm_lot_id || 0) || null;
+                    const inventoryLotIdValue = Number(reservation.inventory_lot_id?.inventory_lot_id || reservation.inventory_lot_id?.id || reservation.inventory_lot_id || 0) || null;
+                    const reservationUomId = Number(reservation.uom_id?.unit_id || reservation.uom_id || prod?.unit_of_measurement?.unit_id || 0) || null;
+                    const stagedQuantity = Number(reservation.staged_quantity || 0);
+                    const issuedToWipQuantity = Number(reservation.issued_to_wip_quantity || 0);
+                    const actualUsedQuantity = Number(reservation.actual_used_quantity || 0);
+                    const returnedQuantity = Number(reservation.returned_quantity || 0);
+                    const availableBasis = issuedToWipQuantity > 0 ? issuedToWipQuantity : stagedQuantity;
+                    const calculatedRemainingWip = Math.max(0, availableBasis - actualUsedQuantity - returnedQuantity);
+
+                    return {
+                        reservation_id: reservationId > 0 ? reservationId : null,
+                        jo_material_id: jomId,
+                        product_id: reservationProductId,
+                        product_name: prod?.product_name || `Product #${reservationProductId}`,
+                        product_code: prod?.product_code || "",
+                        uom_id: reservationUomId,
+                        unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "units",
+                        mm_lot_id: mmLotIdValue,
+                        inventory_lot_id: inventoryLotIdValue,
+                        batch_no: reservation.batch_no || null,
+                        reservation_status: reservation.reservation_status || null,
+                        reserved_quantity: Number(reservation.reserved_quantity || 0),
+                        staged_quantity: stagedQuantity,
+                        issued_to_wip_quantity: issuedToWipQuantity,
+                        actual_used_quantity: actualUsedQuantity,
+                        returned_quantity: returnedQuantity,
+                        remaining_wip_quantity: Number.isFinite(Number(reservation.remaining_wip_quantity))
+                            ? Math.max(0, Number(reservation.remaining_wip_quantity))
+                            : calculatedRemainingWip,
+                        available_stock: calculatedRemainingWip,
+                        staging_bin: reservation.staging_bin || null,
+                        expiry_date: reservation.expiry_date || null,
+                        actual_qty: "0"
+                    };
+                });
 
                 // Check if sub assembly
                 let isSubAssembly = hasActiveVersionLocal(compProductId);
@@ -818,7 +857,8 @@ export async function handleGET(request: Request) {
                     lot_no: lotNo,
                     receipt_no: receiptNo,
                     candidate_lots: candidateLots,
-                    is_sub_assembly: isSubAssembly
+                    is_sub_assembly: isSubAssembly,
+                    reservations: reservationDetails
                 };
             });
             return NextResponse.json(enriched);
@@ -1461,6 +1501,32 @@ export async function handleGET(request: Request) {
         } else {
             // Fetch all Job Orders
             const list = await fetchJobOrders();
+
+            // Resolve the assigned station names once so the queue can show the
+            // workstation and detect unassigned Picked Job Orders.
+            const primaryWorkCenterIds = Array.from(new Set(
+                list
+                    .map((item: any) => Number(item.primary_work_center_id))
+                    .filter((id: number) => Number.isSafeInteger(id) && id > 0)
+            ));
+            const workCenterNameById = new Map<number, string>();
+            if (primaryWorkCenterIds.length > 0) {
+                try {
+                    const wcRes = await fetch(
+                        `${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${primaryWorkCenterIds.join(",")}&fields=work_center_id,work_center_name&limit=-1`,
+                        { headers, cache: "no-store" }
+                    );
+                    if (wcRes.ok) {
+                        const wcRows = (await wcRes.json()).data || [];
+                        wcRows.forEach((wc: any) => {
+                            workCenterNameById.set(Number(wc.work_center_id), String(wc.work_center_name || ""));
+                        });
+                    }
+                } catch (error) {
+                    console.warn("[Manufacturing] Failed to resolve primary work-center names:", error);
+                }
+            }
+
             // Transform snake_case keys back to camelCase for client compatibility if needed
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             const camelCaseList = list.map((item: any) => ({
@@ -1484,6 +1550,10 @@ export async function handleGET(request: Request) {
                 allocationResults: item.allocation_results,
                 procurementStatus: item.procurement_status,
                 branch_id: item.branch_id,
+                primary_work_center_id: item.primary_work_center_id ?? null,
+                primary_work_center_name: item.primary_work_center_id
+                    ? workCenterNameById.get(Number(item.primary_work_center_id)) || null
+                    : null,
                 products: item.products || [],
                 routing_tasks: item.routing_tasks || [],
                 routingTasks: item.routing_tasks || [],

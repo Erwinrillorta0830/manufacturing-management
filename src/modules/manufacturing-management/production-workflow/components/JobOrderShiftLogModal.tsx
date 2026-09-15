@@ -19,8 +19,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason } from "../types";
+import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
@@ -49,7 +50,10 @@ export function JobOrderShiftLogModal({
 }: JobOrderShiftLogModalProps) {
     const [shiftName, setShiftName] = useState("Shift 1 - Day");
     const [productionDay, setProductionDay] = useState("1");
+    const [productionDate, setProductionDate] = useState("");
+    const [sessionKey, setSessionKey] = useState("");
     const [shiftYieldQty, setShiftYieldQty] = useState("");
+    const [rejectedQty, setRejectedQty] = useState("0");
     const [scrapQty, setScrapQty] = useState("0");
     const [rejectionReasons, setRejectionReasons] = useState<RejectionReason[]>([]);
     const [selectedReasonId, setSelectedReasonId] = useState<string>("");
@@ -60,14 +64,20 @@ export function JobOrderShiftLogModal({
     const [eligibleLots, setEligibleLots] = useState<EligibleFinishedGoodsLot[]>([]);
     const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [selectedLotId, setSelectedLotId] = useState<string>("");
-    const [shiftQAStatus, setShiftQAStatus] = useState<"Passed" | "QA Hold" | "Pending">("Pending");
-    const [shiftMaterials, setShiftMaterials] = useState<any[]>([]);
+    const [remarks, setRemarks] = useState("");
+    const [shiftMaterials, setShiftMaterials] = useState<ProductionMaterialReservation[]>([]);
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
     const [targetTaskId, setTargetTaskId] = useState<number>(0);
+
+    const selectedTask = sortedTasks.find((task) => task.id === targetTaskId) || activeStep;
+    const stationId = Number(selectedTask?.work_center_id || selectedJobOrder?.primary_work_center_id || 0) || null;
+    const stationLabel = selectedTask?.work_center_name
+        || selectedJobOrder?.primary_work_center_name
+        || (stationId ? `Work Center #${stationId}` : "Unassigned");
 
     const totalPlannedHours = selectedJobOrder?.routing_tasks 
         ? selectedJobOrder.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
@@ -82,6 +92,9 @@ export function JobOrderShiftLogModal({
         const lname = u.user_lname || u.last_name || "";
         return `${fname} ${lname}`.trim() || `User #${uId}`;
     };
+
+    const activeOperator = allJobOperators.find((operator) => operator.stopped_at === null);
+    const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
 
     const getAvailableShifts = useCallback(() => {
         const hours = Number(selectedJobOrder?.shiftOption || 8);
@@ -117,10 +130,28 @@ export function JobOrderShiftLogModal({
                 throw new Error("Job Order materials lookup returned an invalid response");
             }
 
-            setShiftMaterials(data.map((m: any) => ({
-                ...m,
-                actual_qty: String((Number(m.allocated_quantity || 0) * 0.5).toFixed(2))
-            })));
+            const reservationRows = data.flatMap((material: any) => {
+                const reservations = Array.isArray(material.reservations) ? material.reservations : [];
+                if (reservations.length > 0) {
+                    return reservations.map((reservation: any) => ({
+                        ...reservation,
+                        product_name: reservation.product_name || material.product_name,
+                        product_code: reservation.product_code || material.product_code,
+                        unit_shortcut: reservation.unit_shortcut || material.unit_shortcut || "units",
+                        actual_qty: "0"
+                    }));
+                }
+
+                return [{
+                    ...material,
+                    reservation_id: null,
+                    reservations: undefined,
+                    actual_qty: "0",
+                    available_stock: 0,
+                    reservation_status: null
+                }];
+            });
+            setShiftMaterials(reservationRows);
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to load Job Order materials";
             setShiftMaterials([]);
@@ -135,16 +166,21 @@ export function JobOrderShiftLogModal({
     useEffect(() => {
         if (open && selectedJobOrder && (selectedJobOrder.order_id || selectedJobOrder.job_order_id)) {
             setShiftYieldQty("");
+            setRejectedQty("0");
             setScrapQty("0");
             setSelectedReasonId("");
             setRejectionRemarks("");
-            setShiftQAStatus("Pending");
+            setRemarks("");
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
             setTargetTaskId(activeStep?.id ?? (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0));
             
             const todayStr = new Date().toISOString().split("T")[0];
+            setProductionDate(todayStr);
+            setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `production-session-${Date.now()}`);
             setManufacturingDate(todayStr);
             setBatchNo(`${selectedJobOrder.order_no || selectedJobOrder.jo_id || "JO"}-YLD-${todayStr.replace(/-/g, "")}`);
             setExpiryDate("");
@@ -234,11 +270,12 @@ export function JobOrderShiftLogModal({
         
         setShiftMaterials((prev) =>
             prev.map((m) => {
-                const stdQty = Number(m.allocated_quantity || 0) / targetQ;
+                const plannedQty = Number(m.issued_to_wip_quantity || m.reserved_quantity || m.staged_quantity || m.allocated_quantity || 0);
+                const stdQty = plannedQty / targetQ;
                 const computed = stdQty * qtyNum;
                 return {
                     ...m,
-                    actual_qty: computed > 0 ? computed.toFixed(2) : "0"
+                    actual_qty: computed > 0 ? computed.toFixed(6) : "0"
                 };
             })
         );
@@ -251,7 +288,12 @@ export function JobOrderShiftLogModal({
             return;
         }
         const newYield = Number(shiftYieldQty) || 0;
+        const newRejected = Number(rejectedQty) || 0;
         const newScrap = Number(scrapQty) || 0;
+        if (newYield + newRejected + newScrap <= 0) {
+            toast.error("Record at least one good, rejected, or scrap unit.");
+            return;
+        }
 
         // The API owns accumulated-yield validation and can distinguish a
         // replay of the same batch from a new over-target run. Avoid blocking
@@ -265,15 +307,26 @@ export function JobOrderShiftLogModal({
             toast.error("Please select a manufacturing date.");
             return;
         }
+        if (!productionDate) {
+            toast.error("Please select a production date.");
+            return;
+        }
 
         if (newYield > 0 && !selectedLotId) {
             toast.error("Select an existing storage lot for the finished-goods output.");
             return;
         }
+        if (shiftMaterials.some((material) => !material.reservation_id)) {
+            toast.error("Every required material must have an exact WIP reservation before recording production.");
+            return;
+        }
+        if (shiftMaterials.some((material) => Number(material.actual_qty || 0) <= 0)) {
+            toast.error("Enter an actual consumed quantity for every WIP reservation.");
+            return;
+        }
 
         setSubmittingShiftLog(true);
         try {
-            const activeUser = allJobOperators.find(o => o.stopped_at === null);
             const fullShiftName = `Day ${productionDay} - ${shiftName}`;
             
             // Target routing task (explicit selection wins over the inferred
@@ -281,21 +334,28 @@ export function JobOrderShiftLogModal({
             const resolvedTaskId = targetTaskId || activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
 
             const payload: ShiftRunLogPayload = {
+                sessionKey,
                 taskId: resolvedTaskId,
                 joId: selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0,
+                workCenterId: stationId || 0,
                 shiftName: fullShiftName,
+                productionDate,
                 yieldQty: newYield,
+                rejectedQty: newRejected,
                 scrapQty: newScrap,
                 rejectionReasonId: selectedReasonId ? Number(selectedReasonId) : null,
                 rejectionRemarks: rejectionRemarks || undefined,
-                inspectorId: activeUser ? activeUser.user_id : null,
-                qaStatus: shiftQAStatus,
                 qaParameters: [],
+                remarks: remarks || undefined,
                 materialsConsumed: shiftMaterials.map((m) => ({
-                    product_id: m.product_id,
-                    actual_qty: Number(m.actual_qty || 0),
-                    lot_id: m.lot_id ? Number(m.lot_id) : undefined,
-                    batch_no: m.batch_no || m.lot_no || undefined
+                    joMaterialId: Number(m.jo_material_id),
+                    reservationId: Number(m.reservation_id),
+                    productId: Number(m.product_id),
+                    mmLotId: Number(m.mm_lot_id),
+                    inventoryLotId: Number(m.inventory_lot_id),
+                    batchNo: String(m.batch_no || "").trim(),
+                    uomId: Number(m.uom_id),
+                    actualQty: Number(m.actual_qty || 0)
                 })),
                 batchNo,
                 expiryDate: expiryDate || undefined,
@@ -412,9 +472,29 @@ export function JobOrderShiftLogModal({
         printWindow.document.close();
     };
 
-    const hasInsufficiency = shiftMaterials.some(m => Number(m.actual_qty || 0) > Number(m.available_stock || 0));
-    const isSubmitDisabled = submittingShiftLog || loadingShiftMaterials || loadingEligibleLots || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim() || !selectedLotId;
-    const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !shiftYieldQty || Number(shiftYieldQty) <= 0 || !shiftName.trim();
+    const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && Number(m.actual_qty || 0) > Number(m.available_stock || 0));
+    const hasIncompleteMaterialLine = shiftMaterials.some((m) =>
+        !m.reservation_id
+        || !m.mm_lot_id
+        || !m.inventory_lot_id
+        || !m.uom_id
+        || !String(m.batch_no || "").trim()
+        || Number(m.actual_qty || 0) <= 0
+    );
+    const hasOutput = Number(shiftYieldQty || 0) + Number(rejectedQty || 0) + Number(scrapQty || 0) > 0;
+    const isSubmitDisabled = submittingShiftLog
+        || loadingShiftMaterials
+        || loadingEligibleLots
+        || Boolean(materialsLoadError)
+        || hasInsufficiency
+        || hasIncompleteMaterialLine
+        || !hasOutput
+        || !sessionKey
+        || !productionDate
+        || !stationId
+        || !shiftName.trim()
+        || (Number(shiftYieldQty || 0) > 0 && !selectedLotId);
+    const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
 
     return (
         <>
@@ -431,7 +511,7 @@ export function JobOrderShiftLogModal({
                                         End-of-Shift & Step Progress Entry
                                     </DialogTitle>
                                     <DialogDescription className="text-muted-foreground text-[10px] sm:text-xs mt-0.5 line-clamp-2 sm:line-clamp-none">
-                                        Enter good units produced, component quantities consumed out of staging for point-of-use real-time backflushing, and scrap rejection logs for <strong className="text-foreground">Job Order #{selectedJobOrder?.order_no || selectedJobOrder?.jo_id}</strong>.
+                                         Record this production session's output and exact WIP-reservation consumption for <strong className="text-foreground">Job Order #{selectedJobOrder?.order_no || selectedJobOrder?.jo_id}</strong>. Output remains Pending QA until it is released.
                                     </DialogDescription>
                                 </div>
                             </div>
@@ -451,7 +531,7 @@ export function JobOrderShiftLogModal({
                                             Shift & Good Units Produced
                                         </h4>
                                     </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                                         <div className="space-y-1.5">
                                             <Label htmlFor="productionDay" className="text-muted-foreground font-medium text-[11px]">Production Day</Label>
                                             <div className="relative">
@@ -484,8 +564,8 @@ export function JobOrderShiftLogModal({
                                             />
                                         </div>
 
-                                        <div className="space-y-1.5">
-                                            <Label htmlFor="shiftYield" className="text-muted-foreground font-medium text-[11px] font-mono">Good Output (pcs)</Label>
+                                         <div className="space-y-1.5">
+                                             <Label htmlFor="shiftYield" className="text-muted-foreground font-medium text-[11px] font-mono">Good Output (pcs)</Label>
                                             <Input
                                                 id="shiftYield"
                                                 type="number"
@@ -494,12 +574,24 @@ export function JobOrderShiftLogModal({
                                                 className="h-10 rounded-xl bg-background border-emerald-500/50 text-foreground text-xs font-bold font-mono focus-visible:ring-emerald-500/20 focus-visible:border-emerald-500 transition-all duration-200"
                                                 placeholder="e.g. 5000"
                                                 required
-                                            />
-                                        </div>
+                                             />
+                                         </div>
+
+                                         <div className="space-y-1.5">
+                                             <Label htmlFor="productionDate" className="text-muted-foreground font-medium text-[11px]">Production Date</Label>
+                                             <Input
+                                                 id="productionDate"
+                                                 type="date"
+                                                 value={productionDate}
+                                                 onChange={(e) => setProductionDate(e.target.value)}
+                                                 className="h-10 rounded-xl bg-background border-border/80 text-foreground text-xs focus-visible:ring-primary/20 focus-visible:border-primary transition-all duration-200"
+                                                 required
+                                             />
+                                         </div>
 
                                         <div className="space-y-1.5 sm:col-span-3">
                                             <Label htmlFor="targetStep" className="text-muted-foreground font-medium text-[11px]">Post Output To Routing Step</Label>
-                                            <select
+                                             <select
                                                 id="targetStep"
                                                 value={targetTaskId}
                                                 onChange={(e) => setTargetTaskId(Number(e.target.value))}
@@ -510,38 +602,77 @@ export function JobOrderShiftLogModal({
                                                         Step {t.sequence_order} — {t.name}{t.status === "Completed" ? " (Completed)" : ""}
                                                     </option>
                                                 ))}
-                                            </select>
-                                            <p className="text-[9px] text-muted-foreground">Shift yield and backflushed materials are posted against this routing step.</p>
-                                        </div>
-                                    </div>
+                                             </select>
+                                             <p className="text-[9px] text-muted-foreground">The station is recorded from this routing step; material consumption remains tied to its selected WIP reservations.</p>
+                                         </div>
+                                     </div>
+
+                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl border border-border/60 bg-muted/20 p-3">
+                                         <div className="flex items-center gap-2 min-w-0">
+                                             <User className="h-4 w-4 text-primary shrink-0" />
+                                             <div className="min-w-0">
+                                                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Operator</p>
+                                                 <p className="text-xs font-semibold text-foreground truncate">{operatorLabel}</p>
+                                             </div>
+                                         </div>
+                                         <div className="flex items-center gap-2 min-w-0">
+                                             <MapPin className="h-4 w-4 text-primary shrink-0" />
+                                             <div className="min-w-0">
+                                                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Station / Work Center</p>
+                                                 <p className="text-xs font-semibold text-foreground truncate">{stationLabel}</p>
+                                             </div>
+                                         </div>
+                                         <div className="flex items-center gap-2 min-w-0">
+                                             <Tag className="h-4 w-4 text-primary shrink-0" />
+                                             <div className="min-w-0">
+                                                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Session Key</p>
+                                                 <p className="text-[10px] font-mono font-semibold text-foreground truncate" title={sessionKey}>{sessionKey || "Generating..."}</p>
+                                             </div>
+                                         </div>
+                                     </div>
 
                                     {/* Scrap / Rejection Log Section */}
                                     <div className="bg-rose-500/[0.03] border border-rose-500/20 rounded-xl p-3.5 space-y-3">
                                         <div className="flex items-center justify-between pb-1.5 border-b border-rose-500/10">
                                             <div className="flex items-center gap-1.5">
                                                 <ShieldAlert className="h-4 w-4 text-rose-500" />
-                                                <h5 className="font-bold text-rose-800 dark:text-rose-300 uppercase tracking-wider text-[10px]">
-                                                    Scrap & Defect Logging (Optional)
+                                         <h5 className="font-bold text-rose-800 dark:text-rose-300 uppercase tracking-wider text-[10px]">
+                                                     Rejected & Scrap Output
                                                 </h5>
                                             </div>
                                             <Badge variant="outline" className="text-[9px] text-rose-600 border-rose-500/20">
                                                 QA Tracking
                                             </Badge>
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                                <Label htmlFor="scrapQty" className="text-muted-foreground text-[10px]">Rejected / Scrap Units</Label>
-                                                <Input
-                                                    id="scrapQty"
-                                                    type="number"
-                                                    value={scrapQty}
+                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                             <div className="space-y-1">
+                                                 <Label htmlFor="rejectedQty" className="text-muted-foreground text-[10px]">Rejected Units</Label>
+                                                 <Input
+                                                     id="rejectedQty"
+                                                     type="number"
+                                                     min="0"
+                                                     step="0.000001"
+                                                     value={rejectedQty}
+                                                     onChange={(e) => setRejectedQty(e.target.value)}
+                                                     className="h-8.5 rounded-lg bg-background border-rose-500/30 text-xs font-mono font-bold"
+                                                     placeholder="0"
+                                                 />
+                                             </div>
+                                             <div className="space-y-1">
+                                                 <Label htmlFor="scrapQty" className="text-muted-foreground text-[10px]">Scrap Units</Label>
+                                                 <Input
+                                                     id="scrapQty"
+                                                     type="number"
+                                                     min="0"
+                                                     step="0.000001"
+                                                     value={scrapQty}
                                                     onChange={(e) => setScrapQty(e.target.value)}
                                                     className="h-8.5 rounded-lg bg-background border-rose-500/30 text-xs font-mono font-bold"
                                                     placeholder="0"
                                                 />
                                             </div>
-                                            <div className="space-y-1">
-                                                <Label htmlFor="rejectionReason" className="text-muted-foreground text-[10px]">Rejection Reason</Label>
+                                             <div className="space-y-1">
+                                                 <Label htmlFor="rejectionReason" className="text-muted-foreground text-[10px]">Rejection Reason</Label>
                                                 <select
                                                     id="rejectionReason"
                                                     value={selectedReasonId}
@@ -553,10 +684,20 @@ export function JobOrderShiftLogModal({
                                                         <option key={r.id || r.reason_id} value={r.id || r.reason_id}>
                                                             {r.code} - {r.reason_name}
                                                         </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        </div>
+                                                     ))}
+                                                 </select>
+                                             </div>
+                                             <div className="space-y-1 sm:col-span-3">
+                                                 <Label htmlFor="productionRemarks" className="text-muted-foreground text-[10px]">Session Remarks</Label>
+                                                 <Textarea
+                                                     id="productionRemarks"
+                                                     value={remarks}
+                                                     onChange={(e) => setRemarks(e.target.value)}
+                                                     className="min-h-16 rounded-lg bg-background border-rose-500/30 text-xs resize-y"
+                                                     placeholder="Add production notes, downtime, or defect context..."
+                                                 />
+                                             </div>
+                                         </div>
                                     </div>
 
                                     {/* Batch & Expiry Management */}
@@ -634,7 +775,7 @@ export function JobOrderShiftLogModal({
                                 </div>
                             </div>
 
-                            {/* Right Column: Point-of-Use Real-Time Backflushing Table */}
+                             {/* Right Column: Exact WIP reservation consumption */}
                             <div className="lg:col-span-6">
                                 <div className="bg-card/50 backdrop-blur-sm border border-border/60 rounded-xl p-4 sm:p-5 space-y-4 h-full flex flex-col shadow-sm">
                                     <div className="flex items-center justify-between pb-2 border-b border-border/40">
@@ -644,13 +785,13 @@ export function JobOrderShiftLogModal({
                                             </div>
                                             <div>
                                                 <h4 className="font-bold text-foreground/90 uppercase tracking-wider text-[10px]">
-                                                    Point-of-Use Real-Time Backflushing
-                                                </h4>
-                                                <p className="text-[9px] text-muted-foreground mt-0.5">Component quantities consumed out of staging with source doc <code className="font-mono font-bold text-primary">{selectedJobOrder.order_no || selectedJobOrder.jo_id}</code></p>
-                                            </div>
-                                        </div>
-                                        <Badge variant="outline" className="text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
-                                            Auto-Backflush
+                                                     Exact WIP Reservation Consumption
+                                                 </h4>
+                                                 <p className="text-[9px] text-muted-foreground mt-0.5">Select the reserved lot, inventory lot, batch, and UOM that were consumed for this session.</p>
+                                             </div>
+                                         </div>
+                                         <Badge variant="outline" className="text-[9px] font-mono bg-primary/5 text-primary border-primary/20 font-bold">
+                                             WIP Ledger
                                         </Badge>
                                     </div>
 
@@ -663,7 +804,7 @@ export function JobOrderShiftLogModal({
                                             <AlertTriangle className="h-5 w-5" />
                                             <div>
                                                 <p className="font-semibold">Required raw materials are unavailable.</p>
-                                                <p className="text-xs mt-1">Backflush submission is disabled until the materials lookup succeeds.</p>
+                                                 <p className="text-xs mt-1">Session submission is disabled until the exact WIP reservations load successfully.</p>
                                                 <p className="text-[11px] mt-1 opacity-80">{materialsLoadError}</p>
                                             </div>
                                             <Button type="button" variant="outline" onClick={() => void loadShiftMaterials()}>
@@ -672,17 +813,17 @@ export function JobOrderShiftLogModal({
                                         </div>
                                     ) : shiftMaterials.length === 0 ? (
                                         <div className="p-6 bg-background/50 rounded-lg text-muted-foreground text-center italic border border-border/40 flex-1 flex items-center justify-center">
-                                            No raw materials pre-allocated for this workstation.
+                                             No WIP reservations are available for this Job Order.
                                         </div>
                                     ) : (
                                         <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] lg:max-h-[560px] pr-1">
                                             {shiftMaterials.map((m, index) => {
-                                                const stdQty = Number(m.allocated_quantity || 0) / (Number(selectedJobOrder.quantity) || 1);
-                                                const theoretical = stdQty * (Number(shiftYieldQty) || 0);
-                                                const actual = Number(m.actual_qty || 0);
-                                                const deviationPercent = theoretical > 0 ? (actual / theoretical) * 100 : 100;
-                                                const isExceeded = actual > theoretical * 1.05;
-                                                const isInsufficient = actual > Number(m.available_stock || 0);
+                                                 const plannedQty = Number(m.issued_to_wip_quantity || m.reserved_quantity || m.staged_quantity || m.allocated_quantity || 0);
+                                                 const stdQty = plannedQty / (Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity) || 1);
+                                                 const theoretical = stdQty * (Number(shiftYieldQty) || 0);
+                                                 const actual = Number(m.actual_qty || 0);
+                                                 const isExceeded = actual > theoretical * 1.05;
+                                                 const isInsufficient = actual > Number(m.available_stock || 0);
 
                                                 const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
                                                 const barColor = isInsufficient 
@@ -692,17 +833,21 @@ export function JobOrderShiftLogModal({
                                                     : "bg-emerald-500";
 
                                                 return (
-                                                    <div key={m.jo_material_id || m.id || index} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
-                                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                                                                <span className="font-bold text-foreground text-xs truncate max-w-[220px]" title={m.product_name}>
-                                                                    {m.product_name}
-                                                                </span>
-                                                                {m.lot_no && (
-                                                                    <span className="font-mono bg-primary/5 text-primary text-[8px] px-1.5 py-0.5 rounded border border-primary/15 shrink-0">
-                                                                        Staging Lot: {m.lot_no}
-                                                                    </span>
-                                                                )}
+                                                     <div key={m.reservation_id || `${m.jo_material_id}-${index}`} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
+                                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                             <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                                                                 <span className="font-bold text-foreground text-xs truncate max-w-[220px]" title={m.product_name}>
+                                                                     {m.product_name}
+                                                                 </span>
+                                                                 {m.reservation_id ? (
+                                                                     <span className="font-mono bg-primary/5 text-primary text-[8px] px-1.5 py-0.5 rounded border border-primary/15 shrink-0">
+                                                                         Reservation #{m.reservation_id}
+                                                                     </span>
+                                                                 ) : (
+                                                                     <span className="font-mono bg-red-500/10 text-red-600 text-[8px] px-1.5 py-0.5 rounded border border-red-500/20 shrink-0">
+                                                                         No WIP reservation
+                                                                     </span>
+                                                                 )}
                                                             </div>
                                                             <div className="flex items-center gap-2 shrink-0">
                                                                 <Badge
@@ -715,10 +860,19 @@ export function JobOrderShiftLogModal({
                                                                             : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                                                     }`}
                                                                 >
-                                                                    {isInsufficient ? "Shortfall" : isExceeded ? "Over-limit" : "Normal"}
-                                                                </Badge>
-                                                            </div>
-                                                        </div>
+                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient ? "Shortfall" : isExceeded ? "Over-limit" : "Normal"}
+                                                                 </Badge>
+                                                             </div>
+                                                         </div>
+
+                                                         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
+                                                             <span>MM Lot: <strong className="font-mono text-foreground">{m.mm_lot_id || "—"}</strong></span>
+                                                             <span>Inventory Lot: <strong className="font-mono text-foreground">{m.inventory_lot_id || "—"}</strong></span>
+                                                             <span>Batch: <strong className="font-mono text-foreground">{m.batch_no || "—"}</strong></span>
+                                                             <span>UOM: <strong className="font-mono text-foreground">{m.unit_shortcut || `#${m.uom_id || "—"}`}</strong></span>
+                                                             <span>Status: <strong className="text-foreground">{m.reservation_status || "Not staged"}</strong></span>
+                                                             <span>Remaining WIP: <strong className="font-mono text-foreground">{Number(m.available_stock || 0).toLocaleString()}</strong></span>
+                                                         </div>
 
                                                         {/* Progress bar */}
                                                         {theoretical > 0 && (
@@ -742,9 +896,9 @@ export function JobOrderShiftLogModal({
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5">
-                                                                    <span className="text-muted-foreground">Staging Stock:</span>
+                                                                     <span className="text-muted-foreground">Remaining WIP:</span>
                                                                     <span className={`font-mono font-bold ${isInsufficient ? "text-red-500" : "text-foreground/85"}`}>
-                                                                        {Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}
+                                                                         {Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -754,16 +908,18 @@ export function JobOrderShiftLogModal({
                                                                     <span className="text-muted-foreground">Actual Out:</span>
                                                                     <div className="relative flex items-center">
                                                                         <Input
-                                                                            type="number"
-                                                                            step="0.01"
-                                                                            value={m.actual_qty}
+                                                                             type="number"
+                                                                             min="0"
+                                                                             step="0.000001"
+                                                                             value={m.actual_qty}
                                                                             onChange={(e) => {
                                                                                 const val = e.target.value;
                                                                                 setShiftMaterials((prev) =>
                                                                                     prev.map((item, idx) => idx === index ? { ...item, actual_qty: val } : item)
                                                                                 );
                                                                             }}
-                                                                            className="h-8 w-28 text-right bg-background pr-6 pl-2 py-1.5 rounded-lg font-bold font-mono text-xs"
+                                                                             disabled={!m.reservation_id}
+                                                                             className="h-8 w-28 text-right bg-background pr-6 pl-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50"
                                                                         />
                                                                         <span className="absolute right-2 text-[9px] text-muted-foreground font-semibold pointer-events-none">{m.unit_shortcut}</span>
                                                                     </div>
@@ -785,7 +941,7 @@ export function JobOrderShiftLogModal({
                                 disabled={isSubmitDisabled}
                                 className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-6 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 disabled:opacity-50 w-full sm:w-auto order-1 sm:order-2"
                             >
-                                {submittingShiftLog ? "Submitting Logs..." : "Submit & Backflush Staging Inventory"}
+                                {submittingShiftLog ? "Recording Session..." : "Record Production Session"}
                             </Button>
                             <div className="grid grid-cols-2 gap-2 w-full sm:w-auto order-2 sm:order-1">
                                 <Button

@@ -19,6 +19,7 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
 import { ensureJobOrderReceipt } from "../_finished-goods-ledger";
+import { recordShiftRunSession } from "../_shift-run-session-service";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -269,7 +270,7 @@ export async function GET(request: Request) {
 }
 
 // POST handler: Logs the shift yield, consumes hard-staged reservations, records genealogy, and updates Job Order status.
-export async function POST(request: Request) {
+async function legacyShiftRunPost(request: Request) {
     try {
         const todayStr = await getTodayDateString();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
@@ -909,4 +910,11 @@ export async function POST(request: Request) {
             error: (e as Error).message || "Failed to log shift progress"
         }, { status });
     }
+}
+
+// Production sessions use the exact-reservation recording service. The legacy
+// implementation remains below for historical reference but is no longer the
+// public POST path because it selected reservations by product.
+export async function POST(request: Request) {
+    return recordShiftRunSession(request);
 }
