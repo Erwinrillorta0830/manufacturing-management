@@ -43,10 +43,15 @@ export default function ShipmentExpenses({
     useEffect(() => {
         const loadOverheadTypes = async () => {
             try {
-                const res = await fetch("/api/manufacturing/finished-goods/overhead-types");
+                const res = await fetch("/api/manufacturing/expense-types?view=options");
                 if (res.ok) {
-                    const data = await res.json();
-                    setOverheadTypes(data || []);
+                    const payload = await res.json();
+                    const data = Array.isArray(payload) ? payload : (payload?.data || []);
+                    setOverheadTypes((data || []).map((type: { id: number; label: string; coaId?: number }) => ({
+                        id: type.id,
+                        overhead_name: type.label,
+                        coa_id: type.coaId ?? null,
+                    })));
                 }
             } catch (e) {
                 console.error("Failed to load overhead types", e);

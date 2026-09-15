@@ -93,6 +93,22 @@ export interface POLineItem {
     vat_amount?: number;
     withholding_amount?: number;
     total_amount?: number;
+    /** Product base unit (e.g. BAG, PKG, KG). */
+    uom?: string;
+    /** Purchase-order unit price in the purchase-order currency. */
+    list_price?: number;
+    /** Item discount rate applied on the purchase-order line. */
+    discount_percent?: number;
+    /** Discount amount in the purchase-order currency. */
+    discount_amount?: number;
+    /** Net amount in the purchase-order currency: accepted qty × list price − discount. */
+    net_amount?: number;
+    /** Total capitalized landed cost in PHP: final landed unit cost × accepted qty. */
+    total_landed_cost?: number;
+    /** Whether the resolved unit price came from the purchase-order line or the receipt/invoice fallback. */
+    price_source?: "PO" | "INVOICE" | string;
+    /** Timestamp of the pricing record used for this line, when available. */
+    priced_at?: string | null;
     allocated_expense_php?: number;
     final_landed_unit_cost?: number;
 }
