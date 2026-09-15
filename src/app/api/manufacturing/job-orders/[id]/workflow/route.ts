@@ -29,9 +29,13 @@ function readTokenPayload(token: string | undefined): Record<string, unknown> {
     }
 }
 
-async function getWorkflowActor(): Promise<WorkflowActor> {
+async function getWorkflowActor(): Promise<WorkflowActor | null> {
     const token = (await cookies()).get("vos_access_token")?.value;
+    if (!token) return null;
     const payload = readTokenPayload(token);
+    if (Object.keys(payload).length === 0) return null;
+    const expiration = Number(payload.exp);
+    if (Number.isFinite(expiration) && expiration <= Math.floor(Date.now() / 1000)) return null;
     const userId = Number(payload.id ?? payload.user_id ?? payload.sub);
     const roleValues = [
         payload.role,
@@ -46,7 +50,7 @@ async function getWorkflowActor(): Promise<WorkflowActor> {
         /admin|manager|supervisor|director|manufacturing|production lead/.test(value)
     );
     return {
-        userId: Number.isSafeInteger(userId) && userId > 0 ? userId : 24,
+        userId: Number.isSafeInteger(userId) && userId > 0 ? userId : null,
         canOverride
     };
 }
@@ -73,6 +77,13 @@ export async function POST(
         }
 
         const actor = await getWorkflowActor();
+        if (!actor?.userId) {
+            return NextResponse.json({
+                success: false,
+                error: "Authentication is required for Job Order workflow actions.",
+                code: "AUTHENTICATION_REQUIRED"
+            }, { status: 401 });
+        }
         const overrideReason = typeof body?.overrideReason === "string"
             ? body.overrideReason.trim()
             : "";

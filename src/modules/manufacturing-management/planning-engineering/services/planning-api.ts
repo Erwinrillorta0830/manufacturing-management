@@ -28,8 +28,12 @@ export async function fetchBranches(): Promise<Branch[]> {
         .filter((branch) => Number.isFinite(branch.id) && branch.id > 0 && Boolean(branch.branch_name));
 }
 
-export async function fetchSalesOrders(): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
-    const soRes = await fetch("/api/manufacturing/sales-order?queue=for-production&limit=200", { cache: "no-store" });
+export type PlanningSalesOrderQueue = "for-production" | "in-production";
+
+export async function fetchSalesOrders(
+    queue: PlanningSalesOrderQueue = "for-production"
+): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
+    const soRes = await fetch(`/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`, { cache: "no-store" });
     if (!soRes.ok) {
         throw new Error("Failed to fetch unfulfilled sales orders.");
     }

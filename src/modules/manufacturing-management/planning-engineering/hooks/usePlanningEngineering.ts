@@ -1,10 +1,10 @@
 /* eslint-disable */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
-import { buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
+import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 
 function salesOrderDateValue(value: string | undefined): number {
     const timestamp = Date.parse(value || "");
@@ -38,6 +38,10 @@ export function usePlanningEngineering() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
     const [detailsMap, setDetailsMap] = useState<Record<number, SalesOrderDetail[]>>({});
+    const [productionSalesOrders, setProductionSalesOrders] = useState<SalesOrder[]>([]);
+    const [productionDetailsMap, setProductionDetailsMap] = useState<Record<number, SalesOrderDetail[]>>({});
+    const [loadingProductionOrders, setLoadingProductionOrders] = useState(true);
+    const [productionOrdersError, setProductionOrdersError] = useState<string | null>(null);
     const [netRequirements, setNetRequirements] = useState<NetRequirementItem[]>([]);
     const [subAssemblyMapping, setSubAssemblyMapping] = useState<Record<number, any[]>>({});
 
@@ -67,6 +71,7 @@ export function usePlanningEngineering() {
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
     const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
     const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
+    const productionRequestIdRef = useRef(0);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -152,13 +157,37 @@ export function usePlanningEngineering() {
         }
     };
 
-    // Initial Fetch: Branches & unfulfilled Sales Orders
+    const loadInProductionSalesOrders = async () => {
+        const requestId = ++productionRequestIdRef.current;
+        setLoadingProductionOrders(true);
+        try {
+            const result = await fetchSalesOrders("in-production");
+            if (requestId !== productionRequestIdRef.current) return;
+            setProductionSalesOrders(result.data || []);
+            setProductionDetailsMap(result.detailsMap || {});
+            setProductionOrdersError(null);
+        } catch (err) {
+            if (requestId !== productionRequestIdRef.current) return;
+            const message = err instanceof Error ? err.message : "Failed to load Sales Orders in production.";
+            console.error("Error loading Sales Orders in production:", err);
+            setProductionSalesOrders([]);
+            setProductionDetailsMap({});
+            setProductionOrdersError(message);
+        } finally {
+            if (requestId === productionRequestIdRef.current) {
+                setLoadingProductionOrders(false);
+            }
+        }
+    };
+
+    // Initial Fetch: Branches & For Production Sales Orders
     const loadInitialData = async (silent = false) => {
         if (!silent) {
             setLoadingBranches(true);
             setLoadingOrders(true);
             setLoadingJobs(true);
         }
+        void loadInProductionSalesOrders();
         try {
             const [activeBranches, soResult, queuedJobs] = await Promise.all([
                 fetchBranches(),
@@ -290,6 +319,7 @@ export function usePlanningEngineering() {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
         [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
+            if (so.order_status !== "For Production") return;
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }
@@ -334,6 +364,15 @@ export function usePlanningEngineering() {
             selectableLines: lines.filter(isSchedulableSalesOrderLine)
         }));
     }, [salesOrders, salesOrderLines, selectedBranchId]);
+
+    const productionSalesOrderGroups = useMemo(
+        () => buildSalesOrderDemandGroups(
+            productionSalesOrders.filter((order) => order.order_status === "In Production"),
+            productionDetailsMap,
+            selectedBranchId
+        ),
+        [productionSalesOrders, productionDetailsMap, selectedBranchId]
+    );
 
     const planningLines = useMemo(
         () => salesOrderLines.filter(isSchedulableSalesOrderLine),
@@ -801,6 +840,10 @@ export function usePlanningEngineering() {
         setDeepLinkNotice,
         salesOrderLines,
         salesOrderGroups,
+        productionSalesOrderGroups,
+        loadingProductionOrders,
+        productionOrdersError,
+        loadInProductionSalesOrders,
         selectedLines,
         releaseGroups,
         mergeValidation,

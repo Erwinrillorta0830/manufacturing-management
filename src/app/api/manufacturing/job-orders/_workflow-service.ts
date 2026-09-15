@@ -19,7 +19,7 @@ const QUANTITY_EPSILON = 0.000001;
 export class JobOrderWorkflowError extends Error {
     constructor(
         message: string,
-        readonly status: 400 | 404 | 409 | 422 | 502 = 409,
+        readonly status: 400 | 401 | 404 | 409 | 422 | 502 = 409,
         readonly code = "JOB_ORDER_WORKFLOW_ERROR",
         readonly details?: Record<string, unknown>
     ) {
@@ -533,6 +533,13 @@ export async function executeJobOrderWorkflow(
 ): Promise<JobOrderWorkflowResult> {
     if (!JOB_ORDER_WORKFLOW_ACTIONS.includes(command.action)) {
         throw new JobOrderWorkflowError("Unsupported Job Order workflow action.", 400, "WORKFLOW_ACTION_INVALID");
+    }
+    if (!Number.isSafeInteger(command.actorUserId) || Number(command.actorUserId) <= 0) {
+        throw new JobOrderWorkflowError(
+            "An authenticated user is required for Job Order workflow actions.",
+            401,
+            "AUTHENTICATION_REQUIRED"
+        );
     }
     const idempotencyKey = text(command.idempotencyKey);
     if (!idempotencyKey || idempotencyKey.length > 128) {

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { usePlanningEngineering } from "./hooks/usePlanningEngineering";
 import { NetRequirementsTable } from "./components/NetRequirementsTable";
 import { ConsolidationPanel } from "./components/ConsolidationPanel";
 import { DemandLinesTable } from "./components/DemandLinesTable";
+import { InProductionSalesOrdersTable } from "./components/InProductionSalesOrdersTable";
 import { ReleaseJODialog } from "./components/ReleaseJODialog";
 import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
 import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
@@ -106,6 +107,10 @@ export default function PlanningEngineeringModule() {
         loadInitialData,
         salesOrderLines,
         salesOrderGroups,
+        productionSalesOrderGroups,
+        loadingProductionOrders,
+        productionOrdersError,
+        loadInProductionSalesOrders,
         selectedLines,
         releaseGroups,
         mergeValidation,
@@ -132,7 +137,7 @@ export default function PlanningEngineeringModule() {
         setDeepLinkNotice
     } = usePlanningEngineering();
 
-    const [activeMainTab, setActiveMainTab] = useState<"demand" | "inventory" | "queue">("demand");
+    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue">("demand");
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
@@ -816,7 +821,7 @@ export default function PlanningEngineeringModule() {
             </div>
 
             {/* Tabs-based Layout Dashboard */}
-            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "inventory" | "queue")} className="w-full space-y-6">
+            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "production" | "inventory" | "queue")} className="w-full space-y-6">
                 {deepLinkNotice && (
                     <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
                         <span className="flex items-start gap-2">
@@ -861,12 +866,19 @@ export default function PlanningEngineeringModule() {
                         </div>
                     </div>
                 )}
-                <TabsList className="grid w-full grid-cols-3 max-w-2xl bg-muted/60 p-1 rounded-xl">
+                <TabsList className="grid w-full max-w-4xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-4">
                     <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <ClipboardList className="h-4 w-4 text-primary" />
-                        <span>Sales Order Demand</span>
+                        <span>For Production Demand</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                             {salesOrderGroups.length}
+                        </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger value="production" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <Factory className="h-4 w-4 text-sky-600" />
+                        <span>In Production SOs</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
+                            {productionSalesOrderGroups.length}
                         </Badge>
                     </TabsTrigger>
                     <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
@@ -916,7 +928,17 @@ export default function PlanningEngineeringModule() {
                     </div>
                 </TabsContent>
 
-                {/* TAB 2: Net Requirements */}
+                {/* TAB 2: Sales Orders in Production */}
+                <TabsContent value="production" className="space-y-6 outline-none">
+                    <InProductionSalesOrdersTable
+                        loadingOrders={loadingProductionOrders}
+                        error={productionOrdersError}
+                        salesOrderGroups={productionSalesOrderGroups}
+                        onRetry={() => { void loadInProductionSalesOrders(); }}
+                    />
+                </TabsContent>
+
+                {/* TAB 3: Net Requirements */}
                 <TabsContent value="inventory" className="space-y-6 outline-none">
                     <div className="bg-card border rounded-xl shadow-sm">
                         <NetRequirementsTable
@@ -928,7 +950,7 @@ export default function PlanningEngineeringModule() {
                     </div>
                 </TabsContent>
 
-                {/* TAB 3: Job Orders Queue */}
+                {/* TAB 4: Job Orders Queue */}
                 <TabsContent value="queue" className="space-y-6 outline-none">
                     <div className="bg-card border rounded-xl p-6 shadow-sm space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
