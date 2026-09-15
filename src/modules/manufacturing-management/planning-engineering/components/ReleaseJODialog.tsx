@@ -197,9 +197,9 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen]);
 
-    // Fetch BOM & Routing details on Step 2
+    // Fetch BOM & Routing details on dialog open
     useEffect(() => {
-        if (isConfirmOpen && selectedLines.length > 0 && currentStep >= 2 && !hasLoadedDetails) {
+        if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
                 try {
@@ -218,7 +218,11 @@ export function ReleaseJODialog({
                         setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
                         setInventories(normalizeInventoryMap(data.inventories));
                         if (data.bom) {
-                            setBomBaseQty(Number(data.bom.base_quantity || 1));
+                            const baseQty = Number(data.bom.base_quantity || 1);
+                            setBomBaseQty(baseQty);
+                            if (!isMultiRelease && baseQty > 0) {
+                                setTargetQuantity(baseQty);
+                            }
                         }
                         setHasLoadedDetails(true);
                     }
@@ -230,7 +234,7 @@ export function ReleaseJODialog({
             };
             loadDetails();
         }
-    }, [isConfirmOpen, selectedLines, currentStep, selectedBranchId, hasLoadedDetails]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
@@ -624,6 +628,14 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Target UOM:</span>
                                         <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
                                     </div>
+                                    <div className="flex justify-between pt-1 border-t border-border/50">
+                                        <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
+                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
+                                        <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -639,31 +651,43 @@ export function ReleaseJODialog({
                                         />
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                            Target Production Quantity
-                                        </label>
-                                        <Input
-                                            type="number"
-                                            value={targetQuantity}
-                                            min={1}
-                                            max={maxAvailableQuantity}
-                                            step="any"
-                                            onChange={(e) => {
-                                                const next = Number(e.target.value);
-                                                setTargetQuantity(Number.isFinite(next)
-                                                    ? Math.min(maxAvailableQuantity, Math.max(0, next))
-                                                    : 0);
-                                            }}
-                                            disabled={isMultiRelease}
-                                            className="h-9 font-semibold bg-card border-input text-foreground"
-                                        />
-                                        <p className="text-[10px] text-muted-foreground">
-                                            {isMultiRelease
-                                                ? "The full remaining quantity for this product/BOM group will be released."
-                                                : `Enter a quantity from 1 through ${maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.`}
-                                        </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Ordered Quantity (From SO)
+                                            </label>
+                                            <Input
+                                                type="text"
+                                                value={maxAvailableQuantity.toLocaleString()}
+                                                readOnly
+                                                disabled
+                                                className="h-9 font-semibold bg-muted text-muted-foreground border-input font-mono"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Target Production Quantity
+                                            </label>
+                                            <Input
+                                                type="number"
+                                                value={targetQuantity}
+                                                min={1}
+                                                step="any"
+                                                onChange={(e) => {
+                                                    const next = Number(e.target.value);
+                                                    setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                }}
+                                                disabled={isMultiRelease}
+                                                className="h-9 font-semibold bg-card border-input text-foreground font-mono"
+                                            />
+                                        </div>
                                     </div>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        {isMultiRelease
+                                            ? "The full remaining quantity for this product/BOM group will be released."
+                                            : `Prefilled based on recipe batch size (${bomBaseQty.toLocaleString()}). Total ordered quantity requested in Sales Order is ${maxAvailableQuantity.toLocaleString()} units.`}
+                                    </p>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1">

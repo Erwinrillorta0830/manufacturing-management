@@ -264,6 +264,19 @@ export function CreateBufferJODialog({
         }
     }, [selectedProductId, products]);
 
+    // Prefill targetProductionQuantity from selected Recipe Version's base_quantity
+    useEffect(() => {
+        if (selectedVersionId && versions.length > 0) {
+            const verObj = versions.find((v: any) => String(v.version_id) === String(selectedVersionId));
+            if (verObj) {
+                const baseQty = Number(verObj.base_quantity ?? verObj.baseQuantity ?? 0);
+                if (baseQty > 0) {
+                    setTargetQuantity(baseQty);
+                }
+            }
+        }
+    }, [selectedVersionId, versions]);
+
     // Reset loaded details when selection changes or returning to Step 1
     useEffect(() => {
         if (currentStep === 1) {

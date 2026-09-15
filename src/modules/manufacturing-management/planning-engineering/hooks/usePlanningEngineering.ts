@@ -618,8 +618,8 @@ export function usePlanningEngineering() {
         if (!selectedBranchId || selectedLines.length === 0) return;
 
         const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
-        if (releaseGroups.length === 1 && (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity)) {
-            toast.error(`Enter a Job Order quantity from 1 to ${maxAvailableQuantity.toLocaleString()}.`);
+        if (releaseGroups.length === 1 && (!Number.isFinite(targetQuantity) || targetQuantity <= 0)) {
+            toast.error("Enter a valid Job Order target quantity.");
             return;
         }
 

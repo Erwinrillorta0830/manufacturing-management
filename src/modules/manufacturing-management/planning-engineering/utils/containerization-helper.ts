@@ -34,6 +34,19 @@ export function formatHoursToHMS(hours: number | null | undefined): string {
     return `${sign}${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+export interface ContainerizationBOMComponent {
+    product_name?: string;
+    title?: string;
+    quantity_required?: number;
+    wastage_factor_percentage?: number;
+    scrap_percentage?: number;
+    unit_of_measurement?: string;
+    uom_shortcut?: string;
+    component_product_id?: {
+        product_name?: string;
+    };
+}
+
 export function calculateContainerizationMetrics(
     productName: string,
     targetQuantity: number,
@@ -44,7 +57,7 @@ export function calculateContainerizationMetrics(
     versionCasesPerPallet?: number,
     sacksPerMixParam?: number,
     baseBatchWeightPerSackParam?: number,
-    components?: any[],
+    components?: ContainerizationBOMComponent[],
     bomBaseQty?: number
 ): ContainerizationMetrics {
     const sacksPerMix = Math.max(1, Number(sacksPerMixParam) || 4);
