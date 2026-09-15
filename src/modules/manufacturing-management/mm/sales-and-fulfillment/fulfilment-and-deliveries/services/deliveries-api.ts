@@ -55,6 +55,7 @@ export async function fetchDeliveryClearanceList(params: {
     if (params.search) qs.set("search", params.search.trim());
     if (params.status && params.status !== "All") qs.set("status", params.status);
     if (params.branchId && params.branchId !== "All") qs.set("branchId", String(params.branchId));
+    qs.set("_t", String(Date.now()));
 
     const res = await fetch(`${BASE_API_URL}?${qs.toString()}`, {
         method: "GET",

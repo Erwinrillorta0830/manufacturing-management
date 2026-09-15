@@ -41,8 +41,11 @@ export async function GET(req: NextRequest) {
         let batchProductIds: number[] = [];
         let explicitDetailIds: number[] = [];
 
+        let batchStatus = "Pending";
+        let batchUpdatedAt: string | null = null;
+
         try {
-            const [linksRes, conDetRes] = await Promise.all([
+            const [linksRes, conDetRes, batchRes] = await Promise.all([
                 fetch(
                     `${DIRECTUS_URL}/items/consolidator_invoices?filter[consolidator_id][_eq]=${batchId}&fields=invoice_id&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
@@ -51,6 +54,10 @@ export async function GET(req: NextRequest) {
                     `${DIRECTUS_URL}/items/consolidator_details?filter[consolidator_id][_eq]=${batchId}&fields=id,product_id,sales_order_detail_id,ordered_quantity,picked_quantity,applied_quantity,picked_at,picked_by&limit=-1`,
                     { headers: directusHeaders, cache: "no-store" }
                 ),
+                fetch(
+                    `${DIRECTUS_URL}/items/consolidator/${batchId}?fields=id,status,created_at,updated_at`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ).catch(() => null),
             ]);
             if (linksRes.ok) {
                 const linkData = (await linksRes.json()).data || [];
@@ -60,6 +67,13 @@ export async function GET(req: NextRequest) {
                 const conData = (await conDetRes.json()).data || [];
                 batchProductIds = conData.map((row: { product_id: number }) => Number(row.product_id)).filter(Boolean);
                 explicitDetailIds = conData.map((row: { sales_order_detail_id?: number }) => Number(row.sales_order_detail_id)).filter(Boolean);
+            }
+            if (batchRes && batchRes.ok) {
+                const bData = (await batchRes.json()).data;
+                if (bData) {
+                    batchStatus = bData.status || "Pending";
+                    batchUpdatedAt = bData.updated_at || bData.created_at || null;
+                }
             }
         } catch (err) {
             console.warn("[allocations] Warning fetching batch metadata:", err);
@@ -136,12 +150,15 @@ export async function GET(req: NextRequest) {
             status?: string;
         }> = [];
 
+        const isActiveBatch = ["Pending", "For Picking", "Picking", "Picked"].includes(batchStatus);
+        const allowedStatuses = isActiveBatch ? ["Reserved", "Picked"] : ["Consumed", "Picked", "Reserved"];
+
         try {
             if (detailIds.length > 0) {
                 const soFilter = encodeURIComponent(JSON.stringify({
                     _and: [
                         { sales_order_detail_id: { _in: detailIds } },
-                        { status: { _in: ["Reserved", "Picked", "Consumed"] } },
+                        { status: { _in: allowedStatuses } },
                     ],
                 }));
                 let soRes = await fetch(
@@ -150,13 +167,22 @@ export async function GET(req: NextRequest) {
                 );
                 if (!soRes.ok) {
                     soRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,status&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order_reservation?filter=${soFilter}&fields=reservation_id,sales_order_detail_id,product_id,inventory_lot_id,reserved_quantity,picked_quantity,status,created_at&limit=-1`,
                         { headers: directusHeaders, cache: "no-store" }
                     );
                 }
                 if (soRes.ok) {
                     const rData = (await soRes.json()).data || [];
                     for (const row of rData) {
+                        // For completed batches, ignore any reservations created after the batch finished or left in 'Reserved'
+                        if (!isActiveBatch) {
+                            if (row.status === "Reserved") continue;
+                            if (batchUpdatedAt && row.created_at) {
+                                const rowCreatedTime = new Date(row.created_at).getTime();
+                                const batchUpdatedTime = new Date(batchUpdatedAt).getTime();
+                                if (rowCreatedTime > batchUpdatedTime + 60000) continue;
+                            }
+                        }
                         reservations.push({
                             id: Number(row.reservation_id || row.id),
                             sales_order_detail_id: row.sales_order_detail_id,

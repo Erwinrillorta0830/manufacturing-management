@@ -276,18 +276,28 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Check none are already linked to an active batch
-        const clinvRes = await fetch(
-            `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_in]=${uniqueIds.join(",")}&filter[consolidator_id][is_delete][_eq]=0&limit=-1&fields=invoice_id`,
+        // Check none are already linked to an active batch (Pending, For Picking, Picking, Picked, Approved, Audited)
+        const activeConRes = await fetch(
+            `${DIRECTUS_URL}/items/consolidator?filter[status][_in]=Pending,For Picking,Picking,Picked,Approved,Audited&filter[is_delete][_eq]=0&limit=-1&fields=id`,
             { headers: directusHeaders, cache: "no-store" }
-        );
-        if (!clinvRes.ok) {
-            return NextResponse.json({ message: `Failed to check existing links (HTTP ${clinvRes.status})` }, { status: clinvRes.status });
-        }
-        const linked: { invoice_id: number }[] = (await clinvRes.json()).data || [];
-        if (linked.length > 0) {
-            const alreadyLinked = linked.map((l) => l.invoice_id);
-            return NextResponse.json({ message: `Sales orders already in another batch: ${alreadyLinked.join(", ")}` }, { status: 409 });
+        ).catch(() => null);
+        const activeConData: Array<{ id: number }> =
+            activeConRes && activeConRes.ok ? (await activeConRes.json()).data || [] : [];
+        const activeConIds = activeConData.map((c) => Number(c.id)).filter(Boolean);
+
+        if (activeConIds.length > 0) {
+            const clinvRes = await fetch(
+                `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_in]=${uniqueIds.join(",")}&filter[consolidator_id][_in]=${activeConIds.join(",")}&limit=-1&fields=invoice_id`,
+                { headers: directusHeaders, cache: "no-store" }
+            );
+            if (!clinvRes.ok) {
+                return NextResponse.json({ message: `Failed to check existing links (HTTP ${clinvRes.status})` }, { status: clinvRes.status });
+            }
+            const linked: { invoice_id: number }[] = (await clinvRes.json()).data || [];
+            if (linked.length > 0) {
+                const alreadyLinked = linked.map((l) => l.invoice_id);
+                return NextResponse.json({ message: `Sales orders already in another active batch: ${alreadyLinked.join(", ")}` }, { status: 409 });
+            }
         }
 
         if (detCheck.length === 0) {
