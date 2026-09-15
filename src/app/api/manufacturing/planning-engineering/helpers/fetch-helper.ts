@@ -400,6 +400,12 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             }
 
             const totalProduced = joYieldLogs.reduce((sum: number, l: any) => sum + Number(l.yield_quantity || 0), 0);
+            const productionOutputQuantity = joYieldLogs.reduce(
+                (sum: number, l: any) => sum
+                    + Math.max(0, Number(l.yield_quantity || 0))
+                    + Math.max(0, Number(l.rejected_quantity || 0)),
+                0
+            );
             const completedQuantity = Number(jo.actual_quantity_produced || 0) > 0
                 ? Number(jo.actual_quantity_produced)
                 : totalProduced;
@@ -447,6 +453,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 parent_job_order_id: resolvedParentId,
                 completed_quantity: completedQuantity,
                 produced_quantity: totalProduced,
+                production_output_quantity: productionOutputQuantity,
                 yield_logs: joYieldLogs,
                 status_history: statusHistoryByJobOrder.get(joIdInt) || []
             };

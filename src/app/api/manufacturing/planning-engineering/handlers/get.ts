@@ -918,9 +918,22 @@ export async function handleGET(request: Request) {
             }
 
             const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
-            const producedQuantity = Number(jobOrder.actual_quantity_produced || 0) > 0
-                ? Number(jobOrder.actual_quantity_produced)
-                : Math.max(0, Number(jobOrder.completed_quantity || 0));
+            const yieldLedgerRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            const yieldLedgerRows: any[] = yieldLedgerRes.ok ? ((await yieldLedgerRes.json()).data || []) : [];
+            const ledgerProductionOutput = yieldLedgerRows.reduce(
+                (sum: number, row: any) => sum
+                    + Math.max(0, Number(row.yield_quantity || 0))
+                    + Math.max(0, Number(row.rejected_quantity || 0)),
+                0
+            );
+            const producedQuantity = yieldLedgerRows.length > 0
+                ? ledgerProductionOutput
+                : Number(jobOrder.actual_quantity_produced || 0) > 0
+                    ? Number(jobOrder.actual_quantity_produced)
+                    : Math.max(0, Number(jobOrder.completed_quantity || 0));
 
             // Raw materials and their WIP reservations.
             const materialsRes = await fetch(
@@ -1772,6 +1785,7 @@ export async function handleGET(request: Request) {
                 createdBy: item.created_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
+                productionOutputQuantity: Number(item.production_output_quantity ?? item.produced_quantity ?? 0),
                 yield_logs: item.yield_logs || [],
                 status_history: item.status_history || []
             }));
