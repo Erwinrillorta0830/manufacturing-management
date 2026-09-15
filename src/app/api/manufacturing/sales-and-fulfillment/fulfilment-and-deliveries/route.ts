@@ -1389,7 +1389,7 @@ export async function GET(req: NextRequest) {
                         const totalItemsCount = childOrders.reduce((sum, o) => sum + o.items.length, 0);
                         const totalAmount = childOrders.reduce((sum, o) => sum + o.amount, 0);
 
-                        const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
+                        // const isAllDelivered = childOrders.length > 0 && childOrders.every((o) => o.is_cleared);
                         const hasAnyReturns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Returns" || Boolean(o.linked_sales_return));
                         const hasAnyConcerns = childOrders.some((o) => o.fulfillment_status === "Fulfilled with Concerns");
                         const isAllUnfulfilled = childOrders.length > 0 && childOrders.every((o) => o.fulfillment_status === "Unfulfilled / Returns");

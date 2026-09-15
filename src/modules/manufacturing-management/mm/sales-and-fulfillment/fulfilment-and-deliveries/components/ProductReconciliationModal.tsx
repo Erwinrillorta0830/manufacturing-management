@@ -37,7 +37,7 @@ import {
     Link2,
     SlidersHorizontal,
     Lock,
-    RotateCcw,
+ 
 } from "lucide-react";
 import ReconciliationLotAllocationModal from "./ReconciliationLotAllocationModal";
 
@@ -635,26 +635,26 @@ export default function ProductReconciliationModal({
     };
 
     // Helper to zero out received quantities and mark all items as unfulfilled
-    const handleMarkAllUnfulfilled = () => {
-        if (effectiveReadOnly) return;
-        setLineItems((prev) =>
-            prev.map((item) => {
-                const ordQty = Number(item.ordered_quantity || 0);
-                const updatedReservations = (item.reservations || []).map((r) => ({
-                    ...r,
-                    returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
-                }));
-                return {
-                    ...item,
-                    received_quantity: 0,
-                    returned_quantity: ordQty,
-                    line_status: "Unfulfilled / Returns" as LineStatus,
-                    reservations: updatedReservations,
-                };
-            })
-        );
-        toast.info("Order marked as Unfulfilled. It will return to 'For Consolidation' for re-dispatch upon clearance.");
-    };
+    // const handleMarkAllUnfulfilled = () => {
+    //     if (effectiveReadOnly) return;
+    //     setLineItems((prev) =>
+    //         prev.map((item) => {
+    //             const ordQty = Number(item.ordered_quantity || 0);
+    //             const updatedReservations = (item.reservations || []).map((r) => ({
+    //                 ...r,
+    //                 returned_quantity: Number(r.picked_quantity || r.reserved_quantity || 0),
+    //             }));
+    //             return {
+    //                 ...item,
+    //                 received_quantity: 0,
+    //                 returned_quantity: ordQty,
+    //                 line_status: "Unfulfilled / Returns" as LineStatus,
+    //                 reservations: updatedReservations,
+    //             };
+    //         })
+    //     );
+    //     toast.info("Order marked as Unfulfilled. It will return to 'For Consolidation' for re-dispatch upon clearance.");
+    // };
 
     // Helper to save remarks only when product reconciliation quantities are locked
     const handleSaveRemarks = () => {

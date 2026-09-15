@@ -8,7 +8,7 @@ import {
     Save,
     Loader2,
     Package,
-    GitFork,
+ 
     Send
 } from "lucide-react";
 import { Product, ProductVersion } from "../types";
@@ -51,7 +51,7 @@ export function FinishedGoodsHeader({
     onRequestSwitchProduct,
     isVersionLocked = false,
     selectedVersion,
-    onCreateRevision,
+ 
     onSubmitForApproval
 }: FinishedGoodsHeaderProps) {
 
