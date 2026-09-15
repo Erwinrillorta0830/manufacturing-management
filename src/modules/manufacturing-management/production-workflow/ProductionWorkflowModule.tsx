@@ -171,7 +171,7 @@ export default function ProductionWorkflowModule() {
     )
         ? {
             label: "Log shift run",
-            description: "Record this shift's good output, scrap, and material backflushing."
+            description: "Record this session's output, traceability details, and exact WIP consumption."
         }
         : null;
     const selectedCalloutAction = onBenchNextAction || selectedJobOrderJourney?.nextAction || null;
@@ -232,7 +232,7 @@ export default function ProductionWorkflowModule() {
                             Shop Floor Execution Terminal
                         </h1>
                         <p className="text-xs sm:text-sm text-muted-foreground max-w-xl">
-                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, point-of-use backflushing, and QA gates.
+                            Ruggedized touch-friendly interface for station check-in, real-time operation tracking, exact WIP consumption, and QA gates.
                         </p>
                     </div>
 

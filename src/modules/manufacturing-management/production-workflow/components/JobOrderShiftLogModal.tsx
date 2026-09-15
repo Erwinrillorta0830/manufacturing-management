@@ -458,7 +458,7 @@ export function JobOrderShiftLogModal({
                     <thead><tr><th>Name</th><th>Role</th></tr></thead>
                     <tbody>${operatorsHtml}</tbody>
                 </table>
-                <h3>Point-of-Use Material Consumption (Backflushed)</h3>
+                <h3>Exact WIP Reservation Consumption</h3>
                 <table>
                     <thead><tr><th>Material</th><th style="text-align: right;">Std Qty</th><th style="text-align: right;">Actual Consumed</th><th style="text-align: right;">Deviation</th></tr></thead>
                     <tbody>${materialsHtml}</tbody>
@@ -979,7 +979,7 @@ export function JobOrderShiftLogModal({
                                 </DialogTitle>
                             </div>
                             <DialogDescription className="text-muted-foreground text-xs mt-0.5">
-                                Raw materials in staging inventory are insufficient for the entered point-of-use backflush.
+                            WIP reservation quantity is insufficient for the entered exact consumption.
                             </DialogDescription>
                         </DialogHeader>
                     </div>
@@ -989,7 +989,7 @@ export function JobOrderShiftLogModal({
                             {insufficiencyError}
                         </div>
                         <p className="text-muted-foreground leading-normal">
-                            Please check staging lot balances or consult a warehouse supervisor before executing real-time backflushing.
+                            Please check the WIP reservation balance or consult a warehouse supervisor before recording the session.
                         </p>
                     </div>
 

@@ -82,7 +82,26 @@ interface MaterialPlan {
     existingConsumption?: any | null;
 }
 
-function numberId(value: unknown, keys: string[] = ["id"]): number {
+function numberId(value: unknown, keys: string[] = [
+    "id",
+    "job_order_id",
+    "jo_route_id",
+    "jo_materials_reservation_id",
+    "jo_material_id",
+    "ledger_id",
+    "consumage_id",
+    "genealogy_id",
+    "reservation_id",
+    "product_id",
+    "mm_lot_id",
+    "inventory_lot_id",
+    "unit_id",
+    "uom_id",
+    "branch_id",
+    "work_center_id",
+    "user_id",
+    "sub"
+]): number {
     if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
         for (const key of keys) {
@@ -282,8 +301,11 @@ function requestHash(input: SessionInput): string {
 
 async function directusRequest<T = any>(pathname: string, label: string, init: RequestInit = {}): Promise<T> {
     let response: Response;
+    const url = /^https?:\/\//i.test(pathname)
+        ? pathname
+        : `${DIRECTUS_URL}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
     try {
-        response = await fetch(`${DIRECTUS_URL}${pathname}`, {
+        response = await fetch(url, {
             ...init,
             headers: { ...headers, ...(init.headers || {}) },
             cache: "no-store"
