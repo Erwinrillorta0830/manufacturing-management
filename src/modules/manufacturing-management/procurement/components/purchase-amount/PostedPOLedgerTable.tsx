@@ -72,6 +72,30 @@ function formatPhp(value: number): string {
     return `PHP ${value.toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE })}`;
 }
 
+function formatAmount(value: number): string {
+    return Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE });
+}
+
+function formatQuantity(value: number): string {
+    return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 6 });
+}
+
+function categoryBadgeClass(categoryType?: string): string {
+    return categoryType === "PACKAGING"
+        ? "bg-purple-500/10 text-purple-600 border-purple-500/20"
+        : categoryType === "FINISHED_GOODS"
+            ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
+            : "bg-blue-500/10 text-blue-600 border-blue-500/20";
+}
+
+function categoryBadgeLabel(categoryType?: string): string {
+    return categoryType === "PACKAGING"
+        ? "PACKAGING"
+        : categoryType === "FINISHED_GOODS"
+            ? "FINISHED GOODS"
+            : "RAW MATERIAL";
+}
+
 function LoadingPlaceholder({ className }: { className: string }) {
     return <div className={`animate-pulse rounded bg-muted ${className}`} aria-hidden="true" />;
 }
@@ -324,7 +348,59 @@ export function PurchaseAmountAuditView({ purchaseOrderId, postingSuccessPurchas
 
                             {expenses.length > 0 && <div className="space-y-2"><h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground"><Layers className="h-3.5 w-3.5 text-primary" />Capitalized Expenses and GL Mapping</h4><div className="overflow-hidden rounded-xl border bg-background text-xs"><table className="w-full text-left"><thead className="border-b bg-muted/50 text-[10px] font-bold uppercase text-muted-foreground"><tr><th className="p-2.5">Expense Type</th><th className="p-2.5">Chart of Account</th><th className="p-2.5 text-right">Fee Amount (PHP)</th></tr></thead><tbody className="divide-y">{expenses.map((expense, index) => { const coa = poDetails.chartOfAccounts?.find(account => String(account.coa_id ?? account.id) === String(expense.chart_of_account_id)); const coaTitle = coa ? `[${coa.gl_code || "GL"}] ${coa.account_title || coa.account_name || "Unnamed account"}` : expense.chart_of_account_id ? `Account ID #${expense.chart_of_account_id}` : "Mapped by expense type"; return <tr key={`${expense.id ?? expense.overhead_id ?? "expense"}-${index}`}><td className="p-2.5 font-semibold">{expense.expense_type || "Unclassified legacy expense"}</td><td className="p-2.5 text-muted-foreground">{coaTitle}</td><td className="p-2.5 text-right font-mono font-bold text-emerald-600">PHP {Number(expense.amount_php ?? expense.amount ?? 0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)}</td></tr>; })}</tbody></table></div></div>}
 
-                            <div className="space-y-2"><h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground"><FileText className="h-3.5 w-3.5 text-primary" />Line Items Landed Cost Allocations</h4><div className="overflow-hidden rounded-xl border bg-background text-xs"><table className="w-full text-left"><thead className="border-b bg-muted/50 text-[10px] font-bold uppercase text-muted-foreground"><tr><th className="p-2.5">Product</th><th className="p-2.5 text-right">Accepted Qty</th><th className="p-2.5 text-right">Invoice Unit Price ({currencyCode})</th><th className="p-2.5 text-right">Allocated Fee / Unit (PHP)</th><th className="p-2.5 text-right">Final Landed Unit Cost (PHP)</th></tr></thead><tbody className="divide-y">{poDetails.lineItems?.map((line, index) => { const productName = typeof line.product_id === "object" ? line.product_id.product_name : `Product #${line.product_id}`; const isForeign = currencyCode !== "PHP"; const quantity = Number(line.accepted_quantity ?? line.received_quantity) || 0; const unitPrice = Number(isForeign ? line.unit_price_foreign : line.base_unit_cost_php); return <tr key={`${line.purchase_order_product_id}-${index}`}><td className="p-2.5 font-semibold">{productName}</td><td className="p-2.5 text-right font-mono font-bold">{quantity.toLocaleString()}</td><td className="p-2.5 text-right font-mono text-muted-foreground">{Number.isFinite(unitPrice) ? `${isForeign ? currencyCode : "PHP"} ${unitPrice.toFixed(4)}` : "Unavailable"}</td><td className="p-2.5 text-right font-mono font-bold text-emerald-600">+PHP {(Number(line.allocated_expense_php) || 0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)}</td><td className="p-2.5 text-right font-mono font-bold text-amber-600">PHP {(Number(line.final_landed_unit_cost) || 0).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)}</td></tr>; })}</tbody></table></div></div>
+                            <div className="space-y-2">
+                                <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground"><FileText className="h-3.5 w-3.5 text-primary" />Line Items Landed Cost Allocations</h4>
+                                <div className="overflow-x-auto rounded-xl border bg-background text-xs">
+                                    <table className="w-full min-w-[1160px] text-left">
+                                        <thead className="border-b bg-muted/50 text-[10px] font-bold uppercase text-muted-foreground">
+                                            <tr>
+                                                <th className="p-2.5">Material</th>
+                                                <th className="p-2.5">Category</th>
+                                                <th className="p-2.5 text-center">UOM</th>
+                                                <th className="p-2.5 text-right">Received Qty</th>
+                                                <th className="p-2.5 text-right">List Price ({currencyCode})</th>
+                                                <th className="p-2.5 text-right">Discount</th>
+                                                <th className="p-2.5 text-right">Net Amount ({currencyCode})</th>
+                                                <th className="p-2.5 text-right">Allocated Adjustment / Unit (PHP)</th>
+                                                <th className="p-2.5 text-right">Final Landed Cost / Unit (PHP)</th>
+                                                <th className="p-2.5 text-right">Total Landed Cost (PHP)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {poDetails.lineItems?.map((line, index) => {
+                                                const productName = line.product_name || (typeof line.product_id === "object" ? line.product_id.product_name : `Product #${line.product_id}`);
+                                                const receivedQuantity = Number(line.accepted_quantity ?? line.received_quantity) || 0;
+                                                const listPrice = Number(line.list_price ?? line.unit_price_foreign ?? line.base_unit_cost_php) || 0;
+                                                const discountPercent = Number(line.discount_percent || 0);
+                                                const discountAmount = Number(line.discount_amount || 0);
+                                                const hasDiscount = discountPercent > 0 || discountAmount > 0;
+                                                const netAmount = Number(line.net_amount ?? Math.max(0, receivedQuantity * listPrice - discountAmount));
+                                                const allocatedAdjustment = Number(line.allocated_expense_php) || 0;
+                                                const finalLandedUnitCost = Number(line.final_landed_unit_cost) || 0;
+                                                const totalLandedCost = Number(line.total_landed_cost ?? finalLandedUnitCost * receivedQuantity);
+                                                return (
+                                                    <tr key={`${line.purchase_order_product_id}-${index}`}>
+                                                        <td className="p-2.5 font-semibold">{productName}</td>
+                                                        <td className="p-2.5">
+                                                            <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${categoryBadgeClass(line.category_type)}`}>
+                                                                {categoryBadgeLabel(line.category_type)}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-2.5 text-center font-mono text-muted-foreground">{line.uom || "—"}</td>
+                                                        <td className="p-2.5 text-right font-mono font-bold tabular-nums">{formatQuantity(receivedQuantity)}</td>
+                                                        <td className="p-2.5 text-right font-mono tabular-nums">{formatAmount(listPrice)}</td>
+                                                        <td className="p-2.5 text-right font-mono tabular-nums">{hasDiscount ? `${discountPercent.toFixed(2)}% (${formatAmount(discountAmount)})` : "—"}</td>
+                                                        <td className="p-2.5 text-right font-mono font-bold tabular-nums">{formatAmount(netAmount)}</td>
+                                                        <td className="p-2.5 text-right font-mono font-bold text-emerald-600 tabular-nums">{allocatedAdjustment > 0 ? `+${formatAmount(allocatedAdjustment)}` : formatAmount(allocatedAdjustment)}</td>
+                                                        <td className="p-2.5 text-right font-mono font-bold text-amber-600 tabular-nums">{formatAmount(finalLandedUnitCost)}</td>
+                                                        <td className="p-2.5 text-right font-mono font-black tabular-nums">{formatAmount(totalLandedCost)}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
 
                             <LandedCostAuditSummary purchaseOrderId={purchaseOrderId} compact />
                         </div>

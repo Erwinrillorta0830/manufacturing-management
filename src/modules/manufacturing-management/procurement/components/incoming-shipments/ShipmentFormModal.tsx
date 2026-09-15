@@ -6,7 +6,7 @@ import {
     SUPPLIER_PURCHASE_ORDER_MATERIAL_TYPE_OPTIONS,
     FxRateStatus
 } from "./types";
-import { IncomingShipment, RawMaterial } from "../../types";
+import { IncomingShipment, PurchaseOrderPaymentMode, RawMaterial } from "../../types";
 import { RawProductSelector } from "./RawProductSelector";
 import { formatMoney } from "./ShipmentBadges";
 import { CreatableSelect } from "@/modules/manufacturing-management/finished-goods/components/CreatableSelect";
@@ -67,6 +67,7 @@ export interface ShipmentFormModalProps {
         payment_days?: number | null;
         payment_description?: string | null;
     }>;
+    paymentModes?: PurchaseOrderPaymentMode[];
     priceControlStatus?: "idle" | "loading" | "ready" | "warning" | "error";
     priceControlError?: string | null;
     priceTypeResolution?: {
@@ -153,6 +154,7 @@ export function ShipmentFormModal({
     discountTypes,
     productPerSupplierMap,
     paymentTerms = [],
+    paymentModes = [],
     priceControlStatus = "idle",
     priceControlError = null,
     priceTypeResolution,
@@ -505,6 +507,26 @@ export function ShipmentFormModal({
                                         <option value={5}>Installment</option>
                                     </select>
                                 </div>
+
+                                {canonicalDrafting && (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase">Payment Type *</label>
+                                        <select
+                                            value={shipmentForm.payment_mode !== null ? String(shipmentForm.payment_mode) : ""}
+                                            onChange={e => setShipmentForm({ ...shipmentForm, payment_mode: e.target.value ? parseInt(e.target.value, 10) : null })}
+                                            disabled={paymentModes.length === 0}
+                                            className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs font-semibold h-8 disabled:bg-muted"
+                                        >
+                                            <option value="" disabled hidden>Select Payment Type...</option>
+                                            {paymentModes.map(mode => (
+                                                <option key={mode.id} value={mode.id}>{mode.mode_name}</option>
+                                            ))}
+                                        </select>
+                                        {paymentModes.length === 0 && (
+                                            <p className="text-[10px] font-medium text-destructive" role="alert">Payment types are unavailable.</p>
+                                        )}
+                                    </div>
+                                )}
 
                                 {canonicalDrafting && (
                                     <div className="space-y-1">

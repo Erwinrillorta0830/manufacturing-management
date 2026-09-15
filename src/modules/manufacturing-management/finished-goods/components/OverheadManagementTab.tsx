@@ -67,11 +67,17 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
     useEffect(() => {
         if (isRegisterModalOpen && chartOfAccounts.length === 0) {
             setLoadingCoa(true);
-            fetch("/api/manufacturing/finished-goods/chart-of-accounts")
-                .then((res) => (res.ok ? res.json() : []))
-                .then((data) => {
+            fetch("/api/manufacturing/expense-types?view=gl-accounts")
+                .then((res) => (res.ok ? res.json() : { data: [] }))
+                .then((payload) => {
+                    const data = Array.isArray(payload) ? payload : payload?.data || [];
                     if (Array.isArray(data)) {
-                        setChartOfAccounts(data);
+                        setChartOfAccounts(data.map((account: { coaId: number; glCode?: string | null; accountTitle?: string }) => ({
+                            coa_id: account.coaId,
+                            gl_code: account.glCode || undefined,
+                            account_title: account.accountTitle || "Untitled Account",
+                            status: "active",
+                        })));
                     }
                 })
                 .catch((err) => console.error("Failed fetching chart of accounts:", err))

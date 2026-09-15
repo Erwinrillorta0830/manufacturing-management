@@ -6,7 +6,8 @@ import {
     getLandedCostComputation,
     getLandedCostExpenseTypes,
     isLandedCostError,
-    loadLandedCostSnapshot
+    loadLandedCostSnapshot,
+    buildPricingFingerprint
 } from "../landed-cost/_domain";
 import {
     PURCHASE_ORDER_MODULE_PATHS,
@@ -14,6 +15,7 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { isPurchaseOrderPosted } from "@/modules/manufacturing-management/procurement/landed-cost-eligibility";
+import { PROCUREMENT_MONEY_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
 
 function weightedAverage(
     rows: Array<{ received_quantity?: unknown; quantity_rejected?: unknown } & Record<string, unknown>>,
@@ -64,7 +66,16 @@ function buildCanonicalLineItems(snapshot: Awaited<ReturnType<typeof loadLandedC
             line_gross_weight_kg: line.lineGrossWeightKg,
             allocated_expense_php: allocatedExpense,
             final_landed_unit_cost: finalLandedUnitCost,
-            total_amount: finalLandedUnitCost * line.quantity
+            total_amount: finalLandedUnitCost * line.quantity,
+            uom: line.uom,
+            currency_code: snapshot.currencyCode,
+            list_price: line.unitPriceTransaction,
+            discount_percent: line.discountPercent,
+            discount_amount: line.discountAmountTransaction,
+            net_amount: line.netAmountTransaction,
+            total_landed_cost: Number((finalLandedUnitCost * line.quantity).toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE)),
+            price_source: line.priceSource,
+            priced_at: line.pricedAt
         };
     });
 }
@@ -146,6 +157,14 @@ export async function GET(request: Request) {
         // it is never treated as the foreign invoice price.
         const snapshot = await loadLandedCostSnapshot(purchaseOrderId);
         const lineItems = buildCanonicalLineItems(snapshot);
+        const pricingFingerprint = buildPricingFingerprint(lineItems.map(item => ({
+            key: item.purchase_order_product_id,
+            listPrice: Number(item.list_price || 0),
+            discountPercent: Number(item.discount_percent || 0),
+            discountAmount: Number(item.discount_amount || 0),
+            quantity: Number(item.accepted_quantity ?? item.received_quantity ?? 0),
+            priceSource: String(item.price_source || "PO")
+        })));
 
         // Fetch existing import landed cost entries
         const importRes = await fetch(`${DIRECTUS_URL}/items/purchase_order_import?filter[purchase_order_id][_eq]=${poId}&fields=*&limit=-1`, {
@@ -175,7 +194,9 @@ export async function GET(request: Request) {
             activeForexRate,
             expenseTypes,
             currencyCode: snapshot.currencyCode,
-            exchangeRate: snapshot.exchangeRate
+            exchangeRate: snapshot.exchangeRate,
+            pricingFingerprint,
+            pricingAsOf: new Date().toISOString()
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Internal Server Error";

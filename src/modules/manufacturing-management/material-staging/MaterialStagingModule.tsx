@@ -379,9 +379,14 @@ export default function MaterialStagingModule() {
                                         </div>
 
                                         {/* Meta & Destination */}
-                                        <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-border/40">
-                                            <div>
-                                                Target: <strong className="text-foreground">{jo.target_quantity.toLocaleString()} pcs</strong>
+                                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground pt-1 border-t border-border/40">
+                                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                                <span>
+                                                    Target: <strong className="text-foreground">{jo.target_quantity.toLocaleString()} pcs</strong>
+                                                </span>
+                                                <span>
+                                                    Branch: <strong className="text-foreground">{jo.branch_name || (jo.branch_id ? `Branch #${jo.branch_id}` : "Unassigned")}</strong>
+                                                </span>
                                             </div>
                                             <div className="flex items-center gap-1 font-mono text-[11px]">
                                                 <Warehouse className="h-3 w-3 text-muted-foreground" />
