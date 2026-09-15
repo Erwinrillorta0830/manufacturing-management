@@ -3,7 +3,7 @@ import { DIRECTUS_URL, headers } from "./shared";
 import { getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
 import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError, type NormalizedMmInventoryMovement } from "../../services/mm-inventory-movements.service";
-import { isExpired } from "../../material-staging/_stock";
+import { isExpired, normalizeDirectusStagingMovement } from "../../material-staging/_stock";
 import { loadMmInventoryLots, loadMmLots, mmInventoryLotId, mmLotId, resolveProductUnitId } from "../../services/mm-lots.service";
 import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
@@ -99,7 +99,7 @@ export async function getAvailableInventoryLots(
             branch: numericBranchId,
             product: numericProductId
         });
-    const [movements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots] = await Promise.all([
+    const [springMovements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots, directusMovementsRes] = await Promise.all([
         movementRowsPromise,
         fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${numericProductId}&filter[branch_id][_eq]=${numericBranchId}&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,is_reverted,received_quantity,mm_lot_id,expiry_date,manufacturing_date,created_at&limit=-1`, { headers, cache: "no-store" }),
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${numericProductId}&fields=lot_number,qa_status,job_order_id.product_id&limit=-1`, { headers, cache: "no-store" }),
@@ -111,7 +111,8 @@ export async function getAvailableInventoryLots(
             ]
         }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" }),
         loadMmLots({ branchId: numericBranchId, unitId: productUnitId }),
-        loadMmInventoryLots({ branchId: numericBranchId, productId: numericProductId, onlyActive: true })
+        loadMmInventoryLots({ branchId: numericBranchId, productId: numericProductId, onlyActive: true }),
+        fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[branch_id][_eq]=${numericBranchId}&filter[product_id][_eq]=${numericProductId}&fields=*&limit=-1`, { headers, cache: "no-store" }).catch(() => null)
     ]);
     const eligibleStorageLotIds = new Set(
         eligibleStorageLots
@@ -122,6 +123,20 @@ export async function getAvailableInventoryLots(
     const receipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
     const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
     const reservations = reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
+    const directusMovements = directusMovementsRes?.ok
+        ? ((await directusMovementsRes.json()).data || [])
+            .filter((row: unknown): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+            .map(normalizeDirectusStagingMovement)
+        : [];
+    const springMovementIds = new Set(
+        springMovements
+            .map((movement) => Number(movement.movement_id || 0))
+            .filter((movementId) => movementId > 0)
+    );
+    const movements = [
+        ...springMovements,
+        ...directusMovements.filter((movement) => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
+    ];
 
     type InventoryMetadata = {
         inventoryLotId: number;

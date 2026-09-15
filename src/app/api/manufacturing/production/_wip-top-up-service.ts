@@ -7,7 +7,8 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import { isValidQaStatus, isExpired, normalizeBatchNo } from "@/app/api/manufacturing/material-staging/_stock";
+import { isValidQaStatus, isExpired, normalizeBatchNo, normalizeDirectusStagingMovement } from "@/app/api/manufacturing/material-staging/_stock";
+import { fetchMmInventoryMovements } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 const EPSILON = 0.000001;
 const SOURCE_BIN = "MAIN-STORE";
@@ -367,10 +368,24 @@ async function computeLotBalance(
     batchNo: string,
     inventoryLotId: number
 ): Promise<number> {
-    const movements = await directusRows<any>(
-        `/items/inventory_movements?filter[product_id][_eq]=${productId}&filter[branch_id][_eq]=${branchId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}&fields=product_id,branch_id,mm_lot_id,lot_id,inventory_lot_id,batch_no,quantity&limit=-1`,
-        "Load inventory movements for WIP top-up"
+    const [springMovements, directusMovementRows] = await Promise.all([
+        fetchMmInventoryMovements({ branch: branchId, product: productId, batchNo }),
+        directusRows<Record<string, unknown>>(
+            `/items/inventory_movements?filter[product_id][_eq]=${productId}&filter[branch_id][_eq]=${branchId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}&fields=*&limit=-1`,
+            "Load inventory movements for WIP top-up"
+        )
+    ]);
+    const springMovementIds = new Set(
+        springMovements
+            .map(movement => Number(movement.movement_id || 0))
+            .filter(movementId => movementId > 0)
     );
+    const movements = [
+        ...springMovements,
+        ...directusMovementRows
+            .map(normalizeDirectusStagingMovement)
+            .filter(movement => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
+    ];
     const balance = movements
         .filter(movement => {
             const movementInventoryLotId = movementInventoryLotReference(movement);
