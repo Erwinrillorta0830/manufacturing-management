@@ -128,15 +128,10 @@ export async function getAvailableInventoryLots(
             .filter((row: unknown): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
             .map(normalizeDirectusStagingMovement)
         : [];
-    const springMovementIds = new Set(
-        springMovements
-            .map((movement) => Number(movement.movement_id || 0))
-            .filter((movementId) => movementId > 0)
-    );
-    const movements = [
-        ...springMovements,
-        ...directusMovements.filter((movement) => !movement.movement_id || !springMovementIds.has(Number(movement.movement_id)))
-    ];
+    // Spring is the canonical movement ledger used by Lot Management. Directus
+    // is only a fallback for environments where that ledger has no rows; merging
+    // both sources double-counts the same stock movements.
+    const movements = springMovements.length > 0 ? springMovements : directusMovements;
 
     type InventoryMetadata = {
         inventoryLotId: number;
