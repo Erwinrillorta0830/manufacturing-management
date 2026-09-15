@@ -294,6 +294,10 @@ export function useProductionWorkflow() {
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
         if (!taskId || !assigneeId || !selectedJobOrder) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be assigned while the Job Order is In Production.");
+            return;
+        }
         const uId = parseInt(assigneeId);
         const userObj = users.find((u) => (u.user_id || u.id) === uId);
         if (!userObj) return;
@@ -341,6 +345,10 @@ export function useProductionWorkflow() {
     // Start Shift Timer for existing Operator
     const handleStartTimer = async (taskId: number, opUserId: number) => {
         if (!selectedJobOrder) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("A shift timer can only start while the Job Order is In Production.");
+            return;
+        }
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
             await manageRouteOperator({
@@ -379,6 +387,10 @@ export function useProductionWorkflow() {
     // Manual Hours Entry Save
     const handleSaveManualHours = async (taskId: number, opUserId: number, hoursStr: string) => {
         if (!selectedJobOrder || !hoursStr) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Production hours can only be logged while the Job Order is In Production.");
+            return;
+        }
         const parsedHours = parseFloat(hoursStr);
         if (isNaN(parsedHours) || parsedHours < 0) {
             toast.error("Please enter a valid positive number of hours.");
@@ -428,8 +440,8 @@ export function useProductionWorkflow() {
         const task = sortedTasks.find(t => t.id === taskId);
         if (!task || !selectedJobOrder) return;
 
-        if (isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
-            toast.error("Cancelled Job Orders cannot be progressed.");
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Routing steps can only be progressed while the Job Order is In Production.");
             return;
         }
 
@@ -600,14 +612,14 @@ export function useProductionWorkflow() {
                     if (!forceRes.ok || forceData.success === false) {
                         throw new Error(forceData.error || "Failed to forcibly release Job Order.");
                     }
-                    toast.success("Job Order forcibly released!");
+                    toast.success("Job Order initialized and ready for material picking!");
                     fetchJobs(selectedJobOrderId);
                     return;
                 }
                 return;
             }
 
-            toast.success("Job Order released successfully!");
+            toast.success("Job Order initialized and ready for material picking!");
             fetchJobs(selectedJobOrderId);
         } catch (err: any) {
             console.error("Error releasing Draft JO:", err);

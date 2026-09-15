@@ -70,12 +70,19 @@ export async function fetchJobMaterials(joId: number | string, signal?: AbortSig
 }
 
 export interface ReleaseJOPayload {
+    initialize?: boolean;
+    idempotencyKey?: string;
+    force?: boolean;
+    overrideReason?: string;
     jo: {
         jo_id: string;
         product_id: number;
         product_name: string;
         quantity: number;
         due_date: string;
+        start_date?: string;
+        uom_id?: number | null;
+        priority?: number;
         status: string;
         is_batched: boolean;
         branch_id: number;
@@ -100,6 +107,7 @@ export interface ReleaseJOPayload {
 }
 
 export interface ReleaseJOResult {
+    job_order_id?: number | null;
     jo_id?: string | null;
     status?: string;
     shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
@@ -118,10 +126,16 @@ export interface ReleaseMultipleJob {
 
 export interface ReleaseMultiplePayload {
     action: "release-multiple";
+    initialize?: boolean;
+    idempotencyKey?: string;
+    force?: boolean;
+    overrideReason?: string;
     baseJoNumber: string;
     shared: {
         branchId: number;
         dueDate: string;
+        plannedDate?: string;
+        priority?: number;
         shiftOption: string;
         remarks: string;
     };

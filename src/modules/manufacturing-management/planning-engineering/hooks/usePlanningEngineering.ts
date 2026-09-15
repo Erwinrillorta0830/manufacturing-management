@@ -53,8 +53,10 @@ export function usePlanningEngineering() {
     // Release Modal state
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [targetQuantity, setTargetQuantity] = useState<number>(0);
+    const [plannedDate, setPlannedDate] = useState<string>(new Date().toISOString().split("T")[0]);
     const [dueDate, setDueDate] = useState<string>("");
     const [shiftOption, setShiftOption] = useState<string>("8");
+    const [priority, setPriority] = useState<number>(0);
     const [remarks, setRemarks] = useState<string>("");
     const [joNumber, setJoNumber] = useState<string>("");
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
@@ -85,11 +87,8 @@ export function usePlanningEngineering() {
                 const queuedJobs = data.filter((j: any) => isJobOrderStatus(
                     j.status,
                     JOB_ORDER_STATUS.DRAFT,
-                    JOB_ORDER_STATUS.PLANNED,
-                    JOB_ORDER_STATUS.PLANNING,
-                    JOB_ORDER_STATUS.RELEASED,
-                    JOB_ORDER_STATUS.PROCEED,
-                    JOB_ORDER_STATUS.RESERVED
+                    JOB_ORDER_STATUS.FOR_PICKING,
+                    JOB_ORDER_STATUS.PICKED
                 ));
                 setRawUnreleasedJobs(queuedJobs);
             }
@@ -100,14 +99,14 @@ export function usePlanningEngineering() {
         }
     };
 
-    const handleReleaseDraftFromPlanning = async (joId: string) => {
-        setReleasingDraftId(joId);
+    const handleReleaseDraftFromPlanning = async (joId: string | number) => {
+        setReleasingDraftId(String(joId));
         try {
             const res = await fetch("/api/manufacturing/planning-engineering", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    action: "release-draft",
+                    action: "initialize",
                     joId
                 })
             });
@@ -117,7 +116,7 @@ export function usePlanningEngineering() {
                 // Only material shortfalls offer the force-release escape hatch;
                 // other failures (e.g. wrong status, missing branch) must not
                 // prompt for a forced release that cannot succeed.
-                const isShortfall = /Still insufficient raw materials/i.test(errorMsg);
+                const isShortfall = data.code === "MATERIAL_SHORTAGE" || /Still insufficient raw materials|material reservations are short/i.test(errorMsg);
                 if (!isShortfall) {
                     toast.error(errorMsg);
                     return;
@@ -127,9 +126,10 @@ export function usePlanningEngineering() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            action: "release-draft",
+                            action: "initialize",
                             joId,
-                            forceRelease: true
+                            force: true,
+                            overrideReason: "Authorized planning shortage override"
                         })
                     });
                     const forceData = await forceRes.json();
@@ -142,7 +142,7 @@ export function usePlanningEngineering() {
                 }
                 return;
             }
-            toast.success("Job Order released. Next step: stage its materials on the shop floor.");
+            toast.success("Job Order initialized. Next step: stage its materials on the shop floor.");
             await loadInitialData(true);
         } catch (err: any) {
             console.error("Failed to release Draft JO:", err);
@@ -169,11 +169,8 @@ export function usePlanningEngineering() {
                         return data.filter((j: any) => isJobOrderStatus(
                             j.status,
                             JOB_ORDER_STATUS.DRAFT,
-                            JOB_ORDER_STATUS.PLANNED,
-                            JOB_ORDER_STATUS.PLANNING,
-                            JOB_ORDER_STATUS.RELEASED,
-                            JOB_ORDER_STATUS.PROCEED,
-                            JOB_ORDER_STATUS.RESERVED
+                            JOB_ORDER_STATUS.FOR_PICKING,
+                            JOB_ORDER_STATUS.PICKED
                         ));
                     }
                     return [];
@@ -565,8 +562,10 @@ export function usePlanningEngineering() {
 
         setTargetQuantity(totalRemaining);
         setJoNumber(code);
+        setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption("8");
+        setPriority(0);
         setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
     };
@@ -574,7 +573,8 @@ export function usePlanningEngineering() {
     // Release JO Submit
     const handleConfirmRelease = async (
         selectedSubAssemblyVersions?: Record<number, number>,
-        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>
+        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
+        initialize = false
     ) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
 
@@ -589,8 +589,9 @@ export function usePlanningEngineering() {
             if (releaseGroups.length > 1) {
                 const result = await releaseMultipleJobOrders({
                     action: "release-multiple",
+                    initialize,
                     baseJoNumber: joNumber,
-                    shared: { branchId: selectedBranchId, dueDate, shiftOption, remarks },
+                    shared: { branchId: selectedBranchId, plannedDate, dueDate, priority, shiftOption, remarks },
                     jobs: releaseGroups.map((group) => {
                         const configuration = groupConfigurations?.[group.key];
                         return {
@@ -605,7 +606,9 @@ export function usePlanningEngineering() {
                         };
                     })
                 });
-                toast.success(`${result.jobs?.length || releaseGroups.length} Job Orders released successfully. FIFO materials locked.`);
+                toast.success(initialize
+                    ? `${result.jobs?.length || releaseGroups.length} Job Orders initialized and ready for material picking.`
+                    : `${result.jobs?.length || releaseGroups.length} Job Orders saved as Draft.`);
             } else {
                 const firstLine = selectedLines[0];
                 const targetProductId = firstLine.product_id?.product_id;
@@ -618,7 +621,10 @@ export function usePlanningEngineering() {
                         product_name: targetProductName,
                         quantity: targetQuantity,
                         due_date: dueDate,
-                        status: "Released",
+                        start_date: plannedDate,
+                        uom_id: Number((firstLine.product_id as any)?.uom_id || 0) || null,
+                        priority,
+                        status: JOB_ORDER_STATUS.DRAFT,
                         is_batched: selectedLines.length > 1,
                         branch_id: selectedBranchId,
                         shiftOption,
@@ -634,13 +640,14 @@ export function usePlanningEngineering() {
                         }]
                     },
                     salesOrderIds: uniqueSalesOrderIds,
-                    salesOrderDetailIds: selectedLines.map((line) => line.detail_id)
+                    salesOrderDetailIds: selectedLines.map((line) => line.detail_id),
+                    initialize
                 });
 
-                if (result.status === JOB_ORDER_STATUS.DRAFT) {
-                    toast.warning(`Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
+                if (!initialize) {
+                    toast.success(`Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
                 } else {
-                    toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+                    toast.success(`Job Order ${joNumber} initialized and ready for material picking.`);
                 }
             }
             setIsConfirmOpen(false);
@@ -775,10 +782,14 @@ export function usePlanningEngineering() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        plannedDate,
+        setPlannedDate,
         dueDate,
         setDueDate,
         shiftOption,
         setShiftOption,
+        priority,
+        setPriority,
         remarks,
         setRemarks,
         joNumber,

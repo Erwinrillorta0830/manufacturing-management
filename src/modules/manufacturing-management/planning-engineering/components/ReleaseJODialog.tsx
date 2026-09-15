@@ -37,6 +37,8 @@ interface ReleaseJODialogProps {
     setJoNumber: (val: string) => void;
     targetQuantity: number;
     setTargetQuantity: (val: number) => void;
+    plannedDate: string;
+    setPlannedDate: (val: string) => void;
     dueDate: string;
     setDueDate: (val: string) => void;
     shiftOption: string;
@@ -46,8 +48,11 @@ interface ReleaseJODialogProps {
     releasingJO: boolean;
     handleConfirmRelease: (
         selectedSubAssemblyVersions?: Record<number, number>,
-        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>
+        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
+        initialize?: boolean
     ) => void;
+    priority: number;
+    setPriority: (val: number) => void;
     assignments: Record<number, number[]>;
     setAssignments: React.Dispatch<React.SetStateAction<Record<number, number[]>>>;
 }
@@ -63,10 +68,14 @@ export function ReleaseJODialog({
     setJoNumber,
     targetQuantity: targetQuantityProp,
     setTargetQuantity,
+    plannedDate,
+    setPlannedDate,
     dueDate,
     setDueDate,
     shiftOption,
     setShiftOption,
+    priority,
+    setPriority,
     remarks,
     setRemarks,
     releasingJO,
@@ -602,6 +611,10 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Target Branch:</span>
                                         <span className="font-semibold text-foreground">{selectedBranch?.branch_name}</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Target UOM:</span>
+                                        <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -646,6 +659,18 @@ export function ReleaseJODialog({
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Planned Production Date
+                                            </label>
+                                            <Input
+                                                type="date"
+                                                value={plannedDate}
+                                                onChange={(e) => setPlannedDate(e.target.value)}
+                                                className="h-9 font-semibold bg-card border-input text-foreground"
+                                                required
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Due Date
                                             </label>
                                             <Input
@@ -653,6 +678,23 @@ export function ReleaseJODialog({
                                                 value={dueDate}
                                                 onChange={(e) => setDueDate(e.target.value)}
                                                 className="h-9 font-semibold bg-card border-input text-foreground"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Priority
+                                            </label>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={priority}
+                                                onChange={(e) => setPriority(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                                                className="h-9 font-semibold bg-card border-input text-foreground"
+                                                required
                                             />
                                         </div>
 
@@ -1169,8 +1211,16 @@ export function ReleaseJODialog({
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Planned Production Date:</span>
+                                        <span className="font-semibold text-foreground">{plannedDate || "Not set"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Quantity:</span>
                                         <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Priority:</span>
+                                        <span className="font-mono font-bold text-foreground">{priority}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Due Date:</span>
@@ -1201,7 +1251,7 @@ export function ReleaseJODialog({
                                     )}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground">
-                                    Review the details above, then confirm to release the Job Order and lock FIFO material reservations.
+                                    Review the details above, then save the Job Order as Draft or initialize it for material picking.
                                 </p>
                             </div>
                         )}
@@ -1242,32 +1292,57 @@ export function ReleaseJODialog({
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
-                            <Button
-                                size="sm"
-                                onClick={() => handleConfirmRelease(
-                                    selectedSubAssemblyVersions,
-                                    isMultiRelease
-                                        ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
-                                            group.key,
-                                            {
-                                                subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
-                                                assignments: groupAssignments[group.key] || {}
-                                            }
-                                        ]))
-                                        : undefined
-                                )}
-                                disabled={releasingJO}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
-                            >
-                                {releasingJO ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Releasing...
-                                    </>
-                                ) : (
-                                    "Confirm & Release"
-                                )}
-                            </Button>
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        false
+                                    )}
+                                    disabled={releasingJO}
+                                    className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
+                                >
+                                    {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                    Save Draft
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        true
+                                    )}
+                                    disabled={releasingJO || !plannedDate || priority < 0}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
+                                >
+                                    {releasingJO ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                            Initializing...
+                                        </>
+                                    ) : (
+                                        "Initialize JO"
+                                    )}
+                                </Button>
+                            </>
                         )}
                     </div>
                 </DialogFooter>

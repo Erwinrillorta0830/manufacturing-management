@@ -91,10 +91,14 @@ export default function PlanningEngineeringModule() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        plannedDate,
+        setPlannedDate,
         dueDate,
         setDueDate,
         shiftOption,
         setShiftOption,
+        priority,
+        setPriority,
         remarks,
         setRemarks,
         joNumber,
@@ -180,12 +184,9 @@ export default function PlanningEngineeringModule() {
     const filteredUnreleasedJobs = useMemo(() => {
         return unreleasedJobs.filter((jo: any) => {
             const normalizedFilter = normalizeJobOrderStatus(statusFilter);
-            // The queue API normalizes persisted "Released" to "Proceed", so the
-            // Released filter must accept both canonical values.
             const matchesStatus = statusFilter === "all" || (normalizedFilter !== null && isJobOrderStatus(
                 jo.status,
-                normalizedFilter,
-                ...(normalizedFilter === JOB_ORDER_STATUS.RELEASED ? [JOB_ORDER_STATUS.PROCEED] : [])
+                normalizedFilter
             ));
             const query = searchQuery.toLowerCase().trim();
             const matchesQuery = !query ||
@@ -297,16 +298,14 @@ export default function PlanningEngineeringModule() {
 
     const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
 
-    // Only Draft/Planned/Planning Job Orders can be released by the API; the
-    // footer action should not be offered for already-released family members.
+    // Only Draft Job Orders can be initialized; initialized JOs are read-only
+    // from this planning detail view.
     const releasableFamilyMembers = useMemo(() => {
         if (!activeFamilyJo) return [];
         const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
         return members.filter((jo: any) => isJobOrderStatus(
             jo?.status,
-            JOB_ORDER_STATUS.DRAFT,
-            JOB_ORDER_STATUS.PLANNED,
-            JOB_ORDER_STATUS.PLANNING
+            JOB_ORDER_STATUS.DRAFT
         ));
     }, [activeFamilyJo, familyChildJobs, isFamilyOverview]);
 
@@ -350,7 +349,7 @@ export default function PlanningEngineeringModule() {
         let parentMaterials: any[] = [];
         let parentError: unknown = null;
         try {
-            parentMaterials = await fetchJobMaterials(jo.order_id);
+            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id);
         } catch (error) {
             parentError = error;
             console.error("Failed to load materials for unreleased JO details modal:", error);
@@ -361,7 +360,7 @@ export default function PlanningEngineeringModule() {
         await Promise.all(relatedJobs.map(async (rj: any) => {
             const childKey = String(rj.jo_id);
             try {
-                childMatMap[childKey] = await fetchJobMaterials(rj.order_id);
+                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id);
                 childLoadStates[childKey] = { status: "success" };
             } catch (error) {
                 childMatMap[childKey] = [];
@@ -419,8 +418,10 @@ export default function PlanningEngineeringModule() {
                     materialId,
                     productId,
                     receivingId,
+                    lotNo,
                     qty,
-                    isSubAssembly
+                    isSubAssembly,
+                    idempotencyKey: `planning-reserve:${joId}:${materialId}:${receivingId || "mfg"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
                 })
             });
             const data = await res.json();
@@ -748,8 +749,9 @@ export default function PlanningEngineeringModule() {
         clearDetails();
 
         for (const member of membersToRelease) {
-            if (member.order_id) {
-                await handleReleaseDraftFromPlanning(member.order_id);
+            const jobOrderId = member.job_order_id || member.id || member.order_id;
+            if (jobOrderId) {
+                await handleReleaseDraftFromPlanning(jobOrderId);
             }
         }
     };
@@ -838,7 +840,7 @@ export default function PlanningEngineeringModule() {
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                                 <span><strong className="text-foreground">1.</strong> Review demand</span>
                                 <span className="text-border">→</span>
-                                <span><strong className="text-foreground">2.</strong> Release a Job Order</span>
+                                <span><strong className="text-foreground">2.</strong> Save or initialize a Job Order</span>
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">3.</strong>{" "}
@@ -980,10 +982,14 @@ export default function PlanningEngineeringModule() {
                 setJoNumber={setJoNumber}
                 targetQuantity={targetQuantity}
                 setTargetQuantity={setTargetQuantity}
+                plannedDate={plannedDate}
+                setPlannedDate={setPlannedDate}
                 dueDate={dueDate}
                 setDueDate={setDueDate}
                 shiftOption={shiftOption}
                 setShiftOption={setShiftOption}
+                priority={priority}
+                setPriority={setPriority}
                 remarks={remarks}
                 setRemarks={setRemarks}
                 releasingJO={releasingJO}
@@ -1728,7 +1734,7 @@ export default function PlanningEngineeringModule() {
                             </Button>
                             {releasableFamilyMembers.length > 0 && (
                                 <Button
-                                    onClick={handleReleaseCurrentView}
+                                onClick={handleReleaseCurrentView}
                                     disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
                                 >
@@ -1738,7 +1744,7 @@ export default function PlanningEngineeringModule() {
                                             ? releasableFamilyMembers.length === 1 + familyChildJobs.length
                                                 ? `Release Entire Family (${releasableFamilyMembers.length} Job Orders)`
                                                 : `Release Releasable Members (${releasableFamilyMembers.length})`
-                                            : "Release to Shop Floor"}
+                                                : "Initialize JO"}
                                 </Button>
                             )}
                         </div>

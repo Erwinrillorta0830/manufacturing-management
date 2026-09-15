@@ -6,13 +6,6 @@ import {
     RefreshCw, 
     ArrowRight, 
     BadgeAlert,
-    Forklift, 
-    FileText, 
-    ClipboardCheck, 
-    CheckCircle2, 
-    RotateCcw,
-    Printer,
-    Sparkles,
     ShieldCheck,
     History,
     AlertTriangle
@@ -21,9 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { 
     Tabs, 
-    TabsContent, 
-    TabsList, 
-    TabsTrigger 
+    TabsContent
 } from "@/components/ui/tabs";
 import { useManufacturingQA } from "./hooks/useManufacturingQA";
 import { JobOrderQAInspectionQueue } from "./components/JobOrderQAInspectionQueue";
@@ -257,15 +248,11 @@ export default function ManufacturingQAModule() {
     } = useManufacturingQA();
 
     const [lastSyncedAt, setLastSyncedAt] = React.useState<Date | null>(null);
-    const tabListRef = React.useRef<HTMLDivElement>(null);
-    React.useEffect(() => {
-        const activeTrigger = tabListRef.current?.querySelector<HTMLElement>('[data-state="active"]');
-        activeTrigger?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }, [activeTab]);
     const handleSync = async () => {
         await refreshAll(false);
         setLastSyncedAt(new Date());
     };
+    const processStepClass = (isActive: boolean) => `relative inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-transparent px-3 py-1 text-sm font-bold whitespace-nowrap transition-all ${isActive ? "bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30" : "text-foreground/60 hover:text-foreground"}`;
 
     return (
         <div className="min-w-0 max-w-full space-y-6">
@@ -305,8 +292,8 @@ export default function ManufacturingQAModule() {
             </div>
 
             {/* Process-order guide for operators navigating QA */}
-            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1.5 rounded-xl border bg-muted/30 px-3 py-2 text-[11px]">
-                <span className="mr-1 font-bold uppercase tracking-wider text-muted-foreground">Process order:</span>
+            <div className="flex w-full max-w-full flex-wrap items-center gap-1 overflow-hidden rounded-xl border bg-muted/60 p-1.5 text-[11px]">
+                <span className="flex h-11 shrink-0 items-center px-2 font-bold uppercase tracking-wider text-muted-foreground">Process order:</span>
                 {[
                     { id: "jo-inspection", label: "1. Inspect & sign off" },
                     { id: "closing", label: "2. Close yield" },
@@ -318,13 +305,13 @@ export default function ManufacturingQAModule() {
                         key={step.id}
                         type="button"
                         onClick={() => setActiveTab(step.id)}
-                        className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${activeTab === step.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                        className={processStepClass(activeTab === step.id)}
                     >
                         {step.label}
                     </button>
                 ))}
-                <span className="mx-0.5 text-muted-foreground/50">|</span>
-                <span className="text-muted-foreground">Reference:</span>
+                <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden="true" />
+                <span className="flex h-11 shrink-0 items-center px-2 text-muted-foreground">Reference:</span>
                 {[
                     { id: "qa-inspection-logs", label: "Inspection Logs" },
                     { id: "holds", label: "Quarantine Holds" },
@@ -333,7 +320,7 @@ export default function ManufacturingQAModule() {
                         key={step.id}
                         type="button"
                         onClick={() => setActiveTab(step.id)}
-                        className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${activeTab === step.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                        className={processStepClass(activeTab === step.id)}
                     >
                         {step.label}
                     </button>
@@ -389,53 +376,6 @@ export default function ManufacturingQAModule() {
 
             {/* Main Tabs Dashboard */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 space-y-4">
-                <TabsList ref={tabListRef} className="w-full max-w-full justify-start gap-1 overflow-x-auto overscroll-x-contain rounded-xl border bg-muted/60 p-1.5 scrollbar-thin">
-                    <TabsTrigger value="jo-inspection" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <ClipboardCheck className="h-3.5 w-3.5" />
-                        QA & Rework Entry
-                    </TabsTrigger>
-
-                    <TabsTrigger value="qa-inspection-logs" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <FileText className="h-3.5 w-3.5" />
-                        Inspection Logs
-                        {inspectionLogs.length > 0 && (
-                            <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
-                                {logsMeta.total || inspectionLogs.length}
-                            </Badge>
-                        )}
-                    </TabsTrigger>
-
-                    <TabsTrigger value="closing" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <Forklift className="h-3.5 w-3.5" />
-                        Yield Closing
-                    </TabsTrigger>
-
-                    <TabsTrigger value="holds" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <BadgeAlert className="h-3.5 w-3.5" />
-                        Quarantine Holds
-                        {(qaSummary?.pendingHoldCount ?? pendingHolds.length) > 0 && (
-                            <Badge variant="destructive" className="text-[10px] px-1 py-0 ml-1">
-                                {qaSummary?.pendingHoldCount ?? pendingHolds.length}
-                            </Badge>
-                        )}
-                    </TabsTrigger>
-
-                    <TabsTrigger value="daily-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Daily Yield QA
-                    </TabsTrigger>
-
-                    <TabsTrigger value="final-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Final QA Release
-                    </TabsTrigger>
-
-                    <TabsTrigger value="closed-qa" className="min-h-11 shrink-0 gap-1.5 px-3 text-sm font-bold">
-                        <Printer className="h-3.5 w-3.5" />
-                        Closed Runs
-                    </TabsTrigger>
-                </TabsList>
-
                 {/* TAB 1: Primary Module 4 Job Order QA & Rework Inspection Workcenter */}
                 <TabsContent value="jo-inspection" className="space-y-4 outline-none">
                     {tabErrors["jo-inspection"] ? <TabErrorState message={tabErrors["jo-inspection"]} onRetry={() => { void refreshAll(false); }} /> : <>

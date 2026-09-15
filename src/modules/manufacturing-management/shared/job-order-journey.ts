@@ -117,21 +117,16 @@ const STAGE_LABELS: Record<JobOrderJourneyStage, string> = {
 };
 
 export const JOB_ORDER_STATUS_DESCRIPTIONS: Partial<Record<CanonicalJobOrderStatus, string>> = {
-    Draft: "Created but not yet released to the shop floor.",
-    Planned: "Queued for material reservation or crew planning.",
-    Planning: "Queued for material reservation or crew planning.",
-    Released: "Released to the shop floor; waiting for materials to be staged.",
-    Proceed: "Released to the shop floor; waiting for materials to be staged.",
-    Reserved: "All required materials are staged on the floor; ready for production.",
-    Ongoing: "Production is running on the shop floor.",
-    "In Progress": "Production is running on the shop floor.",
+    Draft: "Created but not yet initialized for material picking.",
+    "For Picking": "Initialized and waiting for all required materials to be staged.",
+    Picked: "All required materials are staged on the floor; ready for production.",
+    "In Production": "Production is running on the shop floor.",
+    "Production Completed": "Production finished; waiting for QA and reconciliation.",
+    "For QA and Reconciliation": "Production output is ready for QA and material reconciliation.",
     "On Hold": "Temporarily stopped; resolve the hold before continuing.",
     "QA Hold": "Held by quality assurance pending a disposition decision.",
-    Finished: "Production finished; waiting for the final yield closing.",
-    Completed: "Completed and posted to finished-goods inventory.",
     Closed: "Completed and closed.",
-    Cancelled: "Cancelled; materials were returned and no further action is required.",
-    Shortage: "Waiting for raw-material replenishment before release."
+    Cancelled: "Cancelled; materials were returned and no further action is required."
 };
 
 export function jobOrderStatusDescription(value: unknown): string {
@@ -199,13 +194,12 @@ function stepStates(currentIndex: number, stage: JobOrderJourneyStage): JobOrder
 function resolveStage(input: JobOrderJourneyInput): JobOrderJourneyStage {
     const status = input.status;
     if (isCancelledJobOrderStatus(status)) return "cancelled";
-    if (isTerminalJobOrderStatus(status) || isJobOrderStatus(status, JOB_ORDER_STATUS.COMPLETED, JOB_ORDER_STATUS.CLOSED)) return "done";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.ON_HOLD)) return "qa";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS)) return "production";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.RESERVED)) return "ready";
-    if (isJobOrderStatus(status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED)) {
-        return input.allMaterialsStaged ? "ready" : "materials";
-    }
+    if (isTerminalJobOrderStatus(status)) return "done";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.QA_HOLD)) return "qa";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED)) return "qa";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION, JOB_ORDER_STATUS.ON_HOLD)) return "production";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.PICKED)) return "ready";
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_PICKING)) return "materials";
     return "scheduled";
 }
 
@@ -220,13 +214,13 @@ function buildNextAction(
         case "scheduled":
             if (input.hasShortage) {
                 return {
-                    label: "Reserve materials",
-                    description: "Reserve the shortfall lots in the Job Order details, then release it to the shop floor."
+                    label: "Resolve material shortage",
+                    description: "Resolve the material shortfall or obtain an authorized override before initialization."
                 };
             }
             return {
-                label: "Release to Shop Floor",
-                description: "Reserve any remaining lots and release this Job Order for staging."
+                label: "Initialize JO",
+                description: "Validate the BOM and material prerequisites, then place this Job Order in the picking queue."
             };
         case "materials":
             return {

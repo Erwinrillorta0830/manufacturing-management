@@ -237,20 +237,11 @@ export default function MaterialStagingModule() {
                                 <SelectValue placeholder="Filter by Status" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="PLANNED_RESERVED" className="text-xs font-medium">
-                                    Planned & Reserved (Default)
-                                </SelectItem>
-                                <SelectItem value="PLANNED" className="text-xs">
-                                    Planned Only
-                                </SelectItem>
-                                <SelectItem value="RESERVED" className="text-xs">
-                                    Reserved Only
-                                </SelectItem>
-                                <SelectItem value="RELEASED" className="text-xs">
-                                    Released / Proceed
+                                <SelectItem value="FOR_PICKING" className="text-xs font-medium">
+                                    For Picking (Default)
                                 </SelectItem>
                                 <SelectItem value="all" className="text-xs">
-                                    All Statuses
+                                    All Stageable JOs
                                 </SelectItem>
                             </SelectContent>
                         </Select>

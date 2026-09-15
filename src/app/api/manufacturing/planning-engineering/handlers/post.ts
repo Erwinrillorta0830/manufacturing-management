@@ -8,7 +8,6 @@ import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/direct
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import {
-    assertJobOrderStatus,
     isCancelledJobOrderStatus,
     isJobOrderStatus,
     isTerminalJobOrderStatus,
@@ -18,8 +17,11 @@ import { isProductionSchedulingStatus } from "../../sales-order/_status";
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import { SalesOrderAllocationConflictError } from "../helpers/create-helper";
 import type { SalesOrderSchedulingPlan } from "../helpers/create-helper";
+import { executeJobOrderWorkflow, JobOrderWorkflowError } from "../../job-orders/_workflow-service";
+import { resolveProductUnitId } from "../../services/mm-lots.service";
 
 const RELEASE_DRAFT_FETCH_TIMEOUT_MS = 15000;
+const QUANTITY_EPSILON = 0.000001;
 
 class PlanningConflictError extends Error {
     constructor(message: string) {
@@ -377,6 +379,26 @@ async function resolvePlanningEncoderId(): Promise<number | null> {
     }
 }
 
+async function resolvePlanningOverrideAccess(): Promise<boolean> {
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get("vos_access_token")?.value;
+        if (!token) return false;
+        const parts = token.split(".");
+        if (parts.length < 2) return false;
+        let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        while (base64.length % 4) base64 += "=";
+        const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+        const claims = [payload?.role, payload?.roles, payload?.position, payload?.job_title, payload?.department]
+            .flatMap((value) => Array.isArray(value) ? value : [value])
+            .map((value) => String(value ?? "").trim().toLowerCase())
+            .filter(Boolean);
+        return claims.some((value) => /admin|manager|supervisor|director|manufacturing|production lead/.test(value));
+    } catch {
+        return false;
+    }
+}
+
 function buildSchedulingDbPayload(
     jo: Record<string, any>,
     schedulingPlan: SalesOrderSchedulingPlan,
@@ -391,7 +413,10 @@ function buildSchedulingDbPayload(
         product_name: jo.product_name,
         quantity: schedulingPlan.totalQuantity,
         due_date: jo.due_date || null,
-        status: assertJobOrderStatus(jo.status || JOB_ORDER_STATUS.RELEASED),
+        // Job Order creation is always a Draft. Initialization is a separate
+        // workflow action that validates prerequisites and performs the soft
+        // material reservation step.
+        status: JOB_ORDER_STATUS.DRAFT,
         is_batched: !!jo.is_batched,
         bom: { version_id: schedulingPlan.bomVersionId },
         components: jo.components || null,
@@ -399,6 +424,9 @@ function buildSchedulingDbPayload(
         allocation_results: jo.allocationResults || null,
         procurement_status: jo.procurementStatus || "Idle",
         branch_id: jo.branch_id,
+        uom_id: jo.uom_id || jo.uomId || null,
+        priority: Number(jo.priority ?? 0),
+        start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
         shift_option: jo.shiftOption || "8",
         daily_breakdown: jo.dailyBreakdown || null,
         remarks: jo.remarks || null,
@@ -444,8 +472,17 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
     const shared = body.shared || {};
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
     const branchId = Number(shared.branchId);
+    const shouldInitialize = body.initialize === true;
+    const forceInitialize = body.force === true || body.forceRelease === true;
+    const overrideReason = String(body.overrideReason || body.overrideRemarks || "").trim();
     if (!baseJoNumber || !Number.isInteger(branchId) || branchId <= 0 || jobs.length < 2) {
         throw new PlanningConflictError("Multi-product release requires a base Job Order number, a valid branch, and at least two product groups.");
+    }
+    if (shouldInitialize && forceInitialize && !overrideReason) {
+        throw new PlanningConflictError("An override reason is required when initializing with material shortfalls.");
+    }
+    if (shouldInitialize && forceInitialize && !await resolvePlanningOverrideAccess()) {
+        return NextResponse.json({ error: "Only an authorized manufacturing supervisor or manager may approve a workflow override.", code: "WORKFLOW_OVERRIDE_NOT_AUTHORIZED" }, { status: 403 });
     }
 
     const generatedJobOrderNos = jobs.map((_: any, index: number) => `${baseJoNumber}-${String(index + 1).padStart(2, "0")}`);
@@ -497,7 +534,9 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
             product_name: String(job?.productName || ""),
             quantity,
             due_date: String(shared.dueDate || "") || null,
-            status: JOB_ORDER_STATUS.RELEASED,
+            start_date: String(shared.plannedDate || shared.startDate || shared.dueDate || "") || null,
+            priority: Number(shared.priority ?? 0),
+            status: JOB_ORDER_STATUS.DRAFT,
             is_batched: detailIds.length > 1,
             branch_id: branchId,
             shiftOption: String(shared.shiftOption || "8"),
@@ -539,12 +578,23 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
                 validation.parentOrderIds,
                 validation.detailIds,
                 validation.schedulingPlan,
-                { deferSalesOrderTransition: true }
+                { deferSalesOrderTransition: true, initialize: shouldInitialize }
             );
             createdJobOrderNos.push(String(validation.job.jo_id));
-            createdResults.push({ ...result, jo_id: result.jo_id || validation.job.jo_id });
+            if (shouldInitialize) {
+                const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
+                    action: "initialize",
+                    actorUserId: encoderId || 24,
+                    idempotencyKey: String(body.idempotencyKey || `planning-initialize:${result.job_order_id}`).trim(),
+                    remarks: String(shared.remarks || "Initialize Job Order for material picking").trim(),
+                    overrideReason: forceInitialize ? overrideReason : undefined,
+                    force: forceInitialize
+                });
+                createdResults.push({ ...result, ...workflow, jo_id: result.jo_id || validation.job.jo_id });
+            } else {
+                createdResults.push({ ...result, jo_id: result.jo_id || validation.job.jo_id });
+            }
         }
-        await transitionLinkedSalesOrdersToInProduction(parentOrderIds, previousParentStatuses);
         return NextResponse.json({ success: true, data: { jobs: createdResults } });
     } catch (error) {
         const cleanupFailures: string[] = [];
@@ -577,17 +627,17 @@ export async function handlePOST(request: Request) {
         const { action } = body;
 
         if (action === "release-multiple") {
-            return handleReleaseMultiple(body);
+            return await handleReleaseMultiple(body);
         }
 
-        if (action === "release-draft") {
+        if (action === "initialize" || action === "release-draft") {
             const { joId } = body;
             if (!joId) {
                 return NextResponse.json({ error: "Missing joId parameter" }, { status: 400 });
             }
 
             // 1. Fetch Job Order Header
-            const joRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=job_order_id,job_order_no,product_id,version_id,target_quantity,status,branch_id,remarks,created_by`, { headers, cache: "no-store" });
+            const joRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joId}?fields=*`, { headers, cache: "no-store" });
             if (!joRes.ok) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
@@ -596,8 +646,19 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
 
-            if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED, JOB_ORDER_STATUS.PLANNING)) {
-                return NextResponse.json({ error: "Only Draft or Planned Job Orders can be released." }, { status: 400 });
+            if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
+                return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
+            }
+
+            const overrideReason = String(body.overrideReason || body.overrideRemarks || "").trim();
+            const forceInitialize = body.force === true || body.forceRelease === true;
+            let encoderId = await resolvePlanningEncoderId();
+            if (!encoderId) encoderId = 24;
+            if (forceInitialize && !overrideReason) {
+                return NextResponse.json({ error: "An override reason is required when initializing with material shortfalls." }, { status: 400 });
+            }
+            if (forceInitialize && !await resolvePlanningOverrideAccess()) {
+                return NextResponse.json({ error: "Only an authorized manufacturing supervisor or manager may approve a workflow override.", code: "WORKFLOW_OVERRIDE_NOT_AUTHORIZED" }, { status: 403 });
             }
 
             // 2. Fetch Job Order Materials Worksheet
@@ -672,7 +733,10 @@ export async function handlePOST(request: Request) {
                             jo_material_id: mat.jo_material_id || mat.id,
                             reserved_quantity: alloc.allocated,
                             actual_used_quantity: 0,
-                            created_by: joData.created_by ? Number(joData.created_by) : null
+                            created_by: joData.created_by ? Number(joData.created_by) : null,
+                            reservation_status: "SOFT",
+                            uom_id: Number(mat.uom_id || 0) || null,
+                            source_event_key: `jo:${joData.job_order_id}:initialize:${mat.jo_material_id || mat.id}:${alloc.purchase_order_receiving_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`
                         };
                         if (alloc.purchase_order_receiving_id) {
                             reservationPayload.purchase_order_receiving_id = alloc.purchase_order_receiving_id;
@@ -682,7 +746,7 @@ export async function handlePOST(request: Request) {
                                 method: "POST",
                                 headers,
                                 body: JSON.stringify(reservationPayload)
-                            }).catch(err => console.error("Error creating materials reservation row during draft release:", err))
+                            })
                         );
                     }
 
@@ -693,7 +757,7 @@ export async function handlePOST(request: Request) {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({ reserved_quantity: updatedReservedQty })
-                        }).catch(err => console.error("Failed to update parent reserved quantity:", err))
+                        })
                     );
                 }
 
@@ -712,44 +776,92 @@ export async function handlePOST(request: Request) {
                 await Promise.all(writePromises);
             }
 
-            if (allRequirementsMet || body.forceRelease === true) {
-                // Change status to Released
-                const patchRes = await fetchWithTimeout(`${DIRECTUS_URL}/items/manufacturing_job_orders/${joData.job_order_id}`, {
-                    method: "PATCH",
-                    headers,
-                    body: JSON.stringify({ status: JOB_ORDER_STATUS.RELEASED })
+            if (allRequirementsMet || forceInitialize) {
+                const workflow = await executeJobOrderWorkflow(joData.job_order_id, {
+                    action: "initialize",
+                    actorUserId: encoderId,
+                    idempotencyKey: String(body.idempotencyKey || `planning-initialize-${joData.job_order_id}-${Date.now()}`).trim(),
+                    remarks: String(body.remarks || "Initialize Job Order for material picking").trim(),
+                    overrideReason: forceInitialize ? overrideReason : undefined,
+                    force: forceInitialize
                 });
-                if (patchRes.ok) {
-                    return NextResponse.json({ 
-                        success: true, 
-                        message: allRequirementsMet 
-                            ? "Job Order released successfully." 
-                            : "Job Order forcibly released with material shortfalls." 
-                    });
-                } else {
-                    return NextResponse.json({ error: "Failed to update Job Order status to Released." }, { status: 500 });
-                }
+                return NextResponse.json({
+                    success: true,
+                    data: workflow,
+                    shortfalls: shortfallsList,
+                    message: allRequirementsMet
+                        ? "Job Order initialized and is ready for material picking."
+                        : "Job Order initialized with an authorized material-shortage override."
+                });
             } else {
                 const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`).join("; ");
                 return NextResponse.json({
                     success: false,
-                    error: `Still insufficient raw materials to release: ${shortfallMsg}`
-                }, { status: 400 });
+                    error: `Still insufficient raw materials to initialize: ${shortfallMsg}`,
+                    code: "MATERIAL_SHORTAGE"
+                }, { status: 422 });
             }
         }
 
         if (action === "reserve-lot") {
-            const { joId, materialId, productId, receivingId, qty, isSubAssembly } = body;
+            const { joId, materialId, productId, receivingId, qty, lotNo, isSubAssembly } = body;
             if (!joId || !materialId || !productId || !qty) {
                 return NextResponse.json({ error: "Missing parameters for reservation." }, { status: 400 });
             }
 
+            const numericJoId = Number(joId);
+            const numericMaterialId = Number(materialId);
+            const numericProductId = Number(productId);
+            const requestedQty = Number(qty);
+            const validBaseParameters =
+                Number.isInteger(numericJoId) && numericJoId > 0 &&
+                Number.isInteger(numericMaterialId) && numericMaterialId > 0 &&
+                Number.isInteger(numericProductId) && numericProductId > 0 &&
+                Number.isFinite(requestedQty) && requestedQty > 0;
+
+            if (!validBaseParameters) {
+                return NextResponse.json({ error: "Invalid reservation parameters." }, { status: 400 });
+            }
+
             if (isSubAssembly) {
-                // Update parent requirement row directly
+                const subJoRes = await fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_orders/${numericJoId}?fields=job_order_id,status,branch_id`,
+                    { headers, cache: "no-store" }
+                );
+                if (!subJoRes.ok) {
+                    return NextResponse.json({ error: "Job Order not found for reservation." }, { status: 404 });
+                }
+                const subJoData = (await subJoRes.json()).data;
+                if (!isJobOrderStatus(subJoData?.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.FOR_PICKING)) {
+                    return NextResponse.json({ error: "Only Draft or For Picking Job Orders may reserve materials." }, { status: 409 });
+                }
+
+                const subMaterialRes = await fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}?fields=jo_material_id,job_order_id,product_id,uom_id,allocated_quantity,reserved_quantity`,
+                    { headers, cache: "no-store" }
+                );
+                if (!subMaterialRes.ok) {
+                    return NextResponse.json({ error: "Job Order material not found for reservation." }, { status: 404 });
+                }
+                const subMaterialData = (await subMaterialRes.json()).data;
+                const subMaterialJoId = Number(subMaterialData?.job_order_id?.job_order_id || subMaterialData?.job_order_id);
+                const subMaterialProductId = Number(subMaterialData?.product_id?.product_id || subMaterialData?.product_id);
+                if (subMaterialJoId !== numericJoId || subMaterialProductId !== numericProductId) {
+                    return NextResponse.json({ error: "Material does not belong to the selected Job Order or product." }, { status: 400 });
+                }
+
+                const productUomId = await resolveProductUnitId(numericProductId);
+                const materialUomId = Number(subMaterialData?.uom_id?.unit_id || subMaterialData?.uom_id || 0);
+                if (materialUomId > 0 && materialUomId !== productUomId) {
+                    return NextResponse.json({ error: "The material UOM does not match the product UOM." }, { status: 409 });
+                }
+
+                // Sub-assembly stock is reserved on the requirement row. It is
+                // still a planning hold and must not create an inventory move.
                 const matRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ reserved_quantity: Number(qty) })
+                    body: JSON.stringify({ reserved_quantity: requestedQty })
                 });
                 if (!matRes.ok) {
                     const errTxt = await matRes.text();
@@ -762,37 +874,34 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Missing receivingId for raw material reservation." }, { status: 400 });
             }
 
-            const numericJoId = Number(joId);
-            const numericMaterialId = Number(materialId);
-            const numericProductId = Number(productId);
             const numericReceivingId = Number(receivingId);
-            const requestedQty = Number(qty);
+            const reservationEventKey = String(body.idempotencyKey || "").trim();
 
             if (
-                !Number.isInteger(numericJoId) || numericJoId <= 0 ||
-                !Number.isInteger(numericMaterialId) || numericMaterialId <= 0 ||
-                !Number.isInteger(numericProductId) || numericProductId <= 0 ||
                 !Number.isInteger(numericReceivingId) || numericReceivingId <= 0 ||
-                !Number.isFinite(requestedQty) || requestedQty <= 0
+                !reservationEventKey || reservationEventKey.length > 128
             ) {
-                return NextResponse.json({ error: "Invalid reservation parameters." }, { status: 400 });
+                return NextResponse.json({ error: "A valid receiving lot and idempotency key are required for reservation." }, { status: 400 });
             }
 
             const joRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_orders/${numericJoId}?fields=job_order_id,branch_id`,
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${numericJoId}?fields=job_order_id,status,branch_id`,
                 { headers, cache: "no-store" }
             );
             if (!joRes.ok) {
                 return NextResponse.json({ error: "Job Order not found for reservation." }, { status: 404 });
             }
             const joData = (await joRes.json()).data;
+            if (!isJobOrderStatus(joData?.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.FOR_PICKING)) {
+                return NextResponse.json({ error: "Only Draft or For Picking Job Orders may reserve materials." }, { status: 409 });
+            }
             const joBranchId = Number(joData?.branch_id);
             if (!joData || !Number.isInteger(joBranchId) || joBranchId <= 0) {
                 return NextResponse.json({ error: "Job Order has no valid branch assigned." }, { status: 400 });
             }
 
             const materialRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}?fields=jo_material_id,job_order_id,product_id,reserved_quantity`,
+                `${DIRECTUS_URL}/items/manufacturing_job_order_materials/${numericMaterialId}?fields=jo_material_id,job_order_id,product_id,uom_id,reserved_quantity,allocated_quantity`,
                 { headers, cache: "no-store" }
             );
             if (!materialRes.ok) {
@@ -808,8 +917,14 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Selected receiving lot does not match the material product." }, { status: 400 });
             }
 
+            const productUomId = await resolveProductUnitId(numericProductId);
+            const materialUomId = Number(materialData?.uom_id?.unit_id || materialData?.uom_id || 0);
+            if (materialUomId > 0 && materialUomId !== productUomId) {
+                return NextResponse.json({ error: "The material UOM does not match the product UOM." }, { status: 409 });
+            }
+
             const receivingRes = await fetch(
-                `${DIRECTUS_URL}/items/purchase_order_receiving/${numericReceivingId}?fields=purchase_order_product_id,product_id,branch_id,batch_no,qa_status,is_reverted,received_quantity`,
+                `${DIRECTUS_URL}/items/purchase_order_receiving/${numericReceivingId}?fields=purchase_order_product_id,product_id,branch_id,batch_no,lot_id,mm_lot_id,qa_status,is_reverted,received_quantity,expiry_date`,
                 { headers, cache: "no-store" }
             );
             if (!receivingRes.ok) {
@@ -819,6 +934,7 @@ export async function handlePOST(request: Request) {
             const receivingProductId = Number(receivingData?.product_id?.product_id || receivingData?.product_id);
             const receivingBranchId = Number(receivingData?.branch_id?.id || receivingData?.branch_id);
             const batchNo = String(receivingData?.batch_no || "").trim();
+            const receivingMmLotId = Number(receivingData?.mm_lot_id?.lot_id || receivingData?.mm_lot_id?.id || receivingData?.mm_lot_id || 0);
             const qaStatus = String(receivingData?.qa_status || "").trim().toLowerCase();
             const isReverted = Number(receivingData?.is_reverted || 0) !== 0;
 
@@ -838,18 +954,67 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: "Selected receiving lot has no available received quantity." }, { status: 400 });
             }
 
+            const reservationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`;
+            const existingReservationRes = await fetch(
+                `${reservationUrl}?filter[source_event_key][_eq]=${encodeURIComponent(reservationEventKey)}&fields=jo_materials_reservation_id,reserved_quantity,reservation_status,source_event_key&limit=1`,
+                { headers, cache: "no-store" }
+            );
+            if (!existingReservationRes.ok) {
+                return NextResponse.json({ error: "Reservation idempotency is not configured in Manufacturing Directus." }, { status: 502 });
+            }
+            const existingReservation = (await existingReservationRes.json()).data?.[0];
+            if (existingReservation) {
+                return NextResponse.json({
+                    success: true,
+                    reservationId: Number(existingReservation.jo_materials_reservation_id || 0) || null,
+                    idempotent: true,
+                    message: "Material reservation already exists for this request."
+                });
+            }
+
+            // The same candidate lookup used by planning and staging is the
+            // final UOM/branch/QA/stock gate. A receipt whose storage lot has a
+            // different UOM is deliberately absent from this result.
+            let compatibleLots;
+            try {
+                compatibleLots = await getAvailableInventoryLots(numericProductId, joBranchId);
+            } catch (error) {
+                return NextResponse.json({
+                    error: error instanceof Error ? error.message : "Unable to verify the selected inventory lot."
+                }, { status: 422 });
+            }
+            const requestedBatchNo = String(lotNo || receivingData?.batch_no || receivingData?.lot_no || "").trim().toLowerCase();
+            const selectedLot = compatibleLots.find((lot) => {
+                const sameBatch = !requestedBatchNo || lot.batchNo.trim().toLowerCase() === requestedBatchNo;
+                const sameStorageLot = receivingMmLotId > 0
+                    ? lot.mmLotId === receivingMmLotId
+                    : lot.purchaseOrderReceivingId === numericReceivingId;
+                return sameBatch && sameStorageLot;
+            });
+            if (!selectedLot) {
+                return NextResponse.json({ error: "The selected receiving lot is not available for this product, branch, UOM, QA status, or storage lot." }, { status: 422 });
+            }
+            if (selectedLot.available + QUANTITY_EPSILON < requestedQty) {
+                return NextResponse.json({
+                    error: `The selected receiving lot has only ${selectedLot.available} unit(s) available for reservation.`,
+                    code: "RESERVATION_QUANTITY_UNAVAILABLE"
+                }, { status: 422 });
+            }
+
             // Create reservation entry
-            const reservationPayload = {
+            const reservationPayload: Record<string, unknown> = {
                 product_id: numericProductId,
                 branch_id: receivingBranchId,
                 batch_no: batchNo,
                 jo_material_id: numericMaterialId,
                 purchase_order_receiving_id: numericReceivingId,
                 reserved_quantity: requestedQty,
-                actual_used_quantity: 0
+                actual_used_quantity: 0,
+                reservation_status: "SOFT",
+                uom_id: productUomId,
+                expiry_date: selectedLot.expiryDate || null,
+                source_event_key: reservationEventKey
             };
-
-            const reservationUrl = `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`;
             const res = await fetch(reservationUrl, {
                 method: "POST",
                 headers,
@@ -1317,6 +1482,14 @@ export async function handlePOST(request: Request) {
 
         const schedulingValidation = await validateSalesOrderScheduling(jo, salesOrderDetailIds, salesOrderIds);
         const effectiveSalesOrderIds = schedulingValidation.parentOrderIds;
+        const forceInitialize = body.force === true || body.forceRelease === true;
+        const overrideReason = String(body.overrideReason || body.overrideRemarks || "").trim();
+        if (body.initialize === true && forceInitialize && !overrideReason) {
+            return NextResponse.json({ error: "An override reason is required when initializing with material shortfalls." }, { status: 400 });
+        }
+        if (body.initialize === true && forceInitialize && !await resolvePlanningOverrideAccess()) {
+            return NextResponse.json({ error: "Only an authorized manufacturing supervisor or manager may approve a workflow override.", code: "WORKFLOW_OVERRIDE_NOT_AUTHORIZED" }, { status: 403 });
+        }
 
         // Get logged in user ID from secure access token cookie
         let encoderId: number | null = null;
@@ -1354,7 +1527,9 @@ export async function handlePOST(request: Request) {
             product_name: jo.product_name,
             quantity: schedulingPlan?.totalQuantity ?? jo.quantity,
             due_date: jo.due_date,
-            status: assertJobOrderStatus(jo.status || JOB_ORDER_STATUS.DRAFT),
+            // Creation is always a Draft. Lifecycle advancement is explicit
+            // through the workflow action, never through this payload.
+            status: JOB_ORDER_STATUS.DRAFT,
             is_batched: !!jo.is_batched,
             bom: schedulingPlan
                 ? { version_id: schedulingPlan.bomVersionId }
@@ -1364,6 +1539,9 @@ export async function handlePOST(request: Request) {
             allocation_results: jo.allocationResults || null,
             procurement_status: jo.procurementStatus || "Idle",
             branch_id: jo.branch_id || null,
+            uom_id: jo.uom_id || jo.uomId || null,
+            priority: Number(jo.priority ?? 0),
+            start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
             shift_option: jo.shiftOption || "8",
             daily_breakdown: jo.dailyBreakdown || null,
             remarks: jo.remarks || null,
@@ -1394,7 +1572,24 @@ export async function handlePOST(request: Request) {
                 })) : null)
         };
 
-        const result = await createJobOrder(dbPayload, effectiveSalesOrderIds, schedulingValidation.detailIds, schedulingPlan);
+        const result = await createJobOrder(
+            dbPayload,
+            effectiveSalesOrderIds,
+            schedulingValidation.detailIds,
+            schedulingPlan,
+            { initialize: body.initialize === true }
+        );
+        if (body.initialize === true) {
+            const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
+                action: "initialize",
+                actorUserId: encoderId || 24,
+                idempotencyKey: String(body.idempotencyKey || `planning-initialize:${result.job_order_id}`).trim(),
+                remarks: String(body.remarks || jo.remarks || "Initialize Job Order for material picking").trim(),
+                overrideReason: forceInitialize ? overrideReason : undefined,
+                force: forceInitialize
+            });
+            return NextResponse.json({ success: true, data: { ...result, ...workflow } });
+        }
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
         console.error("API Error in planning-engineering POST:", e);
@@ -1402,8 +1597,8 @@ export async function handlePOST(request: Request) {
             return NextResponse.json({ error: e.message }, { status: 409 });
         }
         return NextResponse.json(
-            { error: (e as { message?: string }).message || "Failed to create Job Order" },
-            { status: e instanceof MmInventoryMovementError ? e.status : 500 }
+            { error: (e as { message?: string }).message || "Failed to create Job Order", ...(e instanceof JobOrderWorkflowError ? { code: e.code, ...(e.details ? { details: e.details } : {}) } : {}) },
+            { status: e instanceof JobOrderWorkflowError ? e.status : e instanceof MmInventoryMovementError ? e.status : 500 }
         );
     }
 }

@@ -60,7 +60,7 @@ export function StagingPickList({
                 </div>
                 <h3 className="text-base font-bold text-foreground">No Job Order Selected</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                    Select an active Planned or Reserved Job Order from the left queue to review allocated materials and execute floor bin transfers.
+                    Select an initialized For Picking Job Order from the left queue to review required materials and execute floor bin transfers.
                 </p>
             </div>
         );

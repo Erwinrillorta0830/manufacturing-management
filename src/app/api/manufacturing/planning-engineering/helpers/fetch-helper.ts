@@ -198,16 +198,16 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const canonicalStatus = normalizeJobOrderStatus(jo.status);
             let mappedStatus = canonicalStatus || jo.status;
-            if (canonicalStatus === JOB_ORDER_STATUS.RELEASED || canonicalStatus === JOB_ORDER_STATUS.PROCEED) {
-                mappedStatus = JOB_ORDER_STATUS.PROCEED;
-            } else if (canonicalStatus === JOB_ORDER_STATUS.IN_PROGRESS || canonicalStatus === JOB_ORDER_STATUS.ONGOING) {
-                mappedStatus = JOB_ORDER_STATUS.ONGOING;
+            if (canonicalStatus === JOB_ORDER_STATUS.FOR_PICKING) {
+                mappedStatus = JOB_ORDER_STATUS.FOR_PICKING;
+            } else if (canonicalStatus === JOB_ORDER_STATUS.IN_PRODUCTION) {
+                mappedStatus = JOB_ORDER_STATUS.IN_PRODUCTION;
             } else if (
-                canonicalStatus === JOB_ORDER_STATUS.COMPLETED
-                || canonicalStatus === JOB_ORDER_STATUS.FINISHED
+                canonicalStatus === JOB_ORDER_STATUS.PRODUCTION_COMPLETED
+                || canonicalStatus === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION
                 || canonicalStatus === JOB_ORDER_STATUS.CLOSED
             ) {
-                mappedStatus = JOB_ORDER_STATUS.FINISHED;
+                mappedStatus = JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
             }
 
             const matchedProduct = productsList.find((p: any) => Number(p.product_id) === Number(jo.product_id));

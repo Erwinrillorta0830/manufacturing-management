@@ -9,6 +9,7 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select";
+import { JOB_ORDER_STATUS } from "../../job-order-status";
 
 export interface JOFilterBarProps {
     searchQuery: string;
@@ -59,8 +60,8 @@ export function JOFilterBar({
                         <SelectContent>
                             <SelectItem value="all">All Statuses</SelectItem>
                             <SelectItem value="Draft">Draft</SelectItem>
-                            <SelectItem value="Planned">Planned</SelectItem>
-                            <SelectItem value="Released">Released</SelectItem>
+                            <SelectItem value={JOB_ORDER_STATUS.FOR_PICKING}>For Picking</SelectItem>
+                            <SelectItem value={JOB_ORDER_STATUS.PICKED}>Picked</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
