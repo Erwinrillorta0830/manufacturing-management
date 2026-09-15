@@ -399,6 +399,7 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                 productPerSupplierMap={productPerSupplierMap}
                 jobOrders={jobOrders}
                 paymentTerms={paymentTerms}
+                paymentModes={paymentModes}
                 priceControlStatus={priceControlStatus}
                 priceControlError={priceControlError}
                 priceTypeResolution={priceTypeResolution}

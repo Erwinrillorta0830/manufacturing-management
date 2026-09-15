@@ -1,13 +1,14 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
-import { isProductionSchedulingStatus } from "@/app/api/manufacturing/sales-order/_status";
+import { isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
 import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
 
 function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return isProductionSchedulingStatus(line.parent_order_status) && remainingQuantity(line) > 0;
+    return line.parent_order_status === "For Production"
+        && remainingQuantity(line) > 0
+        && (!line.linkedJobOrders || line.linkedJobOrders.every((jobOrder) => isTerminalJobOrderStatus(jobOrder.status)));
 }
 
 function remainingQuantity(line: SalesOrderDetail): number {
@@ -583,7 +584,7 @@ export function usePlanningEngineering() {
                     product_name: targetProductName,
                     quantity: targetQuantity,
                     due_date: dueDate,
-                    status: "Released", // releases directly with lot deduction
+                    status: "Released", // creates the linked JO and transitions the parent SO to In Production
                     is_batched: selectedLines.length > 1,
                     branch_id: selectedBranchId,
                     shiftOption: shiftOption,

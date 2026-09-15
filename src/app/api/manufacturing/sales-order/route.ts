@@ -580,9 +580,14 @@ export async function GET(request: Request) {
         const limit = Number(searchParams.get("limit") || "10");
         const search = searchParams.get("search") || "";
         const status = searchParams.get("status") || "";
+        const queue = searchParams.get("queue") || "";
         const selectedIdsParam = searchParams.get("selectedIds") || "";
-        const excludeHasJo = searchParams.get("excludeHasJo") === "true";
-        const includeAllStatuses = searchParams.get("includeAllStatuses") === "true";
+        const forProductionQueue = queue === "for-production";
+        if (queue && !forProductionQueue) {
+            return NextResponse.json({ error: `Unsupported Sales Order queue: ${queue}` }, { status: 400 });
+        }
+        const excludeHasJo = searchParams.get("excludeHasJo") === "true" || forProductionQueue;
+        const includeAllStatuses = !forProductionQueue && searchParams.get("includeAllStatuses") === "true";
         const customerCode = searchParams.get("customerCode") || "";
         const dateFrom = searchParams.get("dateFrom") || "";
         const dateTo = searchParams.get("dateTo") || "";
@@ -592,7 +597,9 @@ export async function GET(request: Request) {
             .join(",");
         const filters = {
             search,
-            status: excludeHasJo
+            status: forProductionQueue
+                ? "For Production"
+                : excludeHasJo
                 ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
                 : status,
             customerCode,
@@ -647,12 +654,14 @@ export async function GET(request: Request) {
                         const detailId = Number(detail.detail_id || detail.id);
                         const plannedQuantity = chunkPlannedQuantities.get(detailId) || 0;
                         const isScheduled = detailRemainingQuantity(detail, plannedQuantity) <= 0;
+                        const hasActiveJobOrder = forProductionQueue && plannedQuantity > 0;
                         return isPlanningVisibleDetail(
                             detail,
                             candidate.order_status,
                             isScheduled,
                             plannedQuantity,
-                            includeAllStatuses
+                            includeAllStatuses,
+                            hasActiveJobOrder
                         );
                     });
                     if (eligibleOrderDetails.length > 0) {
@@ -714,12 +723,14 @@ export async function GET(request: Request) {
                 const order = orderById.get(Number(detail.order_id));
                 const detailId = Number(detail.detail_id || detail.id);
                 const plannedQuantity = plannedQuantities.get(detailId) || 0;
+                const hasActiveJobOrder = forProductionQueue && plannedQuantity > 0;
                 return isPlanningVisibleDetail(
                     detail,
                     order?.order_status,
                     detailRemainingQuantity(detail, plannedQuantity) <= 0,
                     plannedQuantity,
-                    includeAllStatuses
+                    includeAllStatuses,
+                    hasActiveJobOrder
                 );
             });
         }
