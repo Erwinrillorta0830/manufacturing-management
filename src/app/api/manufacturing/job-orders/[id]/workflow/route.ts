@@ -14,6 +14,7 @@ import {
 interface WorkflowActor {
     userId: number | null;
     canOverride: boolean;
+    canTerminate: boolean;
 }
 
 function readTokenPayload(token: string | undefined): Record<string, unknown> {
@@ -27,6 +28,10 @@ function readTokenPayload(token: string | undefined): Record<string, unknown> {
     } catch {
         return {};
     }
+}
+
+function isTruthyClaim(value: unknown): boolean {
+    return value === true || value === 1 || value === "1" || String(value ?? "").trim().toLowerCase() === "true";
 }
 
 async function getWorkflowActor(): Promise<WorkflowActor | null> {
@@ -44,14 +49,25 @@ async function getWorkflowActor(): Promise<WorkflowActor | null> {
         payload.job_title,
         payload.department
     ].flatMap((value) => Array.isArray(value) ? value : [value])
-        .map((value) => String(value ?? "").trim().toLowerCase())
+        .map((value) => {
+            if (value && typeof value === "object") {
+                const role = value as Record<string, unknown>;
+                return String(role.name ?? role.code ?? role.title ?? "").trim().toLowerCase();
+            }
+            return String(value ?? "").trim().toLowerCase();
+        })
         .filter(Boolean);
-    const canOverride = roleValues.some((value) =>
+    const adminFlag = isTruthyClaim(payload.isAdmin) || isTruthyClaim(payload.is_admin);
+    const canOverride = adminFlag || roleValues.some((value) =>
         /admin|manager|supervisor|director|manufacturing|production lead/.test(value)
+    );
+    const canTerminate = adminFlag || roleValues.some((value) =>
+        /admin|manager|supervisor|director|production lead/.test(value)
     );
     return {
         userId: Number.isSafeInteger(userId) && userId > 0 ? userId : null,
-        canOverride
+        canOverride,
+        canTerminate
     };
 }
 
@@ -84,6 +100,13 @@ export async function POST(
                 code: "AUTHENTICATION_REQUIRED"
             }, { status: 401 });
         }
+        if (action === "terminate-production" && !actor.canTerminate) {
+            return NextResponse.json({
+                success: false,
+                error: "Only an authorized production supervisor, manager, or administrator may terminate a production Job Order.",
+                code: "WORKFLOW_TERMINATION_NOT_AUTHORIZED"
+            }, { status: 403 });
+        }
         const overrideReason = typeof body?.overrideReason === "string"
             ? body.overrideReason.trim()
             : "";
@@ -109,6 +132,9 @@ export async function POST(
             actorUserId: actor.userId,
             idempotencyKey: String(body?.idempotencyKey || request.headers.get("idempotency-key") || "").trim(),
             remarks: typeof body?.remarks === "string" ? body.remarks.trim() : undefined,
+            resolutionRemarks: typeof body?.resolutionRemarks === "string"
+                ? body.resolutionRemarks.trim()
+                : (typeof body?.resumeResolution === "string" ? body.resumeResolution.trim() : undefined),
             workCenterId: body?.workCenterId === null || body?.workCenterId === undefined
                 ? null
                 : Number(body.workCenterId),

@@ -12,8 +12,11 @@ import {
     ShiftRunLogPayload,
     JobOrderCancellationPayload,
     JobOrderCancellationPreview,
-    JobOrderCancellationResponse
+    JobOrderCancellationResponse,
+    WipTopUpPayload,
+    WipTopUpResponse
 } from "../types";
+import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
 export type { ShiftRunLogPayload };
 
@@ -21,6 +24,40 @@ export async function fetchJobOrders(): Promise<JobOrder[]> {
     const res = await fetch("/api/manufacturing/planning-engineering", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load job orders");
     return res.json();
+}
+
+export interface JobOrderWorkflowPayload {
+    action: JobOrderWorkflowAction;
+    remarks?: string;
+    resolutionRemarks?: string;
+    workCenterId?: number | null;
+    force?: boolean;
+    overrideReason?: string;
+    idempotencyKey?: string;
+}
+
+export async function executeJobOrderWorkflow(
+    joId: string | number,
+    payload: JobOrderWorkflowPayload
+): Promise<any> {
+    const body = {
+        ...payload,
+        idempotencyKey: payload.idempotencyKey || (
+            typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `workflow:${payload.action}:${joId}:${Date.now()}`
+        )
+    };
+    const res = await fetch(`/api/manufacturing/job-orders/${encodeURIComponent(String(joId))}/workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to execute Job Order workflow action.");
+    }
+    return data?.data ?? data;
 }
 
 export async function fetchUsersList(): Promise<User[]> {
@@ -142,6 +179,19 @@ export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<an
         throw new Error(errData.error || "Failed to submit shift run log.");
     }
     return res.json();
+}
+
+export async function addReservedMaterial(payload: WipTopUpPayload): Promise<WipTopUpResponse> {
+    const res = await fetch("/api/manufacturing/production/wip-top-up", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to add reserved materials.");
+    }
+    return data as WipTopUpResponse;
 }
 
 export async function scanStationStart(payload: StationScanPayload): Promise<StationScanResponse> {

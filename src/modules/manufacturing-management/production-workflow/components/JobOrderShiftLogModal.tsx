@@ -13,6 +13,7 @@ import {
     Layers,
     ShieldAlert,
     Trash2,
+    PackagePlus,
     CheckCircle2
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -23,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { FinishedGoodsLotSelect } from "../../shared/FinishedGoodsLotSelect";
 import { fetchEligibleFinishedGoodsLots, EligibleFinishedGoodsLot } from "../../shared/finished-goods-lots-api";
 import { toast } from "sonner";
@@ -65,6 +67,8 @@ export function JobOrderShiftLogModal({
     const [loadingEligibleLots, setLoadingEligibleLots] = useState(false);
     const [selectedLotId, setSelectedLotId] = useState<string>("");
     const [remarks, setRemarks] = useState("");
+    const [varianceReason, setVarianceReason] = useState("");
+    const [approveVariance, setApproveVariance] = useState(false);
     const [shiftMaterials, setShiftMaterials] = useState<ProductionMaterialReservation[]>([]);
     const [materialsLoadError, setMaterialsLoadError] = useState<string | null>(null);
     const [loadingShiftMaterials, setLoadingShiftMaterials] = useState(false);
@@ -72,6 +76,8 @@ export function JobOrderShiftLogModal({
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
     const [targetTaskId, setTargetTaskId] = useState<number>(0);
+    const [topUpTarget, setTopUpTarget] = useState<TopUpTarget | null>(null);
+    const [isTopUpOpen, setIsTopUpOpen] = useState(false);
 
     const selectedTask = sortedTasks.find((task) => task.id === targetTaskId) || activeStep;
     const stationId = Number(selectedTask?.work_center_id || selectedJobOrder?.primary_work_center_id || 0) || null;
@@ -142,6 +148,8 @@ export function JobOrderShiftLogModal({
                         product_name: reservation.product_name || material.product_name,
                         product_code: reservation.product_code || material.product_code,
                         unit_shortcut: reservation.unit_shortcut || material.unit_shortcut || "units",
+                        is_sub_assembly: Boolean(material.is_sub_assembly),
+                        candidate_lots: Array.isArray(material.candidate_lots) ? material.candidate_lots : [],
                         actual_qty: "0"
                     }));
                 }
@@ -175,6 +183,8 @@ export function JobOrderShiftLogModal({
             setSelectedReasonId("");
             setRejectionRemarks("");
             setRemarks("");
+            setVarianceReason("");
+            setApproveVariance(false);
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
@@ -354,6 +364,8 @@ export function JobOrderShiftLogModal({
                 scrapQty: newScrap,
                 rejectionReasonId: selectedReasonId ? Number(selectedReasonId) : null,
                 rejectionRemarks: rejectionRemarks || undefined,
+                varianceReason: varianceReason || undefined,
+                approveVariance,
                 qaParameters: [],
                 remarks: remarks || undefined,
                 materialsConsumed: shiftMaterials.map((m) => ({
@@ -481,6 +493,39 @@ export function JobOrderShiftLogModal({
         printWindow.document.close();
     };
 
+    const materialTheoretical = useCallback((material: ProductionMaterialReservation) => {
+        const sameMaterial = shiftMaterials.filter((candidate) => Number(candidate.jo_material_id) === Number(material.jo_material_id));
+        const lineBasis = Number(material.issued_to_wip_quantity || material.reserved_quantity || material.staged_quantity || 0);
+        const totalBasis = sameMaterial.reduce((sum, candidate) => sum + Number(candidate.issued_to_wip_quantity || candidate.reserved_quantity || candidate.staged_quantity || 0), 0);
+        const baseQty = Number(material.allocated_quantity || 0)
+            || Number(material.required_quantity || 0)
+            || totalBasis;
+        const targetQty = Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity) || 1;
+        const totalTheoretical = (baseQty / targetQty) * totalOutputQuantity;
+        return totalBasis > 0 && lineBasis > 0
+            ? totalTheoretical * (lineBasis / totalBasis)
+            : totalTheoretical / Math.max(1, sameMaterial.length);
+    }, [selectedJobOrder, shiftMaterials, totalOutputQuantity]);
+
+    const openTopUp = (material: ProductionMaterialReservation) => {
+        const theoretical = materialTheoretical(material);
+        const available = Number(material.available_stock || 0);
+        setTopUpTarget({
+            jobOrderId: Number(selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0),
+            joMaterialId: Number(material.jo_material_id),
+            productId: Number(material.product_id),
+            productName: material.product_name,
+            unitShortcut: material.unit_shortcut || "units",
+            uomId: material.uom_id ?? null,
+            remainingWip: available,
+            theoretical,
+            shortfall: Math.max(0, theoretical - available),
+            candidateLots: material.candidate_lots || [],
+            isSubAssembly: Boolean(material.is_sub_assembly)
+        });
+        setIsTopUpOpen(true);
+    };
+
     const hasInsufficiency = shiftMaterials.some((m) => Boolean(m.reservation_id) && Number(m.actual_qty || 0) > Number(m.available_stock || 0));
     const hasIncompleteMaterialLine = shiftMaterials.some((m) =>
         !m.reservation_id
@@ -498,6 +543,27 @@ export function JobOrderShiftLogModal({
         (consumedByMaterial.get(Number(material.jo_material_id || 0)) || 0) <= 0
     );
     const hasOutput = Number(shiftYieldQty || 0) + Number(rejectedQty || 0) + Number(scrapQty || 0) > 0;
+    const varianceTolerancePct = Math.max(0, Number(
+        shiftMaterials.find((material) => material.material_consumption_variance_tolerance_pct !== undefined)
+            ?.material_consumption_variance_tolerance_pct || 0
+    ));
+    const varianceGroups = new Map<number, { theoretical: number; actual: number; unit: string }>();
+    shiftMaterials.forEach((material) => {
+        const materialId = Number(material.jo_material_id || 0);
+        const current = varianceGroups.get(materialId) || { theoretical: 0, actual: 0, unit: material.unit_shortcut || "units" };
+        current.theoretical += materialTheoretical(material);
+        current.actual += Number(material.actual_qty || 0);
+        varianceGroups.set(materialId, current);
+    });
+    const varianceExceptions = [...varianceGroups.entries()]
+        .map(([joMaterialId, values]) => ({
+            joMaterialId,
+            ...values,
+            variance: values.actual - values.theoretical
+        }))
+        .filter((group) => Math.abs(group.variance) > Math.max(0.000001, Math.abs(group.theoretical) * varianceTolerancePct / 100));
+    const hasVarianceException = varianceExceptions.length > 0;
+    const missingVarianceApproval = hasVarianceException && (!varianceReason.trim() || !approveVariance);
     const isSubmitDisabled = submittingShiftLog
         || loadingShiftMaterials
         || loadingEligibleLots
@@ -505,6 +571,7 @@ export function JobOrderShiftLogModal({
         || hasInsufficiency
         || hasIncompleteMaterialLine
         || hasMissingMaterialConsumption
+        || missingVarianceApproval
         || !hasOutput
         || !sessionKey
         || !productionDate
@@ -835,11 +902,10 @@ export function JobOrderShiftLogModal({
                                     ) : (
                                         <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] lg:max-h-[560px] pr-1">
                                             {shiftMaterials.map((m, index) => {
-                                                 const plannedQty = Number(m.issued_to_wip_quantity || m.reserved_quantity || m.staged_quantity || m.allocated_quantity || 0);
-                                                 const stdQty = plannedQty / (Number(selectedJobOrder.quantity || selectedJobOrder.target_quantity) || 1);
-                                                 const theoretical = stdQty * totalOutputQuantity;
+                                                 const theoretical = materialTheoretical(m);
                                                  const actual = Number(m.actual_qty || 0);
-                                                 const isExceeded = actual > theoretical * 1.05;
+                                                 const variance = actual - theoretical;
+                                                 const isExceeded = Math.abs(variance) > Math.max(0.000001, Math.abs(theoretical) * varianceTolerancePct / 100);
                                                  const isInsufficient = actual > Number(m.available_stock || 0);
 
                                                 const percentage = Math.min(200, theoretical > 0 ? (actual / theoretical) * 100 : 0);
@@ -848,6 +914,9 @@ export function JobOrderShiftLogModal({
                                                     : isExceeded 
                                                     ? "bg-amber-500" 
                                                     : "bg-emerald-500";
+                                                const availableStock = Number(m.available_stock || 0);
+                                                const shortfall = Math.max(0, theoretical - availableStock);
+                                                const needsTopUp = !m.reservation_id || shortfall > 0.000001;
 
                                                 return (
                                                      <div key={m.reservation_id || `${m.jo_material_id}-${index}`} className="p-3.5 bg-background rounded-xl border border-border/80 hover:border-primary/20 hover:shadow-sm transition-all duration-200 space-y-3">
@@ -877,7 +946,7 @@ export function JobOrderShiftLogModal({
                                                                             : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                                                                     }`}
                                                                 >
-                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient ? "Shortfall" : isExceeded ? "Over-limit" : "Normal"}
+                                                                     {!m.reservation_id ? "Unavailable" : isInsufficient ? "Shortfall" : isExceeded ? "Outside tolerance" : "Normal"}
                                                                  </Badge>
                                                              </div>
                                                          </div>
@@ -918,6 +987,12 @@ export function JobOrderShiftLogModal({
                                                                          {Number(m.available_stock || 0).toLocaleString()} {m.unit_shortcut}
                                                                     </span>
                                                                 </div>
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-muted-foreground">Variance:</span>
+                                                                    <span className={`font-mono font-bold ${isExceeded ? "text-amber-600" : "text-foreground/85"}`}>
+                                                                        {variance > 0 ? "+" : ""}{variance.toFixed(6)} {m.unit_shortcut}
+                                                                    </span>
+                                                                </div>
                                                             </div>
 
                                                             <div className="flex items-center gap-2">
@@ -928,20 +1003,56 @@ export function JobOrderShiftLogModal({
                                                                              type="number"
                                                                              min="0"
                                                                              step="0.000001"
+                                                                             max={m.reservation_id ? availableStock : undefined}
                                                                              value={m.actual_qty}
                                                                             onChange={(e) => {
-                                                                                const val = e.target.value;
+                                                                                const raw = e.target.value;
+                                                                                if (raw === "") {
+                                                                                    setShiftMaterials((prev) =>
+                                                                                        prev.map((item, idx) => idx === index ? { ...item, actual_qty: "" } : item)
+                                                                                    );
+                                                                                    return;
+                                                                                }
+                                                                                const parsed = Number(raw);
+                                                                                if (!Number.isFinite(parsed)) return;
+                                                                                const clamped = Math.min(Math.max(0, parsed), availableStock);
                                                                                 setShiftMaterials((prev) =>
-                                                                                    prev.map((item, idx) => idx === index ? { ...item, actual_qty: val } : item)
+                                                                                    prev.map((item, idx) => idx === index ? { ...item, actual_qty: String(clamped) } : item)
                                                                                 );
                                                                             }}
+                                                                             onBlur={(e) => {
+                                                                                 const parsed = Number(e.target.value);
+                                                                                 if (e.target.value === "" || !Number.isFinite(parsed)) return;
+                                                                                 const clamped = Math.min(Math.max(0, parsed), availableStock);
+                                                                                 setShiftMaterials((prev) =>
+                                                                                     prev.map((item, idx) => idx === index ? { ...item, actual_qty: String(clamped) } : item)
+                                                                                 );
+                                                                             }}
                                                                              disabled={!m.reservation_id}
                                                                              className="h-8 w-28 text-right bg-background pr-6 pl-2 py-1.5 rounded-lg font-bold font-mono text-xs disabled:opacity-50"
-                                                                        />
+                                                                         />
                                                                         <span className="absolute right-2 text-[9px] text-muted-foreground font-semibold pointer-events-none">{m.unit_shortcut}</span>
                                                                     </div>
                                                                 </div>
                                                             </div>
+                                                            {needsTopUp && (
+                                                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                                                                    <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                                                                        {m.reservation_id
+                                                                            ? `Short by ${shortfall.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${m.unit_shortcut} against the theoretical requirement.`
+                                                                            : "No WIP reservation is staged for this material."}
+                                                                    </span>
+                                                                    <Button
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        onClick={() => openTopUp(m)}
+                                                                        className="h-7 shrink-0 border-amber-500/40 text-[10px] font-bold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                                                                    >
+                                                                        <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Add raw materials
+                                                                    </Button>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 );
@@ -950,6 +1061,37 @@ export function JobOrderShiftLogModal({
                                     )}
                                 </div>
                             </div>
+                            {hasVarianceException && (
+                                <div className="lg:col-span-12 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3 text-xs">
+                                    <div className="flex items-start gap-2 text-amber-800 dark:text-amber-300">
+                                        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                                        <div>
+                                            <p className="font-bold">Material consumption is outside the configured tolerance ({varianceTolerancePct}%).</p>
+                                            <p className="mt-1">A reason and administrator approval confirmation are required. The server verifies the authenticated administrator; client-supplied approver IDs are ignored.</p>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="varianceReason" className="text-amber-900 dark:text-amber-200">Variance reason *</Label>
+                                        <Textarea
+                                            id="varianceReason"
+                                            value={varianceReason}
+                                            onChange={(event) => setVarianceReason(event.target.value)}
+                                            placeholder="Explain the material usage variance..."
+                                            maxLength={5000}
+                                            className="min-h-20 bg-background resize-y"
+                                        />
+                                    </div>
+                                    <label className="flex items-start gap-2 text-amber-900 dark:text-amber-200">
+                                        <input
+                                            type="checkbox"
+                                            checked={approveVariance}
+                                            onChange={(event) => setApproveVariance(event.target.checked)}
+                                            className="mt-0.5 h-4 w-4 accent-amber-600"
+                                        />
+                                        <span>I confirm this variance for administrator approval.</span>
+                                    </label>
+                                </div>
+                            )}
                         </div>
 
                         <DialogFooter className="pt-4 border-t border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2.5 shrink-0">
@@ -1011,6 +1153,24 @@ export function JobOrderShiftLogModal({
                     </div>
 
                     <DialogFooter className="p-4 bg-muted/30 border-t border-border/50 gap-2 flex items-center justify-end">
+                        {shiftMaterials.length > 0 && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                    const shortMaterial =
+                                        shiftMaterials.find((m) => Number(m.actual_qty || 0) > Number(m.available_stock || 0))
+                                        || shiftMaterials.find((m) => !m.reservation_id)
+                                        || shiftMaterials[0];
+                                    if (!shortMaterial) return;
+                                    setIsInsufficiencyOpen(false);
+                                    openTopUp(shortMaterial);
+                                }}
+                                className="h-9 border-amber-500/40 text-xs font-bold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                            >
+                                <PackagePlus className="mr-1.5 h-4 w-4" /> Add raw materials
+                            </Button>
+                        )}
                         <Button
                             onClick={() => setIsInsufficiencyOpen(false)}
                             className="bg-primary hover:bg-primary/95 text-white font-bold h-9 text-xs px-5 shadow-sm"
@@ -1020,6 +1180,16 @@ export function JobOrderShiftLogModal({
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <AddReservedMaterialDialog
+                open={isTopUpOpen}
+                onOpenChange={(nextOpen) => {
+                    setIsTopUpOpen(nextOpen);
+                    if (!nextOpen) setTopUpTarget(null);
+                }}
+                target={topUpTarget}
+                onAdded={loadShiftMaterials}
+            />
         </>
     );
 }

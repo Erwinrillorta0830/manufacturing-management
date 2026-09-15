@@ -320,6 +320,18 @@ export interface StationScanResponse {
     error?: string;
 }
 
+export interface MaterialCandidateLot {
+    receipt_id: number | null;
+    receipt_no?: string | null;
+    lot_no: string;
+    received_quantity?: number;
+    physical_quantity?: number;
+    available: number;
+    expiry_date?: string | null;
+    reservation_id?: number | string | null;
+    reserved_qty_for_this_lot?: number;
+}
+
 export interface ProductionMaterialReservation {
     reservation_id: number | null;
     jo_material_id: number;
@@ -333,6 +345,7 @@ export interface ProductionMaterialReservation {
     batch_no: string | null;
     reservation_status: string | null;
     allocated_quantity?: number;
+    required_quantity?: number;
     reserved_quantity: number;
     staged_quantity: number;
     issued_to_wip_quantity: number;
@@ -342,6 +355,47 @@ export interface ProductionMaterialReservation {
     available_stock: number;
     actual_qty: string;
     theoretical_quantity?: number;
+    material_consumption_variance_tolerance_pct?: number | string | null;
+    variance_quantity?: number | null;
+    variance_reason?: string | null;
+    variance_approved_by?: number | null;
+    variance_approved_at?: string | null;
+    is_sub_assembly?: boolean;
+    candidate_lots?: MaterialCandidateLot[];
+}
+
+export interface WipTopUpPayload {
+    jobOrderId: number;
+    joMaterialId: number;
+    productId: number;
+    sourceType: "RAW_MATERIAL" | "MANUFACTURING";
+    receiptId?: number | null;
+    mmLotId?: number | null;
+    batchNo?: string;
+    uomId?: number | null;
+    quantity: number;
+    idempotencyKey: string;
+    remarks?: string;
+}
+
+export interface WipTopUpResponse {
+    success: boolean;
+    idempotent?: boolean;
+    message?: string;
+    error?: string;
+    code?: string;
+    reservation?: {
+        reservationId: number | null;
+        mmLotId: number;
+        inventoryLotId: number;
+        batchNo: string;
+        uomId?: number | null;
+        addedQuantity: number;
+        reservedQuantity: number;
+        stagedQuantity: number;
+        issuedToWipQuantity: number;
+        remainingWipQuantity: number;
+    } | null;
 }
 
 export interface ShiftRunMaterialConsumption {
@@ -380,6 +434,8 @@ export interface ShiftRunLogPayload {
         remarks?: string;
     }>;
     materialsConsumed: ShiftRunMaterialConsumption[];
+    varianceReason?: string | null;
+    approveVariance?: boolean;
     batchNo?: string;
     expiryDate?: string;
     manufacturingDate?: string;

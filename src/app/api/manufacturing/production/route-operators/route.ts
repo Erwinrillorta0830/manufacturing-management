@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 // Directus configuration
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -41,11 +42,13 @@ interface DirectusRouteOperator {
 
 class DirectusRouteOperatorError extends Error {
     status: number;
+    code?: string;
 
-    constructor(status: number, message: string) {
+    constructor(status: number, message: string, code?: string) {
         super(message);
         this.name = "DirectusRouteOperatorError";
         this.status = status;
+        this.code = code;
     }
 }
 
@@ -132,6 +135,46 @@ function responseRecord(payload: { data?: DirectusRouteOperator } | null, joId: 
     return mapDirectusRecord(payload.data, joId);
 }
 
+function relationId(value: unknown): number {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return Number(record.job_order_id ?? record.id ?? 0);
+    }
+    return Number(value ?? 0);
+}
+
+async function assertProductionMutationAllowed(taskId: number, action: string): Promise<void> {
+    const routePayload = await directusRequest<{ data?: { job_order_id?: unknown } }>(
+        `/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id`,
+    );
+    const jobOrderId = relationId(routePayload?.data?.job_order_id);
+    if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+        throw new DirectusRouteOperatorError(404, "Routing task is not linked to a valid Job Order.", "JOB_ORDER_NOT_FOUND");
+    }
+
+    const jobOrderPayload = await directusRequest<{ data?: { status?: unknown; job_order_no?: unknown } }>(
+        `/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status`,
+    );
+    const jobOrder = jobOrderPayload?.data;
+    const status = normalizeJobOrderStatus(jobOrder?.status);
+    if (!status) {
+        throw new DirectusRouteOperatorError(409, "The Job Order has an unknown status and cannot be changed.", "JOB_ORDER_STATUS_UNKNOWN");
+    }
+    if (action === "stop-timer") return;
+    if (isCancelledJobOrderStatus(status)) {
+        throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} is cancelled and cannot be changed.`, "JOB_ORDER_CANCELLED");
+    }
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD)) {
+        throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} is on hold; resume production before changing operator activity.`, "PRODUCTION_ON_HOLD");
+    }
+    if (isJobOrderStatus(status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
+        throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} has completed production and cannot be changed.`, "PRODUCTION_COMPLETED");
+    }
+    if (!isJobOrderStatus(status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+        throw new DirectusRouteOperatorError(409, `Job Order ${jobOrder?.job_order_no || jobOrderId} must be In Production before operator activity can be changed.`, "JOB_ORDER_NOT_IN_PRODUCTION");
+    }
+}
+
 // Fetch all users to resolve their metadata (names, rates, positions)
 async function fetchUsersMap(): Promise<Map<number, { name: string; position: string; rate: number }>> {
     const userMap = new Map<number, { name: string; position: string; rate: number }>();
@@ -194,7 +237,7 @@ async function enrichRecords(records: RouteOperatorRecord[]): Promise<RouteOpera
 function errorResponse(error: unknown, fallbackMessage: string) {
     if (error instanceof DirectusRouteOperatorError) {
         const status = error.status >= 400 && error.status < 500 ? error.status : 502;
-        return NextResponse.json({ error: error.message }, { status });
+        return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status });
     }
     return NextResponse.json({ error: error instanceof Error ? error.message : fallbackMessage }, { status: 500 });
 }
@@ -249,6 +292,8 @@ export async function POST(request: Request) {
         if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(userId) || userId <= 0) {
             return NextResponse.json({ error: "taskId and userId must be positive integers" }, { status: 400 });
         }
+
+        await assertProductionMutationAllowed(taskId, action);
 
         const joId = String(body.joId || "");
         const usersMap = await fetchUsersMap();

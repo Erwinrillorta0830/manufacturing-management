@@ -530,7 +530,6 @@ export default function OperatorPanel({
                                                                 size="xs"
                                                                 className="h-6.5 text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-900/50 dark:hover:bg-amber-950/40 px-2 text-[10px] font-medium"
                                                                 onClick={() => handleStopTimer(selectedTask.id, gop.user_id)}
-                                                                disabled={readOnly}
                                                             >
                                                                 <Square className="mr-1 h-3 w-3 fill-current" /> Stop
                                                             </Button>

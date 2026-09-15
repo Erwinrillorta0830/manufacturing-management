@@ -483,6 +483,20 @@ export async function POST(request: Request) {
                 error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is ${oldStatus.toLowerCase()} and cannot be restarted.`
             }, { status: 409 });
         }
+        if (isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is on hold and cannot be started until the hold is resolved.`,
+                code: "PRODUCTION_ON_HOLD"
+            }, { status: 409 });
+        }
+        if (isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has completed production and cannot be restarted.`,
+                code: "PRODUCTION_COMPLETED"
+            }, { status: 409 });
+        }
 
         const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PRODUCTION);
         if (!isAlreadyActive && !isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.PICKED)) {
