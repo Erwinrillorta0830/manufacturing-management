@@ -8,6 +8,77 @@ import { StickyTableWrapper } from "./StickyTableWrapper";
 import { SearchableDropdown } from "./SearchableDropdown";
 import { isPettyCashBankAccount } from "@/app/api/manufacturing/financial-management/cash-issuance/disbursements/_payment-method";
 import { cn } from "@/lib/utils";
+import { formatAmountNumber } from "../utils/disbursement-utils";
+
+function FormattedPaymentAmountCell({
+    value,
+    onChange,
+    disabled,
+    hasError,
+}: {
+    value: number | string;
+    onChange: (val: number) => void;
+    disabled?: boolean;
+    hasError?: boolean;
+}) {
+    const [isFocused, setIsFocused] = React.useState(false);
+    const [localValue, setLocalValue] = React.useState("");
+
+    React.useEffect(() => {
+        if (!isFocused) {
+            const num = Number(String(value).replace(/,/g, ""));
+            setLocalValue(Number.isFinite(num) && num !== 0 ? formatAmountNumber(num) : (num === 0 ? "0.00" : ""));
+        }
+    }, [value, isFocused]);
+
+    const handleFocus = () => {
+        setIsFocused(true);
+        const num = Number(String(value).replace(/,/g, ""));
+        setLocalValue(Number.isFinite(num) && num !== 0 ? String(num) : "");
+    };
+
+    const handleBlur = () => {
+        setIsFocused(false);
+        const clean = localValue.replace(/,/g, "").trim();
+        const num = clean === "" ? 0 : Number(clean);
+        if (Number.isFinite(num)) {
+            onChange(num);
+            setLocalValue(formatAmountNumber(num));
+        } else {
+            onChange(0);
+            setLocalValue("0.00");
+        }
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        if (/^[-]?([0-9]*,?)*\.?[0-9]*$/.test(val)) {
+            setLocalValue(val);
+            const clean = val.replace(/,/g, "").trim();
+            if (clean !== "" && clean !== "-" && !isNaN(Number(clean))) {
+                onChange(Number(clean));
+            } else if (clean === "" || clean === "-") {
+                onChange(0);
+            }
+        }
+    };
+
+    return (
+        <Input
+            type="text"
+            disabled={disabled}
+            className={cn(
+                "h-7 text-xs font-bold text-right bg-transparent border-transparent hover:border-input focus:border-primary focus:bg-background shadow-none px-2 text-foreground tabular-nums",
+                hasError && "border-rose-500 bg-rose-50/30"
+            )}
+            placeholder="0.00"
+            value={isFocused ? localValue : (Number(value) !== 0 ? formatAmountNumber(value) : (value === "" ? "" : "0.00"))}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+            onChange={handleChange}
+        />
+    );
+}
 
 interface CashIssuancePaymentFormProps {
     payments: PaymentLine[];
@@ -127,13 +198,11 @@ export function CashIssuancePaymentForm({
                                                 />
                                             </TableCell>
                                             <TableCell className="p-1 align-middle">
-                                                <Input
-                                                    type="number"
+                                                <FormattedPaymentAmountCell
                                                     disabled={isPaymentLineLocked}
-                                                    className={cn("h-7 text-xs font-bold text-right bg-transparent border-transparent hover:border-input focus:border-primary focus:bg-background shadow-none px-2 text-foreground", paymentValidationErrors.has(`${index}:amount`) && "border-rose-500 bg-rose-50/30")}
-                                                    placeholder="0.00"
-                                                    value={line.amount || ""}
-                                                    onChange={(event) => handlePaymentChange(index, "amount", event.target.value === "" ? 0 : Number(event.target.value))}
+                                                    hasError={paymentValidationErrors.has(`${index}:amount`)}
+                                                    value={line.amount || 0}
+                                                    onChange={(val) => handlePaymentChange(index, "amount", val)}
                                                 />
                                             </TableCell>
                                             <TableCell className="p-1 text-center align-middle">

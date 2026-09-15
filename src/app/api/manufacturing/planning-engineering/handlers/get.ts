@@ -9,11 +9,11 @@ import {
     headers
 } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct, selectPreferredActiveVersion } from "../../finished-goods/versions/versions-helper";
-import { movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
+import { movementMmLotReference, movementStockKey, sumMovementQuantitiesByStock, uniqueRowsByMovementStockKey } from "../../qa-receiving/_movement-stock";
 import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield-materials";
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
-import { loadMmLots, MmLotError } from "../../services/mm-lots.service";
+import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
@@ -37,9 +37,9 @@ async function withTimeout<T>(operation: Promise<T>, label: string, timeoutMs = 
 
 function mapQAQueueStatus(value: unknown): string {
     const status = normalizeJobOrderStatus(value);
-    if (status === JOB_ORDER_STATUS.RELEASED || status === JOB_ORDER_STATUS.PROCEED) return JOB_ORDER_STATUS.PROCEED;
-    if (status === JOB_ORDER_STATUS.IN_PROGRESS || status === JOB_ORDER_STATUS.ONGOING) return JOB_ORDER_STATUS.ONGOING;
-    if (status === JOB_ORDER_STATUS.COMPLETED || status === JOB_ORDER_STATUS.FINISHED || status === JOB_ORDER_STATUS.CLOSED) return JOB_ORDER_STATUS.FINISHED;
+    if (status === JOB_ORDER_STATUS.FOR_PICKING) return JOB_ORDER_STATUS.FOR_PICKING;
+    if (status === JOB_ORDER_STATUS.IN_PRODUCTION) return JOB_ORDER_STATUS.IN_PRODUCTION;
+    if (status === JOB_ORDER_STATUS.PRODUCTION_COMPLETED || status === JOB_ORDER_STATUS.FOR_QA_RECONCILIATION || status === JOB_ORDER_STATUS.CLOSED) return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
     if (status === JOB_ORDER_STATUS.ON_HOLD || status === JOB_ORDER_STATUS.QA_HOLD) return JOB_ORDER_STATUS.ON_HOLD;
     if (status) return status;
     return String(value || "Unknown");
@@ -326,11 +326,39 @@ export async function handleGET(request: Request) {
             const branchId = Number(joData.branch_id);
 
             if (pIds.length > 0) {
-                const pRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${pIds.join(",")}&fields=product_id,product_name,unit_of_measurement.unit_shortcut,parent_id&limit=-1`, { headers });
+                const pRes = await fetch(`${DIRECTUS_URL}/items/products?filter[product_id][_in]=${pIds.join(",")}&fields=product_id,product_name,unit_of_measurement.unit_id,unit_of_measurement.unit_shortcut,parent_id&limit=-1`, { headers });
                 if (pRes.ok) {
                     const prods = (await pRes.json()).data || [];
                     prods.forEach((p: any) => pMap.set(Number(p.product_id), p));
                 }
+            }
+
+            // Storage lots are UOM-specific. Resolve the eligible MM lots once
+            // per component product so every planning candidate and movement
+            // balance uses the same compatibility rule.
+            const compatibleStorageLotIdsByProduct = new Map<number, Set<number>>();
+            await Promise.all(pIds.map(async (productId) => {
+                const productUnitId = unitId(pMap.get(productId)?.unit_of_measurement);
+                try {
+                    const compatibleLots = productUnitId
+                        ? await loadMmLots({ branchId, unitId: productUnitId })
+                        : [];
+                    compatibleStorageLotIdsByProduct.set(
+                        productId,
+                        new Set(compatibleLots.map((lot) => mmLotId(lot.lot_id)).filter((lotId): lotId is number => lotId !== null))
+                    );
+                } catch (error) {
+                    console.error(`Error loading UOM-compatible storage lots for product ${productId}:`, error);
+                    // Fail closed for an unavailable UOM lookup. A candidate
+                    // cannot be safely reserved without proving compatibility.
+                    compatibleStorageLotIdsByProduct.set(productId, new Set());
+                }
+            }));
+
+            function isCompatibleStorageLot(productId: number, value: unknown): boolean {
+                const storageLotId = mmLotId(value);
+                if (storageLotId === null) return true;
+                return compatibleStorageLotIdsByProduct.get(productId)?.has(storageLotId) === true;
             }
 
             // Fetch children to handle child version fallback
@@ -490,19 +518,28 @@ export async function handleGET(request: Request) {
             const unclassifiedMap = new Map<number, number>();
             let movementStockMap = new Map<string, number>();
             const movementBatchStockMap = new Map<string, number>();
+            const movementStorageLotStockMap = new Map<string, number>();
             let movements: any[] = [];
 
             if (pIds.length > 0) {
                 movements = (await fetchMmInventoryMovements({
                     branch: branchId,
                     product: pIds.length === 1 ? pIds[0] : null
-                })).filter((movement) => pIds.includes(Number(movement.product_id || movement.productId || 0)));
+                })).filter((movement) => {
+                    const productId = Number(movement.product_id || movement.productId || 0);
+                    return pIds.includes(productId) && isCompatibleStorageLot(productId, movementMmLotReference(movement));
+                });
                 movementStockMap = sumMovementQuantitiesByStock(movements);
                 movements.forEach((movement: any) => {
                     const productId = Number(movement.product_id?.product_id || movement.product_id);
                     const batchNumber = movement.batch_no || "LOT-N/A";
                     const key = `${productId}:${batchNumber}`;
                     movementBatchStockMap.set(key, (movementBatchStockMap.get(key) || 0) + Number(movement.quantity || 0));
+                    const storageLotId = movementMmLotReference(movement);
+                    if (storageLotId > 0) {
+                        const storageLotKey = `${productId}:${storageLotId}:${batchNumber}`;
+                        movementStorageLotStockMap.set(storageLotKey, (movementStorageLotStockMap.get(storageLotKey) || 0) + Number(movement.quantity || 0));
+                    }
                 });
 
                 // Aggregate stock maps based on QA Status from batchStatusMap (bypassing inventory_lots)
@@ -597,6 +634,7 @@ export async function handleGET(request: Request) {
                         validReceiptsAll = (await receiptsRes.json()).data || [];
                         validReceiptsAll.forEach((r: any) => {
                             const prodId = Number(r.product_id);
+                            if (!isCompatibleStorageLot(prodId, r.mm_lot_id)) return;
                             if (!receiptsByProduct.has(prodId)) {
                                 receiptsByProduct.set(prodId, []);
                             }
@@ -726,7 +764,10 @@ export async function handleGET(request: Request) {
                     const validReceipts = receiptsByProduct.get(compProductId) || [];
                     candidateLots = validReceipts.map((rec: any) => {
                         const lotNum = rec.lot_no || rec.batch_no || "LOT-N/A";
-                        const physicalQty = movementBatchStockMap.get(`${compProductId}:${lotNum}`) || 0;
+                        const receiptMmLotId = mmLotId(rec.mm_lot_id);
+                        const physicalQty = receiptMmLotId
+                            ? movementStorageLotStockMap.get(`${compProductId}:${receiptMmLotId}:${lotNum}`) || 0
+                            : movementBatchStockMap.get(`${compProductId}:${lotNum}`) || 0;
                         const recId = Number(rec.purchase_order_product_id);
                         const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
                         const netAvailable = Math.max(0, physicalQty - alreadyReserved);
@@ -1454,7 +1495,8 @@ export async function handleGET(request: Request) {
                 createdBy: item.created_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
-                yield_logs: item.yield_logs || []
+                yield_logs: item.yield_logs || [],
+                status_history: item.status_history || []
             }));
             return NextResponse.json(camelCaseList);
         }

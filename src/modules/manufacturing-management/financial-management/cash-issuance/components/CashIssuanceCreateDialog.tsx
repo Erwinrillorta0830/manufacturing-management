@@ -426,7 +426,8 @@ export function CashIssuanceCreateDialog({
     }, []);
 
     const handleAmountChange = useCallback((index: number, rawValue: string) => {
-        const parsedAmount = rawValue.trim() === "" ? 0 : Number(rawValue);
+        const sanitized = rawValue.replace(/,/g, "").trim();
+        const parsedAmount = sanitized === "" ? 0 : Number(sanitized);
 
         setPayables((current) => current.map((line, lineIndex: number) => {
             if (lineIndex !== index) return line;
@@ -550,7 +551,7 @@ export function CashIssuanceCreateDialog({
                 const ewtAmount = netAmount * EWT_RATE;
                 if (po.breakdown && po.breakdown.length > 0) {
                     po.breakdown.forEach(b => {
-                        let coaId = 8;
+                        let coaId = 44;
                         let remarks = `Principal Net of VAT`;
                         
                         if (b.categoryType === 'FINISHED_GOODS') {
@@ -580,7 +581,7 @@ export function CashIssuanceCreateDialog({
                         referenceNo: baseRef,
                         date: date,
                         amount: Number(netAmount.toFixed(2)),
-                        coaId: 8,
+                        coaId: 44,
                         remarks: `Principal Net of VAT`,
                         divisionId: undefined
                     });
@@ -605,7 +606,7 @@ export function CashIssuanceCreateDialog({
             } else {
                 if (po.breakdown && po.breakdown.length > 0) {
                     po.breakdown.forEach(b => {
-                        let coaId = 8;
+                        let coaId = 44;
                         let remarks = `Principal (Non-VAT)`;
                         if (b.categoryType === 'FINISHED_GOODS') {
                             coaId = 47;
@@ -632,7 +633,7 @@ export function CashIssuanceCreateDialog({
                         referenceNo: baseRef,
                         date: date,
                         amount: Number(po.amountDue.toFixed(2)),
-                        coaId: 8,
+                        coaId: 44,
                         remarks: `Principal (Non-VAT)`,
                         divisionId: undefined
                     });
@@ -898,6 +899,7 @@ export function CashIssuanceCreateDialog({
                 }}
             >
                 <DialogContent
+                    showCloseButton={false}
                     onInteractOutside={(e) => {
                         if (isPayeeRegistrationOpen || loading || localSubmitting || submitLockRef.current) e.preventDefault();
                     }}

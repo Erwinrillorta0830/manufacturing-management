@@ -145,10 +145,7 @@ export default function ProductionWorkflowModule() {
     const activeRuns = React.useMemo(() => {
         return jobOrders.filter((jo) => isJobOrderStatus(
             jo.status,
-            JOB_ORDER_STATUS.PROCEED,
-            JOB_ORDER_STATUS.RELEASED,
-            JOB_ORDER_STATUS.ONGOING,
-            JOB_ORDER_STATUS.IN_PROGRESS
+            JOB_ORDER_STATUS.IN_PRODUCTION
         )).length;
     }, [jobOrders]);
 
@@ -169,9 +166,7 @@ export default function ProductionWorkflowModule() {
     // back to the same route.
     const onBenchNextAction = isJobOrderStatus(
         selectedJobOrderStatus,
-        JOB_ORDER_STATUS.RESERVED,
-        JOB_ORDER_STATUS.ONGOING,
-        JOB_ORDER_STATUS.IN_PROGRESS
+        JOB_ORDER_STATUS.IN_PRODUCTION
     )
         ? {
             label: "Log shift run",
@@ -420,9 +415,9 @@ export default function ProductionWorkflowModule() {
                                         disabled={releasingDraft}
                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
                                     >
-                                        <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> {releasingDraft ? "Releasing..." : "Release Job Order"}
+                                        <ClipboardCheck className="mr-1.5 h-4.5 w-4.5" /> {releasingDraft ? "Initializing..." : "Initialize Job Order"}
                                     </Button>
-                                ) : !isSelectedJobOrderCancelled ? (
+                                ) : isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION) ? (
                                     <Button
                                         onClick={() => setIsShiftLogOpen(true)}
                                         className="bg-primary hover:bg-primary/95 text-white font-bold h-10 text-xs px-5 shadow-md shadow-primary/10 hover:shadow-primary/20 transition-all duration-200 flex items-center"

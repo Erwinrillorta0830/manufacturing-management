@@ -1,26 +1,10 @@
 /* eslint-disable */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
-import { isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
-import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, directAllocate } from "../services/planning-api";
-
-function isSchedulableLine(line: SalesOrderDetail): boolean {
-    return line.parent_order_status === "For Production"
-        && remainingQuantity(line) > 0
-        && (!line.linkedJobOrders || line.linkedJobOrders.every((jobOrder) => isTerminalJobOrderStatus(jobOrder.status)));
-}
-
-function remainingQuantity(line: SalesOrderDetail): number {
-    const ordered = Number(line.ordered_quantity || 0);
-    const allocated = Number(line.allocated_quantity || 0);
-    const served = Number(line.served_quantity || 0);
-    const planned = Number(line.planned_quantity || 0);
-    const resolved = Number(line.remaining_quantity);
-    if (Number.isFinite(resolved)) return Math.max(0, resolved);
-    if (!Number.isFinite(ordered) || !Number.isFinite(allocated) || !Number.isFinite(served) || !Number.isFinite(planned)) return 0;
-    return Math.max(0, ordered - Math.max(allocated, served) - Math.max(0, planned));
-}
+import { fetchBranches, fetchSalesOrders, fetchNetRequirementsRaw, releaseJobOrder, releaseMultipleJobOrders, directAllocate } from "../services/planning-api";
+import { buildSalesOrderDemandGroups, buildSalesOrderReleaseGroups, isSchedulableSalesOrderLine, remainingQuantity } from "../utils/demand-groups";
 
 function salesOrderDateValue(value: string | undefined): number {
     const timestamp = Date.parse(value || "");
@@ -54,6 +38,10 @@ export function usePlanningEngineering() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
     const [detailsMap, setDetailsMap] = useState<Record<number, SalesOrderDetail[]>>({});
+    const [productionSalesOrders, setProductionSalesOrders] = useState<SalesOrder[]>([]);
+    const [productionDetailsMap, setProductionDetailsMap] = useState<Record<number, SalesOrderDetail[]>>({});
+    const [loadingProductionOrders, setLoadingProductionOrders] = useState(true);
+    const [productionOrdersError, setProductionOrdersError] = useState<string | null>(null);
     const [netRequirements, setNetRequirements] = useState<NetRequirementItem[]>([]);
     const [subAssemblyMapping, setSubAssemblyMapping] = useState<Record<number, any[]>>({});
 
@@ -69,8 +57,10 @@ export function usePlanningEngineering() {
     // Release Modal state
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [targetQuantity, setTargetQuantity] = useState<number>(0);
+    const [plannedDate, setPlannedDate] = useState<string>(new Date().toISOString().split("T")[0]);
     const [dueDate, setDueDate] = useState<string>("");
     const [shiftOption, setShiftOption] = useState<string>("8");
+    const [priority, setPriority] = useState<number>(0);
     const [remarks, setRemarks] = useState<string>("");
     const [joNumber, setJoNumber] = useState<string>("");
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
@@ -81,6 +71,7 @@ export function usePlanningEngineering() {
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
     const [deepLinkJo, setDeepLinkJo] = useState<any | null>(null);
     const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
+    const productionRequestIdRef = useRef(0);
 
     // Filter unreleased jobs based on selected branch
     const unreleasedJobs = useMemo(() => {
@@ -101,11 +92,8 @@ export function usePlanningEngineering() {
                 const queuedJobs = data.filter((j: any) => isJobOrderStatus(
                     j.status,
                     JOB_ORDER_STATUS.DRAFT,
-                    JOB_ORDER_STATUS.PLANNED,
-                    JOB_ORDER_STATUS.PLANNING,
-                    JOB_ORDER_STATUS.RELEASED,
-                    JOB_ORDER_STATUS.PROCEED,
-                    JOB_ORDER_STATUS.RESERVED
+                    JOB_ORDER_STATUS.FOR_PICKING,
+                    JOB_ORDER_STATUS.PICKED
                 ));
                 setRawUnreleasedJobs(queuedJobs);
             }
@@ -116,14 +104,14 @@ export function usePlanningEngineering() {
         }
     };
 
-    const handleReleaseDraftFromPlanning = async (joId: string) => {
-        setReleasingDraftId(joId);
+    const handleReleaseDraftFromPlanning = async (joId: string | number) => {
+        setReleasingDraftId(String(joId));
         try {
             const res = await fetch("/api/manufacturing/planning-engineering", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    action: "release-draft",
+                    action: "initialize",
                     joId
                 })
             });
@@ -133,7 +121,7 @@ export function usePlanningEngineering() {
                 // Only material shortfalls offer the force-release escape hatch;
                 // other failures (e.g. wrong status, missing branch) must not
                 // prompt for a forced release that cannot succeed.
-                const isShortfall = /Still insufficient raw materials/i.test(errorMsg);
+                const isShortfall = data.code === "MATERIAL_SHORTAGE" || /Still insufficient raw materials|material reservations are short/i.test(errorMsg);
                 if (!isShortfall) {
                     toast.error(errorMsg);
                     return;
@@ -143,9 +131,10 @@ export function usePlanningEngineering() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            action: "release-draft",
+                            action: "initialize",
                             joId,
-                            forceRelease: true
+                            force: true,
+                            overrideReason: "Authorized planning shortage override"
                         })
                     });
                     const forceData = await forceRes.json();
@@ -158,7 +147,7 @@ export function usePlanningEngineering() {
                 }
                 return;
             }
-            toast.success("Job Order released. Next step: stage its materials on the shop floor.");
+            toast.success("Job Order initialized. Next step: stage its materials on the shop floor.");
             await loadInitialData(true);
         } catch (err: any) {
             console.error("Failed to release Draft JO:", err);
@@ -168,13 +157,37 @@ export function usePlanningEngineering() {
         }
     };
 
-    // Initial Fetch: Branches & unfulfilled Sales Orders
+    const loadInProductionSalesOrders = async () => {
+        const requestId = ++productionRequestIdRef.current;
+        setLoadingProductionOrders(true);
+        try {
+            const result = await fetchSalesOrders("in-production");
+            if (requestId !== productionRequestIdRef.current) return;
+            setProductionSalesOrders(result.data || []);
+            setProductionDetailsMap(result.detailsMap || {});
+            setProductionOrdersError(null);
+        } catch (err) {
+            if (requestId !== productionRequestIdRef.current) return;
+            const message = err instanceof Error ? err.message : "Failed to load Sales Orders in production.";
+            console.error("Error loading Sales Orders in production:", err);
+            setProductionSalesOrders([]);
+            setProductionDetailsMap({});
+            setProductionOrdersError(message);
+        } finally {
+            if (requestId === productionRequestIdRef.current) {
+                setLoadingProductionOrders(false);
+            }
+        }
+    };
+
+    // Initial Fetch: Branches & For Production Sales Orders
     const loadInitialData = async (silent = false) => {
         if (!silent) {
             setLoadingBranches(true);
             setLoadingOrders(true);
             setLoadingJobs(true);
         }
+        void loadInProductionSalesOrders();
         try {
             const [activeBranches, soResult, queuedJobs] = await Promise.all([
                 fetchBranches(),
@@ -185,11 +198,8 @@ export function usePlanningEngineering() {
                         return data.filter((j: any) => isJobOrderStatus(
                             j.status,
                             JOB_ORDER_STATUS.DRAFT,
-                            JOB_ORDER_STATUS.PLANNED,
-                            JOB_ORDER_STATUS.PLANNING,
-                            JOB_ORDER_STATUS.RELEASED,
-                            JOB_ORDER_STATUS.PROCEED,
-                            JOB_ORDER_STATUS.RESERVED
+                            JOB_ORDER_STATUS.FOR_PICKING,
+                            JOB_ORDER_STATUS.PICKED
                         ));
                     }
                     return [];
@@ -309,6 +319,7 @@ export function usePlanningEngineering() {
         if (selectedBranchId === null) return [];
         const lines: SalesOrderDetail[] = [];
         [...salesOrders].sort(compareNewestSalesOrders).forEach((so) => {
+            if (so.order_status !== "For Production") return;
             if (so.branch_id === undefined || so.branch_id === null || Number(so.branch_id) !== Number(selectedBranchId)) {
                 return;
             }
@@ -324,11 +335,58 @@ export function usePlanningEngineering() {
         return lines;
     }, [salesOrders, detailsMap, selectedBranchId]);
 
+    // Keep every line in the grouped demand view so scheduled/fulfilled lines
+    // remain visible as read-only context. Only schedulable lines flow into
+    // planning, selection, and Job Order creation.
+    const salesOrderGroups = useMemo(() => {
+        const orderById = new Map(salesOrders.map((order) => [Number(order.order_id), order]));
+        const grouped = new Map<number, SalesOrderDetail[]>();
+        for (const line of salesOrderLines) {
+            const orderLines = grouped.get(line.order_id) || [];
+            orderLines.push(line);
+            grouped.set(line.order_id, orderLines);
+        }
+
+        return [...grouped.entries()].map(([orderId, lines]) => ({
+            order: orderById.get(orderId) || {
+                order_id: orderId,
+                order_no: lines[0]?.order_no || `SO #${orderId}`,
+                customer_code: lines[0]?.customer_name || "",
+                order_date: "",
+                order_status: lines[0]?.parent_order_status || "",
+                total_amount: 0,
+                net_amount: 0,
+                remarks: "",
+                created_date: "",
+                branch_id: selectedBranchId
+            },
+            lines,
+            selectableLines: lines.filter(isSchedulableSalesOrderLine)
+        }));
+    }, [salesOrders, salesOrderLines, selectedBranchId]);
+
+    const productionSalesOrderGroups = useMemo(
+        () => buildSalesOrderDemandGroups(
+            productionSalesOrders.filter((order) => order.order_status === "In Production"),
+            productionDetailsMap,
+            selectedBranchId
+        ),
+        [productionSalesOrders, productionDetailsMap, selectedBranchId]
+    );
+
+    const planningLines = useMemo(
+        () => salesOrderLines.filter(isSchedulableSalesOrderLine),
+        [salesOrderLines]
+    );
+
     // Fetch BOM components for all unique product IDs in sales orders to find sub-assemblies
     useEffect(() => {
-        if (salesOrderLines.length === 0) return;
+        if (planningLines.length === 0) {
+            setSubAssemblyMapping({});
+            return;
+        }
         const loadSubAssemblyBoms = async () => {
-            const uniqueProductIds = Array.from(new Set(salesOrderLines.map((l) => l.product_id?.product_id).filter(Boolean)));
+            const uniqueProductIds = Array.from(new Set(planningLines.map((l) => l.product_id?.product_id).filter(Boolean)));
             const mappings: Record<number, any[]> = {};
             await Promise.all(uniqueProductIds.map(async (pId) => {
                 try {
@@ -348,12 +406,12 @@ export function usePlanningEngineering() {
             setSubAssemblyMapping(mappings);
         };
         loadSubAssemblyBoms();
-    }, [salesOrderLines]);
+    }, [planningLines]);
 
     // Gather unique product IDs across loaded demand lines (mapping directly to SKU product IDs)
     const demandProductIds = useMemo(() => {
         const ids = new Set<number>();
-        salesOrderLines.forEach((line) => {
+        planningLines.forEach((line) => {
             const pInfo = line.product_id;
             if (pInfo && pInfo.product_id) {
                 ids.add(pInfo.product_id);
@@ -369,7 +427,7 @@ export function usePlanningEngineering() {
         });
 
         return Array.from(ids);
-    }, [salesOrderLines, subAssemblyMapping]);
+    }, [planningLines, subAssemblyMapping]);
 
     // Fetch On-Hand & Safety Stock for the Net Requirements Calculation Grid
     useEffect(() => {
@@ -385,7 +443,7 @@ export function usePlanningEngineering() {
                 
                 // Group gross demands from all outstanding lines, grouping by SKU product_id directly
                 const grossDemandMap: Record<number, number> = {};
-                salesOrderLines.forEach((line) => {
+                planningLines.forEach((line) => {
                     const pInfo = line.product_id;
                     if (pInfo && pInfo.product_id) {
                         const pId = pInfo.product_id;
@@ -400,7 +458,7 @@ export function usePlanningEngineering() {
                 const parentShortfalls: Record<number, number> = {};
                 data.forEach((item: any) => {
                     const pId = Number(item.product_id);
-                    const isParent = salesOrderLines.some((l) => l.product_id?.product_id === pId);
+                    const isParent = planningLines.some((l) => l.product_id?.product_id === pId);
                     if (isParent) {
                         const grossDemand = grossDemandMap[pId] || 0;
                         const onHand = Number(item.on_hand || 0);
@@ -424,7 +482,7 @@ export function usePlanningEngineering() {
                 // 2. Second pass: calculate sub-assembly requirements based on parent shortfalls
                 data.forEach((item: any) => {
                     const pId = Number(item.product_id);
-                    const isParent = salesOrderLines.some((l) => l.product_id?.product_id === pId);
+                    const isParent = planningLines.some((l) => l.product_id?.product_id === pId);
                     if (!isParent) {
                         let subAssemblyGrossDemand = 0;
                         const associatedParentNames: string[] = [];
@@ -437,7 +495,7 @@ export function usePlanningEngineering() {
                                 const qtyPerParent = Number(compNeeded.quantity_required || 0);
                                 subAssemblyGrossDemand += parentShortfall * qtyPerParent;
                                 
-                                const parentLine = salesOrderLines.find((l) => l.product_id?.product_id === parentId);
+                                const parentLine = planningLines.find((l) => l.product_id?.product_id === parentId);
                                 if (parentLine?.product_id?.product_name) {
                                     associatedParentNames.push(parentLine.product_id.product_name);
                                 }
@@ -470,12 +528,17 @@ export function usePlanningEngineering() {
         };
 
         runFetchNetRequirements();
-    }, [selectedBranchId, demandProductIds, salesOrderLines, subAssemblyMapping]);
+    }, [selectedBranchId, demandProductIds, planningLines, subAssemblyMapping]);
 
     // Helper: Currently selected details
     const selectedLines = useMemo(() => {
-        return salesOrderLines.filter((l) => selectedDetailIds.includes(l.detail_id) && isSchedulableLine(l));
+        return salesOrderLines.filter((l) => selectedDetailIds.includes(l.detail_id) && isSchedulableSalesOrderLine(l));
     }, [salesOrderLines, selectedDetailIds]);
+
+    const releaseGroups = useMemo(
+        () => buildSalesOrderReleaseGroups(selectedLines),
+        [selectedLines]
+    );
 
     // Validation checks for merging selected lines
     const mergeValidation = useMemo(() => {
@@ -483,38 +546,26 @@ export function usePlanningEngineering() {
             return { isValid: false, reason: "Select sales order lines to begin." };
         }
 
-        // 1. Must share the exact same product SKU
-        const productIds = new Set(selectedLines.map((l) => l.product_id?.product_id));
-        if (productIds.size > 1) {
-            return { isValid: false, reason: "Cannot consolidate: Selected lines must belong to the exact same product SKU." };
-        }
-
-        // 2. Must have valid version IDs
-        const versions = selectedLines.map((l) => l.bom_version_id);
-        const hasMissingVersion = versions.some((v) => v === null || v === undefined);
-        if (hasMissingVersion) {
+        const hasInvalidIdentity = selectedLines.some((line) =>
+            !Number.isInteger(Number(line.product_id?.product_id))
+            || Number(line.product_id?.product_id) <= 0
+            || !Number.isInteger(Number(line.bom_version_id))
+            || Number(line.bom_version_id) <= 0
+        );
+        if (hasInvalidIdentity || releaseGroups.length !== new Set(selectedLines.map((line) => `${line.product_id?.product_id}:${line.bom_version_id}`)).size) {
             return {
                 isValid: false,
-                reason: "Cannot consolidate: Selected product is missing an active recipe version override or standard BOM."
+                reason: "Cannot release: every selected line must have a valid product and active recipe version."
             };
         }
 
-        // 3. Must have matching versions
-        const uniqueVersions = new Set(versions);
-        if (uniqueVersions.size > 1) {
-            return {
-                isValid: false,
-                reason: "Cannot consolidate: Selected lines have different recipe version overrides. Block merging if versions differ."
-            };
-        }
-
-        return { isValid: true, reason: "" };
-    }, [selectedLines]);
+        return { isValid: releaseGroups.length > 0, reason: "" };
+    }, [selectedLines, releaseGroups]);
 
     // Handle toggling select-all
     const handleSelectAll = (checked: boolean) => {
         if (checked) {
-            setSelectedDetailIds(salesOrderLines.filter(isSchedulableLine).map((l) => l.detail_id));
+            setSelectedDetailIds(salesOrderLines.filter(isSchedulableSalesOrderLine).map((l) => l.detail_id));
         } else {
             setSelectedDetailIds([]);
         }
@@ -524,7 +575,7 @@ export function usePlanningEngineering() {
     const handleSelectLine = (detailId: number, checked: boolean) => {
         if (checked) {
             const line = salesOrderLines.find((candidate) => candidate.detail_id === detailId);
-            if (!line || !isSchedulableLine(line)) return;
+            if (!line || !isSchedulableSalesOrderLine(line)) return;
             setSelectedDetailIds((prev) => [...prev, detailId]);
         } else {
             setSelectedDetailIds((prev) => prev.filter((id) => id !== detailId));
@@ -535,9 +586,6 @@ export function usePlanningEngineering() {
     const handleInitiateRelease = () => {
         if (!mergeValidation.isValid) return;
 
-        const firstLine = selectedLines[0];
-        const targetProductId = firstLine.product_id?.product_id;
-        
         // Sum total demand
         // Sales-Order-linked JO quantity is authoritative: it is the sum of
         // each selected line's remaining unfulfilled quantity. Net
@@ -553,68 +601,93 @@ export function usePlanningEngineering() {
 
         setTargetQuantity(totalRemaining);
         setJoNumber(code);
+        setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
         setShiftOption("8");
-        setRemarks(`Consolidated production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
+        setPriority(0);
+        setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
     };
 
     // Release JO Submit
-    const handleConfirmRelease = async (selectedSubAssemblyVersions?: Record<number, number>) => {
+    const handleConfirmRelease = async (
+        selectedSubAssemblyVersions?: Record<number, number>,
+        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
+        initialize = false
+    ) => {
         if (!selectedBranchId || selectedLines.length === 0) return;
 
         const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
-        if (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity) {
+        if (releaseGroups.length === 1 && (!Number.isFinite(targetQuantity) || targetQuantity <= 0 || targetQuantity > maxAvailableQuantity)) {
             toast.error(`Enter a Job Order quantity from 1 to ${maxAvailableQuantity.toLocaleString()}.`);
             return;
         }
 
         setReleasingJO(true);
         try {
-            const firstLine = selectedLines[0];
-            const targetProductId = firstLine.product_id?.product_id;
-            const targetProductName = firstLine.product_id?.product_name;
-
-            const uniqueSalesOrderIds = Array.from(new Set(selectedLines.map((l) => l.order_id)));
-
-            const payload = {
-                jo: {
-                    jo_id: joNumber,
-                    product_id: targetProductId,
-                    product_name: targetProductName,
-                    quantity: targetQuantity,
-                    due_date: dueDate,
-                    status: "Released", // creates the linked JO and transitions the parent SO to In Production
-                    is_batched: selectedLines.length > 1,
-                    branch_id: selectedBranchId,
-                    shiftOption: shiftOption,
-                    remarks: remarks,
-                    bom: {
-                        version_id: firstLine.bom_version_id
-                    },
-                    subAssemblyVersionMap: selectedSubAssemblyVersions || {},
-                    assignments: assignments,
-                    products: [
-                        {
+            if (releaseGroups.length > 1) {
+                const result = await releaseMultipleJobOrders({
+                    action: "release-multiple",
+                    initialize,
+                    baseJoNumber: joNumber,
+                    shared: { branchId: selectedBranchId, plannedDate, dueDate, priority, shiftOption, remarks },
+                    jobs: releaseGroups.map((group) => {
+                        const configuration = groupConfigurations?.[group.key];
+                        return {
+                            productId: group.productId,
+                            productName: group.productName,
+                            bomVersionId: group.bomVersionId,
+                            quantity: group.totalRemainingQuantity,
+                            salesOrderIds: group.salesOrderIds,
+                            salesOrderDetailIds: group.salesOrderDetailIds,
+                            subAssemblyVersionMap: configuration?.subAssemblyVersions || {},
+                            assignments: configuration?.assignments || {}
+                        };
+                    })
+                });
+                toast.success(initialize
+                    ? `${result.jobs?.length || releaseGroups.length} Job Orders initialized and ready for material picking.`
+                    : `${result.jobs?.length || releaseGroups.length} Job Orders saved as Draft.`);
+            } else {
+                const firstLine = selectedLines[0];
+                const targetProductId = firstLine.product_id?.product_id;
+                const targetProductName = firstLine.product_id?.product_name;
+                const uniqueSalesOrderIds = Array.from(new Set(selectedLines.map((l) => l.order_id)));
+                const result = await releaseJobOrder({
+                    jo: {
+                        jo_id: joNumber,
+                        product_id: targetProductId,
+                        product_name: targetProductName,
+                        quantity: targetQuantity,
+                        due_date: dueDate,
+                        start_date: plannedDate,
+                        uom_id: Number((firstLine.product_id as any)?.uom_id || 0) || null,
+                        priority,
+                        status: JOB_ORDER_STATUS.DRAFT,
+                        is_batched: selectedLines.length > 1,
+                        branch_id: selectedBranchId,
+                        shiftOption,
+                        remarks,
+                        bom: { version_id: firstLine.bom_version_id },
+                        subAssemblyVersionMap: selectedSubAssemblyVersions || {},
+                        assignments,
+                        products: [{
                             product_id: targetProductId,
                             product_name: targetProductName,
                             quantity: targetQuantity,
-                            bom: {
-                                version_id: firstLine.bom_version_id
-                            }
-                        }
-                    ]
-                },
-                salesOrderIds: uniqueSalesOrderIds,
-                salesOrderDetailIds: selectedLines.map((line) => line.detail_id)
-            };
+                            bom: { version_id: firstLine.bom_version_id }
+                        }]
+                    },
+                    salesOrderIds: uniqueSalesOrderIds,
+                    salesOrderDetailIds: selectedLines.map((line) => line.detail_id),
+                    initialize
+                });
 
-            const result = await releaseJobOrder(payload);
-
-            if (result.status === JOB_ORDER_STATUS.DRAFT) {
-                toast.warning(`Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
-            } else {
-                toast.success(`Job Order ${joNumber} released successfully! FIFO materials locked.`);
+                if (!initialize) {
+                    toast.success(`Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
+                } else {
+                    toast.success(`Job Order ${joNumber} initialized and ready for material picking.`);
+                }
             }
             setIsConfirmOpen(false);
             setSelectedDetailIds([]);
@@ -631,6 +704,10 @@ export function usePlanningEngineering() {
     // Direct Allocate Submit
     const handleConfirmDirectAllocate = async () => {
         if (!selectedBranchId || selectedLines.length === 0) return;
+        if (releaseGroups.length !== 1) {
+            toast.error("Direct allocation is available only when one product and recipe version group is selected.");
+            return;
+        }
  
         setDirectAllocating(true);
         setAllocationProgress(10);
@@ -691,7 +768,7 @@ export function usePlanningEngineering() {
 
     // Load available version stock when selected lines change
     useEffect(() => {
-        if (!selectedBranchId || !mergeValidation.isValid || selectedLines.length === 0) {
+        if (!selectedBranchId || !mergeValidation.isValid || releaseGroups.length !== 1 || selectedLines.length === 0) {
             setVersionStock(null);
             return;
         }
@@ -725,7 +802,7 @@ export function usePlanningEngineering() {
         };
 
         fetchVersionStock();
-    }, [selectedBranchId, selectedLines, mergeValidation.isValid]);
+    }, [selectedBranchId, selectedLines, releaseGroups, mergeValidation.isValid]);
 
     return {
         loadingBranches,
@@ -744,10 +821,14 @@ export function usePlanningEngineering() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        plannedDate,
+        setPlannedDate,
         dueDate,
         setDueDate,
         shiftOption,
         setShiftOption,
+        priority,
+        setPriority,
         remarks,
         setRemarks,
         joNumber,
@@ -758,7 +839,13 @@ export function usePlanningEngineering() {
         deepLinkNotice,
         setDeepLinkNotice,
         salesOrderLines,
+        salesOrderGroups,
+        productionSalesOrderGroups,
+        loadingProductionOrders,
+        productionOrdersError,
+        loadInProductionSalesOrders,
         selectedLines,
+        releaseGroups,
         mergeValidation,
         handleSelectAll,
         handleSelectLine,

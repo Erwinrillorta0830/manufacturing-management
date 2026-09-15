@@ -19,7 +19,7 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select";
-import { Branch, SalesOrderDetail } from "../types";
+import { Branch, SalesOrderDetail, SalesOrderReleaseGroup } from "../types";
 import { OperatorSelect } from "./OperatorSelect";
 import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
@@ -30,12 +30,15 @@ interface ReleaseJODialogProps {
     isConfirmOpen: boolean;
     setIsConfirmOpen: (open: boolean) => void;
     selectedLines: SalesOrderDetail[];
+    releaseGroups: SalesOrderReleaseGroup[];
     branches: Branch[];
     selectedBranchId: number | null;
     joNumber: string;
     setJoNumber: (val: string) => void;
     targetQuantity: number;
     setTargetQuantity: (val: number) => void;
+    plannedDate: string;
+    setPlannedDate: (val: string) => void;
     dueDate: string;
     setDueDate: (val: string) => void;
     shiftOption: string;
@@ -43,7 +46,13 @@ interface ReleaseJODialogProps {
     remarks: string;
     setRemarks: (val: string) => void;
     releasingJO: boolean;
-    handleConfirmRelease: (selectedSubAssemblyVersions?: Record<number, number>) => void;
+    handleConfirmRelease: (
+        selectedSubAssemblyVersions?: Record<number, number>,
+        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
+        initialize?: boolean
+    ) => void;
+    priority: number;
+    setPriority: (val: number) => void;
     assignments: Record<number, number[]>;
     setAssignments: React.Dispatch<React.SetStateAction<Record<number, number[]>>>;
 }
@@ -51,23 +60,28 @@ interface ReleaseJODialogProps {
 export function ReleaseJODialog({
     isConfirmOpen,
     setIsConfirmOpen,
-    selectedLines,
+    selectedLines: selectedLinesProp,
+    releaseGroups,
     branches,
     selectedBranchId,
-    joNumber,
+    joNumber: joNumberProp,
     setJoNumber,
-    targetQuantity,
+    targetQuantity: targetQuantityProp,
     setTargetQuantity,
+    plannedDate,
+    setPlannedDate,
     dueDate,
     setDueDate,
     shiftOption,
     setShiftOption,
+    priority,
+    setPriority,
     remarks,
     setRemarks,
     releasingJO,
     handleConfirmRelease,
-    assignments,
-    setAssignments
+    assignments: assignmentsProp,
+    setAssignments: setAssignmentsProp
 }: ReleaseJODialogProps) {
     const [currentStep, setCurrentStep] = useState(1);
     const [loadingDetails, setLoadingDetails] = useState(false);
@@ -81,7 +95,10 @@ export function ReleaseJODialog({
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
     const [subAssemblyRoutings, setSubAssemblyRoutings] = useState<Record<number, { setup_time_hours: number; run_time_hours_per_unit: number; base_quantity: number }>>({});
     const [subAssemblyVersions, setSubAssemblyVersions] = useState<Record<number, any[]>>({});
-    const [selectedSubAssemblyVersions, setSelectedSubAssemblyVersions] = useState<Record<number, number>>({});
+    const [singleSelectedSubAssemblyVersions, setSingleSelectedSubAssemblyVersions] = useState<Record<number, number>>({});
+    const [activeGroupIndex, setActiveGroupIndex] = useState(0);
+    const [groupAssignments, setGroupAssignments] = useState<Record<string, Record<number, number[]>>>({});
+    const [groupSubAssemblyVersions, setGroupSubAssemblyVersions] = useState<Record<string, Record<number, number>>>({});
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
 
@@ -94,6 +111,39 @@ export function ReleaseJODialog({
         }, {});
     };
 
+    const normalizedReleaseGroups = releaseGroups.length > 0 ? releaseGroups : [{
+        key: "single",
+        productId: Number(selectedLinesProp[0]?.product_id?.product_id || 0),
+        productName: selectedLinesProp[0]?.product_id?.product_name || "",
+        bomVersionId: Number(selectedLinesProp[0]?.bom_version_id || 0),
+        bomVersionName: selectedLinesProp[0]?.bom_version_name || "Default",
+        lines: selectedLinesProp,
+        totalRemainingQuantity: targetQuantityProp,
+        salesOrderIds: [...new Set(selectedLinesProp.map((line) => line.order_id))],
+        salesOrderDetailIds: selectedLinesProp.map((line) => line.detail_id)
+    }];
+    const isMultiRelease = normalizedReleaseGroups.length > 1;
+    const activeReleaseGroup = normalizedReleaseGroups[activeGroupIndex] || normalizedReleaseGroups[0];
+    const activeGroupKey = activeReleaseGroup?.key || "single";
+    const selectedLines = activeReleaseGroup?.lines || selectedLinesProp;
+    const targetQuantity = isMultiRelease ? activeReleaseGroup.totalRemainingQuantity : targetQuantityProp;
+    const joNumber = isMultiRelease
+        ? `${joNumberProp}-${String(activeGroupIndex + 1).padStart(2, "0")}`
+        : joNumberProp;
+    const assignments = isMultiRelease ? (groupAssignments[activeGroupKey] || {}) : assignmentsProp;
+    const selectedSubAssemblyVersions = isMultiRelease
+        ? (groupSubAssemblyVersions[activeGroupKey] || {})
+        : singleSelectedSubAssemblyVersions;
+    const setSelectedSubAssemblyVersions = (value: React.SetStateAction<Record<number, number>>) => {
+        if (isMultiRelease) {
+            setGroupSubAssemblyVersions((previous) => ({
+                ...previous,
+                [activeGroupKey]: typeof value === "function" ? value(previous[activeGroupKey] || {}) : value
+            }));
+        } else {
+            setSingleSelectedSubAssemblyVersions(value);
+        }
+    };
     const selectedBranch = branches.find((b) => b.id === selectedBranchId);
     const maxAvailableQuantity = useMemo(() => selectedLines.reduce((sum, line) => {
         const resolved = Number(line.remaining_quantity);
@@ -111,17 +161,31 @@ export function ReleaseJODialog({
             setRoutings([]);
             setComponents([]);
             setInventories({});
-            setAssignments({});
+            setAssignmentsProp({});
             setSearchQuery("");
             setSubAssemblyBoms({});
             setSubAssemblyRoutings({});
             setSubAssemblyVersions({});
-            setSelectedSubAssemblyVersions({});
+            setSingleSelectedSubAssemblyVersions({});
+            setGroupAssignments({});
+            setGroupSubAssemblyVersions({});
+            setActiveGroupIndex(0);
             setLoadingSubVersion({});
             setPrintSelection({});
             setHasLoadedDetails(false);
         }
-    }, [isConfirmOpen, setAssignments]);
+    }, [isConfirmOpen, setAssignmentsProp]);
+
+    const updateAssignments = (value: React.SetStateAction<Record<number, number[]>>) => {
+        if (isMultiRelease) {
+            setGroupAssignments((previous) => ({
+                ...previous,
+                [activeGroupKey]: typeof value === "function" ? value(previous[activeGroupKey] || {}) : value
+            }));
+        } else {
+            setAssignmentsProp(value);
+        }
+    };
 
     // Fetch master operators list once dialog opens
     useEffect(() => {
@@ -454,7 +518,7 @@ export function ReleaseJODialog({
 
     // Toggle operator assignment
     const handleToggleOperator = (seq: number, opId: number) => {
-        setAssignments((prev) => {
+        updateAssignments((prev) => {
             const current = prev[seq] || [];
             if (current.includes(opId)) {
                 return { ...prev, [seq]: current.filter((id) => id !== opId) };
@@ -505,6 +569,29 @@ export function ReleaseJODialog({
                     ))}
                 </div>
 
+                {isMultiRelease && (
+                    <div className="flex flex-wrap gap-2 rounded-lg border border-primary/20 bg-primary/[0.03] p-2">
+                        {normalizedReleaseGroups.map((group, index) => (
+                            <Button
+                                key={group.key}
+                                type="button"
+                                variant={index === activeGroupIndex ? "default" : "outline"}
+                                size="sm"
+                                className="h-8 text-[10px] font-bold"
+                                onClick={() => {
+                                    setActiveGroupIndex(index);
+                                    setHasLoadedDetails(false);
+                                    setRoutings([]);
+                                    setComponents([]);
+                                    setInventories({});
+                                }}
+                            >
+                                JO {index + 1}: {group.productName} ({group.totalRemainingQuantity.toLocaleString()})
+                            </Button>
+                        ))}
+                    </div>
+                )}
+
                 {selectedLines.length > 0 && (
                     <div className="py-2 space-y-4 flex-1 overflow-y-auto max-h-[68vh] px-1">
                         
@@ -524,6 +611,10 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Target Branch:</span>
                                         <span className="font-semibold text-foreground">{selectedBranch?.branch_name}</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Target UOM:</span>
+                                        <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -532,7 +623,7 @@ export function ReleaseJODialog({
                                             Job Order Reference #
                                         </label>
                                         <Input
-                                            value={joNumber}
+                                            value={joNumberProp}
                                             onChange={(e) => setJoNumber(e.target.value)}
                                             className="h-9 font-semibold bg-card border-input text-foreground"
                                             placeholder="JO-XXXXXX"
@@ -555,14 +646,29 @@ export function ReleaseJODialog({
                                                     ? Math.min(maxAvailableQuantity, Math.max(0, next))
                                                     : 0);
                                             }}
+                                            disabled={isMultiRelease}
                                             className="h-9 font-semibold bg-card border-input text-foreground"
                                         />
                                         <p className="text-[10px] text-muted-foreground">
-                                            Enter a quantity from 1 through {maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.
+                                            {isMultiRelease
+                                                ? "The full remaining quantity for this product/BOM group will be released."
+                                                : `Enter a quantity from 1 through ${maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.`}
                                         </p>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Planned Production Date
+                                            </label>
+                                            <Input
+                                                type="date"
+                                                value={plannedDate}
+                                                onChange={(e) => setPlannedDate(e.target.value)}
+                                                className="h-9 font-semibold bg-card border-input text-foreground"
+                                                required
+                                            />
+                                        </div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Due Date
@@ -572,6 +678,23 @@ export function ReleaseJODialog({
                                                 value={dueDate}
                                                 onChange={(e) => setDueDate(e.target.value)}
                                                 className="h-9 font-semibold bg-card border-input text-foreground"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Priority
+                                            </label>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                value={priority}
+                                                onChange={(e) => setPriority(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                                                className="h-9 font-semibold bg-card border-input text-foreground"
+                                                required
                                             />
                                         </div>
 
@@ -1053,6 +1176,21 @@ export function ReleaseJODialog({
                         {/* STEP 4: REVIEW & CONFIRM */}
                         {currentStep === 4 && (
                             <div className="space-y-4">
+                                {isMultiRelease && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {normalizedReleaseGroups.map((group, index) => (
+                                            <div key={group.key} className="rounded-xl border border-primary/20 bg-primary/[0.03] p-3 text-xs space-y-1.5">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="font-bold text-foreground">JO {index + 1} · {group.productName}</span>
+                                                    <span className="font-mono font-bold text-primary">{joNumberProp}-{String(index + 1).padStart(2, "0")}</span>
+                                                </div>
+                                                <div className="text-muted-foreground">{group.bomVersionName} · {group.lines.length} detail line{group.lines.length === 1 ? "" : "s"}</div>
+                                                <div className="font-bold text-emerald-700">Full remaining: {group.totalRemainingQuantity.toLocaleString()} {group.lines[0]?.product_id?.uom || "units"}</div>
+                                                <div className="text-muted-foreground">Operators assigned: {Object.values(groupAssignments[group.key] || {}).reduce((sum, ids) => sum + ids.length, 0)}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                                 <div className="bg-muted/50 border border-border/80 rounded-xl p-4 text-xs space-y-2">
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Job Order Reference:</span>
@@ -1073,8 +1211,16 @@ export function ReleaseJODialog({
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Planned Production Date:</span>
+                                        <span className="font-semibold text-foreground">{plannedDate || "Not set"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Quantity:</span>
                                         <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Priority:</span>
+                                        <span className="font-mono font-bold text-foreground">{priority}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Due Date:</span>
@@ -1105,7 +1251,7 @@ export function ReleaseJODialog({
                                     )}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground">
-                                    Review the details above, then confirm to release the Job Order and lock FIFO material reservations.
+                                    Review the details above, then save the Job Order as Draft or initialize it for material picking.
                                 </p>
                             </div>
                         )}
@@ -1146,21 +1292,57 @@ export function ReleaseJODialog({
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
-                            <Button
-                                size="sm"
-                                onClick={() => handleConfirmRelease(selectedSubAssemblyVersions)}
-                                disabled={releasingJO}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
-                            >
-                                {releasingJO ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Releasing...
-                                    </>
-                                ) : (
-                                    "Confirm & Release"
-                                )}
-                            </Button>
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        false
+                                    )}
+                                    disabled={releasingJO}
+                                    className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
+                                >
+                                    {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                    Save Draft
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        true
+                                    )}
+                                    disabled={releasingJO || !plannedDate || priority < 0}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
+                                >
+                                    {releasingJO ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                            Initializing...
+                                        </>
+                                    ) : (
+                                        "Initialize JO"
+                                    )}
+                                </Button>
+                            </>
                         )}
                     </div>
                 </DialogFooter>

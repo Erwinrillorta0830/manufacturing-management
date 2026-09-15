@@ -70,6 +70,9 @@ export interface JobOrder {
     due_date: string;
     status: CanonicalJobOrderStatus | string;
     branch_id: number;
+    uom_id?: number | null;
+    priority?: number;
+    start_date?: string | null;
     primary_work_center_id?: number | null;
     work_center_name?: string | null;
     routing_tasks?: RoutingTask[];
@@ -146,14 +149,15 @@ export interface JobOrderCancellationPayload {
 export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
     { value: "Active", label: "Active" },
     { value: "All", label: "All" },
-    { value: "Proceed", label: "Released" },
-    { value: "Reserved", label: "Ready to run" },
-    { value: "Ongoing", label: "In Progress" },
+    { value: JOB_ORDER_STATUS.FOR_PICKING, label: "For Picking" },
+    { value: JOB_ORDER_STATUS.PICKED, label: "Picked" },
+    { value: JOB_ORDER_STATUS.IN_PRODUCTION, label: "In Production" },
     { value: "On Hold", label: "On Hold" },
     { value: "QA Hold", label: "QA Hold" },
     { value: "Shortage", label: "Shortage" },
     { value: "Cancelled", label: "Cancelled" },
-    { value: "Finished", label: "Finished" }
+    { value: JOB_ORDER_STATUS.PRODUCTION_COMPLETED, label: "Production Completed" },
+    { value: JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, label: "For QA and Reconciliation" }
 ] as const;
 
 export function matchesProductionWorkflowStatus(status: string, filter: string): boolean {
@@ -170,11 +174,14 @@ export function matchesProductionWorkflowStatus(status: string, filter: string):
             JOB_ORDER_STATUS.IN_PROGRESS
         );
     }
-    if (filter === "Proceed" || filter === "Released") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.RELEASED);
+    if (filter === JOB_ORDER_STATUS.FOR_PICKING || filter === "Proceed" || filter === "Released") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FOR_PICKING);
     }
-    if (filter === "Ongoing" || filter === "In Progress") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.IN_PROGRESS);
+    if (filter === JOB_ORDER_STATUS.PICKED || filter === "Reserved") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED);
+    }
+    if (filter === JOB_ORDER_STATUS.IN_PRODUCTION || filter === "Ongoing" || filter === "In Progress") {
+        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.IN_PRODUCTION);
     }
     return normalizedStatus === normalizeJobOrderStatus(filter);
 }

@@ -10,6 +10,86 @@ import { StickyTableWrapper } from "./StickyTableWrapper";
 import { PayableLine, COADto } from "../types";
 import { isMemoPayableLine, normalizeMemoReference } from "@/modules/manufacturing-management/financial-management/treasury/components/memo-payable-line";
 import { cn } from "@/lib/utils";
+import { formatAmountNumber } from "../utils/disbursement-utils";
+
+function FormattedAmountCell({
+    value,
+    onChange,
+    disabled,
+    hasError,
+    memoLine,
+    title,
+    className
+}: {
+    value: number | string;
+    onChange: (val: string) => void;
+    disabled?: boolean;
+    hasError?: boolean;
+    memoLine?: boolean;
+    title?: string;
+    className?: string;
+}) {
+    const [isFocused, setIsFocused] = React.useState(false);
+    const [localValue, setLocalValue] = React.useState("");
+
+    React.useEffect(() => {
+        if (!isFocused) {
+            const num = Number(String(value).replace(/,/g, ""));
+            setLocalValue(Number.isFinite(num) && num !== 0 ? formatAmountNumber(num) : (num === 0 ? "0.00" : ""));
+        }
+    }, [value, isFocused]);
+
+    const handleFocus = () => {
+        setIsFocused(true);
+        const num = Number(String(value).replace(/,/g, ""));
+        setLocalValue(Number.isFinite(num) && num !== 0 ? String(num) : "");
+    };
+
+    const handleBlur = () => {
+        setIsFocused(false);
+        const clean = localValue.replace(/,/g, "").trim();
+        const num = clean === "" ? 0 : Number(clean);
+        if (Number.isFinite(num)) {
+            onChange(String(num));
+            setLocalValue(formatAmountNumber(num));
+        } else {
+            onChange("0");
+            setLocalValue("0.00");
+        }
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        if (/^[-]?([0-9]*,?)*\.?[0-9]*$/.test(val)) {
+            setLocalValue(val);
+            const clean = val.replace(/,/g, "").trim();
+            if (clean !== "" && clean !== "-" && !isNaN(Number(clean))) {
+                onChange(clean);
+            } else if (clean === "" || clean === "-") {
+                onChange("0");
+            }
+        }
+    };
+
+    return (
+        <Input
+            type="text"
+            disabled={disabled}
+            title={title}
+            className={cn(
+                "h-7 text-xs font-bold text-right bg-transparent border-transparent hover:border-input focus:border-primary focus:bg-background focus:ring-0 focus-visible:ring-0 shadow-none px-2 rounded-sm transition-all disabled:bg-transparent disabled:cursor-not-allowed text-foreground tabular-nums",
+                memoLine && "bg-muted/40",
+                hasError && "border-destructive text-destructive focus:border-destructive",
+                className
+            )}
+            placeholder="0.00"
+            value={isFocused ? localValue : (Number(value) !== 0 ? formatAmountNumber(value) : (value === "" ? "" : "0.00"))}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+            onChange={handleChange}
+        />
+    );
+}
 
 interface PayablesSectionProps {
     payables: PayableLine[];
@@ -146,15 +226,13 @@ export function PayablesSection({
                                     
                                     {/* Amount */}
                                     <TableCell className="p-1 align-middle">
-                                        <Input 
-                                            type="number" 
+                                        <FormattedAmountCell
                                             disabled={disabled}
-                                            aria-invalid={!!memoAmountError}
+                                            hasError={!!memoAmountError}
+                                            memoLine={memoLine}
                                             title={memoLine ? "Memo amount can be edited within the memo's available balance." : undefined}
-                                            className={`h-7 text-xs font-bold text-right bg-transparent border-transparent hover:border-input focus:border-primary focus:bg-background focus:ring-0 focus-visible:ring-0 shadow-none px-2 rounded-sm transition-all disabled:bg-transparent disabled:cursor-not-allowed text-foreground ${memoLine ? "bg-muted/40" : ""} ${memoAmountError ? "border-destructive text-destructive focus:border-destructive" : ""}`}
-                                            placeholder="0.00" 
-                                            value={p.amount || ""}
-                                            onChange={e => handleAmountChange(i, e.target.value)}
+                                            value={p.amount ?? 0}
+                                            onChange={val => handleAmountChange(i, val)}
                                         />
                                         {memoAmountError && (
                                             <p role="alert" className="mt-1 text-[10px] leading-tight text-destructive">

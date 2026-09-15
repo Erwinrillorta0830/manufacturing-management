@@ -28,10 +28,16 @@ export async function fetchBranches(): Promise<Branch[]> {
         .filter((branch) => Number.isFinite(branch.id) && branch.id > 0 && Boolean(branch.branch_name));
 }
 
-export async function fetchSalesOrders(): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
-    const soRes = await fetch("/api/manufacturing/sales-order?queue=for-production&limit=200", { cache: "no-store" });
+export type PlanningSalesOrderQueue = "for-production" | "in-production";
+
+export async function fetchSalesOrders(
+    queue: PlanningSalesOrderQueue = "for-production"
+): Promise<{ data: SalesOrder[]; detailsMap: Record<number, SalesOrderDetail[]> }> {
+    const soRes = await fetch(`/api/manufacturing/sales-order?queue=${encodeURIComponent(queue)}&limit=200`, { cache: "no-store" });
     if (!soRes.ok) {
-        throw new Error("Failed to fetch unfulfilled sales orders.");
+        throw new Error(queue === "in-production"
+            ? "Failed to fetch Sales Orders in production."
+            : "Failed to fetch For Production Sales Orders.");
     }
     const soData = await soRes.json();
     return {
@@ -70,12 +76,19 @@ export async function fetchJobMaterials(joId: number | string, signal?: AbortSig
 }
 
 export interface ReleaseJOPayload {
+    initialize?: boolean;
+    idempotencyKey?: string;
+    force?: boolean;
+    overrideReason?: string;
     jo: {
         jo_id: string;
         product_id: number;
         product_name: string;
         quantity: number;
         due_date: string;
+        start_date?: string;
+        uom_id?: number | null;
+        priority?: number;
         status: string;
         is_batched: boolean;
         branch_id: number;
@@ -92,15 +105,51 @@ export interface ReleaseJOPayload {
                 version_id: number | null | undefined;
             };
         }>;
+        subAssemblyVersionMap?: Record<number, number>;
+        assignments?: Record<number, number[]>;
     };
     salesOrderIds: number[];
     salesOrderDetailIds: number[];
 }
 
 export interface ReleaseJOResult {
+    job_order_id?: number | null;
     jo_id?: string | null;
     status?: string;
     shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
+}
+
+export interface ReleaseMultipleJob {
+    productId: number;
+    productName: string;
+    bomVersionId: number;
+    quantity: number;
+    salesOrderIds: number[];
+    salesOrderDetailIds: number[];
+    subAssemblyVersionMap?: Record<number, number>;
+    assignments?: Record<number, number[]>;
+}
+
+export interface ReleaseMultiplePayload {
+    action: "release-multiple";
+    initialize?: boolean;
+    idempotencyKey?: string;
+    force?: boolean;
+    overrideReason?: string;
+    baseJoNumber: string;
+    shared: {
+        branchId: number;
+        dueDate: string;
+        plannedDate?: string;
+        priority?: number;
+        shiftOption: string;
+        remarks: string;
+    };
+    jobs: ReleaseMultipleJob[];
+}
+
+export interface ReleaseMultipleResult {
+    jobs?: ReleaseJOResult[];
 }
 
 export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<ReleaseJOResult> {
@@ -115,6 +164,19 @@ export async function releaseJobOrder(payload: ReleaseJOPayload): Promise<Releas
     }
     const json = await res.json().catch(() => null);
     return json?.data ?? {};
+}
+
+export async function releaseMultipleJobOrders(payload: ReleaseMultiplePayload): Promise<ReleaseMultipleResult> {
+    const res = await fetch("/api/manufacturing/planning-engineering", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(json?.error || "Failed to release the Job Orders.");
+    }
+    return json?.data ?? { jobs: [] };
 }
 
 export async function directAllocate(payload: {

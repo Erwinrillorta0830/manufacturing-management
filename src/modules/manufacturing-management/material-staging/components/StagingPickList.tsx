@@ -60,7 +60,7 @@ export function StagingPickList({
                 </div>
                 <h3 className="text-base font-bold text-foreground">No Job Order Selected</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                    Select an active Planned or Reserved Job Order from the left queue to review allocated materials and execute floor bin transfers.
+                    Select an initialized For Picking Job Order from the left queue to review required materials and execute floor bin transfers.
                 </p>
             </div>
         );
@@ -416,9 +416,9 @@ export function StagingPickList({
                                                 {isHard ? (
                                                     <Badge
                                                         title="HARD: all required quantity for this component is staged on the floor."
-                                                        className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold"
+                                                        className="bg-emerald-600 text-white border border-emerald-600 text-[10px] font-semibold"
                                                     >
-                                                        Floor ready
+                                                        Floor Ready
                                                     </Badge>
                                                 ) : isPartial ? (
                                                     <Badge

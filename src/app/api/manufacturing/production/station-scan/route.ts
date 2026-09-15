@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 
 interface UserRecord {
     user_id: number;
@@ -424,6 +425,32 @@ export async function POST(request: Request) {
             }, { status: 422 });
         }
 
+        // Enforce the production gate before loading routing or changing any
+        // station records. Only fully staged Picked JOs may start production;
+        // an already active JO may check into another station.
+        const oldStatus = normalizeJobOrderStatus(matchedJobOrder.status || JOB_ORDER_STATUS.DRAFT);
+        if (!oldStatus) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has an unknown status and cannot be transitioned.`
+            }, { status: 409 });
+        }
+        if (isTerminalJobOrderStatus(oldStatus) || isCancelledJobOrderStatus(oldStatus)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is ${oldStatus.toLowerCase()} and cannot be restarted.`
+            }, { status: 409 });
+        }
+
+        const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PRODUCTION);
+        if (!isAlreadyActive && !isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.PICKED)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} must be Picked before production can start. Complete material staging first.`,
+                code: "JOB_ORDER_NOT_PICKED"
+            }, { status: 409 });
+        }
+
         // 3. Resolve the active routing step before changing any records.
         const routes = await directusData<any[]>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderIdNumber}&sort=sequence_order&limit=-1`,
@@ -463,40 +490,31 @@ export async function POST(request: Request) {
         }) || null;
 
         // 4. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION.
-        const oldStatus = normalizeJobOrderStatus(matchedJobOrder.status || JOB_ORDER_STATUS.DRAFT);
-        if (!oldStatus) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has an unknown status and cannot be transitioned.`
-            }, { status: 409 });
-        }
-        if (isTerminalJobOrderStatus(oldStatus)) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is already finished and cannot be restarted.`
-            }, { status: 409 });
-        }
-        if (isCancelledJobOrderStatus(oldStatus)) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is cancelled and cannot be restarted.`
-            }, { status: 409 });
-        }
-
-        const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING);
-        const targetStatus = isAlreadyActive ? oldStatus : JOB_ORDER_STATUS.IN_PROGRESS;
+        const targetStatus = JOB_ORDER_STATUS.IN_PRODUCTION;
         const statusTransitioned = !isAlreadyActive;
         const primaryWorkCenterChanged = Number(matchedJobOrder.primary_work_center_id) !== workCenterIdNumber;
         let updatedJobOrder = matchedJobOrder;
 
-        if (statusTransitioned || primaryWorkCenterChanged) {
+        if (statusTransitioned) {
+            await executeJobOrderWorkflow(jobOrderIdNumber, {
+                action: "start-production",
+                actorUserId: currentUserId,
+                idempotencyKey: `station-start:${jobOrderIdNumber}:${workCenterIdNumber}`,
+                remarks: `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${workCenterIdNumber})`,
+                workCenterId: workCenterIdNumber
+            });
+            updatedJobOrder = {
+                ...matchedJobOrder,
+                status: targetStatus,
+                primary_work_center_id: workCenterIdNumber
+            };
+        } else if (primaryWorkCenterChanged) {
             updatedJobOrder = await directusData<any>(
                 `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderIdNumber}`,
-                "Station job-order transition",
+                "Update active station work center",
                 {
                     method: "PATCH",
                     body: JSON.stringify({
-                        status: targetStatus,
                         primary_work_center_id: workCenterIdNumber,
                         modified_by: currentUserId,
                         modified_at: manilaTimestamp
@@ -535,7 +553,7 @@ export async function POST(request: Request) {
             }
             : null;
 
-        if (!existingStationHistory && (statusTransitioned || isAlreadyActive)) {
+        if (!existingStationHistory && isAlreadyActive) {
             const createdStationHistory = await directusData<any>(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_status_history`,
                 "Station status-history insert",
@@ -548,6 +566,8 @@ export async function POST(request: Request) {
                         new_status: targetStatus,
                         changed_by: currentUserId,
                         changed_at: manilaTimestamp,
+                        event_key: `station-start:${jobOrderIdNumber}:${workCenterIdNumber}`,
+                        workflow_action: "station-start-check-in",
                         remarks: stationRemark
                     })
                 }
@@ -581,7 +601,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({
             success: true,
-            message: `Station Start Verified! Job Order ${returnedJobOrder.job_order_no} is now IN PROGRESS at workstation "${matchedWorkCenter.work_center_name}".`,
+            message: `Station Start Verified! Job Order ${returnedJobOrder.job_order_no} is now IN PRODUCTION at workstation "${matchedWorkCenter.work_center_name}".`,
             workCenter: matchedWorkCenter,
             jobOrder: returnedJobOrder,
             activeOperation,

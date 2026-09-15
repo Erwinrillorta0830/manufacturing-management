@@ -1,4 +1,5 @@
 import type { CanonicalJobOrderStatus } from "../job-order-status";
+import type { JobOrderReservationStatus } from "../job-order-workflow";
 
 export interface Branch {
     id: number;
@@ -12,6 +13,7 @@ export interface ProductIdInfo {
     product_name: string;
     product_code: string;
     uom?: string;
+    uom_id?: number | null;
     uom_count?: number;
     brand?: string;
     category?: string;
@@ -47,6 +49,24 @@ export interface SalesOrderDetail {
     is_read_only?: boolean;
     linkedJobOrders?: LinkedJobOrder[];
     id?: number;
+}
+
+export interface SalesOrderDemandGroup {
+    order: SalesOrder;
+    lines: SalesOrderDetail[];
+    selectableLines: SalesOrderDetail[];
+}
+
+export interface SalesOrderReleaseGroup {
+    key: string;
+    productId: number;
+    productName: string;
+    bomVersionId: number;
+    bomVersionName: string;
+    lines: SalesOrderDetail[];
+    totalRemainingQuantity: number;
+    salesOrderIds: number[];
+    salesOrderDetailIds: number[];
 }
 
 export interface SalesOrder {
@@ -112,6 +132,23 @@ export interface JobOrder {
     start_date?: string | null;
     end_date?: string | null;
     due_date?: string | null;
+    uom_id?: number | null;
+    priority?: number;
+    initialized_at?: string | null;
+    initialized_by?: number | null;
+    picked_at?: string | null;
+    picked_by?: number | null;
+    production_started_at?: string | null;
+    production_started_by?: number | null;
+    production_completed_at?: string | null;
+    production_completed_by?: number | null;
+    qa_started_at?: string | null;
+    qa_started_by?: number | null;
+    closed_at?: string | null;
+    closed_by?: number | null;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
+    cancellation_reason?: string | null;
     remarks?: string | null;
     actual_quantity_produced?: number;
     quantity?: number;
@@ -239,6 +276,34 @@ export interface JobOrderAllocation {
     purchase_order_receiving_id?: number | null;
 }
 
+/** manufacturing_job_order_materials_reservations DDL */
+export interface JobOrderMaterialReservation {
+    jo_materials_reservation_id?: number;
+    id?: number;
+    job_order_id?: number | null;
+    jo_material_id: number;
+    product_id: number;
+    uom_id?: number | null;
+    branch_id?: number | null;
+    mm_lot_id?: number | null;
+    inventory_lot_id?: number | null;
+    purchase_order_receiving_id?: number | null;
+    batch_no?: string | null;
+    expiry_date?: string | null;
+    required_quantity?: number;
+    reserved_quantity: number;
+    staged_quantity?: number;
+    issued_to_wip_quantity?: number;
+    actual_used_quantity?: number;
+    returned_quantity?: number;
+    remaining_wip_quantity?: number;
+    reservation_status?: JobOrderReservationStatus | string;
+    staging_bin?: string | null;
+    staging_operation_id?: string | null;
+    staging_allocation_line_id?: string | null;
+    source_event_key?: string | null;
+}
+
 /**
  * manufacturing_job_order_status_history DDL
  */
@@ -246,8 +311,11 @@ export interface JobOrderStatusHistory {
     history_id?: number;
     id?: number;
     job_order_id: number;
-    previous_status: string;
+    previous_status?: string;
+    old_status?: string;
     new_status: string;
+    event_key?: string | null;
+    workflow_action?: string | null;
     remarks?: string | null;
     changed_by?: number | null;
     changed_by_name?: string;
