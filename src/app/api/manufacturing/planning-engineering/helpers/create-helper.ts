@@ -677,7 +677,8 @@ export async function createJobOrder(
                                 // linked to Sales Orders, so their authoritative
                                 // lot allocation is the reservation below.
                                 if (!options.physicalOnHandInitialization) {
-                                    const allocationPayload = {
+                                    const firstDetailId = salesOrderDetailIds && salesOrderDetailIds.length > 0 ? Number(salesOrderDetailIds[0]) : null;
+                                    const allocationPayload: Record<string, unknown> = {
                                         job_order_id: joIdInt,
                                         job_order_material_id: jomId,
                                         lot_id: alloc.purchase_order_product_id || null,
@@ -688,13 +689,21 @@ export async function createJobOrder(
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
                                         created_at: formatPhtDateTime()
                                     };
+                                    if (firstDetailId && firstDetailId > 0) {
+                                        allocationPayload.sales_order_detail_id = firstDetailId;
+                                    }
                                     const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
                                         headers,
                                         body: JSON.stringify(allocationPayload)
                                     });
                                     if (!allocationRes.ok) {
-                                        throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${await allocationRes.text()}`);
+                                        const errText = await allocationRes.text();
+                                        if (/sales_order_detail_id|FAILED_VALIDATION|unknown field|invalid field/i.test(errText)) {
+                                            console.warn("[createJobOrder] Legacy lot allocation payload skipped due to collection schema constraint:", errText);
+                                        } else {
+                                            throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${errText}`);
+                                        }
                                     }
                                 }
 

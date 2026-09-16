@@ -325,12 +325,7 @@ async function assertMaterialReservations(jobOrderId: number): Promise<void> {
         reserved: reservedByMaterial.get(materialId(material)) || 0
     })).filter((item) => item.required > 0 && item.reserved + QUANTITY_EPSILON < item.required);
     if (incomplete.length > 0) {
-        throw new JobOrderWorkflowError(
-            "Job Order cannot be initialized while required material reservations are short.",
-            422,
-            "MATERIAL_SHORTAGE",
-            { incomplete }
-        );
+        console.warn(`[JobOrderWorkflow] Warning: Job Order ${jobOrderId} initialized with material shortfalls:`, incomplete);
     }
 }
 

@@ -641,6 +641,10 @@ export function usePlanningEngineering() {
             toast.error("Enter a valid Job Order target quantity.");
             return;
         }
+        if (releaseGroups.length === 1 && targetQuantity < maxAvailableQuantity - 0.000001) {
+            toast.error(`The requested Job Order quantity (${targetQuantity}) is less than the required Sales Order quantity (${maxAvailableQuantity}). Job Order quantity cannot be less than Sales Order quantity.`);
+            return;
+        }
 
         setReleasingJO(true);
         try {
