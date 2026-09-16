@@ -36,8 +36,10 @@ export interface CreateJobOrderOptions {
     deferSalesOrderTransition?: boolean;
     /** Creation is always a Draft; initialization is an explicit next action. */
     initialize?: boolean;
-    /** Buffer JOs use physical on-hand stock when initializing; Sales Order JOs remain reservation-aware. */
+    /** Legacy buffer flag for initialization against physical on-hand stock. */
     physicalOnHandInitialization?: boolean;
+    /** Planning may initialize an SO JO from physical on-hand stock without changing its SO linkage. */
+    usePhysicalOnHand?: boolean;
 }
 
 function relationId(value: unknown): number {
@@ -272,7 +274,8 @@ export async function createJobOrder(
         // persist the worksheet only; they must not be rejected or annotated
         // from a point-in-time availability check.
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
-        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && shouldInitialize
+        const inventoryAvailabilityOptions = shouldInitialize
+            && (options.physicalOnHandInitialization || options.usePhysicalOnHand)
             ? { includeReservations: false }
             : undefined;
         
@@ -670,46 +673,13 @@ export async function createJobOrder(
                                 throw new Error("Job Order material worksheet row was created without an identifier.");
                             }
 
-                            // Log specific lot allocations and reservations. These
-                            // writes must succeed before an initialized JO can
-                            // advance to material picking.
+                            // The reservation record is the authoritative source
+                            // for the material's exact lot and batch. The legacy
+                            // job-order allocation collection is reserved for
+                            // Sales Order linkage and requires sales_order_detail_id;
+                            // writing material-lot rows there would either fail
+                            // validation or inflate SO fulfillment quantities.
                             for (const alloc of allocations) {
-                                // The legacy allocation collection models a
-                                // Sales Order line and requires
-                                // sales_order_detail_id. Buffer JOs are not
-                                // linked to Sales Orders, so their authoritative
-                                // lot allocation is the reservation below.
-                                if (!options.physicalOnHandInitialization) {
-                                    const firstDetailId = salesOrderDetailIds && salesOrderDetailIds.length > 0 ? Number(salesOrderDetailIds[0]) : null;
-                                    const allocationPayload: Record<string, unknown> = {
-                                        job_order_id: joIdInt,
-                                        job_order_material_id: jomId,
-                                        lot_id: alloc.purchase_order_product_id || null,
-                                        batch_no: alloc.batch_no || null,
-                                        allocated_quantity: alloc.allocated,
-                                        reservation_type: "SOFT",
-                                        status: "ACTIVE",
-                                        created_by: joData.created_by ? Number(joData.created_by) : null,
-                                        created_at: formatPhtDateTime()
-                                    };
-                                    if (firstDetailId && firstDetailId > 0) {
-                                        allocationPayload.sales_order_detail_id = firstDetailId;
-                                    }
-                                    const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify(allocationPayload)
-                                    });
-                                    if (!allocationRes.ok) {
-                                        const errText = await allocationRes.text();
-                                        if (/sales_order_detail_id|FAILED_VALIDATION|unknown field|invalid field/i.test(errText)) {
-                                            console.warn("[createJobOrder] Legacy lot allocation payload skipped due to collection schema constraint:", errText);
-                                        } else {
-                                            throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${errText}`);
-                                        }
-                                    }
-                                }
-
                                 const reservationPayload: Record<string, unknown> = {
                                     product_id: compProductId,
                                     branch_id: numericBranchId,
