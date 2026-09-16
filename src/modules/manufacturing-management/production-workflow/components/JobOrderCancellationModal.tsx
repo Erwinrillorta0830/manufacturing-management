@@ -1,14 +1,16 @@
 /* eslint-disable */
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, Undo2, XCircle } from "lucide-react";
+import { AlertTriangle, ImagePlus, Loader2, Trash2, Undo2, XCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JobOrderCancellationPreview } from "../types";
 import { displayJobOrderStatus } from "../../job-order-status";
+import { validateManufacturingImage } from "../services/production-yield-image";
 
 interface JobOrderCancellationModalProps {
     open: boolean;
@@ -18,7 +20,7 @@ interface JobOrderCancellationModalProps {
     loading: boolean;
     submitting: boolean;
     error: string | null;
-    onConfirm: (reason: string) => void;
+    onConfirm: (reason: string, cancellationImage?: File | null) => void;
 }
 
 function formatQuantity(value: number): string {
@@ -36,10 +38,25 @@ export function JobOrderCancellationModal({
     onConfirm
 }: JobOrderCancellationModalProps) {
     const [reason, setReason] = useState("");
+    const [cancellationImage, setCancellationImage] = useState<File | null>(null);
+    const [cancellationImagePreview, setCancellationImagePreview] = useState<string | null>(null);
+    const [cancellationImageError, setCancellationImageError] = useState<string | null>(null);
+    const [cancellationImageInputKey, setCancellationImageInputKey] = useState(0);
 
     useEffect(() => {
-        if (open) setReason("");
+        if (!open) return;
+        setReason("");
+        setCancellationImage(null);
+        setCancellationImageError(null);
+        setCancellationImagePreview(null);
+        setCancellationImageInputKey((current) => current + 1);
     }, [open, mode]);
+
+    useEffect(() => {
+        return () => {
+            if (cancellationImagePreview) URL.revokeObjectURL(cancellationImagePreview);
+        };
+    }, [cancellationImagePreview]);
 
     const returnableLines = useMemo(
         () => (preview?.lines || []).filter((line) => !line.releaseOnly && line.returnableQuantity > 0),
@@ -56,11 +73,45 @@ export function JobOrderCancellationModal({
     const confirmDisabled = loading
         || submitting
         || !preview
-        || (isReturnMode ? !preview.canReturnMaterials : !preview.cancellable || !reason.trim());
+        || (isReturnMode
+            ? !preview.canReturnMaterials
+            : !preview.cancellable || !reason.trim() || !cancellationImage);
+
+    const handleCancellationImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] || null;
+        setCancellationImageError(null);
+        if (!file) {
+            setCancellationImage(null);
+            setCancellationImagePreview(null);
+            return;
+        }
+
+        const validationError = validateManufacturingImage(file, "Cancellation evidence");
+        if (validationError) {
+            setCancellationImage(null);
+            setCancellationImagePreview(null);
+            setCancellationImageError(validationError);
+            event.target.value = "";
+            return;
+        }
+
+        setCancellationImage(file);
+        setCancellationImagePreview(URL.createObjectURL(file));
+    };
+
+    const removeCancellationImage = () => {
+        setCancellationImage(null);
+        setCancellationImagePreview(null);
+        setCancellationImageError(null);
+        setCancellationImageInputKey((current) => current + 1);
+    };
 
     const handleConfirm = () => {
         if (confirmDisabled || !preview) return;
-        onConfirm(isReturnMode ? (reason.trim() || "Return raw materials from Job Order") : reason.trim());
+        onConfirm(
+            isReturnMode ? (reason.trim() || "Return raw materials from Job Order") : reason.trim(),
+            isReturnMode ? null : cancellationImage
+        );
     };
 
     return (
@@ -182,6 +233,58 @@ export function JobOrderCancellationModal({
                                     disabled={submitting}
                                 />
                             </div>
+
+                            {!isReturnMode && (
+                                <div className="space-y-2 rounded-xl border border-dashed border-destructive/40 bg-destructive/5 p-3">
+                                    <div className="flex items-center gap-2">
+                                        <ImagePlus className="h-4 w-4 text-destructive" />
+                                        <label htmlFor="job-order-cancellation-image" className="text-xs font-bold text-foreground">
+                                            Cancellation Evidence Image <span className="text-destructive">*</span>
+                                        </label>
+                                    </div>
+                                    <Input
+                                        key={cancellationImageInputKey}
+                                        id="job-order-cancellation-image"
+                                        type="file"
+                                        accept="image/jpeg,image/jpg,image/png,image/webp"
+                                        required
+                                        onChange={handleCancellationImageChange}
+                                        disabled={submitting}
+                                        aria-describedby="job-order-cancellation-image-help"
+                                    />
+                                    <p id="job-order-cancellation-image-help" className="text-[11px] text-muted-foreground">
+                                        Upload one PNG, JPG, or WEBP image. Maximum size: 5 MB.
+                                    </p>
+                                    {cancellationImageError && (
+                                        <p className="text-[11px] font-semibold text-destructive">{cancellationImageError}</p>
+                                    )}
+                                    {cancellationImage && cancellationImagePreview && (
+                                        <div className="flex items-center gap-3 rounded-lg border bg-background p-2">
+                                            <img
+                                                src={cancellationImagePreview}
+                                                alt="Cancellation evidence preview"
+                                                className="h-16 w-16 rounded-md border object-cover"
+                                            />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-xs font-semibold">{cancellationImage.name}</p>
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    {(cancellationImage.size / 1024 / 1024).toFixed(2)} MB
+                                                </p>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon-xs"
+                                                onClick={removeCancellationImage}
+                                                disabled={submitting}
+                                                aria-label="Remove cancellation evidence image"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </>
                     )}
 

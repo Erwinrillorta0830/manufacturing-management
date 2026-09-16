@@ -169,10 +169,16 @@ export async function submitQAVerification(payload: QAVerificationPayload): Prom
 }
 
 export async function submitShiftRunLog(payload: ShiftRunLogPayload): Promise<any> {
+    const { evidenceImage, ...sessionPayload } = payload;
+    const formData = new FormData();
+    formData.set("payload", JSON.stringify(sessionPayload));
+    if (evidenceImage) {
+        formData.set("image", evidenceImage, evidenceImage.name);
+    }
+
     const res = await fetch("/api/manufacturing/production/shift-run-log", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: formData
     });
     if (!res.ok) {
         const errData = await res.json();
@@ -322,19 +328,35 @@ export async function fetchJobOrderCancellationPreview(joId: string | number): P
     return json.data;
 }
 
-async function submitJobOrderCancellation(payload: JobOrderCancellationPayload): Promise<JobOrderCancellationResponse> {
-    const res = await fetch("/api/manufacturing/production/job-order-cancellation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
+async function submitJobOrderCancellation(
+    payload: JobOrderCancellationPayload,
+    cancellationImage?: File | null
+): Promise<JobOrderCancellationResponse> {
+    const isCancellation = payload.action === "cancel-and-return";
+    const request: RequestInit = { method: "POST" };
+
+    if (isCancellation) {
+        const formData = new FormData();
+        formData.set("payload", JSON.stringify(payload));
+        if (cancellationImage) formData.set("image", cancellationImage, cancellationImage.name);
+        request.body = formData;
+    } else {
+        request.headers = { "Content-Type": "application/json" };
+        request.body = JSON.stringify(payload);
+    }
+
+    const res = await fetch("/api/manufacturing/production/job-order-cancellation", request);
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || "Failed to process the Job Order cancellation.");
     return json.data;
 }
 
-export async function cancelJobOrder(joId: string | number, reason: string): Promise<JobOrderCancellationResponse> {
-    return submitJobOrderCancellation({ action: "cancel-and-return", joId, reason });
+export async function cancelJobOrder(
+    joId: string | number,
+    reason: string,
+    cancellationImage: File
+): Promise<JobOrderCancellationResponse> {
+    return submitJobOrderCancellation({ action: "cancel-and-return", joId, reason }, cancellationImage);
 }
 
 export async function returnJobOrderMaterials(joId: string | number, reason?: string): Promise<JobOrderCancellationResponse> {

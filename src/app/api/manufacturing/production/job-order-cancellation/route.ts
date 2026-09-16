@@ -6,6 +6,12 @@ import {
     returnJobOrderMaterialLeftovers,
     JobOrderCancellationError
 } from "./_cancellation-service";
+import {
+    deleteJobOrderCancellationImage,
+    JobOrderCancellationImageError,
+    uploadJobOrderCancellationImage,
+    validateJobOrderCancellationImage
+} from "./_image";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +39,12 @@ async function resolveActorUserId(bodyActorId: unknown): Promise<number | null> 
 }
 
 function errorResponse(error: unknown) {
+    if (error instanceof JobOrderCancellationImageError) {
+        return NextResponse.json(
+            { error: error.message, code: error.code },
+            { status: error.status }
+        );
+    }
     if (error instanceof JobOrderCancellationError) {
         return NextResponse.json(
             {
@@ -64,11 +76,55 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    let uploadedImageId: string | null = null;
     try {
-        const body = await request.json().catch(() => null);
-        if (!body || typeof body !== "object" || Array.isArray(body)) {
-            return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+        const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+        let body: Record<string, unknown> | null = null;
+        let cancellationImage: File | null = null;
+
+        if (contentType.includes("multipart/form-data")) {
+            const formData = await request.formData();
+            const payloadValue = formData.get("payload");
+            if (typeof payloadValue !== "string") {
+                return NextResponse.json(
+                    { error: "The Job Order cancellation payload is required.", code: "CANCELLATION_PAYLOAD_REQUIRED" },
+                    { status: 400 }
+                );
+            }
+
+            let parsedPayload: unknown;
+            try {
+                parsedPayload = JSON.parse(payloadValue);
+            } catch {
+                return NextResponse.json(
+                    { error: "The Job Order cancellation payload is not valid JSON.", code: "CANCELLATION_PAYLOAD_INVALID" },
+                    { status: 400 }
+                );
+            }
+            if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+                return NextResponse.json(
+                    { error: "The Job Order cancellation payload must be an object.", code: "CANCELLATION_PAYLOAD_INVALID" },
+                    { status: 400 }
+                );
+            }
+            body = parsedPayload as Record<string, unknown>;
+
+            const imageValue = formData.get("image");
+            if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
+                return NextResponse.json(
+                    { error: "The cancellation evidence image is invalid.", code: "CANCELLATION_IMAGE_INVALID" },
+                    { status: 422 }
+                );
+            }
+            cancellationImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+        } else {
+            const parsedBody = await request.json().catch(() => null);
+            if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+                return NextResponse.json({ error: "Request body must be a JSON object." }, { status: 400 });
+            }
+            body = parsedBody as Record<string, unknown>;
         }
+
         const { action, joId, reason, actorUserId } = body as Record<string, unknown>;
         if (!joId) {
             return NextResponse.json({ error: "joId is required." }, { status: 400 });
@@ -80,10 +136,25 @@ export async function POST(request: Request) {
             if (!trimmedReason) {
                 return NextResponse.json({ error: "A cancellation reason is required." }, { status: 400 });
             }
+            if (!cancellationImage) {
+                return NextResponse.json(
+                    { error: "A cancellation evidence image is required.", code: "CANCELLATION_IMAGE_REQUIRED" },
+                    { status: 422 }
+                );
+            }
+            const imageError = validateJobOrderCancellationImage(cancellationImage);
+            if (imageError) {
+                return NextResponse.json(
+                    { error: imageError, code: "CANCELLATION_IMAGE_INVALID" },
+                    { status: 422 }
+                );
+            }
+            uploadedImageId = await uploadJobOrderCancellationImage(cancellationImage, String(joId));
             const execution = await cancelJobOrderAndReturnMaterials({
                 joId: String(joId),
                 reason: trimmedReason,
-                actorUserId: actor
+                actorUserId: actor,
+                cancellationImageId: uploadedImageId
             });
             return NextResponse.json({ success: true, data: execution.response });
         }
@@ -100,6 +171,9 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ error: "Invalid action parameter." }, { status: 400 });
     } catch (error) {
+        if (uploadedImageId) {
+            await deleteJobOrderCancellationImage(uploadedImageId);
+        }
         return errorResponse(error);
     }
 }

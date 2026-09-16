@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X } from "lucide-react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -75,6 +75,14 @@ function NoMaterialsState() {
             <p className="text-sm text-muted-foreground">This Job Order has no BOM material rows. Material reservation is not applicable.</p>
         </div>
     );
+}
+
+function matchesJobOrderSearch(jobOrder: any, searchQuery: string): boolean {
+    const query = searchQuery.toLowerCase().trim();
+    return !query
+        || String(jobOrder.jo_id || "").toLowerCase().includes(query)
+        || String(jobOrder.product_name || "").toLowerCase().includes(query)
+        || String(jobOrder.remarks || "").toLowerCase().includes(query);
 }
 
 function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
@@ -161,6 +169,7 @@ export default function PlanningEngineeringModule() {
         setIsDirectAllocDialogOpen,
         handleConfirmDirectAllocate,
         unreleasedJobs,
+        cancelledJobs,
         loadingJobs,
         releasingDraftId,
         handleReleaseDraftFromPlanning,
@@ -176,7 +185,7 @@ export default function PlanningEngineeringModule() {
     };
     const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
 
-    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue">("demand");
+    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue" | "cancelled">("demand");
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
@@ -192,6 +201,7 @@ export default function PlanningEngineeringModule() {
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
+    const [cancelledSearchQuery, setCancelledSearchQuery] = useState("");
 
     // Quantity editing state for Draft JOs
     const [isEditingQuantity, setIsEditingQuantity] = useState(false);
@@ -199,6 +209,10 @@ export default function PlanningEngineeringModule() {
     const [updatingQuantity, setUpdatingQuantity] = useState(false);
 
     const handleSaveQuantity = async () => {
+        if (isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) {
+            toast.error("Cancelled Job Orders are read-only.");
+            return;
+        }
         const num = Number(editQuantityValue);
         if (!Number.isFinite(num) || num <= 0) {
             toast.error("Please enter a valid positive target quantity.");
@@ -274,14 +288,24 @@ export default function PlanningEngineeringModule() {
                 jo.status,
                 normalizedFilter
             ));
-            const query = searchQuery.toLowerCase().trim();
-            const matchesQuery = !query ||
-                String(jo.jo_id || "").toLowerCase().includes(query) ||
-                String(jo.product_name || "").toLowerCase().includes(query) ||
-                String(jo.remarks || "").toLowerCase().includes(query);
-            return matchesStatus && matchesQuery;
+            return matchesStatus && matchesJobOrderSearch(jo, searchQuery);
         });
     }, [unreleasedJobs, statusFilter, searchQuery]);
+
+    const filteredCancelledJobs = useMemo(
+        () => cancelledJobs.filter((jobOrder: any) => matchesJobOrderSearch(jobOrder, cancelledSearchQuery)),
+        [cancelledJobs, cancelledSearchQuery]
+    );
+
+    const cancelledFamilyGroups = useMemo(
+        () => filteredCancelledJobs.map((jobOrder: any) => ({
+            familyId: String(jobOrder.jo_id || jobOrder.job_order_no || jobOrder.id),
+            parentJo: jobOrder,
+            childJos: [],
+            isFamily: false
+        })),
+        [filteredCancelledJobs]
+    );
 
     const familyGroups = useMemo(() => {
         if (!filteredUnreleasedJobs || filteredUnreleasedJobs.length === 0) return [];
@@ -375,6 +399,8 @@ export default function PlanningEngineeringModule() {
         return familyChildJobs.find((child: any) => child.jo_id === familyActiveTab) || selectedUnreleasedJo;
     }, [familyActiveTab, familyChildJobs, selectedUnreleasedJo]);
 
+    const isReadOnlyDetails = isCancelledJobOrderStatus(selectedUnreleasedJo?.status);
+
     const activeFamilyMaterials = useMemo(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
             return joMaterials;
@@ -387,13 +413,13 @@ export default function PlanningEngineeringModule() {
     // Only Draft Job Orders can be initialized; initialized JOs are read-only
     // from this planning detail view.
     const releasableFamilyMembers = useMemo(() => {
-        if (!activeFamilyJo) return [];
+        if (!activeFamilyJo || isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) return [];
         const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
         return members.filter((jo: any) => isJobOrderStatus(
             jo?.status,
             JOB_ORDER_STATUS.DRAFT
         ));
-    }, [activeFamilyJo, familyChildJobs, isFamilyOverview]);
+    }, [activeFamilyJo, familyChildJobs, isFamilyOverview, selectedUnreleasedJo]);
 
     const activeMaterialLoadState = useMemo<MaterialLoadState>(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
@@ -487,6 +513,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handleConfirmReserveAction = async () => {
+        if (isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) {
+            toast.error("Cancelled Job Orders are read-only.");
+            return;
+        }
         if (!materialActionsReady) {
             toast.error("Required materials are unavailable. Retry the materials lookup before reserving stock.");
             return;
@@ -527,6 +557,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handleConfirmUnreserveAction = async () => {
+        if (isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) {
+            toast.error("Cancelled Job Orders are read-only.");
+            return;
+        }
         if (!materialActionsReady) {
             toast.error("Required materials are unavailable. Retry the materials lookup before removing a reservation.");
             return;
@@ -824,6 +858,10 @@ export default function PlanningEngineeringModule() {
     };
 
     const handleReleaseCurrentView = async () => {
+        if (isCancelledJobOrderStatus(selectedUnreleasedJo?.status)) {
+            toast.error("Cancelled Job Orders are read-only.");
+            return;
+        }
         if (!materialActionsReady) {
             toast.error("Required materials are unavailable. Retry the materials lookup before releasing the Job Order.");
             return;
@@ -909,7 +947,7 @@ export default function PlanningEngineeringModule() {
             )}
 
             {/* Tabs-based Layout Dashboard */}
-            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "production" | "inventory" | "queue")} className="w-full space-y-6">
+            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "production" | "inventory" | "queue" | "cancelled")} className="w-full space-y-6">
                 {deepLinkNotice && (
                     <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
                         <span className="flex items-start gap-2">
@@ -954,7 +992,7 @@ export default function PlanningEngineeringModule() {
                         </div>
                     </div>
                 )}
-                <TabsList className="grid w-full max-w-4xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-4">
+                <TabsList className="grid w-full max-w-6xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-5">
                     <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <ClipboardList className="h-4 w-4 text-primary" />
                         <span>For Production Demand</span>
@@ -983,6 +1021,13 @@ export default function PlanningEngineeringModule() {
                         <span>Job Order Queue</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
                             {unreleasedJobs.length}
+                        </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger value="cancelled" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <XCircle className="h-4 w-4 text-rose-500" />
+                        <span>Cancelled JOs</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold">
+                            {cancelledJobs.length}
                         </Badge>
                     </TabsTrigger>
                 </TabsList>
@@ -1076,6 +1121,47 @@ export default function PlanningEngineeringModule() {
                             familyGroups={familyGroups}
                             loadingJobs={loadingJobs}
                             handleOpenDetails={handleOpenDetails}
+                        />
+                    </div>
+                </TabsContent>
+
+                {/* TAB 5: Cancelled Job Orders */}
+                <TabsContent value="cancelled" className="space-y-6 outline-none">
+                    <div className="bg-card border rounded-xl p-6 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div className="space-y-1">
+                                <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
+                                    <XCircle className="h-5 w-5 text-rose-500" />
+                                    Cancelled Job Orders
+                                </h2>
+                                <p className="text-sm text-muted-foreground">
+                                    Review cancelled Job Orders and their planning history. Cancelled records are read-only and require no further workflow action.
+                                </p>
+                            </div>
+                            {loadingJobs && (
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                                    <Loader2 className="h-4 w-4 animate-spin text-rose-500" />
+                                    Updating cancelled orders...
+                                </div>
+                            )}
+                        </div>
+
+                        <JOFilterBar
+                            searchQuery={cancelledSearchQuery}
+                            setSearchQuery={setCancelledSearchQuery}
+                            statusFilter={JOB_ORDER_STATUS.CANCELLED}
+                            setStatusFilter={() => undefined}
+                            lockedStatus={{ value: JOB_ORDER_STATUS.CANCELLED, label: JOB_ORDER_STATUS.CANCELLED }}
+                            totalCount={cancelledJobs.length}
+                            filteredCount={filteredCancelledJobs.length}
+                        />
+
+                        <JOTable
+                            unreleasedJobs={filteredCancelledJobs}
+                            familyGroups={cancelledFamilyGroups}
+                            loadingJobs={loadingJobs}
+                            handleOpenDetails={handleOpenDetails}
+                            readOnly
                         />
                     </div>
                 </TabsContent>
@@ -1250,6 +1336,42 @@ export default function PlanningEngineeringModule() {
                             blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).blockers}
                             title="What's next"
                         />
+                        {isReadOnlyDetails && (
+                            <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 shadow-sm">
+                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                        <h3 className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">Cancellation evidence</h3>
+                                        <p className="mt-1 text-xs text-muted-foreground">Attachment and audit details recorded when this Job Order was cancelled.</p>
+                                    </div>
+                                    {activeFamilyJo?.cancelled_at && (
+                                        <time className="text-[10px] text-muted-foreground" dateTime={activeFamilyJo.cancelled_at}>
+                                            {new Date(activeFamilyJo.cancelled_at).toLocaleString()}
+                                        </time>
+                                    )}
+                                </div>
+                                {activeFamilyJo?.cancellation_image_url ? (
+                                    <img
+                                        src={activeFamilyJo.cancellation_image_url}
+                                        alt={`Cancellation evidence for ${activeFamilyJo.jo_id || "Job Order"}`}
+                                        className="max-h-80 w-full rounded-lg border border-rose-500/20 bg-background object-contain"
+                                    />
+                                ) : (
+                                    <p className="rounded-lg border border-dashed border-rose-500/20 bg-background/60 px-4 py-6 text-center text-xs text-muted-foreground">
+                                        No cancellation evidence image is attached to this record.
+                                    </p>
+                                )}
+                                <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
+                                    <div>
+                                        <span className="text-muted-foreground">Cancellation reason:</span>{" "}
+                                        <span className="font-semibold text-foreground">{activeFamilyJo?.cancellation_reason || "Not recorded"}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-muted-foreground">Cancelled by:</span>{" "}
+                                        <span className="font-semibold text-foreground">{activeFamilyJo?.cancelled_by || "Not recorded"}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <JobOrderStatusHistoryPanel history={activeFamilyJo?.status_history} />
                         {isFamilyOverview ? (
                             /* DUAL / MULTI FAMILY VIEW: Render Parent & Child JOs side-by-side / stacked */
@@ -1334,7 +1456,7 @@ export default function PlanningEngineeringModule() {
                                                                     <td className="px-4 py-3.5 text-right font-bold text-foreground text-sm">
                                                                         <div className="flex items-center justify-end gap-2">
                                                                             <span>{needed.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span></span>
-                                                                            {String(selectedUnreleasedJo?.status || "").toLowerCase() === "draft" && (
+                                                                        {!isReadOnlyDetails && String(selectedUnreleasedJo?.status || "").toLowerCase() === "draft" && (
                                                                                 isEditingQuantity ? (
                                                                                     <div className="flex items-center gap-1 ml-1">
                                                                                         <input
@@ -1591,7 +1713,7 @@ export default function PlanningEngineeringModule() {
                                                                 <td className="px-4 py-4 text-right font-semibold">
                                                                     <div className="flex items-center justify-end gap-2">
                                                                         <span>{needed.toLocaleString()} {mat.unit_shortcut}</span>
-                                                                        {String(activeFamilyJo?.status || "").toLowerCase() === "draft" && (
+                                                                        {!isReadOnlyDetails && String(activeFamilyJo?.status || "").toLowerCase() === "draft" && (
                                                                             isEditingQuantity ? (
                                                                                 <div className="flex items-center gap-1 ml-1">
                                                                                     <input

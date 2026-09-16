@@ -1,11 +1,13 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import {
     AlertCircle,
     Calendar,
     ChevronRight,
     ClipboardCheck,
+    ImageIcon,
     MapPin,
     Tag,
 } from "lucide-react";
@@ -100,6 +102,53 @@ export function DailyYieldAuditDialog({ controller }: DailyYieldAuditDialogProps
                             </div>
                         </details>
                     </div>
+
+                    {yieldRecord?.evidenceImage && (
+                        <div className="bg-sky-500/[0.03] border border-sky-500/20 rounded-xl p-4 space-y-3 shadow-sm">
+                            <div className="flex items-center gap-2 pb-2 border-b border-sky-500/10">
+                                <div className="p-1.5 bg-sky-500/10 rounded-lg text-sky-600 dark:text-sky-400">
+                                    <ImageIcon className="h-4 w-4" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
+                                        End-of-Shift Evidence
+                                    </h4>
+                                    <p className="text-[9px] text-muted-foreground mt-0.5">
+                                        Photo attached to this production session for audit reference.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
+                                <Image
+                                    src={yieldRecord.evidenceImage.url}
+                                    alt={yieldRecord.evidenceImage.fileName || "End-of-shift evidence"}
+                                    width={112}
+                                    height={112}
+                                    unoptimized
+                                    className="h-28 w-28 rounded-md object-cover border border-border"
+                                />
+                                <div className="min-w-0 space-y-1 text-[10px]">
+                                    <p className="truncate font-semibold text-foreground" title={yieldRecord.evidenceImage.fileName || undefined}>
+                                        {yieldRecord.evidenceImage.fileName || "End-of-shift evidence image"}
+                                    </p>
+                                    {yieldRecord.evidenceImage.mimeType && (
+                                        <p className="text-muted-foreground">{yieldRecord.evidenceImage.mimeType}</p>
+                                    )}
+                                    {yieldRecord.evidenceImage.fileSize && (
+                                        <p className="text-muted-foreground">{(yieldRecord.evidenceImage.fileSize / 1024 / 1024).toFixed(2)} MB</p>
+                                    )}
+                                    <a
+                                        href={yieldRecord.evidenceImage.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex font-semibold text-primary hover:underline"
+                                    >
+                                        Open full image
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="bg-emerald-500/[0.015] dark:bg-emerald-500/[0.005] border border-emerald-500/20 rounded-xl p-4 space-y-4 shadow-sm">
                         <div className="flex items-center gap-2 pb-2 border-b border-emerald-500/10">

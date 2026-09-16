@@ -13,7 +13,9 @@ import {
     ShieldAlert,
     Trash2,
     PackagePlus,
-    CheckCircle2
+    CheckCircle2,
+    ImageIcon,
+    X
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord, RejectionReason, ProductionMaterialReservation } from "../types";
 import { submitShiftRunLog, ShiftRunLogPayload, fetchRejectionReasons } from "../services/production-api";
+import { validateProductionYieldImage } from "../services/production-yield-image";
 import { AddReservedMaterialDialog, type TopUpTarget } from "./AddReservedMaterialDialog";
 import { toast } from "sonner";
 
@@ -69,6 +72,9 @@ export function JobOrderShiftLogModal({
     const [targetTaskId, setTargetTaskId] = useState<number>(0);
     const [topUpTarget, setTopUpTarget] = useState<TopUpTarget | null>(null);
     const [isTopUpOpen, setIsTopUpOpen] = useState(false);
+    const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
+    const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
+    const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
 
     const selectedTask = sortedTasks.find((task) => task.id === targetTaskId) || activeStep;
     const stationId = Number(selectedTask?.work_center_id || selectedJobOrder?.primary_work_center_id || 0) || null;
@@ -92,6 +98,32 @@ export function JobOrderShiftLogModal({
 
     const activeOperator = allJobOperators.find((operator) => operator.stopped_at === null);
     const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
+
+    useEffect(() => {
+        if (!evidenceImage) {
+            setEvidenceImagePreview(null);
+            return;
+        }
+
+        const previewUrl = URL.createObjectURL(evidenceImage);
+        setEvidenceImagePreview(previewUrl);
+        return () => URL.revokeObjectURL(previewUrl);
+    }, [evidenceImage]);
+
+    const handleEvidenceImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] || null;
+        event.target.value = "";
+        if (!file) return;
+
+        const validationError = validateProductionYieldImage(file);
+        setEvidenceImageError(validationError);
+        setEvidenceImage(validationError ? null : file);
+    };
+
+    const removeEvidenceImage = () => {
+        setEvidenceImage(null);
+        setEvidenceImageError(null);
+    };
 
     const getAvailableShifts = useCallback(() => {
         const hours = Number(selectedJobOrder?.shiftOption || 8);
@@ -176,6 +208,8 @@ export function JobOrderShiftLogModal({
             setRemarks("");
             setVarianceReason("");
             setApproveVariance(false);
+            setEvidenceImage(null);
+            setEvidenceImageError(null);
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
@@ -324,6 +358,7 @@ export function JobOrderShiftLogModal({
                 approveVariance,
                 qaParameters: [],
                 remarks: remarks || undefined,
+                evidenceImage,
                 materialsConsumed: shiftMaterials.map((m) => ({
                     joMaterialId: Number(m.jo_material_id),
                     reservationId: Number(m.reservation_id),
@@ -732,6 +767,58 @@ export function JobOrderShiftLogModal({
                                                  />
                                              </div>
                                          </div>
+                                    </div>
+
+                                    <div className="bg-sky-500/[0.03] border border-sky-500/20 rounded-xl p-3.5 space-y-3">
+                                        <div className="flex items-center justify-between pb-1.5 border-b border-sky-500/10">
+                                            <div className="flex items-center gap-1.5">
+                                                <ImageIcon className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                                                <h5 className="font-bold text-sky-800 dark:text-sky-300 uppercase tracking-wider text-[10px]">
+                                                    Shift Evidence Image
+                                                </h5>
+                                            </div>
+                                            <Badge variant="outline" className="text-[9px] text-sky-700 dark:text-sky-300 border-sky-500/20">
+                                                Optional
+                                            </Badge>
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Attach one PNG, JPG, or WEBP photo captured at the end of the shift. Maximum file size: 5 MB.
+                                        </p>
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                                            <Input
+                                                id="production-evidence-image"
+                                                type="file"
+                                                accept="image/jpeg,image/jpg,image/png,image/webp"
+                                                onChange={handleEvidenceImageChange}
+                                                className="h-9 rounded-lg bg-background border-sky-500/30 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-sky-500/10 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-sky-700 dark:file:text-sky-300"
+                                            />
+                                            {evidenceImage && (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={removeEvidenceImage}
+                                                    className="h-9 shrink-0 rounded-lg border-sky-500/30 text-xs"
+                                                >
+                                                    <X className="h-3.5 w-3.5 mr-1" /> Remove
+                                                </Button>
+                                            )}
+                                        </div>
+                                        {evidenceImageError && (
+                                            <p className="text-[10px] font-semibold text-destructive" role="alert">{evidenceImageError}</p>
+                                        )}
+                                        {evidenceImage && evidenceImagePreview && (
+                                            <div className="flex items-center gap-3 rounded-lg border border-sky-500/20 bg-background/70 p-2">
+                                                <img
+                                                    src={evidenceImagePreview}
+                                                    alt="Selected shift evidence preview"
+                                                    className="h-16 w-16 rounded-md object-cover border border-border"
+                                                />
+                                                <div className="min-w-0 text-[10px]">
+                                                    <p className="truncate font-semibold text-foreground" title={evidenceImage.name}>{evidenceImage.name}</p>
+                                                    <p className="text-muted-foreground">{(evidenceImage.size / 1024 / 1024).toFixed(2)} MB</p>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                 </div>
