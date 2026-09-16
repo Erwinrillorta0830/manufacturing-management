@@ -10,6 +10,7 @@ interface ConsolidationPanelProps {
     selectedLines: SalesOrderDetail[];
     releaseGroups: SalesOrderReleaseGroup[];
     mergeValidation: { isValid: boolean; reason: string };
+    hasValidTargetBranch: boolean;
     handleInitiateRelease: () => void;
     versionStock: number | null;
     loadingVersionStock: boolean;
@@ -21,6 +22,7 @@ export function ConsolidationPanel({
     selectedLines,
     releaseGroups,
     mergeValidation,
+    hasValidTargetBranch,
     handleInitiateRelease,
     versionStock,
     loadingVersionStock,
@@ -90,17 +92,17 @@ export function ConsolidationPanel({
                         </div>
 
                         <div className="space-y-2">
-                            <Button className="w-full font-bold text-xs uppercase" disabled={!mergeValidation.isValid} onClick={handleInitiateRelease}>
+                            <Button className="w-full font-bold text-xs uppercase" disabled={!hasValidTargetBranch || !mergeValidation.isValid} onClick={handleInitiateRelease}>
                                 {releaseGroups.length > 1 ? `Release ${releaseGroups.length} Job Orders` : "Release Job Order"}
                             </Button>
 
-                            {canDirectAllocate && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock >= (releaseGroups[0]?.totalRemainingQuantity || 0) && (
                                 <Button type="button" variant="outline" className="w-full font-bold text-xs uppercase border-emerald-600/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50/20 dark:bg-emerald-950/20 hover:bg-emerald-600 hover:text-white transition-all duration-200" onClick={handleInitiateDirectAllocate}>
                                     Direct Allocate &amp; Invoice
                                 </Button>
                             )}
 
-                            {canDirectAllocate && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
+                            {canDirectAllocate && hasValidTargetBranch && mergeValidation.isValid && versionStock !== null && versionStock < (releaseGroups[0]?.totalRemainingQuantity || 0) && (
                                 <p className="text-[10px] text-muted-foreground leading-snug">Direct Allocate &amp; Invoice becomes available when version stock ({versionStock.toLocaleString()}) covers the remaining quantity ({(releaseGroups[0]?.totalRemainingQuantity || 0).toLocaleString()}).</p>
                             )}
                             {!canDirectAllocate && releaseGroups.length > 1 && (

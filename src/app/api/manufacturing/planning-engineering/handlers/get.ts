@@ -795,6 +795,7 @@ export async function handleGET(request: Request) {
                             receipt_id: lot.purchaseOrderReceivingId,
                             receipt_no: lot.purchaseOrderReceivingId ? "Receiving" : "Inventory Movement",
                             source_type: lot.purchaseOrderReceivingId ? "RAW_MATERIAL" : "INVENTORY",
+                            storage_lot_name: lot.storageLotName,
                             mm_lot_id: lot.mmLotId,
                             inventory_lot_id: lot.inventoryLotId,
                             lot_no: lotNum,
@@ -1212,10 +1213,10 @@ export async function handleGET(request: Request) {
         if (action === "wizard-step-2") {
             const prodId = Number(searchParams.get("productId") || "0");
             const vId = searchParams.get("bomId") ? Number(searchParams.get("bomId")) : undefined;
-            const branchId = Number(searchParams.get("branchId") || "1");
+            const branchId = Number(searchParams.get("branchId") || "0");
 
-            if (!prodId) {
-                return NextResponse.json({ error: "Missing or invalid productId query parameter" }, { status: 400 });
+            if (!prodId || !Number.isSafeInteger(branchId) || branchId <= 0) {
+                return NextResponse.json({ error: "Missing or invalid productId or branchId query parameter" }, { status: 400 });
             }
 
             // Load the selected recipe first. The operations catalog is supplemental display data and
@@ -1270,20 +1271,50 @@ export async function handleGET(request: Request) {
                 expected_yield_percentage: version.expected_yield_percentage
             };
 
+            // Resolve the work centers used by the selected recipe so costing can apply machine rates.
+            const workCenterIds = Array.from(new Set(
+                routes.map((route: any) => Number(route.work_center_id)).filter((id: number) => id > 0)
+            ));
+            const workCentersById = new Map<number, any>();
+            if (workCenterIds.length > 0) {
+                try {
+                    const wcRes = await withTimeout(
+                        fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${workCenterIds.join(",")}&fields=work_center_id,work_center_name,overhead_cost_per_hour,capacity_per_hour&limit=-1`, { headers }),
+                        "Selected work centers",
+                        5000
+                    );
+                    const wcRows = wcRes.ok ? (await wcRes.json()).data || [] : [];
+                    wcRows.forEach((wc: any) => workCentersById.set(Number(wc.work_center_id), wc));
+                } catch (error) {
+                    console.warn("Selected work centers could not be loaded for the Step 2 preview:", error);
+                }
+            }
+
             // Map routings
-            const routings = routes.map(r => ({
-                routing_id: r.route_id,
-                bom_id: version.version_id,
-                sequence_order: r.sequence_order,
-                setup_time_hours: r.setup_time_hours,
-                run_time_hours: r.run_time_hours,
-                duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
-                step_batch_size: r.step_batch_size,
-                operation_id: r.operation_id,
-                work_center_id: r.work_center_id,
-                qa_template_id: r.qa_template_id,
-                operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`
-            }));
+            const routings = routes.map(r => {
+                const workCenter = workCentersById.get(Number(r.work_center_id)) || null;
+                return {
+                    routing_id: r.route_id,
+                    bom_id: version.version_id,
+                    sequence_order: r.sequence_order,
+                    setup_time_hours: r.setup_time_hours,
+                    run_time_hours: r.run_time_hours,
+                    duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
+                    step_batch_size: r.step_batch_size,
+                    operation_id: r.operation_id,
+                    work_center_id: r.work_center_id,
+                    qa_template_id: r.qa_template_id,
+                    operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`,
+                    overhead_cost_per_hour: Number(workCenter?.overhead_cost_per_hour || 0),
+                    work_center_name: workCenter?.work_center_name || null,
+                    work_center: workCenter ? {
+                        work_center_id: Number(workCenter.work_center_id),
+                        work_center_name: workCenter.work_center_name || null,
+                        overhead_cost_per_hour: Number(workCenter.overhead_cost_per_hour || 0),
+                        capacity_per_hour: workCenter.capacity_per_hour != null ? Number(workCenter.capacity_per_hour) : null
+                    } : null
+                };
+            });
 
             // Helper to safely extract integer product ID from primitive or object
             const extractProductId = (val: any): number => {
@@ -1360,7 +1391,7 @@ export async function handleGET(request: Request) {
             const productsMap = new Map<number, any>();
             if (allProductIds.length > 0) {
                 const prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
                     { headers }
                 );
                 if (prodRes.ok) {
@@ -1384,6 +1415,7 @@ export async function handleGET(request: Request) {
             const components = parentBomItems.map(item => {
                 const pId = extractProductId(item.product_id);
                 const pDetails = productsMap.get(pId);
+                const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
                 return {
                     component_id: item.id,
                     bom_id: version.version_id,
@@ -1392,8 +1424,10 @@ export async function handleGET(request: Request) {
                         product_name: pDetails?.product_name || `Product #${pId}`,
                         product_code: pDetails?.product_code || "",
                         category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
-                        product_type: pDetails?.product_type ?? item.product_type
+                        product_type: pDetails?.product_type ?? item.product_type,
+                        cost_per_unit: unitCost
                     },
+                    cost_per_unit: unitCost,
                     quantity_required: Number(item.quantity_required || 0),
                     wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
                     unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
@@ -1415,6 +1449,7 @@ export async function handleGET(request: Request) {
                 subAssemblyBoms[subProdId] = subItems.map(item => {
                     const cPid = extractProductId(item.product_id);
                     const pDetails = productsMap.get(cPid);
+                    const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
                     return {
                         component_id: item.id,
                         bom_id: subVersionId,
@@ -1424,8 +1459,10 @@ export async function handleGET(request: Request) {
                             product_name: pDetails?.product_name || `Product #${cPid}`,
                             product_code: pDetails?.product_code || "",
                             category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
-                            product_type: pDetails?.product_type ?? item.product_type
+                            product_type: pDetails?.product_type ?? item.product_type,
+                            cost_per_unit: unitCost
                         },
+                        cost_per_unit: unitCost,
                         quantity_required: Number(item.quantity_required || 0),
                         wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
                         unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
@@ -1496,10 +1533,10 @@ export async function handleGET(request: Request) {
 
             const subProdId = Number(searchParams.get("productId") || "0");
             const vId = Number(searchParams.get("versionId") || "0");
-            const branchId = Number(searchParams.get("branchId") || "1");
+            const branchId = Number(searchParams.get("branchId") || "0");
 
-            if (!subProdId || !vId) {
-                return NextResponse.json({ error: "Missing productId or versionId" }, { status: 400 });
+            if (!subProdId || !vId || !Number.isSafeInteger(branchId) || branchId <= 0) {
+                return NextResponse.json({ error: "Missing productId, versionId, or branchId" }, { status: 400 });
             }
 
             const { version, routes } = await getBOMDetailsForVersion(subProdId, vId);

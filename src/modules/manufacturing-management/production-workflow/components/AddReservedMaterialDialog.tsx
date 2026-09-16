@@ -196,7 +196,8 @@ export function AddReservedMaterialDialog({
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-muted/40 text-[10px] font-bold uppercase text-muted-foreground">
                                         <tr>
-                                            <th className="p-2.5">Lot / Batch</th>
+                                            <th className="p-2.5">Storage lot</th>
+                                            <th className="p-2.5">Batch</th>
                                             <th className="p-2.5">Source</th>
                                             <th className="p-2.5">Expiry</th>
                                             <th className="p-2.5 text-right">Available</th>
@@ -214,7 +215,11 @@ export function AddReservedMaterialDialog({
                                                         setError(null);
                                                     }}
                                                     className={`cursor-pointer transition-colors ${isSelected ? "bg-emerald-500/10" : "hover:bg-muted/40"}`}
+                                                    aria-selected={isSelected}
                                                 >
+                                                    <td className="p-2.5 font-semibold text-foreground">
+                                                        {candidate.storage_lot_name || "Unnamed storage lot"}
+                                                    </td>
                                                     <td className="p-2.5 font-mono font-bold text-foreground">{candidate.lot_no}</td>
                                                     <td className="p-2.5 text-[11px] text-muted-foreground">
                                                         {candidate.receipt_no || (candidate.source_type === "INVENTORY" ? "Inventory movement" : "Receiving")}

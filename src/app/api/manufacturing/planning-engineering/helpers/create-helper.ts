@@ -397,7 +397,7 @@ export async function createJobOrder(
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
-            branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+            branch_id: numericBranchId,
             created_by: joData.created_by ? Number(joData.created_by) : null,
             created_at: formatPhtDateTime(),
             modified_at: null,
@@ -677,7 +677,7 @@ export async function createJobOrder(
 
                                     const reservationPayload: Record<string, unknown> = {
                                         product_id: compProductId,
-                                         branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+                                         branch_id: numericBranchId,
                                          mm_lot_id: alloc.mm_lot_id || null,
                                          inventory_lot_id: alloc.inventory_lot_id || null,
                                          batch_no: alloc.batch_no || null,

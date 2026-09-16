@@ -88,6 +88,7 @@ export function ReleaseJODialog({
     const [hasLoadedDetails, setHasLoadedDetails] = useState(false);
     const [routings, setRoutings] = useState<any[]>([]);
     const [components, setComponents] = useState<any[]>([]);
+    const [bomData, setBomData] = useState<any | null>(null);
     const [inventories, setInventories] = useState<Record<number, any>>({});
     const [operators, setOperators] = useState<any[]>([]);
     const [bomBaseQty, setBomBaseQty] = useState(1);
@@ -101,6 +102,11 @@ export function ReleaseJODialog({
     const [groupSubAssemblyVersions, setGroupSubAssemblyVersions] = useState<Record<string, Record<number, number>>>({});
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
+
+    const parseValidBranchId = (value: unknown): number | null => {
+        const branchId = Number(value);
+        return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+    };
 
     const normalizeInventoryMap = (value: any): Record<number, any> => {
         if (!Array.isArray(value)) return value || {};
@@ -160,6 +166,7 @@ export function ReleaseJODialog({
             setCurrentStep(1);
             setRoutings([]);
             setComponents([]);
+            setBomData(null);
             setInventories({});
             setAssignmentsProp({});
             setSearchQuery("");
@@ -206,12 +213,13 @@ export function ReleaseJODialog({
                     const first = selectedLines[0];
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${selectedBranchId || 1}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}`;
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
                         setRoutings(data.routings || []);
                         setComponents(data.components || []);
+                        setBomData(data.bom || null);
                         setSubAssemblyBoms(data.subAssemblyBoms || {});
                         setSubAssemblyRoutings(data.subAssemblyRoutings || {});
                         setSubAssemblyVersions(data.subAssemblyVersions || {});
@@ -237,10 +245,15 @@ export function ReleaseJODialog({
     }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null) {
+            console.error("Cannot load sub-assembly details without a valid target branch.");
+            return;
+        }
         setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
         setLoadingSubVersion(prev => ({ ...prev, [subProdId]: true }));
         try {
-            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${selectedBranchId || 1}`;
+            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${branchId}`;
             const res = await fetch(url);
             if (res.ok) {
                 const data = await res.json();
@@ -345,7 +358,7 @@ export function ReleaseJODialog({
         const bomItemsForCosting = components.map((comp) => ({
             quantity_required: Number(comp.quantity_required || 0),
             wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
-            cost_per_unit: Number(comp.component_product_id?.cost_per_unit || comp.cost_per_unit || 0)
+            cost_per_unit: Number(comp.component_product_id?.cost_per_unit ?? comp.cost_per_unit ?? 0)
         }));
 
         const routeStepsForCosting = routings.map((r) => ({
@@ -354,18 +367,19 @@ export function ReleaseJODialog({
             setup_time_hours: Number(r.setup_time_hours || 0),
             run_time_hours: Number(r.run_time_hours || 0),
             step_batch_size: Number(r.step_batch_size || 1),
-            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour || r.overhead_cost_per_hour || 0)
+            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour ?? r.overhead_cost_per_hour ?? 0)
         }));
 
         return calculateUnitCOGSBreakdown(
             bomBaseQty,
-            (first as any).expected_yield_percentage || prodObj.expected_yield_percentage,
-            (first as any).custom_overhead || prodObj.custom_overhead,
+            bomData?.expected_yield_percentage ?? (first as any).expected_yield_percentage ?? prodObj.expected_yield_percentage,
+            bomData?.custom_overhead ?? (first as any).custom_overhead ?? prodObj.custom_overhead,
             bomItemsForCosting,
             routeStepsForCosting,
-            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0)
+            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0),
+            Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : []
         );
-    }, [selectedLines, components, routings, bomBaseQty]);
+    }, [selectedLines, components, routings, bomBaseQty, bomData]);
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
@@ -880,13 +894,15 @@ export function ReleaseJODialog({
                                                         <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
                                                         <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">
-                                                            {cogsBreakdown.isCustomLaborOverride ? "Fixed Version Override" : "Work Center Hourly Rate"}
+                                                            BOM Labor Standard
                                                         </span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
                                                         <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
-                                                        <span className="text-[9px] text-muted-foreground block">Power, Steam & Depreciation</span>
+                                                        <span className="text-[9px] text-muted-foreground block">
+                                                            {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
+                                                        </span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1330,6 +1346,7 @@ export function ReleaseJODialog({
                                     Save Draft
                                 </Button>
                                 <Button
+                                    variant="outline"
                                     size="sm"
                                     onClick={() => handleConfirmRelease(
                                         selectedSubAssemblyVersions,
