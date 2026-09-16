@@ -85,14 +85,14 @@ export function Step1BasicDetails({
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                        Target Branch
+                        Target Branch <span className="text-destructive">*</span>
                     </label>
                     <Select
                         value={selectedBranchId}
                         onValueChange={setSelectedBranchId}
                     >
                         <SelectTrigger className="h-9 font-semibold bg-card border-input text-foreground">
-                            <SelectValue placeholder="Select branch" />
+                            <SelectValue placeholder="Select Target Branch..." />
                         </SelectTrigger>
                         <SelectContent>
                             {branches.map((b) => (
