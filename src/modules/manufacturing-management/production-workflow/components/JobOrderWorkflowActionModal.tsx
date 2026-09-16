@@ -195,6 +195,7 @@ export function JobOrderWorkflowActionModal({
                                 )}
                                 {terminationImage && terminationImagePreview && (
                                     <div className="flex items-center gap-3 rounded-lg border bg-background p-2">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
                                             src={terminationImagePreview}
                                             alt="Termination evidence preview"
