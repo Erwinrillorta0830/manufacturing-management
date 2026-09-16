@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
-import { resolveApplicableWorkCenterIds } from "./_applicable-work-centers";
+import { resolveApplicableRouteWorkCenters, resolveApplicableWorkCenterIds } from "./_applicable-work-centers";
 
 interface UserRecord {
     user_id: number;
@@ -285,13 +285,17 @@ export async function GET(request: Request) {
                 }, { status: 404 });
             }
 
-            const applicable = await resolveApplicableWorkCenterIds(jobOrder);
+            const [applicable, routeOptions] = await Promise.all([
+                resolveApplicableWorkCenterIds(jobOrder),
+                resolveApplicableRouteWorkCenters(jobOrder)
+            ]);
             if (applicable.source === "NONE" || applicable.workCenterIds.length === 0) {
                 return NextResponse.json({
                     success: true,
                     data: [],
                     applicableWorkCenterIds: [],
-                    source: "NONE"
+                    source: "NONE",
+                    routeOptions
                 });
             }
 
@@ -303,7 +307,8 @@ export async function GET(request: Request) {
                 success: true,
                 data,
                 applicableWorkCenterIds: applicable.workCenterIds,
-                source: applicable.source
+                source: applicable.source,
+                routeOptions
             });
         }
 
@@ -352,9 +357,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { workCenterBarcode, jobOrderBarcode, workCenterId, jobOrderId } = body;
+        const { workCenterBarcode, jobOrderBarcode, workCenterId, jobOrderId, joRouteId } = body;
         const hasWorkCenterId = workCenterId !== undefined && workCenterId !== null && String(workCenterId).trim() !== "";
         const hasJobOrderId = jobOrderId !== undefined && jobOrderId !== null && String(jobOrderId).trim() !== "";
+        const hasJoRouteId = joRouteId !== undefined && joRouteId !== null && String(joRouteId).trim() !== "";
 
         const currentUserId = await getUserIdFromSession();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
@@ -460,10 +466,17 @@ export async function POST(request: Request) {
 
         const jobOrderIdNumber = Number(matchedJobOrder.job_order_id);
         const workCenterIdNumber = Number(matchedWorkCenter.work_center_id);
+        const requestedJoRouteId = hasJoRouteId ? Number(joRouteId) : null;
         if (!Number.isInteger(jobOrderIdNumber) || jobOrderIdNumber <= 0 || !Number.isInteger(workCenterIdNumber) || workCenterIdNumber <= 0) {
             return NextResponse.json({
                 success: false,
                 error: "The scanned job order or work center has an invalid identifier."
+            }, { status: 422 });
+        }
+        if (hasJoRouteId && (!Number.isInteger(requestedJoRouteId) || Number(requestedJoRouteId) <= 0)) {
+            return NextResponse.json({
+                success: false,
+                error: "The selected routing step has an invalid identifier."
             }, { status: 422 });
         }
 
@@ -542,16 +555,58 @@ export async function POST(request: Request) {
             throw new Error("Station routing lookup returned an invalid data set.");
         }
 
-        const isOpenRoute = (route: any) => !route.status || route.status === "Pending" || route.status === "Ongoing";
-        let activeOperation = routes.find((route: any) => Number(route.work_center_id) === workCenterIdNumber && isOpenRoute(route));
-        if (!activeOperation) {
-            activeOperation = routes.find((route: any) => isOpenRoute(route));
+        const isOpenRoute = (route: any) => {
+            const status = String(route.status || "").trim().toLowerCase();
+            return !status || status === "pending" || status === "ongoing" || status === "in progress";
+        };
+        const openRoutes = routes.filter((route: any) => isOpenRoute(route));
+        const routeOptions = await resolveApplicableRouteWorkCenters(matchedJobOrder);
+        let activeOperation = requestedJoRouteId
+            ? routes.find((route: any) => Number(route.jo_route_id || route.id) === requestedJoRouteId && isOpenRoute(route))
+            : routes.find((route: any) => Number(route.work_center_id) === workCenterIdNumber && isOpenRoute(route));
+
+        if (!requestedJoRouteId && openRoutes.length > 1) {
+            return NextResponse.json({
+                success: false,
+                error: "Select a routing step before starting a Job Order with multiple open routes.",
+                code: "ROUTE_SELECTION_REQUIRED",
+                routes: openRoutes.map((route: any) => ({
+                    joRouteId: Number(route.jo_route_id || route.id),
+                    sequenceOrder: Number(route.sequence_order || 0),
+                    status: route.status || "Pending"
+                }))
+            }, { status: 422 });
         }
 
         if (!activeOperation) {
             return NextResponse.json({
                 success: false,
                 error: `No pending or ongoing routing operation is available for Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber}.`
+            }, { status: 409 });
+        }
+
+        const activeOperationRouteId = Number(activeOperation.jo_route_id || activeOperation.id);
+        const routeOption = routeOptions.find((option) => option.joRouteId === activeOperationRouteId);
+        if (!routeOption || routeOption.workCenterIds.length === 0) {
+            return NextResponse.json({
+                success: false,
+                error: `Routing step ${activeOperation.sequence_order || activeOperationRouteId} has no configured workstation in the product version routing.`,
+                code: "ROUTE_WORKCENTER_NOT_CONFIGURED"
+            }, { status: 409 });
+        }
+        if (!routeOption.workCenterIds.includes(workCenterIdNumber)) {
+            const applicableLabels = routeOption.workCenterIds
+                .map((id) => {
+                    const center = allWorkCenters.find((w: any) => Number(w.work_center_id) === id);
+                    return center ? `${center.work_center_name} (ID: ${id})` : `Work Center #${id}`;
+                })
+                .join(", ");
+            return NextResponse.json({
+                success: false,
+                error: `Work Center "${matchedWorkCenter.work_center_name}" is not assigned to routing step ${activeOperation.sequence_order || activeOperationRouteId}. Applicable station: ${applicableLabels}.`,
+                code: "ROUTE_WORKCENTER_NOT_APPLICABLE",
+                joRouteId: activeOperationRouteId,
+                applicableWorkCenterIds: routeOption.workCenterIds
             }, { status: 409 });
         }
 

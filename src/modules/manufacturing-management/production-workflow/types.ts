@@ -260,6 +260,7 @@ export interface StationScanPayload {
     jobOrderBarcode?: string;
     workCenterId?: number;
     jobOrderId?: number | string;
+    joRouteId?: number;
     operatorId?: number;
     action?: "scan" | "start-station" | "lookup";
 }
