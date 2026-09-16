@@ -25,7 +25,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { JobOrder, WorkCenter, StationScanResponse } from "../types";
 import { scanStationStart, fetchWorkCenters, type RouteWorkCenterOption, type WorkCenterApplicabilitySource } from "../services/production-api";
-import { RouteWorkstationAssignmentDialog } from "./RouteWorkstationAssignmentDialog";
 import { toast } from "sonner";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -76,7 +75,6 @@ export function StationStartScanner({
     const [selectedWc, setSelectedWc] = useState<WorkCenter | null>(null);
     const [selectedJo, setSelectedJo] = useState<JobOrder | null>(null);
     const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
-    const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [scanResult, setScanResult] = useState<StationScanResponse | null>(null);
@@ -116,7 +114,6 @@ export function StationStartScanner({
         setScannedJoBarcode("");
         setSelectedWc(null);
         setSelectedRouteId(null);
-        setIsRouteAssignmentOpen(false);
 
         const prefill = initialJobOrder || null;
         setSelectedJo(prefill);
@@ -536,16 +533,6 @@ export function StationStartScanner({
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-1">
-                                            {selectedJoRoutes.length > 1 && (
-                                                <Button
-                                                    variant="outline"
-                                                    size="xs"
-                                                    onClick={() => setIsRouteAssignmentOpen(true)}
-                                                    className="h-7 text-[10px] font-bold"
-                                                >
-                                                    <GitBranch className="mr-1 h-3 w-3" /> Assign Routes
-                                                </Button>
-                                            )}
                                             <Button
                                                 variant="ghost"
                                                 size="xs"
@@ -694,31 +681,6 @@ export function StationStartScanner({
                 </div>
             </DialogContent>
         </Dialog>
-        <RouteWorkstationAssignmentDialog
-            open={isRouteAssignmentOpen}
-            onOpenChange={setIsRouteAssignmentOpen}
-            jobOrder={selectedJo}
-            onSaved={(savedRoutes) => {
-                setSelectedJo((previous) => {
-                    if (!previous) return previous;
-                    const currentRoutes = previous.routing_tasks || previous.routingTasks || [];
-                    const savedById = new Map(savedRoutes.map((route) => [route.joRouteId, route]));
-                    const updatedRoutes = currentRoutes.map((route) => {
-                        const saved = savedById.get(Number(route.id || route.jo_route_id));
-                        return saved
-                            ? { ...route, work_center_id: saved.workCenterId, work_center_name: saved.workCenterName }
-                            : route;
-                    });
-                    return { ...previous, routing_tasks: updatedRoutes, routingTasks: updatedRoutes };
-                });
-                setRouteOptions((previous) => previous.map((option) => {
-                    const saved = savedRoutes.find((route) => route.joRouteId === option.joRouteId);
-                    return saved
-                        ? { ...option, currentWorkCenterId: saved.workCenterId }
-                        : option;
-                }));
-            }}
-        />
         </>
     );
 }
