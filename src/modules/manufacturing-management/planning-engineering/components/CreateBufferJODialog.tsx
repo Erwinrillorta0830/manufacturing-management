@@ -304,7 +304,7 @@ export function CreateBufferJODialog({
                 const controller = new AbortController();
                 const timeoutId = window.setTimeout(() => controller.abort(), 25000);
                 try {
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}&isBuffer=true`;
                     const res = await fetch(url, { signal: controller.signal });
                     const data = await res.json().catch(() => null);
                     if (!res.ok) {

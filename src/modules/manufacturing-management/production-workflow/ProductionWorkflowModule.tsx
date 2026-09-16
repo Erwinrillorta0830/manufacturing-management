@@ -597,6 +597,7 @@ export default function ProductionWorkflowModule() {
                                         handleStopTimer={handleStopTimer}
                                         handleSaveManualHours={handleSaveManualHours}
                                         handleCompleteStepClick={handleCompleteStepClick}
+                                        onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
                                         readOnly={isProductionReadOnly}
                                     />
                                 );

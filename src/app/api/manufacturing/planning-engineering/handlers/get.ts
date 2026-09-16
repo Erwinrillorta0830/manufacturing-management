@@ -1214,6 +1214,7 @@ export async function handleGET(request: Request) {
             const prodId = Number(searchParams.get("productId") || "0");
             const vId = searchParams.get("bomId") ? Number(searchParams.get("bomId")) : undefined;
             const branchId = Number(searchParams.get("branchId") || "0");
+            const isBuffer = searchParams.get("isBuffer") === "true";
 
             if (!prodId || !Number.isSafeInteger(branchId) || branchId <= 0) {
                 return NextResponse.json({ error: "Missing or invalid productId or branchId query parameter" }, { status: 400 });
@@ -1509,7 +1510,9 @@ export async function handleGET(request: Request) {
             }
 
             // Run getProductInventoryAndSafetyStock for all collected product IDs
-            const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId);
+            const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId, {
+                includeReservations: !isBuffer
+            });
 
             // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
             return NextResponse.json({
