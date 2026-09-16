@@ -456,14 +456,14 @@ export async function GET(request: Request) {
                     sort: "customer_name"
                 })),
                 read("products", new URLSearchParams({
-                    fields: "product_id,product_name,product_code,product_type,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count",
+                    fields: "product_id,product_name,product_code,product_type,product_type.id,price_per_unit,cost_per_unit,parent_id,parent_id.product_id,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,unit_of_measurement_count",
                     limit: "-1",
                     sort: "product_name",
                     "filter[isActive][_eq]": "1"
                 }))
             ]);
 
-            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult, userResult, discountTypeResult] = await Promise.all([
+            const [branchResult, paymentTermResult, salesmanResult, supplierResult, productTypeResult, userResult, discountTypeResult, versionsResult] = await Promise.all([
                 optionalRead("branches", new URLSearchParams({
                     "filter[isActive][_eq]": "1",
                     fields: "id,branch_name",
@@ -499,8 +499,32 @@ export async function GET(request: Request) {
                 optionalRead("discount_type", new URLSearchParams({
                     fields: "id,discount_type,total_percent",
                     limit: "-1"
+                })),
+                optionalRead("product_manufacturing_version", new URLSearchParams({
+                    limit: "-1"
                 }))
             ]);
+
+            const activeVersionProductIds = new Set<number>();
+            const activeVersionProductUomPairs = new Set<string>();
+            (versionsResult.data || []).forEach((v: any) => {
+                const st = String(v.status || "").trim().toLowerCase();
+                const isActiveStatus = st === "active";
+                const isActiveFlag = v.is_active === true || v.is_active === 1 || String(v.is_active) === "1";
+                const isPrimaryFlag = v.is_primary === true || v.is_primary === 1 || String(v.is_primary) === "1" || Number(v.is_primary) === 1;
+                
+                const rawProd = v.product_id;
+                const prodId = Number(typeof rawProd === "object" && rawProd !== null ? rawProd.product_id || rawProd.id : rawProd);
+                const rawUom = v.uom_id;
+                const uomId = Number(typeof rawUom === "object" && rawUom !== null ? rawUom.unit_id || rawUom.id : rawUom);
+
+                if ((isActiveStatus || isActiveFlag || isPrimaryFlag) && Number.isSafeInteger(prodId) && prodId > 0) {
+                    activeVersionProductIds.add(prodId);
+                    if (Number.isSafeInteger(uomId) && uomId > 0) {
+                        activeVersionProductUomPairs.add(`${prodId}_${uomId}`);
+                    }
+                }
+            });
 
             const customers = (customerResult.data || []).map((customer: any) => {
                 const rawPaymentTerm = customer.payment_term;
@@ -521,6 +545,17 @@ export async function GET(request: Request) {
                         : null
                 };
             });
+            const parentHasActiveVersionSet = new Set<number>();
+            (productResult.data || []).forEach((product: any) => {
+                const rawParent = product.parent_id;
+                const parentId = Number(rawParent && typeof rawParent === "object" ? rawParent.product_id : rawParent);
+                const productId = Number(product.product_id);
+                const effectiveParentId = Number.isSafeInteger(parentId) && parentId > 0 ? parentId : productId;
+                if (activeVersionProductIds.has(productId)) {
+                    parentHasActiveVersionSet.add(effectiveParentId);
+                }
+            });
+
             const products = (productResult.data || []).map((product: any) => {
                 const rawParent = product.parent_id;
                 const parentId = Number(
@@ -530,20 +565,30 @@ export async function GET(request: Request) {
                 );
                 const productId = Number(product.product_id);
                 const unit = product.unit_of_measurement;
+                const rawType = product.product_type;
+                const productTypeId = Number(
+                    rawType && typeof rawType === "object"
+                        ? rawType.id
+                        : rawType
+                );
+                const effectiveParentId = Number.isSafeInteger(parentId) && parentId > 0 ? parentId : productId;
+                const hasVer = activeVersionProductIds.has(productId) || parentHasActiveVersionSet.has(effectiveParentId);
                 return {
                     product_id: productId,
-                    parent_product_id: Number.isSafeInteger(parentId) && parentId > 0 ? parentId : productId,
+                    parent_product_id: effectiveParentId,
                     is_parent: !(Number.isSafeInteger(parentId) && parentId > 0),
                     product_name: product.product_name,
                     product_code: product.product_code,
-                    product_type: product.product_type,
+                    product_type: Number.isSafeInteger(productTypeId) && productTypeId > 0 ? productTypeId : product.product_type,
                     price_per_unit: product.price_per_unit,
                     cost_per_unit: product.cost_per_unit,
                     unit_id: Number(unit?.unit_id) || null,
                     unit_name: unit?.unit_name || "Unit",
                     unit_shortcut: unit?.unit_shortcut || "UNIT",
                     unit_count: Number(product.unit_of_measurement_count) || 1,
-                    manufacturing_lead_days: Number(product.manufacturing_lead_days) || 0
+                    manufacturing_lead_days: Number(product.manufacturing_lead_days) || 0,
+                    has_active_version: hasVer,
+                    has_active_uom_version: activeVersionProductIds.has(productId) || (Boolean(unit?.unit_id) && (activeVersionProductUomPairs.has(`${productId}_${unit.unit_id}`) || activeVersionProductUomPairs.has(`${effectiveParentId}_${unit.unit_id}`)))
                 };
             });
 
@@ -1135,7 +1180,8 @@ export async function PATCH(request: Request) {
             const allDetails = (await allDetailsRes.json()).data || [];
 
             if ("action" in body && body.action === "update-draft") {
-                if (mapStatus(currentStatus) !== "Draft") {
+                const mappedStatus = mapStatus(currentStatus);
+                if (mappedStatus !== "Draft" && mappedStatus !== "For Revision") {
                     throw new ApiError(409, `Sales order cannot be fully edited while it is ${currentStatus || "in an unknown status"}.`);
                 }
 
@@ -1151,7 +1197,7 @@ export async function PATCH(request: Request) {
                     discount_amount: body.discountAmount || 0,
                     modified_by: user.id,
                     modified_date: localCreatedDate,
-                    order_status: body.submitForApproval ? "For Approval" : "Draft",
+                    order_status: body.submitForApproval ? "For Approval" : (mappedStatus === "For Revision" ? "For Revision" : "Draft"),
                     for_approval_at: body.submitForApproval ? localCreatedDate : undefined
                 };
 
@@ -1251,7 +1297,7 @@ export async function PATCH(request: Request) {
                     }
                 }
 
-                return NextResponse.json({ success: true, order_status: body.submitForApproval ? "For Approval" : "Draft" });
+                return NextResponse.json({ success: true, order_status: body.submitForApproval ? "For Approval" : (mappedStatus === "For Revision" ? "For Revision" : "Draft") });
             }
 
             if ("orderStatus" in body) {
@@ -1285,8 +1331,8 @@ export async function PATCH(request: Request) {
                     }
                 }
 
-                const isApprovalDecision = (current === "For Approval" || current === "On Hold")
-                    && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "On Hold" || target === "Cancelled");
+                const isApprovalDecision = (current === "For Approval" || current === "On Hold" || current === "For Revision")
+                    && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "For Revision" || target === "On Hold" || target === "Cancelled");
                 if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
                     throw new ApiError(403, "Sales-order approval access is required for this transition.");
                 }
@@ -1386,7 +1432,8 @@ export async function PATCH(request: Request) {
                 return NextResponse.json({ success: true, order_status: target });
             }
 
-            if (mapStatus(currentStatus) !== "Draft") {
+            const mappedDetailStatus = mapStatus(currentStatus);
+            if (mappedDetailStatus !== "Draft" && mappedDetailStatus !== "For Revision") {
                 throw new ApiError(409, `Quantities cannot be changed while the sales order is ${currentStatus || "in an unknown status"}.`);
             }
 

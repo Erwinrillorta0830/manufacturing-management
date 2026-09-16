@@ -36,16 +36,18 @@ export function SelectedProductsList({
     const [versionsMap, setVersionsMap] = useState<Record<number, { id: number; version_name: string; created_at?: string }[]>>({});
     const [loadingVersions, setLoadingVersions] = useState<Record<number, boolean>>({});
 
-    // Fetch versions dynamically for selected parent products
+    // Fetch versions dynamically for selected product/variant
     useEffect(() => {
         selectedProductsList.forEach(item => {
-            const parentId = item.parent_product_id || item.product?.parent_product_id || item.product?.product_id;
-            if (!parentId) return;
+            const pid = item.product?.product_id || item.parent_product_id;
+            if (!pid) return;
             
-            if (versionsMap[parentId] !== undefined || loadingVersions[parentId]) return;
+            if (versionsMap[pid] !== undefined || loadingVersions[pid]) return;
 
-            setLoadingVersions(prev => ({ ...prev, [parentId]: true }));
-            fetch(`/api/manufacturing/finished-goods/versions?productId=${parentId}&status=Active`)
+            setLoadingVersions(prev => ({ ...prev, [pid]: true }));
+            const uomId = item.product?.unit_id || item.product?.unit_of_measurement?.unit_id || null;
+            const url = `/api/manufacturing/finished-goods/versions?productId=${pid}${uomId ? `&uomId=${uomId}` : ""}&status=Active`;
+            fetch(url)
                 .then(res => res.ok ? res.json() : [])
                 .then(data => {
                     const sorted = [...data].sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
@@ -57,16 +59,16 @@ export function SelectedProductsList({
                         if (timeA !== timeB) return timeB - timeA;
                         return (b.id as number) - (a.id as number);
                     });
-                    setVersionsMap(prev => ({ ...prev, [parentId]: sorted }));
+                    setVersionsMap(prev => ({ ...prev, [pid]: sorted }));
                     
                     // Auto-default if product is already selected
                     if (item.product && sorted.length > 0 && !item.versionId && item.line_id) {
                         changeProductVersion(item.line_id, sorted[0].id, sorted[0].version_name);
                     }
                 })
-                .catch(e => console.error("Error fetching versions:", parentId, e))
+                .catch(e => console.error("Error fetching versions:", pid, e))
                 .finally(() => {
-                    setLoadingVersions(prev => ({ ...prev, [parentId]: false }));
+                    setLoadingVersions(prev => ({ ...prev, [pid]: false }));
                 });
         });
     }, [selectedProductsList, versionsMap, loadingVersions, changeProductVersion]);
@@ -126,8 +128,8 @@ export function SelectedProductsList({
                         <tr>
                             <th className="p-3.5 w-48">Product Type</th>
                             <th className="p-3.5 w-64">Product</th>
-                            <th className="p-3.5 min-w-[10rem]">Version</th>
                             <th className="p-3.5 w-32">UOM</th>
+                            <th className="p-3.5 min-w-[10rem]">Version</th>
                             <th className="p-3.5 text-right w-24">Standard COGS</th>
                             <th className="p-3.5 text-right w-24">Price Type Rate</th>
                             <th className="p-3.5 text-right w-36">Agreed Price</th>
@@ -161,19 +163,53 @@ export function SelectedProductsList({
 
                             const otherSelectedVariantIds = selectedProductsList.filter(it => it.line_id !== lineId).map(it => it.product?.product_id).filter(Boolean);
 
+                            const isFinishedGoods = Boolean(
+                                item.product_type_id &&
+                                String(productTypes.find((t: Record<string, unknown>) => Number(t.id) === Number(item.product_type_id))?.name || "")
+                                    .toLowerCase()
+                                    .includes("finished")
+                            );
+
                             const parentOptions = allProducts.filter(p => (p as unknown as Record<string, unknown>).is_parent)
                                 .filter(p => {
                                     if (item.product_type_id && Number((p as unknown as Record<string, unknown>).product_type) !== item.product_type_id) return false;
+                                    if (isFinishedGoods) {
+                                        const pRec = p as unknown as Record<string, unknown>;
+                                        const parentHasVer = Boolean(pRec.has_active_version);
+                                        const childHasVer = allProducts.some(child => {
+                                            const cRec = child as unknown as Record<string, unknown>;
+                                            return Number(cRec.parent_product_id) === Number(p.product_id) && Boolean(cRec.has_active_version);
+                                        });
+                                        if (!parentHasVer && !childHasVer) return false;
+                                    }
+                                    // Check if parent still has at least one selectable UOM variant
+                                    const isCurrentParent = Number(p.product_id) === Number(parentId);
+                                    if (!isCurrentParent) {
+                                        const availableVariants = allProducts
+                                            .filter(child => Number((child as unknown as Record<string, unknown>).parent_product_id) === Number(p.product_id))
+                                            .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
+                                            .filter(child => {
+                                                if (!isFinishedGoods) return true;
+                                                const cRec = child as unknown as Record<string, unknown>;
+                                                return Boolean(cRec.has_active_uom_version ?? cRec.has_active_version);
+                                            });
+                                        if (availableVariants.length === 0) return false;
+                                    }
                                     return true;
                                 })
                                 .map(p => ({ value: String(p.product_id), label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})` }));
 
                             const uomOptions = allProducts.filter(p => Number((p as unknown as Record<string, unknown>).parent_product_id) === Number(parentId))
                                 .filter(p => Number(p.product_id) === Number(pid) || !otherSelectedVariantIds.includes(Number(p.product_id)))
+                                .filter(p => {
+                                    if (!isFinishedGoods) return true;
+                                    const pRec = p as unknown as Record<string, unknown>;
+                                    return Boolean(pRec.has_active_uom_version ?? pRec.has_active_version);
+                                })
                                 .sort((a, b) => Number((b as unknown as Record<string, unknown>).is_parent) - Number((a as unknown as Record<string, unknown>).is_parent) || Number((a as unknown as Record<string, unknown>).unit_count) - Number((b as unknown as Record<string, unknown>).unit_count))
                                 .map(p => ({ value: String(p.product_id), label: formatUomLabel(p as unknown as Record<string, unknown>) }));
                                 
-                            const activeVersions = versionsMap[parentId || 0] || [];
+                            const activeVersions = (pid && versionsMap[pid]) || (parentId && versionsMap[parentId]) || [];
 
                             return (
                                 <tr key={lineId} className="hover:bg-muted/35 transition-colors group">
@@ -200,26 +236,11 @@ export function SelectedProductsList({
                                                 if (updateRow) {
                                                     updateRow(lineId, "parent_product_id", Number(val));
                                                     if (handleRowProductSelect) handleRowProductSelect(lineId, null);
-                                                    
-                                                    // Auto-select UOM if only 1 option available? Let user select it.
                                                 }
                                             }} 
                                             placeholder="Choose Product..." 
                                             className="h-8 text-xs font-semibold" 
                                             disabled={!item.product_type_id && !parentId} 
-                                        />
-                                    </td>
-                                    <td className="p-3.5 overflow-visible">
-                                        <CreatableSelect 
-                                            options={activeVersions.map(v => ({ value: String(v.id), label: v.version_name }))} 
-                                            value={vid ? String(vid) : ""} 
-                                            onValueChange={(val) => {
-                                                const vObj = activeVersions.find(v => String(v.id) === val);
-                                                changeProductVersion(lineId, Number(val), vObj ? vObj.version_name : null);
-                                            }} 
-                                            placeholder="Choose Version..." 
-                                            className="h-8 text-xs font-semibold" 
-                                            disabled={!parentId || activeVersions.length === 0} 
                                         />
                                     </td>
                                     <td className="p-3.5 overflow-visible">
@@ -235,6 +256,19 @@ export function SelectedProductsList({
                                             placeholder="Choose UOM..." 
                                             className="h-8 text-xs font-semibold" 
                                             disabled={!parentId} 
+                                        />
+                                    </td>
+                                    <td className="p-3.5 overflow-visible">
+                                        <CreatableSelect 
+                                            options={activeVersions.map(v => ({ value: String(v.id), label: v.version_name }))} 
+                                            value={vid ? String(vid) : ""} 
+                                            onValueChange={(val) => {
+                                                const vObj = activeVersions.find(v => String(v.id) === val);
+                                                changeProductVersion(lineId, Number(val), vObj ? vObj.version_name : null);
+                                            }} 
+                                            placeholder="Choose Version..." 
+                                            className="h-8 text-xs font-semibold" 
+                                            disabled={!parentId || activeVersions.length === 0} 
                                         />
                                     </td>
                                     <td className="p-3.5 text-right font-semibold text-foreground">

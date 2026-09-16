@@ -229,21 +229,22 @@ export function useSalesOrderApproval() {
         }
     };
 
-    const handleReject = async (orderId: number) => {
+    const handleRevise = async (orderId: number) => {
         setUpdatingStatusId(orderId);
         try {
-            await updateSalesOrderStatus(orderId, "Draft");
-            toast.success("Sales Order rejected and returned to Draft status.");
+            await updateSalesOrderStatus(orderId, "For Revision");
+            toast.success("Sales Order returned for revision.");
             loadPendingOrders(currentPage, searchQuery, customerCodeFilter, dateFromFilter, dateToFilter, statusFilter);
             if (selectedOrder && selectedOrder.order_id === orderId) {
                 setSelectedOrder(null);
             }
         } catch (e: unknown) {
-            toast.error(e instanceof Error ? e.message : "Rejection failed");
+            toast.error(e instanceof Error ? e.message : "Return for revision failed");
         } finally {
             setUpdatingStatusId(null);
         }
     };
+    const handleReject = handleRevise;
 
     const handleCancel = async (orderId: number) => {
         setUpdatingStatusId(orderId);
@@ -314,6 +315,7 @@ export function useSalesOrderApproval() {
         handleSendToJO,
         handleSendToConsolidation,
         handleHold,
+        handleRevise,
         handleReject,
         handleCancel,
         refreshData
