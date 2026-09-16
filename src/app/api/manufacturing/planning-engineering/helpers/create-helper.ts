@@ -36,8 +36,10 @@ export interface CreateJobOrderOptions {
     deferSalesOrderTransition?: boolean;
     /** Creation is always a Draft; initialization is an explicit next action. */
     initialize?: boolean;
-    /** Buffer JOs use physical on-hand stock when initializing; Sales Order JOs remain reservation-aware. */
+    /** Legacy buffer flag for initialization against physical on-hand stock. */
     physicalOnHandInitialization?: boolean;
+    /** Planning may initialize an SO JO from physical on-hand stock without changing its SO linkage. */
+    usePhysicalOnHand?: boolean;
 }
 
 function relationId(value: unknown): number {
@@ -272,7 +274,8 @@ export async function createJobOrder(
         // persist the worksheet only; they must not be rejected or annotated
         // from a point-in-time availability check.
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
-        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && shouldInitialize
+        const inventoryAvailabilityOptions = shouldInitialize
+            && (options.physicalOnHandInitialization || options.usePhysicalOnHand)
             ? { includeReservations: false }
             : undefined;
         
@@ -670,9 +673,12 @@ export async function createJobOrder(
                                 throw new Error("Job Order material worksheet row was created without an identifier.");
                             }
 
-                            // Log specific lot allocations and reservations. These
-                            // writes must succeed before an initialized JO can
-                            // advance to material picking.
+                            // The reservation record is the authoritative source
+                            // for the material's exact lot and batch. The legacy
+                            // job-order allocation collection is reserved for
+                            // Sales Order linkage and requires sales_order_detail_id;
+                            // writing material-lot rows there would either fail
+                            // validation or inflate SO fulfillment quantities.
                             for (const alloc of allocations) {
                                 // The legacy allocation collection models a
                                 // Sales Order line and requires

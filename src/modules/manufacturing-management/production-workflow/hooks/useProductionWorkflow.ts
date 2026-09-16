@@ -666,13 +666,17 @@ export function useProductionWorkflow() {
         }
     }, [selectedJobOrder]);
 
-    const handleConfirmCancellation = useCallback(async (reason: string) => {
+    const handleConfirmCancellation = useCallback(async (reason: string, cancellationImage?: File | null) => {
         if (!cancellationPreview) return;
+        if (cancellationMode === "cancel" && !cancellationImage) {
+            setCancellationError("A cancellation evidence image is required.");
+            return;
+        }
         setSubmittingCancellation(true);
         setCancellationError(null);
         try {
             const response = cancellationMode === "cancel"
-                ? await cancelJobOrder(cancellationPreview.jobOrderId, reason)
+                ? await cancelJobOrder(cancellationPreview.jobOrderId, reason, cancellationImage as File)
                 : await returnJobOrderMaterials(cancellationPreview.jobOrderId, reason);
             toast.success(
                 cancellationMode === "cancel"

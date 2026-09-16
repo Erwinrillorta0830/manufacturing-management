@@ -18,6 +18,10 @@ export interface JOFilterBarProps {
     setStatusFilter: (status: string) => void;
     totalCount: number;
     filteredCount: number;
+    lockedStatus?: {
+        value: string;
+        label: string;
+    };
 }
 
 export function JOFilterBar({
@@ -26,13 +30,14 @@ export function JOFilterBar({
     statusFilter,
     setStatusFilter,
     totalCount,
-    filteredCount
+    filteredCount,
+    lockedStatus
 }: JOFilterBarProps) {
-    const hasActiveFilters = searchQuery.trim() !== "" || statusFilter !== "all";
+    const hasActiveFilters = searchQuery.trim() !== "" || (!lockedStatus && statusFilter !== "all");
 
     const handleClear = () => {
         setSearchQuery("");
-        setStatusFilter("all");
+        if (!lockedStatus) setStatusFilter("all");
     };
 
     return (
@@ -53,17 +58,28 @@ export function JOFilterBar({
                 {/* Status Filter */}
                 <div className="flex items-center gap-2 w-full sm:w-auto">
                     <Filter className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="h-9 font-semibold text-xs bg-card border-input w-full sm:w-[150px]">
-                            <SelectValue placeholder="Status Filter" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All Statuses</SelectItem>
-                            <SelectItem value="Draft">Draft</SelectItem>
-                            <SelectItem value={JOB_ORDER_STATUS.FOR_PICKING}>For Picking</SelectItem>
-                            <SelectItem value={JOB_ORDER_STATUS.PICKED}>Picked</SelectItem>
-                        </SelectContent>
-                    </Select>
+                    {lockedStatus ? (
+                        <div
+                            role="status"
+                            aria-label={`Status filter: ${lockedStatus.label}`}
+                            className="flex h-9 w-full items-center rounded-md border border-input bg-card px-3 text-xs font-semibold text-foreground sm:w-[150px]"
+                        >
+                            <span className="mr-1 text-muted-foreground">Status:</span>
+                            {lockedStatus.label}
+                        </div>
+                    ) : (
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="h-9 font-semibold text-xs bg-card border-input w-full sm:w-[150px]">
+                                <SelectValue placeholder="Status Filter" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Statuses</SelectItem>
+                                <SelectItem value="Draft">Draft</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.FOR_PICKING}>For Picking</SelectItem>
+                                <SelectItem value={JOB_ORDER_STATUS.PICKED}>Picked</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    )}
                 </div>
 
                 {hasActiveFilters && (

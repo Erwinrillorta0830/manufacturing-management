@@ -80,7 +80,7 @@ function isReservableQaStatus(value: unknown): boolean {
  */
 export interface AvailableInventoryLotOptions {
     movementRows?: NormalizedMmInventoryMovement[];
-    /** Buffer initialization may use physical stock without subtracting other JO reservations. */
+    /** Set false when planning must use physical stock without subtracting other JO reservations. */
     includeReservations?: boolean;
 }
 
@@ -372,7 +372,7 @@ export async function getAvailableInventoryLots(
 }
 
 export interface ProductInventoryOptions {
-    /** Buffer planning uses physical stock without subtracting other JO reservations. */
+    /** Set false when planning must use physical stock without subtracting other JO reservations. */
     includeReservations?: boolean;
 }
 
