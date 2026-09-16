@@ -36,8 +36,36 @@ export async function deleteJobOrder(joId: string): Promise<boolean> {
         const matRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter[job_order_id][_eq]=${joIdInt}&limit=-1`, { headers });
         if (matRes.ok) {
             const mats = (await matRes.json()).data || [];
+
+            // Reservations reference the material worksheet rows, so remove
+            // them before deleting those rows. This keeps a failed create /
+            // initialize attempt from leaving live reservations behind.
+            const materialIds = mats
+                .map((material: { jo_material_id?: number | string | null; id?: number | string | null }) => Number(material.jo_material_id || material.id || 0))
+                .filter((materialId: number) => materialId > 0);
+            if (materialIds.length > 0) {
+                const reservationRes = await fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,id&limit=-1`,
+                    { headers }
+                );
+                if (reservationRes.ok) {
+                    const reservations = (await reservationRes.json()).data || [];
+                    for (const reservation of reservations) {
+                        const reservationId = reservation.jo_materials_reservation_id || reservation.id;
+                        if (reservationId) {
+                            await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations/${reservationId}`, { method: "DELETE", headers }).catch(() => {});
+                        }
+                    }
+                } else {
+                    console.error("[Manufacturing Directus API] Failed to find Job Order material reservations during cleanup:", reservationRes.status);
+                }
+            }
+
             for (const m of mats) {
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${m.jo_material_id}`, { method: "DELETE", headers }).catch(() => {});
+                const materialId = m.jo_material_id || m.id;
+                if (materialId) {
+                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${materialId}`, { method: "DELETE", headers }).catch(() => {});
+                }
             }
         }
 
