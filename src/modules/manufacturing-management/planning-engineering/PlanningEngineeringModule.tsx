@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
-import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, ClipboardList, Layers, Database, Printer, Factory, AlertTriangle, History, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { usePlanningEngineering } from "./hooks/usePlanningEngineering";
 import { NetRequirementsTable } from "./components/NetRequirementsTable";
 import { ConsolidationPanel } from "./components/ConsolidationPanel";
 import { DemandLinesTable } from "./components/DemandLinesTable";
+import { InProductionSalesOrdersTable } from "./components/InProductionSalesOrdersTable";
 import { ReleaseJODialog } from "./components/ReleaseJODialog";
 import { CreateBufferJODialog } from "./components/CreateBufferJODialog";
 import { PlanningSummaryCards } from "./components/PlanningSummaryCards";
@@ -76,6 +77,38 @@ function NoMaterialsState() {
     );
 }
 
+function JobOrderStatusHistoryPanel({ history }: { history?: any[] }) {
+    const rows = Array.isArray(history) ? history : [];
+    if (rows.length === 0) return null;
+
+    return (
+        <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+                <History className="h-4 w-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">Status history</h3>
+            </div>
+            <div className="space-y-2">
+                {rows.slice(0, 8).map((entry, index) => {
+                    const previous = entry.old_status || entry.previous_status || "Created";
+                    const next = entry.new_status || "Unknown";
+                    const changedAt = entry.changed_at ? new Date(entry.changed_at).toLocaleString() : "Time not recorded";
+                    return (
+                        <div key={entry.history_id || entry.id || `${next}-${changedAt}-${index}`} className="flex flex-col gap-1 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                            <div className="min-w-0">
+                                <span className="font-semibold text-muted-foreground">{previous}</span>
+                                <span className="mx-2 text-muted-foreground">-&gt;</span>
+                                <span className="font-bold text-foreground">{next}</span>
+                                {entry.workflow_action && <span className="ml-2 text-[10px] font-mono text-muted-foreground">({entry.workflow_action})</span>}
+                            </div>
+                            <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={entry.changed_at || undefined}>{changedAt}</time>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 export default function PlanningEngineeringModule() {
     const {
         loadingBranches,
@@ -91,10 +124,14 @@ export default function PlanningEngineeringModule() {
         setIsConfirmOpen,
         targetQuantity,
         setTargetQuantity,
+        plannedDate,
+        setPlannedDate,
         dueDate,
         setDueDate,
         shiftOption,
         setShiftOption,
+        priority,
+        setPriority,
         remarks,
         setRemarks,
         joNumber,
@@ -102,6 +139,10 @@ export default function PlanningEngineeringModule() {
         loadInitialData,
         salesOrderLines,
         salesOrderGroups,
+        productionSalesOrderGroups,
+        loadingProductionOrders,
+        productionOrdersError,
+        loadInProductionSalesOrders,
         selectedLines,
         releaseGroups,
         mergeValidation,
@@ -128,7 +169,7 @@ export default function PlanningEngineeringModule() {
         setDeepLinkNotice
     } = usePlanningEngineering();
 
-    const [activeMainTab, setActiveMainTab] = useState<"demand" | "inventory" | "queue">("demand");
+    const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue">("demand");
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
     const [selectedUnreleasedJo, setSelectedUnreleasedJo] = useState<any | null>(null);
@@ -144,6 +185,48 @@ export default function PlanningEngineeringModule() {
     // Filter bar state for JO Queue
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
+
+    // Quantity editing state for Draft JOs
+    const [isEditingQuantity, setIsEditingQuantity] = useState(false);
+    const [editQuantityValue, setEditQuantityValue] = useState("");
+    const [updatingQuantity, setUpdatingQuantity] = useState(false);
+
+    const handleSaveQuantity = async () => {
+        const num = Number(editQuantityValue);
+        if (!Number.isFinite(num) || num <= 0) {
+            toast.error("Please enter a valid positive target quantity.");
+            return;
+        }
+        const joToUpdate = activeFamilyJo || selectedUnreleasedJo;
+        if (!joToUpdate) return;
+        const joId = joToUpdate.jo_id;
+        setUpdatingQuantity(true);
+        try {
+            const res = await fetch("/api/manufacturing/planning-engineering", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    joId: joId,
+                    patch: {
+                        quantity: num
+                    }
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                throw new Error(data.error || "Failed to update Job Order quantity.");
+            }
+            toast.success(`Job Order ${joId} target quantity updated to ${num.toLocaleString()} pcs!`);
+            setIsEditingQuantity(false);
+            await loadInitialData();
+            const updatedJo = { ...joToUpdate, quantity: num, target_quantity: num };
+            await handleOpenDetails(updatedJo, familyActiveTab);
+        } catch (err: any) {
+            toast.error(err.message || "Failed to update quantity.");
+        } finally {
+            setUpdatingQuantity(false);
+        }
+    };
 
     // Deep link support: /mm/planning-engineering?jo=JO-XXXX opens the item.
     useEffect(() => {
@@ -180,12 +263,9 @@ export default function PlanningEngineeringModule() {
     const filteredUnreleasedJobs = useMemo(() => {
         return unreleasedJobs.filter((jo: any) => {
             const normalizedFilter = normalizeJobOrderStatus(statusFilter);
-            // The queue API normalizes persisted "Released" to "Proceed", so the
-            // Released filter must accept both canonical values.
             const matchesStatus = statusFilter === "all" || (normalizedFilter !== null && isJobOrderStatus(
                 jo.status,
-                normalizedFilter,
-                ...(normalizedFilter === JOB_ORDER_STATUS.RELEASED ? [JOB_ORDER_STATUS.PROCEED] : [])
+                normalizedFilter
             ));
             const query = searchQuery.toLowerCase().trim();
             const matchesQuery = !query ||
@@ -297,16 +377,14 @@ export default function PlanningEngineeringModule() {
 
     const isFamilyOverview = familyChildJobs.length > 0 && familyActiveTab === "family-all";
 
-    // Only Draft/Planned/Planning Job Orders can be released by the API; the
-    // footer action should not be offered for already-released family members.
+    // Only Draft Job Orders can be initialized; initialized JOs are read-only
+    // from this planning detail view.
     const releasableFamilyMembers = useMemo(() => {
         if (!activeFamilyJo) return [];
         const members = isFamilyOverview ? [activeFamilyJo, ...familyChildJobs] : [activeFamilyJo];
         return members.filter((jo: any) => isJobOrderStatus(
             jo?.status,
-            JOB_ORDER_STATUS.DRAFT,
-            JOB_ORDER_STATUS.PLANNED,
-            JOB_ORDER_STATUS.PLANNING
+            JOB_ORDER_STATUS.DRAFT
         ));
     }, [activeFamilyJo, familyChildJobs, isFamilyOverview]);
 
@@ -350,7 +428,7 @@ export default function PlanningEngineeringModule() {
         let parentMaterials: any[] = [];
         let parentError: unknown = null;
         try {
-            parentMaterials = await fetchJobMaterials(jo.order_id);
+            parentMaterials = await fetchJobMaterials(jo.job_order_id || jo.id || jo.order_id);
         } catch (error) {
             parentError = error;
             console.error("Failed to load materials for unreleased JO details modal:", error);
@@ -361,7 +439,7 @@ export default function PlanningEngineeringModule() {
         await Promise.all(relatedJobs.map(async (rj: any) => {
             const childKey = String(rj.jo_id);
             try {
-                childMatMap[childKey] = await fetchJobMaterials(rj.order_id);
+                childMatMap[childKey] = await fetchJobMaterials(rj.job_order_id || rj.id || rj.order_id);
                 childLoadStates[childKey] = { status: "success" };
             } catch (error) {
                 childMatMap[childKey] = [];
@@ -419,8 +497,10 @@ export default function PlanningEngineeringModule() {
                     materialId,
                     productId,
                     receivingId,
+                    lotNo,
                     qty,
-                    isSubAssembly
+                    isSubAssembly,
+                    idempotencyKey: `planning-reserve:${joId}:${materialId}:${receivingId || "mfg"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
                 })
             });
             const data = await res.json();
@@ -487,8 +567,8 @@ export default function PlanningEngineeringModule() {
 
         activeFamilyMaterials.forEach((m: any) => {
             const needed = Number(m.allocated_quantity || 0);
-            const reserved = Number(m.reserved_quantity || 0);
-            const shortfall = needed - reserved;
+            const onHand = Number(m.available_stock ?? m.reserved_quantity ?? 0);
+            const shortfall = needed - onHand;
             if (shortfall > 0) {
                 shortfallItems.push({
                     joId: activeFamilyJo.jo_id,
@@ -496,7 +576,7 @@ export default function PlanningEngineeringModule() {
                     materialName: m.product_name,
                     unit: m.unit_shortcut,
                     needed,
-                    reserved,
+                    reserved: onHand,
                     shortfall,
                     isSubAssembly: m.is_sub_assembly
                 });
@@ -508,8 +588,8 @@ export default function PlanningEngineeringModule() {
                 const cMats = childJoMaterials[child.jo_id] || [];
                 cMats.forEach((m: any) => {
                     const needed = Number(m.allocated_quantity || 0);
-                    const reserved = Number(m.reserved_quantity || 0);
-                    const shortfall = needed - reserved;
+                    const onHand = Number(m.available_stock ?? m.reserved_quantity ?? 0);
+                    const shortfall = needed - onHand;
                     if (shortfall > 0) {
                         shortfallItems.push({
                             joId: child.jo_id,
@@ -517,7 +597,7 @@ export default function PlanningEngineeringModule() {
                             materialName: m.product_name,
                             unit: m.unit_shortcut,
                             needed,
-                            reserved,
+                    reserved: onHand,
                             shortfall,
                             isSubAssembly: m.is_sub_assembly
                         });
@@ -587,7 +667,7 @@ export default function PlanningEngineeringModule() {
                             <th>Target Product</th>
                             <th>Material Required</th>
                             <th style="text-align: right;">Required</th>
-                            <th style="text-align: right;">Reserved</th>
+                            <th style="text-align: right;">On-Hand Stock</th>
                             <th style="text-align: right;">Shortfall Qty</th>
                         </tr>
                     </thead>
@@ -637,8 +717,8 @@ export default function PlanningEngineeringModule() {
                 <tr>
                     <td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">${m.product_name} ${m.is_sub_assembly ? '<span style="color: #0284c7;">(Sub-Assembly)</span>' : ''}</td>
                     <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">${Number(m.allocated_quantity || 0).toLocaleString()} ${m.unit_shortcut}</td>
-                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right; font-weight: bold; color: #059669;">${Number(m.reserved_quantity || 0).toLocaleString()} ${m.unit_shortcut}</td>
-                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">${Number(m.allocated_quantity || 0) <= Number(m.reserved_quantity || 0) ? '<span style="color:#059669; font-weight:bold;">✓ RESERVED</span>' : '<span style="color:#dc2626; font-weight:bold;">⚠ SHORTFALL</span>'}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: right; font-weight: bold; color: #059669;">${Number(m.available_stock ?? m.reserved_quantity ?? 0).toLocaleString()} ${m.unit_shortcut}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">${Number(m.allocated_quantity || 0) <= Number(m.available_stock ?? m.reserved_quantity ?? 0) ? '<span style="color:#059669; font-weight:bold;">✓ STOCK AVAILABLE</span>' : '<span style="color:#dc2626; font-weight:bold;">⚠ SHORTFALL</span>'}</td>
                 </tr>
             `).join("");
 
@@ -663,7 +743,7 @@ export default function PlanningEngineeringModule() {
                             <tr style="background: #f9fafb;">
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Material</th>
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Required</th>
-                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">Reserved</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: right;">On-Hand Stock</th>
                                 <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Status</th>
                             </tr>
                         </thead>
@@ -748,8 +828,9 @@ export default function PlanningEngineeringModule() {
         clearDetails();
 
         for (const member of membersToRelease) {
-            if (member.order_id) {
-                await handleReleaseDraftFromPlanning(member.order_id);
+            const jobOrderId = member.job_order_id || member.id || member.order_id;
+            if (jobOrderId) {
+                await handleReleaseDraftFromPlanning(jobOrderId);
             }
         }
     };
@@ -814,7 +895,7 @@ export default function PlanningEngineeringModule() {
             </div>
 
             {/* Tabs-based Layout Dashboard */}
-            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "inventory" | "queue")} className="w-full space-y-6">
+            <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "production" | "inventory" | "queue")} className="w-full space-y-6">
                 {deepLinkNotice && (
                     <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
                         <span className="flex items-start gap-2">
@@ -838,7 +919,7 @@ export default function PlanningEngineeringModule() {
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                                 <span><strong className="text-foreground">1.</strong> Review demand</span>
                                 <span className="text-border">→</span>
-                                <span><strong className="text-foreground">2.</strong> Release a Job Order</span>
+                                <span><strong className="text-foreground">2.</strong> Save or initialize a Job Order</span>
                                 <span className="text-border">→</span>
                                 <span>
                                     <strong className="text-foreground">3.</strong>{" "}
@@ -859,12 +940,19 @@ export default function PlanningEngineeringModule() {
                         </div>
                     </div>
                 )}
-                <TabsList className="grid w-full grid-cols-3 max-w-2xl bg-muted/60 p-1 rounded-xl">
+                <TabsList className="grid w-full max-w-4xl grid-cols-2 rounded-xl bg-muted/60 p-1 lg:grid-cols-4">
                     <TabsTrigger value="demand" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
                         <ClipboardList className="h-4 w-4 text-primary" />
-                        <span>Sales Order Demand</span>
+                        <span>For Production Demand</span>
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono">
                             {salesOrderGroups.length}
+                        </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger value="production" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
+                        <Factory className="h-4 w-4 text-sky-600" />
+                        <span>In Production SOs</span>
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5 min-w-4.5 flex items-center justify-center font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold">
+                            {productionSalesOrderGroups.length}
                         </Badge>
                     </TabsTrigger>
                     <TabsTrigger value="inventory" className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs">
@@ -914,7 +1002,17 @@ export default function PlanningEngineeringModule() {
                     </div>
                 </TabsContent>
 
-                {/* TAB 2: Net Requirements */}
+                {/* TAB 2: Sales Orders in Production */}
+                <TabsContent value="production" className="space-y-6 outline-none">
+                    <InProductionSalesOrdersTable
+                        loadingOrders={loadingProductionOrders}
+                        error={productionOrdersError}
+                        salesOrderGroups={productionSalesOrderGroups}
+                        onRetry={() => { void loadInProductionSalesOrders(); }}
+                    />
+                </TabsContent>
+
+                {/* TAB 3: Net Requirements */}
                 <TabsContent value="inventory" className="space-y-6 outline-none">
                     <div className="bg-card border rounded-xl shadow-sm">
                         <NetRequirementsTable
@@ -926,7 +1024,7 @@ export default function PlanningEngineeringModule() {
                     </div>
                 </TabsContent>
 
-                {/* TAB 3: Job Orders Queue */}
+                {/* TAB 4: Job Orders Queue */}
                 <TabsContent value="queue" className="space-y-6 outline-none">
                     <div className="bg-card border rounded-xl p-6 shadow-sm space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -980,10 +1078,14 @@ export default function PlanningEngineeringModule() {
                 setJoNumber={setJoNumber}
                 targetQuantity={targetQuantity}
                 setTargetQuantity={setTargetQuantity}
+                plannedDate={plannedDate}
+                setPlannedDate={setPlannedDate}
                 dueDate={dueDate}
                 setDueDate={setDueDate}
                 shiftOption={shiftOption}
                 setShiftOption={setShiftOption}
+                priority={priority}
+                setPriority={setPriority}
                 remarks={remarks}
                 setRemarks={setRemarks}
                 releasingJO={releasingJO}
@@ -1133,6 +1235,7 @@ export default function PlanningEngineeringModule() {
                             blockers={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id }).blockers}
                             title="What's next"
                         />
+                        <JobOrderStatusHistoryPanel history={activeFamilyJo?.status_history} />
                         {isFamilyOverview ? (
                             /* DUAL / MULTI FAMILY VIEW: Render Parent & Child JOs side-by-side / stacked */
                             <div className="space-y-8">
@@ -1190,16 +1293,15 @@ export default function PlanningEngineeringModule() {
                                                         <tr>
                                                             <th className="px-4 py-3">Raw Material / Component</th>
                                                             <th className="px-4 py-3 text-right">Required</th>
-                                                            <th className="px-4 py-3 text-right">Reserved</th>
+                                                            <th className="px-4 py-3 text-right">On-Hand Stock</th>
                                                             <th className="px-4 py-3">Status</th>
-                                                            <th className="px-4 py-3">Candidate Lots & Action</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y text-foreground/90">
                                                         {joMaterials.map((mat) => {
                                                             const needed = Number(mat.allocated_quantity || 0);
-                                                            const reserved = Number(mat.reserved_quantity || 0);
-                                                            const shortfall = needed - reserved;
+                                                            const onHand = Number(mat.available_stock ?? mat.reserved_quantity ?? 0);
+                                                            const shortfall = needed - onHand;
                                                             const isMet = shortfall <= 0;
 
                                                             return (
@@ -1215,98 +1317,64 @@ export default function PlanningEngineeringModule() {
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-4 py-3.5 text-right font-bold text-foreground text-sm">
-                                                                        {needed.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span>
+                                                                        <div className="flex items-center justify-end gap-2">
+                                                                            <span>{needed.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span></span>
+                                                                            {String(selectedUnreleasedJo?.status || "").toLowerCase() === "draft" && (
+                                                                                isEditingQuantity ? (
+                                                                                    <div className="flex items-center gap-1 ml-1">
+                                                                                        <input
+                                                                                            type="number"
+                                                                                            min="1"
+                                                                                            value={editQuantityValue}
+                                                                                            onChange={(e) => setEditQuantityValue(e.target.value)}
+                                                                                            className="w-20 h-7 px-2 border border-primary rounded-md text-xs font-bold bg-background text-foreground focus:outline-none"
+                                                                                            autoFocus
+                                                                                        />
+                                                                                        <Button
+                                                                                            size="sm"
+                                                                                            onClick={handleSaveQuantity}
+                                                                                            disabled={updatingQuantity}
+                                                                                            className="h-7 px-2 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 gap-1"
+                                                                                        >
+                                                                                            {updatingQuantity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
+                                                                                        </Button>
+                                                                                        <Button
+                                                                                            size="sm"
+                                                                                            variant="ghost"
+                                                                                            onClick={() => setIsEditingQuantity(false)}
+                                                                                            className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                                                                        >
+                                                                                            <X className="h-3.5 w-3.5" />
+                                                                                        </Button>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            setEditQuantityValue(String(selectedUnreleasedJo?.quantity || ""));
+                                                                                            setIsEditingQuantity(true);
+                                                                                        }}
+                                                                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md transition-colors border border-primary/20 ml-1"
+                                                                                        title="Edit Job Order Quantity"
+                                                                                    >
+                                                                                        <Pencil className="h-3 w-3" /> Edit Qty
+                                                                                    </button>
+                                                                                )
+                                                                            )}
+                                                                        </div>
                                                                     </td>
                                                                     <td className="px-4 py-3.5 text-right font-black text-primary text-sm">
-                                                                        {reserved.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span>
+                                                                        {onHand.toLocaleString()} <span className="text-xs text-muted-foreground">{mat.unit_shortcut}</span>
                                                                     </td>
                                                                     <td className="px-4 py-3.5">
                                                                         {isMet ? (
                                                                             <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold px-2.5 py-1 text-xs shadow-sm">
-                                                                                ✓ Fully Reserved
+                                                                                ✓ Stock Available
                                                                             </Badge>
                                                                         ) : (
                                                                             <div className="flex flex-col items-start gap-1.5">
                                                                                 <Badge variant="destructive" className="font-extrabold px-2.5 py-1 text-xs shadow-sm">
                                                                                     ⚠ Shortfall: {shortfall.toLocaleString()} {mat.unit_shortcut}
                                                                                 </Badge>
-                                                                            </div>
-                                                                        )}
-                                                                    </td>
-                                                                    <td className="px-4 py-3.5">
-                                                                        {(!mat.candidate_lots || mat.candidate_lots.length === 0) ? (
-                                                                            <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 font-medium flex items-center justify-between gap-3">
-                                                                                <span>{mat.is_sub_assembly ? "Auto-spawned in sub-assembly JO below." : "No Passed lots found in this branch."}</span>
-                                                                                {!mat.is_sub_assembly && (
-                                                                                    <Button
-                                                                                        size="xs"
-                                                                                        disabled={!materialActionsReady}
-                                                                                        onClick={() => {
-                                                                                            clearDetails();
-                                                                                            window.location.href = "/mm/incoming-shipments";
-                                                                                        }}
-                                                                                        className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
-                                                                                    >
-                                                                                        Log Receipt
-                                                                                    </Button>
-                                                                                )}
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="space-y-2 max-w-md">
-                                                                                {mat.candidate_lots.map((lot: any) => {
-                                                                                    const isReserved = !!lot.reservation_id;
-                                                                                    return (
-                                                                                        <div
-                                                                                            key={`parent-lot-${lot.receipt_id || lot.lot_no}`}
-                                                                                            className={`text-xs p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all ${
-                                                                                                isReserved
-                                                                                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm"
-                                                                                                    : "bg-card border-border hover:border-primary/40"
-                                                                                            }`}
-                                                                                        >
-                                                                                            <div className="flex flex-col min-w-0">
-                                                                                                <div className="flex items-center gap-1.5 font-bold font-mono text-foreground truncate">
-                                                                                                    <span>Lot: {lot.lot_no}</span>
-                                                                                                    {isReserved && (
-                                                                                                        <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">
-                                                                                                            Reserved ({lot.reserved_qty_for_this_lot?.toLocaleString()})
-                                                                                                        </span>
-                                                                                                    )}
-                                                                                                </div>
-                                                                                                <div className="text-[10px] text-muted-foreground mt-0.5">Source: {lot.receipt_no}</div>
-                                                                                            </div>
-                                                                                            <div className="flex items-center gap-2 shrink-0">
-                                                                                                <span className={`font-mono font-bold ${isReserved ? "text-emerald-600" : "text-foreground"}`}>
-                                                                                                    {lot.available.toLocaleString()} avail
-                                                                                                </span>
-                                                                                                {!mat.is_sub_assembly && (
-                                                                                                    isReserved ? (
-                                                                                                        <Button
-                                                                                                            size="xs"
-                                                                                                            variant="ghost"
-                                                                                                            disabled={!materialActionsReady}
-                                                                                                            onClick={() => setConfirmUnreserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
-                                                                                                            className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
-                                                                                                        >
-                                                                                                            Unreserve
-                                                                                                        </Button>
-                                                                                                    ) : (
-                                                                                                        shortfall > 0 && lot.available > 0 && (
-                                                                                                            <Button
-                                                                                                                size="xs"
-                                                                                                                disabled={!materialActionsReady}
-                                                                                                                onClick={() => setConfirmReserveData({ joId: selectedUnreleasedJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
-                                                                                                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
-                                                                                                            >
-                                                                                                                Reserve
-                                                                                                            </Button>
-                                                                                                        )
-                                                                                                    )
-                                                                                                )}
-                                                                                            </div>
-                                                                                        </div>
-                                                                                    );
-                                                                                })}
                                                                             </div>
                                                                         )}
                                                                     </td>
@@ -1371,15 +1439,14 @@ export default function PlanningEngineeringModule() {
                                                             <tr>
                                                                 <th className="px-4 py-3">Raw Material / Component</th>
                                                                 <th className="px-4 py-3 text-right">Required</th>
-                                                                <th className="px-4 py-3 text-right">Reserved</th>
+                                                                <th className="px-4 py-3 text-right">On-Hand Stock</th>
                                                                 <th className="px-4 py-3">Status</th>
-                                                                <th className="px-4 py-3">Candidate Lots & Action</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y text-foreground/90">
                                                             {cMaterialLoadState.status === "loading" ? (
                                                                 <tr>
-                                                                    <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground font-medium">
+                                                                    <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground font-medium">
                                                                         <div className="flex flex-col items-center justify-center space-y-1">
                                                                             <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
                                                                             <span>Loading ingredient materials...</span>
@@ -1388,21 +1455,21 @@ export default function PlanningEngineeringModule() {
                                                                 </tr>
                                                             ) : cMaterialLoadState.status === "error" ? (
                                                                 <tr>
-                                                                    <td colSpan={5} className="px-4 py-4">
+                                                                    <td colSpan={4} className="px-4 py-4">
                                                                         <MaterialLoadErrorState message={cMaterialLoadState.message} onRetry={retryCurrentMaterials} />
                                                                     </td>
                                                                 </tr>
                                                             ) : cMaterials.length === 0 ? (
                                                                 <tr>
-                                                                    <td colSpan={5} className="px-4 py-4">
+                                                                    <td colSpan={4} className="px-4 py-4">
                                                                         <NoMaterialsState />
                                                                     </td>
                                                                 </tr>
                                                             ) : (
                                                                 cMaterials.map((cMat: any) => {
                                                                     const needed = Number(cMat.allocated_quantity || 0);
-                                                                    const reserved = Number(cMat.reserved_quantity || 0);
-                                                                    const shortfall = needed - reserved;
+                                                                    const onHand = Number(cMat.available_stock ?? cMat.reserved_quantity ?? 0);
+                                                                    const shortfall = needed - onHand;
                                                                     const isMet = shortfall <= 0;
 
                                                                     return (
@@ -1414,91 +1481,18 @@ export default function PlanningEngineeringModule() {
                                                                                 {needed.toLocaleString()} <span className="text-xs text-muted-foreground">{cMat.unit_shortcut}</span>
                                                                             </td>
                                                                             <td className="px-4 py-3.5 text-right font-black text-sky-600 dark:text-sky-400 text-sm">
-                                                                                {reserved.toLocaleString()} <span className="text-xs text-muted-foreground">{cMat.unit_shortcut}</span>
+                                                                                {onHand.toLocaleString()} <span className="text-xs text-muted-foreground">{cMat.unit_shortcut}</span>
                                                                             </td>
                                                                             <td className="px-4 py-3.5">
                                                                                 {isMet ? (
                                                                                     <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold px-2.5 py-1 text-xs shadow-sm">
-                                                                                        ✓ Fully Reserved
+                                                                                        ✓ Stock Available
                                                                                     </Badge>
                                                                                 ) : (
                                                                                     <div className="flex flex-col items-start gap-1.5">
                                                                                         <Badge variant="destructive" className="font-extrabold px-2.5 py-1 text-xs shadow-sm">
                                                                                             ⚠ Shortfall: {shortfall.toLocaleString()} {cMat.unit_shortcut}
                                                                                         </Badge>
-                                                                                    </div>
-                                                                                )}
-                                                                            </td>
-                                                                            <td className="px-4 py-3.5">
-                                                                                {(!cMat.candidate_lots || cMat.candidate_lots.length === 0) ? (
-                                                                                    <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 font-medium flex items-center justify-between gap-3">
-                                                                                        <span>No Passed lots found in this branch.</span>
-                                                                                        <Button
-                                                                                            size="xs"
-                                                                                            disabled={!materialActionsReady}
-                                                                                            onClick={() => {
-                                                                                                clearDetails();
-                                                                                                window.location.href = "/mm/incoming-shipments";
-                                                                                            }}
-                                                                                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
-                                                                                        >
-                                                                                            Log Receipt
-                                                                                        </Button>
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <div className="space-y-2 max-w-md">
-                                                                                        {cMat.candidate_lots.map((lot: any) => {
-                                                                                            const isReserved = !!lot.reservation_id;
-                                                                                            return (
-                                                                                                <div
-                                                                                                    key={`child-lot-${lot.receipt_id || lot.lot_no}`}
-                                                                                                    className={`text-xs p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all ${
-                                                                                                        isReserved
-                                                                                                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200 shadow-sm"
-                                                                                                            : "bg-card border-border hover:border-sky-500/40"
-                                                                                                    }`}
-                                                                                                >
-                                                                                                    <div className="flex flex-col min-w-0">
-                                                                                                        <div className="flex items-center gap-1.5 font-bold font-mono text-foreground truncate">
-                                                                                                            <span>Lot: {lot.lot_no}</span>
-                                                                                                            {isReserved && (
-                                                                                                                <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">
-                                                                                                                    Reserved ({lot.reserved_qty_for_this_lot?.toLocaleString()})
-                                                                                                                </span>
-                                                                                                            )}
-                                                                                                        </div>
-                                                                                                        <div className="text-[10px] text-muted-foreground mt-0.5">Source: {lot.receipt_no}</div>
-                                                                                                    </div>
-                                                                                                    <div className="flex items-center gap-2 shrink-0">
-                                                                                                        <span className={`font-mono font-bold ${isReserved ? "text-emerald-600" : "text-foreground"}`}>
-                                                                                                            {lot.available.toLocaleString()} avail
-                                                                                                        </span>
-                                                                                                        {isReserved ? (
-                                                                                                            <Button
-                                                                                                                size="xs"
-                                                                                                                variant="ghost"
-                                                                                                                disabled={!materialActionsReady}
-                                                                                                                onClick={() => setConfirmUnreserveData({ joId: childJo.order_id, materialId: cMat.jo_material_id || cMat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: cMat.product_name })}
-                                                                                                                className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
-                                                                                                            >
-                                                                                                                Unreserve
-                                                                                                            </Button>
-                                                                                                        ) : (
-                                                                                                            shortfall > 0 && lot.available > 0 && (
-                                                                                                                <Button
-                                                                                                                    size="xs"
-                                                                                                                    disabled={!materialActionsReady}
-                                                                                                                    onClick={() => setConfirmReserveData({ joId: childJo.order_id, materialId: cMat.jo_material_id || cMat.id, productId: cMat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: cMat.product_name })}
-                                                                                                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
-                                                                                                                >
-                                                                                                                    Reserve
-                                                                                                                </Button>
-                                                                                                            )
-                                                                                                        )}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            );
-                                                                                        })}
                                                                                     </div>
                                                                                 )}
                                                                             </td>
@@ -1543,7 +1537,7 @@ export default function PlanningEngineeringModule() {
                                     {materialLoadState.status === "loading" ? (
                                         <div className="flex flex-col items-center justify-center py-12 space-y-2">
                                             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                            <span className="text-sm text-muted-foreground font-medium">Resolving raw material reservations...</span>
+                                            <span className="text-sm text-muted-foreground font-medium">Resolving raw material stock levels...</span>
                                         </div>
                                     ) : materialLoadState.status === "error" ? (
                                         <MaterialLoadErrorState message={materialLoadState.message} onRetry={retryCurrentMaterials} />
@@ -1556,16 +1550,15 @@ export default function PlanningEngineeringModule() {
                                                     <tr>
                                                         <th className="px-4 py-3">Raw Material</th>
                                                         <th className="px-4 py-3 text-right">Required</th>
-                                                        <th className="px-4 py-3 text-right">Reserved</th>
+                                                        <th className="px-4 py-3 text-right">On-Hand Stock</th>
                                                         <th className="px-4 py-3">Status</th>
-                                                        <th className="px-4 py-3">Candidate Lots & Action</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y text-foreground/90">
                                                     {activeFamilyMaterials.map((mat) => {
                                                         const needed = Number(mat.allocated_quantity || 0);
-                                                        const reserved = Number(mat.reserved_quantity || 0);
-                                                        const shortfall = needed - reserved;
+                                                        const onHand = Number(mat.available_stock ?? mat.reserved_quantity ?? 0);
+                                                        const shortfall = needed - onHand;
                                                         const isMet = shortfall <= 0;
 
                                                         return (
@@ -1581,96 +1574,64 @@ export default function PlanningEngineeringModule() {
                                                                     </div>
                                                                 </td>
                                                                 <td className="px-4 py-4 text-right font-semibold">
-                                                                    {needed.toLocaleString()} {mat.unit_shortcut}
+                                                                    <div className="flex items-center justify-end gap-2">
+                                                                        <span>{needed.toLocaleString()} {mat.unit_shortcut}</span>
+                                                                        {String(activeFamilyJo?.status || "").toLowerCase() === "draft" && (
+                                                                            isEditingQuantity ? (
+                                                                                <div className="flex items-center gap-1 ml-1">
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        min="1"
+                                                                                        value={editQuantityValue}
+                                                                                        onChange={(e) => setEditQuantityValue(e.target.value)}
+                                                                                        className="w-20 h-7 px-2 border border-primary rounded-md text-xs font-bold bg-background text-foreground focus:outline-none"
+                                                                                        autoFocus
+                                                                                    />
+                                                                                    <Button
+                                                                                        size="sm"
+                                                                                        onClick={handleSaveQuantity}
+                                                                                        disabled={updatingQuantity}
+                                                                                        className="h-7 px-2 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 gap-1"
+                                                                                    >
+                                                                                        {updatingQuantity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
+                                                                                    </Button>
+                                                                                    <Button
+                                                                                        size="sm"
+                                                                                        variant="ghost"
+                                                                                        onClick={() => setIsEditingQuantity(false)}
+                                                                                        className="h-7 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                                                                    >
+                                                                                        <X className="h-3.5 w-3.5" />
+                                                                                    </Button>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <button
+                                                                                    onClick={() => {
+                                                                                        setEditQuantityValue(String(activeFamilyJo?.quantity || ""));
+                                                                                        setIsEditingQuantity(true);
+                                                                                    }}
+                                                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md transition-colors border border-primary/20 ml-1"
+                                                                                    title="Edit Job Order Quantity"
+                                                                                >
+                                                                                    <Pencil className="h-3 w-3" /> Edit Qty
+                                                                                </button>
+                                                                            )
+                                                                        )}
+                                                                    </div>
                                                                 </td>
                                                                 <td className="px-4 py-4 text-right font-semibold text-primary">
-                                                                    {reserved.toLocaleString()} {mat.unit_shortcut}
+                                                                    {onHand.toLocaleString()} {mat.unit_shortcut}
                                                                 </td>
                                                                 <td className="px-4 py-4">
                                                                     {isMet ? (
                                                                         <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-extrabold px-2.5 py-1 text-xs shadow-sm">
-                                                                            ✓ Fully Reserved
+                                                                            ✓ Stock Available
                                                                         </Badge>
                                                                     ) : (
                                                                         <div className="flex flex-col items-start gap-1.5">
                                                                             <Badge variant="destructive" className="font-extrabold px-2.5 py-1 text-xs shadow-sm">
                                                                                 ⚠ Shortfall: {shortfall.toLocaleString()} {mat.unit_shortcut}
                                                                             </Badge>
-                                                                        </div>
-                                                                    )}
-                                                                </td>
-                                                                <td className="px-4 py-4">
-                                                                    {(!mat.candidate_lots || mat.candidate_lots.length === 0) ? (
-                                                                        <div className="text-xs text-amber-600 bg-amber-500/10 p-2.5 rounded-lg border border-amber-500/20 font-medium flex items-center justify-between gap-3">
-                                                                            <span>{mat.is_sub_assembly ? "No completed manufacturing lots found." : "No Passed lots found in this branch."}</span>
-                                                                            {!mat.is_sub_assembly && (
-                                                                                    <Button
-                                                                                        size="xs"
-                                                                                        disabled={!materialActionsReady}
-                                                                                        onClick={() => {
-                                                                                        clearDetails();
-                                                                                        window.location.href = "/mm/incoming-shipments";
-                                                                                    }}
-                                                                                    className="bg-amber-600 hover:bg-amber-500 text-white font-bold h-7 text-[10px] px-2.5 rounded-md shadow-sm shrink-0"
-                                                                                >
-                                                                                    Log Receipt
-                                                                                </Button>
-                                                                            )}
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="space-y-2 max-w-md">
-                                                                            {mat.candidate_lots.map((lot: any) => {
-                                                                                const isReserved = !!lot.reservation_id;
-                                                                                return (
-                                                                                    <div
-                                                                                        key={lot.receipt_id || lot.lot_no}
-                                                                                        className={`text-xs p-2.5 rounded-lg border flex items-center justify-between gap-3 transition-all ${
-                                                                                            isReserved
-                                                                                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-200"
-                                                                                                : "bg-card border-border hover:border-primary/40"
-                                                                                        }`}
-                                                                                    >
-                                                                                        <div className="flex flex-col min-w-0">
-                                                                                            <div className="flex items-center gap-1.5 font-bold font-mono text-foreground truncate">
-                                                                                                <span>Lot: {lot.lot_no}</span>
-                                                                                                {isReserved && (
-                                                                                                    <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">
-                                                                                                        Reserved ({lot.reserved_qty_for_this_lot?.toLocaleString()})
-                                                                                                    </span>
-                                                                                                )}
-                                                                                            </div>
-                                                                                            <div className="text-[10px] text-muted-foreground mt-0.5">Source: {lot.receipt_no}</div>
-                                                                                        </div>
-                                                                                        <div className="flex items-center gap-2 shrink-0">
-                                                                                            <span className={`font-mono font-bold ${isReserved ? "text-emerald-600" : "text-foreground"}`}>
-                                                                                                {lot.available.toLocaleString()} available
-                                                                                            </span>
-                                                                                            {!mat.is_sub_assembly && (
-                                                                                                isReserved ? (
-                                                                                                    <Button
-                                                                                                        size="xs"
-                                                                                                        variant="ghost"
-                                                                                                        disabled={!materialActionsReady}
-                                                                                                        onClick={() => setConfirmUnreserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, reservationId: lot.reservation_id, qty: lot.reserved_qty_for_this_lot, lotNo: lot.lot_no, productName: mat.product_name })}
-                                                                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 font-bold h-6 px-2 text-[10px] transition-all"
-                                                                                                    >
-                                                                                                        Unreserve
-                                                                                                    </Button>
-                                                                                                ) : shortfall > 0 && lot.available > 0 ? (
-                                                                                                    <Button
-                                                                                                        size="xs"
-                                                                                                        disabled={!materialActionsReady}
-                                                                                                        onClick={() => setConfirmReserveData({ joId: activeFamilyJo.order_id, materialId: mat.jo_material_id || mat.id, productId: mat.product_id, receivingId: lot.receipt_id, qty: Math.min(shortfall, lot.available), lotNo: lot.lot_no, productName: mat.product_name })}
-                                                                                                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-6 px-2.5 text-[10px] shadow-sm rounded-md transition-all"
-                                                                                                    >
-                                                                                                        Reserve
-                                                                                                    </Button>
-                                                                                                ) : null
-                                                                                            )}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
                                                                         </div>
                                                                     )}
                                                                 </td>
@@ -1700,15 +1661,6 @@ export default function PlanningEngineeringModule() {
                             </Button>
                             <Button
                                 variant="outline"
-                                className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-amber-500/30 text-amber-600 hover:text-amber-500 hover:bg-amber-500/10 dark:text-amber-400"
-                                onClick={handlePrintShortfall}
-                                disabled={!materialActionsReady}
-                            >
-                                <Printer className="h-4 w-4" />
-                                Print Shortfall
-                            </Button>
-                            <Button
-                                variant="outline"
                                 className="font-bold h-10 px-4 text-xs flex items-center gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
                                 onClick={handlePrintJobOrder}
                                 disabled={!materialActionsReady}
@@ -1728,7 +1680,7 @@ export default function PlanningEngineeringModule() {
                             </Button>
                             {releasableFamilyMembers.length > 0 && (
                                 <Button
-                                    onClick={handleReleaseCurrentView}
+                                onClick={handleReleaseCurrentView}
                                     disabled={releasingDraftId === activeFamilyJo?.order_id || !materialActionsReady}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 px-5 text-xs shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200"
                                 >
@@ -1738,7 +1690,7 @@ export default function PlanningEngineeringModule() {
                                             ? releasableFamilyMembers.length === 1 + familyChildJobs.length
                                                 ? `Release Entire Family (${releasableFamilyMembers.length} Job Orders)`
                                                 : `Release Releasable Members (${releasableFamilyMembers.length})`
-                                            : "Release to Shop Floor"}
+                                                : "Initialize JO"}
                                 </Button>
                             )}
                         </div>

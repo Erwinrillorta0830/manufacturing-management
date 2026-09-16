@@ -47,6 +47,16 @@ function getLotOrderLabels(
     allocations: LotAllocation[],
     allocIdx: number
 ): Array<{ orderNo: string; customer: string; qty: number }> {
+    const alloc = allocations[allocIdx];
+    if (alloc?.orderNo) {
+        const matchedCust = alloc.customerName || (orders.find((o) => o.invoiceNo === alloc.orderNo)?.customerName || "Customer");
+        return [{
+            orderNo: alloc.orderNo,
+            customer: matchedCust,
+            qty: Number(alloc.quantity || 0),
+        }];
+    }
+
     if (!orders || orders.length === 0) return [];
 
     let orderPos = 0;

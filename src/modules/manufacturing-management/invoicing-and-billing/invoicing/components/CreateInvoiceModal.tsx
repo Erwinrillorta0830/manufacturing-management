@@ -45,6 +45,12 @@ function getLineMaxInvoiceable(
     const orderedQty = Number(detail.ordered_quantity || 0);
     if (!lineAvail) return orderedQty;
 
+    if (lineAvail.isConsolidated) {
+        const remainingOrder = lineAvail.remainingOrderQuantity ?? orderedQty;
+        const remainingPool = lineAvail.remainingBatchPool ?? 0;
+        return Math.max(0, Math.min(remainingOrder, remainingPool));
+    }
+
     const batchPickedTotal = lineAvail.batches && lineAvail.batches.length > 0
         ? lineAvail.batches.reduce((sum, b) => {
             const q = Number(b.pickedQuantity !== undefined ? b.pickedQuantity : (b.onhandQuantity || 0));
@@ -190,9 +196,11 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                 0
             ) || rawDetailPickedQty;
 
-            const totalConsolidatedPool = (lineAvail?.totalPoolQuantity !== undefined && lineAvail.totalPoolQuantity > 0)
-                ? lineAvail.totalPoolQuantity
-                : fallbackBatchPool;
+            const totalConsolidatedPool = lineAvail?.isConsolidated
+                ? Number(lineAvail.remainingBatchPool ?? 0)
+                : ((lineAvail?.totalPoolQuantity !== undefined && lineAvail.totalPoolQuantity > 0)
+                    ? lineAvail.totalPoolQuantity
+                    : fallbackBatchPool);
 
             const remainingForSiblings = Math.max(0, totalConsolidatedPool - invoiceQty);
             const siblingShortfall = Math.max(0, siblingDemand - remainingForSiblings);
@@ -772,7 +780,20 @@ export default function CreateInvoiceModal({ candidate, submitting, onClose, onS
                                                         <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-foreground">
                                                             Ordered: <strong>{orderedQty} {uomStr}</strong> / Picked Left: <strong>{maxInvoiceable} {uomStr}</strong>
                                                         </span>
-                                                        {takenBySiblings > 0 ? (
+                                                        {lineAvail?.isConsolidated ? (
+                                                            <>
+                                                                <span className="rounded-md border border-primary/20 bg-primary/5 px-2 py-0.5 font-medium text-primary flex items-center gap-1">
+                                                                    <Boxes className="h-3 w-3 shrink-0" />
+                                                                    Batch Pool: <strong>{lineAvail.remainingBatchPool ?? 0} {uomStr} remaining</strong> (of {lineAvail.totalBatchPicked ?? 0} {uomStr} picked, {lineAvail.alreadyInvoicedAcrossBatch ?? 0} {uomStr} billed by siblings)
+                                                                </span>
+                                                                {(lineAvail.shortfall || 0) > 0 ? (
+                                                                    <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
+                                                                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                                                                        Shortfall: <strong>{lineAvail.shortfall} {uomStr}</strong> (capped by remaining batch supply)
+                                                                    </span>
+                                                                ) : null}
+                                                            </>
+                                                        ) : takenBySiblings > 0 ? (
                                                             <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300 flex items-center gap-1">
                                                                 <AlertTriangle className="h-3 w-3 shrink-0" />
                                                                 Available to Invoice: <strong>{maxInvoiceable} {uomStr}</strong> ({takenBySiblings} {uomStr} taken by sibling sales order)

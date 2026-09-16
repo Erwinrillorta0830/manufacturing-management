@@ -23,6 +23,7 @@ import {
     mapStatus,
 } from "./_status";
 import { areSalesOrderDetailsFullyFulfilled } from "./_fulfillment";
+import { loadSalesOrderQACoverage } from "../production/_qa-accepted-output";
 
 const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 const DIRECTUS_STATIC_TOKEN = process.env.DIRECTUS_STATIC_TOKEN || "";
@@ -583,7 +584,8 @@ export async function GET(request: Request) {
         const queue = searchParams.get("queue") || "";
         const selectedIdsParam = searchParams.get("selectedIds") || "";
         const forProductionQueue = queue === "for-production";
-        if (queue && !forProductionQueue) {
+        const inProductionQueue = queue === "in-production";
+        if (queue && !forProductionQueue && !inProductionQueue) {
             return NextResponse.json({ error: `Unsupported Sales Order queue: ${queue}` }, { status: 400 });
         }
         const excludeHasJo = searchParams.get("excludeHasJo") === "true" || forProductionQueue;
@@ -598,7 +600,9 @@ export async function GET(request: Request) {
         const filters = {
             search,
             status: forProductionQueue
-                ? "For Production,In Production"
+                ? "For Production"
+                : inProductionQueue
+                ? "In Production"
                 : excludeHasJo
                 ? (includeAllStatuses ? plannerStatuses : "For Production,In Production")
                 : status,
@@ -741,7 +745,7 @@ export async function GET(request: Request) {
             contextOrders,
             details,
             excludeHasJo ? plannedQuantities : undefined,
-            excludeHasJo
+            excludeHasJo || inProductionQueue
         );
 
         const totalPages = Math.ceil(totalCount / limit);
@@ -1266,6 +1270,19 @@ export async function PATCH(request: Request) {
 
                 if (target === "For Invoicing" && !areSalesOrderDetailsFullyFulfilled(allDetails)) {
                     throw new ApiError(409, "Sales order cannot move to For Invoicing until every detail line is fully fulfilled.");
+                }
+
+                if (target === "For Consolidation" && current === "In Production") {
+                    let qaCoverage;
+                    try {
+                        qaCoverage = await loadSalesOrderQACoverage(orderId, allDetails);
+                    } catch (error) {
+                        console.error(`Unable to verify QA-passed output for sales order ${orderId}.`, error);
+                        throw new ApiError(503, "Unable to verify QA-passed production output for this sales order.");
+                    }
+                    if (!qaCoverage.fulfilled) {
+                        throw new ApiError(409, "Sales order cannot move to For Consolidation until every detail line has enough QA-passed output.");
+                    }
                 }
 
                 const isApprovalDecision = (current === "For Approval" || current === "On Hold")

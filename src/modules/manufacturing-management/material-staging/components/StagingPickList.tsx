@@ -60,7 +60,7 @@ export function StagingPickList({
                 </div>
                 <h3 className="text-base font-bold text-foreground">No Job Order Selected</h3>
                 <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                    Select an active Planned or Reserved Job Order from the left queue to review allocated materials and execute floor bin transfers.
+                    Select an initialized For Picking Job Order from the left queue to review required materials and execute floor bin transfers.
                 </p>
             </div>
         );
@@ -155,30 +155,6 @@ export function StagingPickList({
                     >
                         <Printer className="h-4 w-4 mr-1.5" />
                         Print Staging Slip
-                    </Button>
-
-                    <Button
-                        size="sm"
-                        onClick={() => onStageAllAvailable(jobOrder)}
-                        disabled={isProcessing || isAllStaged || isCancelled}
-                        title={isCancelled ? "Cancelled Job Orders cannot accept staged material." : undefined}
-                        className="text-xs h-9 font-semibold shadow-sm"
-                    >
-                        {isProcessing ? (
-                            "Staging..."
-                        ) : isCancelled ? (
-                            "Cancelled — no staging"
-                        ) : isAllStaged ? (
-                            <>
-                                <CheckCircle2 className="h-4 w-4 mr-1.5 text-emerald-300" />
-                                All Materials Staged
-                            </>
-                        ) : (
-                            <>
-                                <Sparkles className="h-4 w-4 mr-1.5" />
-                                Stage All Available
-                            </>
-                        )}
                     </Button>
                 </div>
             </div>

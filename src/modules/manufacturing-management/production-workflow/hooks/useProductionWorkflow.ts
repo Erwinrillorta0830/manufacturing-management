@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview, matchesProductionWorkflowStatus } from "../types";
+import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -12,9 +12,11 @@ import {
     submitQAVerification,
     fetchJobOrderCancellationPreview,
     cancelJobOrder,
-    returnJobOrderMaterials
+    returnJobOrderMaterials,
+    executeJobOrderWorkflow
 } from "../services/production-api";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
 export function useProductionWorkflow() {
     // --- State Variables ---
@@ -31,7 +33,6 @@ export function useProductionWorkflow() {
     const [loadingJobs, setLoadingJobs] = useState(true);
     const [loadingOperators, setLoadingOperators] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState<string>("Active");
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
@@ -58,11 +59,16 @@ export function useProductionWorkflow() {
     const [loadingCancellation, setLoadingCancellation] = useState(false);
     const [submittingCancellation, setSubmittingCancellation] = useState(false);
     const [cancellationError, setCancellationError] = useState<string | null>(null);
+    const [workflowSubmitting, setWorkflowSubmitting] = useState(false);
 
-    // Get current Job Order object
+    const inProductionJobOrders = useMemo(() => {
+        return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION));
+    }, [jobOrders]);
+
+    // Get current Job Order object. The details modal follows the queue scope.
     const selectedJobOrder = useMemo(() => {
-        return jobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
-    }, [jobOrders, selectedJobOrderId]);
+        return inProductionJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
+    }, [inProductionJobOrders, selectedJobOrderId]);
 
     // Sorted routing steps for selected Job Order
     const sortedTasks = useMemo(() => {
@@ -92,15 +98,16 @@ export function useProductionWorkflow() {
     }, []);
 
     useEffect(() => {
-        if (!pendingDeepLinkJo || jobOrders.length === 0) return;
-        const match = jobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
+        if (!pendingDeepLinkJo || loadingJobs) return;
+        const match = inProductionJobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
         if (match) {
-            setStatusFilter("All");
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
+        } else {
+            toast.info("Only Job Orders in Production can be opened in this terminal.");
         }
         setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, jobOrders]);
+    }, [pendingDeepLinkJo, loadingJobs, inProductionJobOrders]);
 
     // Fetch Job Orders
     const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {
@@ -114,10 +121,11 @@ export function useProductionWorkflow() {
                 JOB_ORDER_STATUS.PLANNING
             ));
             setJobOrders(activeJobs);
-            
-            if (activeJobs.length > 0) {
-                const nextId = selectIdAfterFetch || selectedJobOrderId || "";
-                setSelectedJobOrderId(nextId);
+
+            const nextId = selectIdAfterFetch || selectedJobOrderId || "";
+            const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
+            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+                setSelectedJobOrderId(nextJobOrder.jo_id);
             } else {
                 setSelectedJobOrderId("");
                 setSelectedTaskId(null);
@@ -294,6 +302,10 @@ export function useProductionWorkflow() {
     // Clock In / Check In Operator
     const handleAddOperator = async (startTimer: boolean, taskId: number, assigneeId: string) => {
         if (!taskId || !assigneeId || !selectedJobOrder) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Operators can only be assigned while the Job Order is In Production.");
+            return;
+        }
         const uId = parseInt(assigneeId);
         const userObj = users.find((u) => (u.user_id || u.id) === uId);
         if (!userObj) return;
@@ -341,6 +353,10 @@ export function useProductionWorkflow() {
     // Start Shift Timer for existing Operator
     const handleStartTimer = async (taskId: number, opUserId: number) => {
         if (!selectedJobOrder) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("A shift timer can only start while the Job Order is In Production.");
+            return;
+        }
         const taskObj = sortedTasks.find(t => t.id === taskId);
         try {
             await manageRouteOperator({
@@ -379,6 +395,10 @@ export function useProductionWorkflow() {
     // Manual Hours Entry Save
     const handleSaveManualHours = async (taskId: number, opUserId: number, hoursStr: string) => {
         if (!selectedJobOrder || !hoursStr) return;
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Production hours can only be logged while the Job Order is In Production.");
+            return;
+        }
         const parsedHours = parseFloat(hoursStr);
         if (isNaN(parsedHours) || parsedHours < 0) {
             toast.error("Please enter a valid positive number of hours.");
@@ -428,8 +448,8 @@ export function useProductionWorkflow() {
         const task = sortedTasks.find(t => t.id === taskId);
         if (!task || !selectedJobOrder) return;
 
-        if (isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
-            toast.error("Cancelled Job Orders cannot be progressed.");
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Routing steps can only be progressed while the Job Order is In Production.");
             return;
         }
 
@@ -600,14 +620,14 @@ export function useProductionWorkflow() {
                     if (!forceRes.ok || forceData.success === false) {
                         throw new Error(forceData.error || "Failed to forcibly release Job Order.");
                     }
-                    toast.success("Job Order forcibly released!");
+                    toast.success("Job Order initialized and ready for material picking!");
                     fetchJobs(selectedJobOrderId);
                     return;
                 }
                 return;
             }
 
-            toast.success("Job Order released successfully!");
+            toast.success("Job Order initialized and ready for material picking!");
             fetchJobs(selectedJobOrderId);
         } catch (err: any) {
             console.error("Error releasing Draft JO:", err);
@@ -658,8 +678,42 @@ export function useProductionWorkflow() {
         }
     }, [cancellationPreview, cancellationMode, fetchJobs]);
 
+    const handleWorkflowAction = useCallback(async (
+        action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
+        input: { remarks?: string; resolutionRemarks?: string } = {}
+    ): Promise<boolean> => {
+        if (!selectedJobOrder) return false;
+        const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;
+        if (!jobOrderId) {
+            toast.error("The selected Job Order has no valid identifier.");
+            return false;
+        }
+
+        setWorkflowSubmitting(true);
+        try {
+            await executeJobOrderWorkflow(jobOrderId, {
+                action,
+                ...input
+            });
+            const successMessage: Record<typeof action, string> = {
+                "place-on-hold": "Production placed on hold.",
+                "resume-production": "Production resumed.",
+                "complete-production": "Production completed and sent directly to QA and reconciliation.",
+                "terminate-production": "Production terminated. Remaining WIP is ready for reconciliation or return."
+            };
+            toast.success(successMessage[action]);
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to execute the Job Order workflow action.");
+            return false;
+        } finally {
+            setWorkflowSubmitting(false);
+        }
+    }, [selectedJobOrder, fetchJobs]);
+
     const filteredJobOrders = useMemo(() => {
-        return jobOrders.filter((jo) => {
+        return inProductionJobOrders.filter((jo) => {
             const matchesSearch =
                 jo.jo_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 jo.product_name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -671,9 +725,9 @@ export function useProductionWorkflow() {
                 return false;
             }
 
-            return matchesProductionWorkflowStatus(jo.status, statusFilter);
+            return true;
         });
-    }, [jobOrders, searchQuery, statusFilter, selectedBranchFilter]);
+    }, [inProductionJobOrders, searchQuery, selectedBranchFilter]);
 
     return {
         jobOrders,
@@ -688,8 +742,7 @@ export function useProductionWorkflow() {
         loadingOperators,
         searchQuery,
         setSearchQuery,
-        statusFilter,
-        setStatusFilter,
+        inProductionJobOrders,
         selectedAssigneeId,
         setSelectedAssigneeId,
         manualHours,
@@ -735,6 +788,8 @@ export function useProductionWorkflow() {
         submittingCancellation,
         cancellationError,
         openCancellationModal,
-        handleConfirmCancellation
+        handleConfirmCancellation,
+        workflowSubmitting,
+        handleWorkflowAction
     };
 }

@@ -212,6 +212,12 @@ export interface LineAvailability {
     isPicked?: boolean;
     batches: BatchItem[];
     siblingOrders?: SiblingConsolidatedOrder[];
+    isConsolidated?: boolean;
+    totalBatchPicked?: number;
+    alreadyInvoicedAcrossBatch?: number;
+    remainingBatchPool?: number;
+    remainingOrderQuantity?: number;
+    shortfall?: number;
 }
 
 export interface RawSalesOrderReservation {

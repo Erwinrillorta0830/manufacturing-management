@@ -55,7 +55,9 @@ export function CreateBufferJODialog({
     const [selectedVersionId, setSelectedVersionId] = useState<string>("");
     const [joNumber, setJoNumber] = useState("");
     const [targetQuantity, setTargetQuantity] = useState<number>(100);
+    const [plannedDate, setPlannedDate] = useState("");
     const [dueDate, setDueDate] = useState("");
+    const [priority, setPriority] = useState<number>(0);
     const [shiftOption, setShiftOption] = useState("8.0");
     const [remarks, setRemarks] = useState("");
 
@@ -125,6 +127,7 @@ export function CreateBufferJODialog({
             const uomShortcut = prod.unit_of_measurement?.unit_shortcut || "PCS";
             return {
                 product_id: String(prod.product_id),
+                uom_id: Number(prod.unit_of_measurement?.unit_id || prod.unit_of_measurement || 0),
                 product_code: prod.product_code,
                 uom_name: uomName,
                 uom_shortcut: uomShortcut,
@@ -156,7 +159,9 @@ export function CreateBufferJODialog({
             setJoNumber(code);
 
             // Default due date to +7 days
+            setPlannedDate(new Date().toISOString().split("T")[0]);
             setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
+            setPriority(0);
 
             // Set branch id
             if (initialBranchId) {
@@ -258,6 +263,19 @@ export function CreateBufferJODialog({
             setSelectedVersionId("");
         }
     }, [selectedProductId, products]);
+
+    // Prefill targetProductionQuantity from selected Recipe Version's base_quantity
+    useEffect(() => {
+        if (selectedVersionId && versions.length > 0) {
+            const verObj = versions.find((v: any) => String(v.version_id) === String(selectedVersionId));
+            if (verObj) {
+                const baseQty = Number(verObj.base_quantity ?? verObj.baseQuantity ?? 0);
+                if (baseQty > 0) {
+                    setTargetQuantity(baseQty);
+                }
+            }
+        }
+    }, [selectedVersionId, versions]);
 
     // Reset loaded details when selection changes or returning to Step 1
     useEffect(() => {
@@ -398,10 +416,17 @@ export function CreateBufferJODialog({
         return calculateContainerizationMetrics(
             (selectedProdObj as any).product_name || selectedProdObj.title || selectedProdObj.sku || "Product",
             targetQuantity,
-            selectedProdObj.unit_of_measurement_count,
-            verObj?.expected_yield_percentage
+            selectedProdObj.unit_of_measurement_count || (selectedProdObj as any).pcs_per_bundle || (selectedProdObj as any).pcs_per_case || (selectedProdObj as any).uom_count,
+            verObj?.expected_yield_percentage || (verObj as any)?.yield_percentage,
+            (verObj as any)?.scrap_rate || (verObj as any)?.scrap_percentage || (verObj as any)?.wastage_factor_percentage,
+            (verObj as any)?.cutting_unit_weight_grams || (verObj as any)?.unit_weight_grams || (selectedProdObj as any)?.net_weight_grams || (selectedProdObj as any)?.piece_weight_grams,
+            (verObj as any)?.cases_per_pallet || (selectedProdObj as any)?.cases_per_pallet || (selectedProdObj as any)?.bundles_per_pallet,
+            (verObj as any)?.sacks_per_mix || (verObj as any)?.sacks_per_batch,
+            (verObj as any)?.batch_weight_per_sack || (verObj as any)?.base_batch_weight_grams,
+            components,
+            bomBaseQty
         );
-    }, [selectedProdObj, versions, selectedVersionId, targetQuantity]);
+    }, [selectedProdObj, versions, selectedVersionId, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = useMemo(() => {
         if (!selectedProdObj) return null;
@@ -640,6 +665,14 @@ export function CreateBufferJODialog({
                 toast.error("Please enter a Job Order Reference #.");
                 return;
             }
+            if (!plannedDate) {
+                toast.error("Please select a planned production date.");
+                return;
+            }
+            if (!Number.isFinite(priority) || priority < 0) {
+                toast.error("Please enter a valid priority.");
+                return;
+            }
         }
         setCurrentStep((prev) => prev + 1);
     };
@@ -776,7 +809,7 @@ export function CreateBufferJODialog({
         printWindow.document.close();
     };
 
-    const handleConfirmRelease = async () => {
+    const handleConfirmRelease = async (initialize = false) => {
         if (!selectedProductId || !selectedBranchId) return;
 
         setSubmitting(true);
@@ -788,7 +821,10 @@ export function CreateBufferJODialog({
                     product_name: selectedProduct?.product_name || `Product #${selectedProductId}`,
                     quantity: Number(targetQuantity),
                     due_date: dueDate,
-                    status: "Released",
+                    start_date: plannedDate,
+                    uom_id: Number(selectedProduct?.unit_of_measurement?.unit_id || selectedProduct?.unit_of_measurement || 0) || null,
+                    priority,
+                    status: "Draft",
                     is_batched: false,
                     branch_id: Number(selectedBranchId),
                     shiftOption: shiftOption,
@@ -809,7 +845,8 @@ export function CreateBufferJODialog({
                         }
                     ]
                 },
-                salesOrderIds: []
+                salesOrderIds: [],
+                initialize
             };
 
             const res = await fetch("/api/manufacturing/planning-engineering", {
@@ -824,10 +861,10 @@ export function CreateBufferJODialog({
             }
 
             const json = await res.json().catch(() => null);
-            if (json?.data?.status === "Draft") {
-                toast.warning(`Buffer Job Order ${joNumber} saved as Draft due to raw material shortfalls. Reserve materials, then release it from the Job Order Queue.`);
+            if (!initialize) {
+                toast.success(`Buffer Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
             } else {
-                toast.success(`Buffer Job Order ${joNumber} released successfully!`);
+                toast.success(`Buffer Job Order ${joNumber} initialized and ready for material picking.`);
             }
             printPickingList(
                 joNumber,
@@ -894,8 +931,12 @@ export function CreateBufferJODialog({
                             setSelectedVersionId={setSelectedVersionId}
                             targetQuantity={targetQuantity}
                             setTargetQuantity={setTargetQuantity}
+                            plannedDate={plannedDate}
+                            setPlannedDate={setPlannedDate}
                             dueDate={dueDate}
                             setDueDate={setDueDate}
+                            priority={priority}
+                            setPriority={setPriority}
                             shiftOption={shiftOption}
                             setShiftOption={setShiftOption}
                             remarks={remarks}
@@ -954,7 +995,9 @@ export function CreateBufferJODialog({
                             selectedProduct={selectedProduct}
                             selectedVersion={selectedVersion}
                             targetQuantity={targetQuantity}
+                            plannedDate={plannedDate}
                             dueDate={dueDate}
+                            priority={priority}
                             shiftOption={shiftOption}
                             totalEstimatedHours={totalEstimatedHours}
                             components={components}
@@ -1001,26 +1044,37 @@ export function CreateBufferJODialog({
                                 Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
+                            <>
                             <Button
                                 size="sm"
-                                onClick={handleConfirmRelease}
+                                onClick={() => handleConfirmRelease(false)}
                                 disabled={submitting}
+                                className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
+                            >
+                                {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                Save Draft
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={() => handleConfirmRelease(true)}
+                                disabled={submitting || !plannedDate || priority < 0}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                             >
                                 {submitting ? (
                                     <>
                                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Releasing...
+                                        Initializing...
                                     </>
                                 ) : (
-                                    "Confirm & Release"
+                                    "Initialize JO"
                                 )}
                             </Button>
+                            </>
                         )}
                     </div>
                 </DialogFooter>
             </DialogContent>
-            <SubmittingLoadingOverlay isOpen={submitting} title="Creating & Releasing Buffer Job Order..." />
+            <SubmittingLoadingOverlay isOpen={submitting} title="Creating Buffer Job Order..." />
         </Dialog>
     );
 }

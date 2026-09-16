@@ -449,7 +449,9 @@ export async function GET(request: Request) {
         });
 
         // Assemble Job Orders
-        const transformedJOs = rawJOs.map((jo: {
+        const transformedJOs = rawJOs
+            .filter((jo: { status: string }) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING))
+            .map((jo: {
             job_order_id?: number;
             id?: number;
             job_order_no: string;
@@ -643,9 +645,7 @@ export async function GET(request: Request) {
         if (statusFilter && statusFilter !== "all") {
             const sf = statusFilter.toUpperCase();
             filtered = filtered.filter((j: { status: string }) => {
-                if (sf === "PLANNED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED);
-                if (sf === "RESERVED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.RESERVED);
-                if (sf === "RELEASED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.PROCEED);
+                if (sf === "FOR_PICKING" || sf === "RELEASED") return isJobOrderStatus(j.status, JOB_ORDER_STATUS.FOR_PICKING);
                 const normalized = normalizeJobOrderStatus(j.status);
                 return normalized?.toUpperCase() === sf;
             });
@@ -678,22 +678,11 @@ export async function GET(request: Request) {
         // Summary KPI statistics. Only in-flight Job Orders count toward floor
         // readiness and shortages so terminal/cancelled runs never inflate the
         // numbers a planner acts on.
-        const activeJOs = transformedJOs.filter((j: { status: string }) => isJobOrderStatus(
-            j.status,
-            JOB_ORDER_STATUS.DRAFT,
-            JOB_ORDER_STATUS.PLANNED,
-            JOB_ORDER_STATUS.RELEASED,
-            JOB_ORDER_STATUS.PROCEED,
-            JOB_ORDER_STATUS.ONGOING,
-            JOB_ORDER_STATUS.IN_PROGRESS,
-            JOB_ORDER_STATUS.RESERVED,
-            JOB_ORDER_STATUS.ON_HOLD,
-            JOB_ORDER_STATUS.QA_HOLD
-        ));
+        const activeJOs = transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.FOR_PICKING));
         const stats = {
             totalActiveJobs: activeJOs.length,
-            plannedJobs: transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.DRAFT, JOB_ORDER_STATUS.PLANNED)).length,
-            reservedJobs: transformedJOs.filter((j: { status: string }) => isJobOrderStatus(j.status, JOB_ORDER_STATUS.RESERVED)).length,
+            plannedJobs: activeJOs.length,
+            reservedJobs: 0,
             fullyStagedJobs: activeJOs.filter((j: { all_staged: boolean }) => j.all_staged).length,
             pendingStagingJobs: activeJOs.filter((j: { all_staged: boolean }) => !j.all_staged).length,
             shortageAlertJobs: activeJOs.filter((j: { has_shortage: boolean }) => j.has_shortage).length

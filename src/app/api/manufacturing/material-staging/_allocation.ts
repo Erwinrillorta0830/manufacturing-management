@@ -12,7 +12,13 @@ import {
     unitId,
     type MmLotRecord
 } from "../services/mm-lots.service";
-import { normalizeBatchNo, normalizeDirectusStagingMovement, type MaterialStagingStockMovement } from "./_stock";
+import {
+    normalizeBatchNo,
+    normalizeDirectusStagingMovement,
+    isValidQaStatus,
+    isExpired,
+    type MaterialStagingStockMovement
+} from "./_stock";
 import type {
     AllocationCandidate,
     AllocationLine,
@@ -22,6 +28,12 @@ import type {
     BatchStageMaterialResult,
     StagingCommitResponse
 } from "@/modules/manufacturing-management/material-staging/types";
+import {
+    isJobOrderStatus,
+    normalizeJobOrderStatus,
+    JOB_ORDER_STATUS
+} from "@/modules/manufacturing-management/job-order-status";
+import { executeJobOrderWorkflow } from "../job-orders/_workflow-service";
 
 const QUANTITY_EPSILON = 0.000001;
 const PREVIEW_TOKEN_VERSION = 1;
@@ -60,6 +72,7 @@ interface ReservationContext {
     mmLotId: number;
     inventoryLotId: number;
     batchNo: string;
+    uomId: number;
     reservedQuantity: number;
     stagedQuantity: number;
     actualUsedQuantity: number;
@@ -240,28 +253,14 @@ function reservationId(row: DirectusRecord): number {
 function reservationMatches(
     reservation: ReservationContext,
     materialId: number,
-    candidate: Pick<AllocationCandidate, "product_id" | "mm_lot_id" | "inventory_lot_id" | "batch_no">
+    candidate: Pick<AllocationCandidate, "product_id" | "uom_id" | "mm_lot_id" | "inventory_lot_id" | "batch_no">
 ): boolean {
     return reservation.materialId === materialId
         && reservation.productId === candidate.product_id
+        && (!reservation.uomId || !candidate.uom_id || reservation.uomId === candidate.uom_id)
         && reservation.mmLotId === candidate.mm_lot_id
         && reservation.inventoryLotId === candidate.inventory_lot_id
         && normalizeBatchNo(reservation.batchNo) === normalizeBatchNo(candidate.batch_no);
-}
-
-function isValidQaStatus(value: unknown): boolean {
-    const status = canonicalTypeName(value || "GOOD");
-    return !["FAILED", "REJECTED", "QUARANTINED", "QUARANTINE", "BAD", "HOLD"].includes(status);
-}
-
-function isExpired(value: unknown): boolean {
-    const raw = text(value);
-    if (!raw) return false;
-    const expiry = new Date(raw);
-    if (Number.isNaN(expiry.getTime())) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return expiry.getTime() < today.getTime();
 }
 
 function candidateSort(left: AllocationCandidate, right: AllocationCandidate): number {
@@ -383,8 +382,8 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
     if (jobOrderId !== payload.job_order_id || !jobOrderNo || !branchId) {
         throw new MaterialStagingAllocationError("The Job Order has incomplete identity or branch data.", 409, "JOB_ORDER_INVALID");
     }
-    const status = canonicalTypeName(jobOrder.status);
-    if (["CANCELLED", "FINISHED", "COMPLETED", "CLOSED"].includes(status)) {
+    const status = normalizeJobOrderStatus(jobOrder.status);
+    if (!isJobOrderStatus(status, JOB_ORDER_STATUS.FOR_PICKING)) {
         throw new MaterialStagingAllocationError("This Job Order cannot accept staged material in its current status.", 409, "JOB_ORDER_NOT_STAGEABLE");
     }
 
@@ -431,6 +430,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         mmLotId: relationId(row.mm_lot_id, ["lot_id", "id"]),
         inventoryLotId: relationId(row.inventory_lot_id, ["inventory_lot_id", "id"]),
         batchNo: text(row.batch_no),
+        uomId: relationId(row.uom_id, ["unit_id", "id"]),
         reservedQuantity: Math.max(0, quantity(row.reserved_quantity)),
         stagedQuantity: Math.max(0, quantity(row.staged_quantity)),
         actualUsedQuantity: Math.max(0, quantity(row.actual_used_quantity)),
@@ -565,6 +565,7 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
                 product_id: material.productId,
                 product_name: material.productName,
                 product_code: material.productCode,
+                uom_id: material.productUnitId,
                 mm_lot_id: inventoryMmLotId,
                 inventory_lot_id: inventoryId,
                 lot_name: text(lot.lot_name) || `Lot #${inventoryMmLotId}`,
@@ -798,6 +799,17 @@ function reservationSnapshot(row: DirectusRecord): DirectusRecord {
         "staging_operation_id",
         "staging_allocation_line_id",
         "reservation_status",
+        "uom_id",
+        "expiry_date",
+        "issued_to_wip_quantity",
+        "returned_quantity",
+        "remaining_wip_quantity",
+        "wip_started_at",
+        "wip_started_by",
+        "exception_reason",
+        "exception_approved_by",
+        "exception_approved_at",
+        "source_event_key",
         "actual_used_quantity",
         "product_id",
         "branch_id",
@@ -995,6 +1007,8 @@ export async function commitAllocation(
                 staging_operation_id: operationId,
                 staging_allocation_line_id: line.allocation_line_id,
                 reservation_status: nextStagedQuantity + QUANTITY_EPSILON >= nextReservedQuantity ? "HARD" : "PARTIAL",
+                uom_id: material.productUnitId,
+                source_event_key: `staging:${operationId}:${line.allocation_line_id}`,
                 created_by: actorUserId
             };
             let reservationId: number;
@@ -1040,6 +1054,7 @@ export async function commitAllocation(
                         created_by: actorUserId,
                         staging_operation_id: operationId,
                         staging_allocation_line_id: line.allocation_line_id,
+                        source_event_key: `staging:${operationId}:${line.allocation_line_id}`,
                         remarks
                     })
                 },
@@ -1057,15 +1072,13 @@ export async function commitAllocation(
             if (previewMaterial) return previewMaterial.shortage_quantity <= QUANTITY_EPSILON;
             return material.requiredQuantity - material.stagedQuantity <= QUANTITY_EPSILON;
         });
-        if (allMaterialsStaged && canonicalTypeName(prepared.context.jobOrder.status) !== "RESERVED") {
-            state.previousJobOrderStatus = prepared.context.jobOrder.status ?? null;
-            state.jobOrderId = prepared.context.jobOrderId;
-            state.jobOrderPatched = true;
-            await directusRequest(
-                `/items/manufacturing_job_orders/${prepared.context.jobOrderId}`,
-                { method: "PATCH", headers, body: JSON.stringify({ status: "Reserved" }) },
-                "Update Job Order staging status"
-            );
+        if (allMaterialsStaged) {
+            await executeJobOrderWorkflow(prepared.context.jobOrderId, {
+                action: "complete-staging",
+                actorUserId,
+                idempotencyKey: `staging:${operationId}`,
+                remarks: "All required materials were staged to the production floor."
+            });
         }
 
         const materialResults: BatchStageMaterialResult[] = prepared.preview.materials.map(material => ({

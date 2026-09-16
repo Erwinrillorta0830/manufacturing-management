@@ -2,6 +2,30 @@ export function normalizeBatchNo(value: unknown): string {
     return String(value ?? "").trim().toLowerCase();
 }
 
+export function canonicalTypeName(value: unknown): string {
+    return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+/** QA statuses that may still be staged, issued to WIP, or consumed. */
+export function isValidQaStatus(value: unknown): boolean {
+    const status = canonicalTypeName(value || "GOOD");
+    return !["FAILED", "REJECTED", "QUARANTINED", "QUARANTINE", "BAD", "HOLD"].includes(status);
+}
+
+export function isExpired(value: unknown): boolean {
+    const raw = String(value ?? "").trim();
+    if (!raw) return false;
+    const expiry = new Date(raw);
+    if (Number.isNaN(expiry.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return expiry.getTime() < today.getTime();
+}
+
 export function branchProductKey(branchId: number, productId: number): string {
     return `${branchId}:${productId}`;
 }

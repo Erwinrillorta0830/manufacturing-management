@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
+import { resolveApplicableWorkCenterIds } from "./_applicable-work-centers";
 
 interface UserRecord {
     user_id: number;
@@ -238,11 +240,72 @@ async function getUserIdFromSession(): Promise<number> {
 }
 
 // GET: Fetch work centers, status history, and active stations
+async function fetchMappedWorkCenters(extraFilter = ""): Promise<any[]> {
+    const wcData = await directusData<any[]>(
+        `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}${extraFilter}`,
+        "Station work-center lookup"
+    );
+
+    if (!Array.isArray(wcData)) {
+        throw new Error("Station work-center lookup returned an invalid data set.");
+    }
+
+    return wcData.map((wc: any) => {
+        const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
+        const barcode = asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(wc.work_center_id).padStart(3, "0")}`;
+
+        return {
+            ...wc,
+            barcode,
+            rfid_code: asset?.rfid_code || null,
+            serial: asset?.serial || null,
+            is_active: wc.is_active === undefined || wc.is_active === null ? true : Boolean(Number(wc.is_active))
+        };
+    });
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
         const action = searchParams.get("action");
+
+        // 0. Fetch the work centers applicable to a Job Order's product version
+        // routing so the scanner can only offer valid stations.
+        if (action === "applicable-work-centers" && joId) {
+            const joRows = await directusData<any[]>(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_eq]=${encodeURIComponent(joId)}&fields=job_order_id,version_id&limit=1`,
+                "Station job-order version lookup"
+            );
+            const jobOrder = Array.isArray(joRows) ? joRows[0] : null;
+            if (!jobOrder) {
+                return NextResponse.json({
+                    success: false,
+                    error: `Job Order ${joId} was not found.`
+                }, { status: 404 });
+            }
+
+            const applicable = await resolveApplicableWorkCenterIds(jobOrder);
+            if (applicable.source === "NONE" || applicable.workCenterIds.length === 0) {
+                return NextResponse.json({
+                    success: true,
+                    data: [],
+                    applicableWorkCenterIds: [],
+                    source: "NONE"
+                });
+            }
+
+            const data = await fetchMappedWorkCenters(
+                `&filter[work_center_id][_in]=${applicable.workCenterIds.join(",")}&filter[is_active][_eq]=1`
+            );
+
+            return NextResponse.json({
+                success: true,
+                data,
+                applicableWorkCenterIds: applicable.workCenterIds,
+                source: applicable.source
+            });
+        }
 
         // 1. Fetch status history for a specific Job Order
         if (action === "history" || joId) {
@@ -276,27 +339,7 @@ export async function GET(request: Request) {
 
         // 2. Fetch all active work centers with barcodes. Keep this projection
         // aligned with the POST resolver and avoid unsupported relation paths.
-        const wcData = await directusData<any[]>(
-            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}`,
-            "Station work-center lookup"
-        );
-
-        if (!Array.isArray(wcData)) {
-            throw new Error("Station work-center lookup returned an invalid data set.");
-        }
-
-        const mappedWorkCenters = wcData.map((wc: any) => {
-            const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
-            const barcode = asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(wc.work_center_id).padStart(3, "0")}`;
-
-            return {
-                ...wc,
-                barcode,
-                rfid_code: asset?.rfid_code || null,
-                serial: asset?.serial || null,
-                is_active: wc.is_active === undefined || wc.is_active === null ? true : Boolean(Number(wc.is_active))
-            };
-        });
+        const mappedWorkCenters = await fetchMappedWorkCenters();
 
         return NextResponse.json({ success: true, data: mappedWorkCenters });
     } catch (e: any) {
@@ -424,6 +467,71 @@ export async function POST(request: Request) {
             }, { status: 422 });
         }
 
+        // Enforce the production gate before loading routing or changing any
+        // station records. Only fully staged Picked JOs may start production;
+        // an already active JO may check into another station.
+        const oldStatus = normalizeJobOrderStatus(matchedJobOrder.status || JOB_ORDER_STATUS.DRAFT);
+        if (!oldStatus) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has an unknown status and cannot be transitioned.`
+            }, { status: 409 });
+        }
+        if (isTerminalJobOrderStatus(oldStatus) || isCancelledJobOrderStatus(oldStatus)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is ${oldStatus.toLowerCase()} and cannot be restarted.`
+            }, { status: 409 });
+        }
+        if (isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is on hold and cannot be started until the hold is resolved.`,
+                code: "PRODUCTION_ON_HOLD"
+            }, { status: 409 });
+        }
+        if (isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has completed production and cannot be restarted.`,
+                code: "PRODUCTION_COMPLETED"
+            }, { status: 409 });
+        }
+
+        const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PRODUCTION);
+        if (!isAlreadyActive && !isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.PICKED)) {
+            return NextResponse.json({
+                success: false,
+                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} must be Picked before production can start. Complete material staging first.`,
+                code: "JOB_ORDER_NOT_PICKED"
+            }, { status: 409 });
+        }
+
+        // Enforce the product-version routing: a Job Order may only start (or
+        // check in) at a work station that is part of its applicable routing.
+        const applicableStations = await resolveApplicableWorkCenterIds(matchedJobOrder);
+        if (applicableStations.workCenterIds.length === 0) {
+            return NextResponse.json({
+                success: false,
+                error: `No work stations are configured for Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber}'s product version routing. Configure the routing in Finished Goods Master → Version Management before starting production.`,
+                code: "WORK_CENTER_ROUTING_NOT_CONFIGURED"
+            }, { status: 409 });
+        }
+        if (!applicableStations.workCenterIds.includes(workCenterIdNumber)) {
+            const applicableLabels = applicableStations.workCenterIds
+                .map((id) => {
+                    const center = allWorkCenters.find((w: any) => Number(w.work_center_id) === id);
+                    return center ? `${center.work_center_name} (ID: ${id})` : `Work Center #${id}`;
+                })
+                .join(", ");
+            return NextResponse.json({
+                success: false,
+                error: `Work Center "${matchedWorkCenter.work_center_name}" is not part of Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber}'s routing. Applicable stations: ${applicableLabels}.`,
+                code: "WORK_CENTER_NOT_APPLICABLE",
+                applicableWorkCenterIds: applicableStations.workCenterIds
+            }, { status: 409 });
+        }
+
         // 3. Resolve the active routing step before changing any records.
         const routes = await directusData<any[]>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderIdNumber}&sort=sequence_order&limit=-1`,
@@ -463,40 +571,31 @@ export async function POST(request: Request) {
         }) || null;
 
         // 4. BOTH WORK CENTER & JOB ORDER MATCHED -> PROCESS STATION START TRANSITION.
-        const oldStatus = normalizeJobOrderStatus(matchedJobOrder.status || JOB_ORDER_STATUS.DRAFT);
-        if (!oldStatus) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} has an unknown status and cannot be transitioned.`
-            }, { status: 409 });
-        }
-        if (isTerminalJobOrderStatus(oldStatus)) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is already finished and cannot be restarted.`
-            }, { status: 409 });
-        }
-        if (isCancelledJobOrderStatus(oldStatus)) {
-            return NextResponse.json({
-                success: false,
-                error: `Job Order ${matchedJobOrder.job_order_no || jobOrderIdNumber} is cancelled and cannot be restarted.`
-            }, { status: 409 });
-        }
-
-        const isAlreadyActive = isJobOrderStatus(oldStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING);
-        const targetStatus = isAlreadyActive ? oldStatus : JOB_ORDER_STATUS.IN_PROGRESS;
+        const targetStatus = JOB_ORDER_STATUS.IN_PRODUCTION;
         const statusTransitioned = !isAlreadyActive;
         const primaryWorkCenterChanged = Number(matchedJobOrder.primary_work_center_id) !== workCenterIdNumber;
         let updatedJobOrder = matchedJobOrder;
 
-        if (statusTransitioned || primaryWorkCenterChanged) {
+        if (statusTransitioned) {
+            await executeJobOrderWorkflow(jobOrderIdNumber, {
+                action: "start-production",
+                actorUserId: currentUserId,
+                idempotencyKey: `station-start:${jobOrderIdNumber}:${workCenterIdNumber}`,
+                remarks: `Station Start Scanner: Checked in at Work Center "${matchedWorkCenter.work_center_name}" (ID: ${workCenterIdNumber})`,
+                workCenterId: workCenterIdNumber
+            });
+            updatedJobOrder = {
+                ...matchedJobOrder,
+                status: targetStatus,
+                primary_work_center_id: workCenterIdNumber
+            };
+        } else if (primaryWorkCenterChanged) {
             updatedJobOrder = await directusData<any>(
                 `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderIdNumber}`,
-                "Station job-order transition",
+                "Update active station work center",
                 {
                     method: "PATCH",
                     body: JSON.stringify({
-                        status: targetStatus,
                         primary_work_center_id: workCenterIdNumber,
                         modified_by: currentUserId,
                         modified_at: manilaTimestamp
@@ -535,7 +634,7 @@ export async function POST(request: Request) {
             }
             : null;
 
-        if (!existingStationHistory && (statusTransitioned || isAlreadyActive)) {
+        if (!existingStationHistory && isAlreadyActive) {
             const createdStationHistory = await directusData<any>(
                 `${DIRECTUS_URL}/items/manufacturing_job_order_status_history`,
                 "Station status-history insert",
@@ -548,6 +647,8 @@ export async function POST(request: Request) {
                         new_status: targetStatus,
                         changed_by: currentUserId,
                         changed_at: manilaTimestamp,
+                        event_key: `station-start:${jobOrderIdNumber}:${workCenterIdNumber}`,
+                        workflow_action: "station-start-check-in",
                         remarks: stationRemark
                     })
                 }
@@ -581,7 +682,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({
             success: true,
-            message: `Station Start Verified! Job Order ${returnedJobOrder.job_order_no} is now IN PROGRESS at workstation "${matchedWorkCenter.work_center_name}".`,
+            message: `Station Start Verified! Job Order ${returnedJobOrder.job_order_no} is now IN PRODUCTION at workstation "${matchedWorkCenter.work_center_name}".`,
             workCenter: matchedWorkCenter,
             jobOrder: returnedJobOrder,
             activeOperation,

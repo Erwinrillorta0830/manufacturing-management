@@ -7,7 +7,7 @@ import type { CanonicalJobOrderStatus } from "../job-order-status";
 
 export type JobOrderStatus = CanonicalJobOrderStatus;
 
-export type ReservationStatus = "SOFT" | "HARD" | "PARTIAL";
+export type ReservationStatus = "SOFT" | "HARD" | "PARTIAL" | "WIP" | "CONSUMED" | "RETURNED" | "RELEASED";
 
 export type AllocationMode = "auto" | "manual";
 
@@ -49,6 +49,7 @@ export interface AllocationCandidate {
     product_id: number;
     product_name: string;
     product_code: string;
+    uom_id?: number;
     mm_lot_id: number;
     inventory_lot_id: number;
     lot_name: string;

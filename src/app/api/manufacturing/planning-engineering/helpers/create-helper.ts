@@ -1,11 +1,9 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
-import { fetchMmInventoryMovements } from "../../services/mm-inventory-movements.service";
+import { getTodayDateString, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { getAvailableInventoryLots } from "./inventory-helper";
 import {
-    assertJobOrderStatus,
     isCancelledJobOrderStatus,
     isTerminalJobOrderStatus,
     JOB_ORDER_STATUS
@@ -36,6 +34,8 @@ export interface SalesOrderSchedulingPlan {
 
 export interface CreateJobOrderOptions {
     deferSalesOrderTransition?: boolean;
+    /** Creation is always a Draft; initialization is an explicit next action. */
+    initialize?: boolean;
 }
 
 function relationId(value: unknown): number {
@@ -150,7 +150,7 @@ export async function createJobOrder(
     salesOrderDetailIds: number[] = [],
     schedulingPlan?: SalesOrderSchedulingPlan | null,
     options: CreateJobOrderOptions = {}
-): Promise<{ jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
+): Promise<{ job_order_id?: number | null; jo_id?: string | null; status?: string; shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }> }> {
     let createdJobOrderNo: string | null = null;
     const previousParentStatuses = new Map<number, string>();
     try {
@@ -249,6 +249,21 @@ export async function createJobOrder(
             versionId = activeVer.version?.version_id;
         }
 
+        let targetUomId = Number((joData as any).uom_id || (joData as any).uomId || firstProd.uom_id || 0);
+        if (!targetUomId) {
+            const productResponse = await fetch(
+                `${DIRECTUS_URL}/items/products/${firstProd.product_id}?fields=unit_of_measurement,unit_of_measurement.unit_id`,
+                { headers, cache: "no-store" }
+            );
+            if (productResponse.ok) {
+                const product = (await productResponse.json()).data || {};
+                const unit = product.unit_of_measurement;
+                targetUomId = Number(
+                    typeof unit === "object" ? unit?.unit_id ?? unit?.id : unit
+                ) || 0;
+            }
+        }
+
         // Dry-Run BOM Explosion & Raw Material Stock Verification
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
         
@@ -327,16 +342,35 @@ export async function createJobOrder(
             }
         }
 
-        let initialStatus = assertJobOrderStatus(joData.status || JOB_ORDER_STATUS.DRAFT);
-        if (initialStatus === JOB_ORDER_STATUS.SHORTAGE) initialStatus = JOB_ORDER_STATUS.DRAFT;
-        else if (initialStatus === JOB_ORDER_STATUS.PROCEED) initialStatus = JOB_ORDER_STATUS.RELEASED;
-        else if (initialStatus === JOB_ORDER_STATUS.ONGOING) initialStatus = JOB_ORDER_STATUS.IN_PROGRESS;
-        else if (initialStatus === JOB_ORDER_STATUS.FINISHED) initialStatus = JOB_ORDER_STATUS.COMPLETED;
+        const numericTargetQuantity = Number(totalMergedQuantity);
+        const numericBranchId = Number(joData.branch_id);
+        const numericPriority = Number((joData as any).priority ?? 0);
+        const numericVersionId = Number(versionId || 0);
+        if (!Number.isSafeInteger(numericBranchId) || numericBranchId <= 0) {
+            throw new Error("A valid branch is required before creating a Job Order.");
+        }
+        if (!Number.isSafeInteger(numericVersionId) || numericVersionId <= 0) {
+            throw new Error("An approved product version/formula is required before creating a Job Order.");
+        }
+        if (!Number.isFinite(numericTargetQuantity) || numericTargetQuantity <= 0) {
+            throw new Error("A target production quantity greater than zero is required before creating a Job Order.");
+        }
+        if (!Number.isSafeInteger(targetUomId) || targetUomId <= 0) {
+            throw new Error("A target unit of measurement is required before creating a Job Order.");
+        }
+        if (!Number.isFinite(numericPriority) || numericPriority < 0) {
+            throw new Error("A valid non-negative Job Order priority is required before creating a Job Order.");
+        }
+
+        // A create request never changes the lifecycle state. The caller must
+        // invoke the workflow initialize action after the full BOM, routing,
+        // and material worksheet are persisted.
+        const initialStatus = JOB_ORDER_STATUS.DRAFT;
+        const shouldInitialize = options.initialize === true;
 
         let forcedDraftRemarks = "";
         if (shortfalls.length > 0) {
             console.log("[createJobOrder] Shortfall detected. Forcing status to Draft. shortfalls:", shortfalls);
-            initialStatus = JOB_ORDER_STATUS.DRAFT;
             const shortfallMsg = shortfalls.map(s => 
                 `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`
             ).join("; ");
@@ -349,13 +383,15 @@ export async function createJobOrder(
             parent_job_order_id: joData.parent_job_order_id ? Number(joData.parent_job_order_id) : null,
             product_id: firstProd.product_id,
             version_id: versionId || null,
-            target_quantity: Number(totalMergedQuantity),
+            target_quantity: numericTargetQuantity,
             completed_quantity: 0,
             rejected_quantity: 0,
             actual_quantity_produced: 0,
-            start_date: todayStr,
+            start_date: joData.start_date || (joData as any).planned_date || todayStr,
             end_date: joData.due_date || null,
             status: initialStatus,
+            uom_id: targetUomId,
+            priority: numericPriority,
             primary_work_center_id: (joData as any).primary_work_center_id ? Number((joData as any).primary_work_center_id) : null,
             shift_option: joData.shift_option || "8",
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
@@ -363,7 +399,8 @@ export async function createJobOrder(
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
             branch_id: joData.branch_id ? Number(joData.branch_id) : null,
             created_by: joData.created_by ? Number(joData.created_by) : null,
-            created_at: new Date().toISOString(),
+            created_at: formatPhtDateTime(),
+            modified_at: null,
             remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
         };
 
@@ -383,18 +420,23 @@ export async function createJobOrder(
         createdJobOrderNo = joNoStr;
 
         // Insert initial status record into manufacturing_job_order_status_history
-        await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
+        const historyRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_status_history`, {
             method: "POST",
             headers,
             body: JSON.stringify({
                 job_order_id: joIdInt,
-                previous_status: JOB_ORDER_STATUS.DRAFT,
-                new_status: initialStatus === JOB_ORDER_STATUS.DRAFT ? JOB_ORDER_STATUS.DRAFT : JOB_ORDER_STATUS.PLANNED,
+                old_status: JOB_ORDER_STATUS.DRAFT,
+                new_status: JOB_ORDER_STATUS.DRAFT,
+                workflow_action: "create-draft",
+                event_key: `create:${joNoStr}`,
                 remarks: "Initial Job Order Creation",
                 changed_by: joData.created_by ? Number(joData.created_by) : null,
-                changed_at: new Date().toISOString()
+                changed_at: formatPhtDateTime()
             })
-        }).catch(err => console.error("Error creating initial job order status history row:", err));
+        });
+        if (!historyRes.ok) {
+            throw new Error(`Failed to create initial Job Order status history: ${historyRes.status} - ${await historyRes.text()}`);
+        }
 
         // 4. Insert merged product(s) and explode BOM/routings
         let totalEstimatedHours = 0;
@@ -516,7 +558,7 @@ export async function createJobOrder(
                                     operator_id: Number(uId),
                                     logged_hours: 0,
                                     hourly_rate: userRate,
-                                    logged_at: new Date().toISOString()
+                                    logged_at: formatPhtDateTime()
                                 };
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
                                     method: "POST",
@@ -542,59 +584,16 @@ export async function createJobOrder(
                              const isSubAssembly = activeVer && activeVer.version;
 
                              let allocatedQty = 0;
-                             const allocations: { purchase_order_product_id: number; mm_lot_id?: number; batch_no?: string; allocated: number }[] = [];
+                             const allocations: {
+                                 purchase_order_product_id: number;
+                                 mm_lot_id?: number;
+                                 inventory_lot_id?: number;
+                                 batch_no?: string;
+                                 expiry_date?: string | null;
+                                 allocated: number;
+                             }[] = [];
 
-                             if (isSubAssembly) {
-                                  if (!joData.branch_id) {
-                                      throw new Error("Cannot allocate sub-assembly: Job Order is missing branch_id");
-                                  }
-                                  const branchId = Number(joData.branch_id);
-
-                                  // Fetch manufacturing yield ledger for this product to resolve QA status
-                                  const yieldRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${compProductId}&fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" });
-                                  const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
-                                  const batchStatusMap = new Map<string, string>();
-                                  yields.forEach((yl: any) => {
-                                      const batchNo = String(yl.lot_number || `MFG-${yl.job_order_id?.job_order_no}`).trim() || "LOT-N/A";
-                                      batchStatusMap.set(batchNo, yl.qa_status || "Pending");
-                                  });
-
-                                  // Fetch inventory movements to calculate the true ledger stock
-                                  const movements = await fetchMmInventoryMovements({
-                                      branch: branchId,
-                                      product: compProductId
-                                  });
-                                  const movementStockMap = new Map<string, number>();
-                                  movements.forEach((mov: any) => {
-                                      const batchNo = mov.batch_no || "LOT-N/A";
-                                      const qty = Number(mov.quantity || 0);
-                                      movementStockMap.set(batchNo, (movementStockMap.get(batchNo) || 0) + qty);
-                                  });
-
-                                  let totalAvailableStock = 0;
-                                  movementStockMap.forEach((qty, lotNum) => {
-                                      if (qty > 0) {
-                                          const status = batchStatusMap.get(lotNum) || "Passed"; // Default to Passed for legacy stock
-                                          if (status === "Passed" || status === "Partially Accepted") {
-                                              totalAvailableStock += qty;
-                                          }
-                                      }
-                                  });
-
-                                 // Calculate active reservations by other JOs on this sub-assembly
-                                 const activeReservedFilter = encodeURIComponent(JSON.stringify({
-                                     _and: [
-                                         { product_id: { _eq: compProductId } },
-                                         { job_order_id: { status: { _in: [JOB_ORDER_STATUS.PROCEED, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.RELEASED, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.RESERVED] } } }
-                                     ]
-                                 }));
-                                 const activeReservedRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?filter=${activeReservedFilter}&fields=reserved_quantity&limit=-1`, { headers, cache: 'no-store' });
-                                 const activeReservedData = activeReservedRes.ok ? (await activeReservedRes.json()).data || [] : [];
-                                 const totalReservedByOthers = activeReservedData.reduce((sum: number, r: any) => sum + Number(r.reserved_quantity || 0), 0);
-
-                                 const netAvailable = Math.max(0, totalAvailableStock - totalReservedByOthers);
-                                 allocatedQty = Math.min(quantityRequired, netAvailable);
-                             } else {
+                            if (shouldInitialize) {
                                  if (!joData.branch_id) {
                                      throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                                  }
@@ -612,7 +611,9 @@ export async function createJobOrder(
                                           allocations.push({
                                               purchase_order_product_id: lot.purchaseOrderReceivingId || 0,
                                               mm_lot_id: lot.mmLotId || undefined,
+                                              inventory_lot_id: lot.inventoryLotId || undefined,
                                               batch_no: lot.batchNo,
+                                             expiry_date: lot.expiryDate || null,
                                              allocated: taken
                                          });
                                      }
@@ -666,7 +667,7 @@ export async function createJobOrder(
                                         reservation_type: "SOFT",
                                         status: "ACTIVE",
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
-                                        created_at: new Date().toISOString()
+                                        created_at: formatPhtDateTime()
                                     };
                                     await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
@@ -678,10 +679,15 @@ export async function createJobOrder(
                                         product_id: compProductId,
                                          branch_id: joData.branch_id ? Number(joData.branch_id) : null,
                                          mm_lot_id: alloc.mm_lot_id || null,
+                                         inventory_lot_id: alloc.inventory_lot_id || null,
                                          batch_no: alloc.batch_no || null,
+                                         expiry_date: alloc.expiry_date || null,
                                         jo_material_id: jomId,
                                         reserved_quantity: alloc.allocated,
                                         actual_used_quantity: 0,
+                                        reservation_status: "SOFT",
+                                        uom_id: uomId || null,
+                                        source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
                                         created_by: joData.created_by ? Number(joData.created_by) : null
                                     };
                                     if (alloc.purchase_order_product_id > 0) {
@@ -700,7 +706,7 @@ export async function createJobOrder(
                             const shortfall = quantityRequired - allocatedQty;
 
                             // Auto-spawn child Job Orders for manufactured sub-assemblies with shortages
-                            if (shortfall > 0) {
+                            if (shouldInitialize && shortfall > 0) {
                                 try {
                                     const subVerMap = (joData as any).subAssemblyVersionMap || (joData as any).sub_assembly_version_map || {};
                                     const selectedVerId = subVerMap[compProductId] || subVerMap[String(compProductId)];
@@ -732,7 +738,7 @@ export async function createJobOrder(
                                                 product_id: compProductId,
                                                 quantity: shortfall,
                                                 due_date: joData.due_date || null,
-                                                status: assertJobOrderStatus(joData.status || JOB_ORDER_STATUS.RELEASED),
+                                                status: JOB_ORDER_STATUS.DRAFT,
                                                 branch_id: joData.branch_id,
                                                 created_by: joData.created_by,
                                                 parent_job_order_id: joIdInt,
@@ -847,7 +853,7 @@ export async function createJobOrder(
                         sales_order_detail_id: detailId,
                         allocated_quantity: allocationQuantity,
                         reservation_type: "SOFT",
-                        created_at: new Date().toISOString(),
+                        created_at: formatPhtDateTime(),
                         created_by: joData.created_by ? Number(joData.created_by) : null
                     })
                 });
@@ -877,12 +883,12 @@ export async function createJobOrder(
 
             // A regular JO puts its linked parent orders into production only
             // after every requested allocation has been persisted.
-            if (!options.deferSalesOrderTransition) {
+            if (shouldInitialize && !options.deferSalesOrderTransition) {
                 await transitionLinkedSalesOrdersToInProduction(affectedOrderIds, previousParentStatuses);
             }
         }
 
-        return { jo_id: joNoStr, status: initialStatus, shortfalls };
+        return { job_order_id: joIdInt, jo_id: joNoStr, status: initialStatus, shortfalls };
     } catch (e) {
         console.error("[Manufacturing Directus API] Failed to create job order:", e);
         if (createdJobOrderNo) {

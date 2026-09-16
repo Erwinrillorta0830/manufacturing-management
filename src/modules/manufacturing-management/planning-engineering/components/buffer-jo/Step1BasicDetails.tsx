@@ -24,6 +24,7 @@ export interface Step1BasicDetailsProps {
     setSelectedParentProductId: (id: string) => void;
     uomOptions: {
         product_id: string;
+        uom_id: number;
         product_code: string;
         uom_name: string;
         uom_shortcut: string;
@@ -39,6 +40,10 @@ export interface Step1BasicDetailsProps {
     setTargetQuantity: (qty: number) => void;
     dueDate: string;
     setDueDate: (date: string) => void;
+    plannedDate: string;
+    setPlannedDate: (date: string) => void;
+    priority: number;
+    setPriority: (priority: number) => void;
     shiftOption: string;
     setShiftOption: (shift: string) => void;
     remarks: string;
@@ -66,6 +71,10 @@ export function Step1BasicDetails({
     setTargetQuantity,
     dueDate,
     setDueDate,
+    plannedDate,
+    setPlannedDate,
+    priority,
+    setPriority,
     shiftOption,
     setShiftOption,
     remarks,
@@ -258,6 +267,19 @@ export function Step1BasicDetails({
 
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                        Planned Production Date
+                    </label>
+                    <Input
+                        type="date"
+                        value={plannedDate}
+                        onChange={(e) => setPlannedDate(e.target.value)}
+                        className="h-9 font-semibold bg-card border-input text-foreground"
+                        required
+                    />
+                </div>
+
+                <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                         Due Date
                     </label>
@@ -268,7 +290,9 @@ export function Step1BasicDetails({
                         className="h-9 font-semibold bg-card border-input text-foreground"
                     />
                 </div>
+            </div>
 
+            <div>
                 <div className="space-y-1">
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                         Shift Option (Hours)

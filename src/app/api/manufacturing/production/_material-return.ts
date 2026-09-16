@@ -694,7 +694,14 @@ function reversalLineId(line: JobOrderMaterialReturnLine): string {
 async function executeCancellation(
     jobOrder: ResolvedJobOrder,
     computed: ComputedCancellation,
-    options: { reason: string; actorUserId: number | null; writeStatus: boolean; writer?: MaterialReturnWriter }
+    options: {
+        reason: string;
+        actorUserId: number | null;
+        writeStatus: boolean;
+        writer?: MaterialReturnWriter;
+        eventKey?: string;
+        workflowAction?: string;
+    }
 ): Promise<JobOrderCancellationExecution> {
     const createdMovementIds: number[] = [];
     const createdInventoryLotIds: number[] = [];
@@ -961,10 +968,16 @@ async function executeCancellation(
 
         if (options.writeStatus) {
             joStatusSnapshot = jobOrder.status;
+            const cancelledAt = new Date().toISOString();
             await directusWrite(
                 `/items/manufacturing_job_orders/${jobOrder.jobOrderId}`,
                 "PATCH",
-                { status: JOB_ORDER_STATUS.CANCELLED },
+                {
+                    status: JOB_ORDER_STATUS.CANCELLED,
+                    cancelled_at: cancelledAt,
+                    cancelled_by: options.actorUserId,
+                    cancellation_reason: options.reason
+                },
                 `cancel Job Order ${jobOrder.jobOrderNo}`
             );
             const history = await directusWrite<RawRecord>(
@@ -974,6 +987,8 @@ async function executeCancellation(
                     job_order_id: jobOrder.jobOrderId,
                     old_status: jobOrder.status,
                     new_status: JOB_ORDER_STATUS.CANCELLED,
+                    event_key: options.eventKey || null,
+                    workflow_action: options.workflowAction || "cancel",
                     changed_by: options.actorUserId,
                     changed_at: new Date().toISOString(),
                     remarks: `Job Order cancelled. Reason: ${options.reason} | Returned ${returnedQuantity} unit(s) to ${MAIN_STORE_BIN} across ${returnLines.length} lot/batch line(s); released ${computed.reservationReleaseTargets.length} reservation(s).`
@@ -1027,7 +1042,10 @@ export async function previewJobOrderCancellation(joId: string | number): Promis
     const productName = await resolveJobOrderProductName(jobOrder.productId);
     const status = jobOrder.status;
     const cancellable = isCancellableJobOrderStatus(status) && !computed.reconciliationError;
-    const canReturnMaterials = isCancelledJobOrderStatus(status)
+    const canReturnMaterials = (
+        isCancelledJobOrderStatus(status)
+        || isJobOrderStatus(status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION)
+    )
         && computed.totals.returnableQuantity > QUANTITY_EPSILON
         && !computed.reconciliationError;
 
@@ -1057,6 +1075,7 @@ export async function cancelJobOrderAndReturnMaterials(input: {
     joId: string | number;
     reason: string;
     actorUserId?: number | null;
+    eventKey?: string;
 }): Promise<JobOrderCancellationExecution> {
     const jobOrder = await fetchJobOrder(input.joId);
     if (isCancelledJobOrderStatus(jobOrder.status)) {
@@ -1093,7 +1112,9 @@ export async function cancelJobOrderAndReturnMaterials(input: {
     return executeCancellation(jobOrder, computed, {
         reason: input.reason,
         actorUserId: input.actorUserId ?? null,
-        writeStatus: true
+        writeStatus: true,
+        eventKey: input.eventKey,
+        workflowAction: "cancel"
     });
 }
 
@@ -1152,7 +1173,7 @@ export async function returnJobOrderMaterialLeftovers(input: ReturnLeftoverMater
     const jobOrder = await fetchJobOrder(input.joId);
     const returnableStatus = isCancelledJobOrderStatus(jobOrder.status)
         || isTerminalJobOrderStatus(jobOrder.status)
-        || isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
+        || isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION);
     if (!returnableStatus) {
         throw new JobOrderCancellationError(
             `Job Order ${jobOrder.jobOrderNo} is in status "${jobOrder.status}" and cannot return leftover material through this flow.`,

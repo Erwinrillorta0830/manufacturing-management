@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { JobOrder, WorkCenter, StationScanResponse } from "../types";
-import { scanStationStart, fetchWorkCenters } from "../services/production-api";
+import { scanStationStart, fetchWorkCenters, type WorkCenterApplicabilitySource } from "../services/production-api";
 import { toast } from "sonner";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -30,6 +30,7 @@ interface StationStartScannerProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     jobOrders: JobOrder[];
+    initialJobOrder?: JobOrder | null;
     onStationStarted: (response: StationScanResponse) => void;
 }
 
@@ -58,9 +59,11 @@ export function StationStartScanner({
     open,
     onOpenChange,
     jobOrders,
+    initialJobOrder = null,
     onStationStarted
 }: StationStartScannerProps) {
     const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
+    const [workCenterSource, setWorkCenterSource] = useState<WorkCenterApplicabilitySource | null>(null);
     const [loadingWc, setLoadingWc] = useState(false);
 
     // Scanned values
@@ -75,25 +78,61 @@ export function StationStartScanner({
     const wcInputRef = useRef<HTMLInputElement>(null);
     const joInputRef = useRef<HTMLInputElement>(null);
 
-    // Load work centers on open
-    useEffect(() => {
-        if (open) {
-            setLoadingWc(true);
-            setScanResult(null);
-            setScannedWcBarcode("");
-            setScannedJoBarcode("");
-            setSelectedWc(null);
-            setSelectedJo(null);
-
-            fetchWorkCenters()
-                .then((data) => setWorkCenters(data))
-                .catch((err) => toast.error(err.message || "Failed to load work centers"))
-                .finally(() => {
-                    setLoadingWc(false);
-                    setTimeout(() => wcInputRef.current?.focus(), 150);
-                });
+    const loadWorkCentersFor = React.useCallback(async (jobOrder: JobOrder | null) => {
+        setLoadingWc(true);
+        try {
+            const result = await fetchWorkCenters(jobOrder ? (jobOrder.order_id || jobOrder.job_order_id || jobOrder.jo_id) : undefined);
+            setWorkCenters(result.data);
+            setWorkCenterSource(result.source);
+            return result;
+        } catch (err: any) {
+            toast.error(err.message || "Failed to load work centers");
+            setWorkCenters([]);
+            setWorkCenterSource(jobOrder ? "NONE" : null);
+            return {
+                data: [] as WorkCenter[],
+                applicableWorkCenterIds: [] as number[],
+                source: (jobOrder ? "NONE" : "ALL") as WorkCenterApplicabilitySource
+            };
+        } finally {
+            setLoadingWc(false);
         }
-    }, [open]);
+    }, []);
+
+    // Load work centers on open, honoring an optional prefilled Job Order.
+    useEffect(() => {
+        if (!open) return;
+        setScanResult(null);
+        setScannedWcBarcode("");
+        setScannedJoBarcode("");
+        setSelectedWc(null);
+
+        const prefill = initialJobOrder || null;
+        setSelectedJo(prefill);
+        if (prefill) {
+            setScannedJoBarcode(prefill.job_order_no || prefill.jo_id);
+        }
+
+        void loadWorkCentersFor(prefill).finally(() => {
+            setTimeout(() => wcInputRef.current?.focus(), 150);
+        });
+    }, [open, initialJobOrder, loadWorkCentersFor]);
+
+    const selectJobOrder = async (jobOrder: JobOrder | null) => {
+        setSelectedJo(jobOrder);
+        setScannedJoBarcode(jobOrder ? (jobOrder.job_order_no || jobOrder.jo_id) : "");
+        setScanResult(null);
+        const result = await loadWorkCentersFor(jobOrder);
+        setSelectedWc((previous) => {
+            if (!previous) return previous;
+            const stillApplicable = result.data.some((center) => Number(center.work_center_id) === Number(previous.work_center_id));
+            if (!stillApplicable) {
+                setScannedWcBarcode("");
+                return null;
+            }
+            return previous;
+        });
+    };
 
     // Handle Work Center Barcode Enter
     const handleWcBarcodeSubmit = (e?: React.FormEvent) => {
@@ -120,7 +159,9 @@ export function StationStartScanner({
             toast.success(`Work Center matched: ${matched.work_center_name}`);
             setTimeout(() => joInputRef.current?.focus(), 100);
         } else {
-            toast.error(`Work Center barcode "${code}" not recognized.`);
+            toast.error(selectedJo
+                ? `Work Center "${code}" is not part of this Job Order's routing.`
+                : `Work Center barcode "${code}" not recognized.`);
         }
     };
 
@@ -142,9 +183,9 @@ export function StationStartScanner({
         });
 
         if (matched) {
-            setSelectedJo(matched);
             playSuccessBeep();
             toast.success(`Job Order matched: ${matched.job_order_no || matched.jo_id}`);
+            void selectJobOrder(matched);
         } else {
             toast.error(`Job Order barcode "${code}" not recognized.`);
         }
@@ -269,7 +310,9 @@ export function StationStartScanner({
                                     <Building2 className="h-4 w-4 text-primary" /> Work Center Barcode
                                 </CardTitle>
                                 <CardDescription className="text-[11px]">
-                                    Scan station asset tag, RFID, or tap a station below
+                                    {selectedJo
+                                        ? "Only work stations configured for this product version's routing are shown"
+                                        : "Scan station asset tag, RFID, or tap a station below"}
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="p-4 pt-2 space-y-3">
@@ -314,8 +357,13 @@ export function StationStartScanner({
                                 ) : (
                                     <div className="space-y-1.5">
                                         <span className="text-[9px] font-bold text-muted-foreground uppercase font-mono block">
-                                            Quick Touch Station Select:
+                                            {selectedJo ? "Applicable Stations for this Job Order:" : "Quick Touch Station Select:"}
                                         </span>
+                                        {selectedJo && !loadingWc && (workCenterSource === "NONE" || workCenters.length === 0) ? (
+                                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                                                No work stations are configured for this product version&apos;s routing. Update the routing in Finished Goods Master → Version Management before starting production.
+                                            </div>
+                                        ) : (
                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-[140px] overflow-y-auto pr-1">
                                             {loadingWc ? (
                                                 <div className="col-span-3 py-4 text-center text-xs text-muted-foreground">
@@ -342,6 +390,7 @@ export function StationStartScanner({
                                                 </button>
                                             ))}
                                         </div>
+                                        )}
                                     </div>
                                 )}
                             </CardContent>
@@ -403,8 +452,7 @@ export function StationStartScanner({
                                             variant="ghost"
                                             size="xs"
                                             onClick={() => {
-                                                setSelectedJo(null);
-                                                setScannedJoBarcode("");
+                                                void selectJobOrder(null);
                                             }}
                                             className="h-7 text-xs text-muted-foreground hover:text-red-500"
                                         >
@@ -425,9 +473,8 @@ export function StationStartScanner({
                                                     key={jo.jo_id}
                                                     type="button"
                                                     onClick={() => {
-                                                        setSelectedJo(jo);
-                                                        setScannedJoBarcode(jo.job_order_no || jo.jo_id);
                                                         playSuccessBeep();
+                                                        void selectJobOrder(jo);
                                                     }}
                                                     className="p-2 text-left bg-background border border-border/80 hover:border-primary hover:bg-primary/5 rounded-xl transition-all text-xs flex flex-col justify-between"
                                                 >
@@ -479,7 +526,7 @@ export function StationStartScanner({
                             </Button>
                             <Button
                                 onClick={handleExecuteStationStart}
-                                disabled={isSubmitting || (!selectedWc && !scannedWcBarcode) || (!selectedJo && !scannedJoBarcode)}
+                                disabled={isSubmitting || (!selectedWc && !scannedWcBarcode) || (!selectedJo && !scannedJoBarcode) || (Boolean(selectedJo) && !loadingWc && workCenters.length === 0)}
                                 className="h-11 text-xs font-extrabold px-6 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20 w-1/2 sm:w-auto"
                             >
                                 {isSubmitting ? (

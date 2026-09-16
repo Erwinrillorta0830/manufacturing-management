@@ -14,12 +14,12 @@ import {
 import { salesOrderStatusAfterFulfillment } from "../../sales-order/_fulfillment";
 import {
     isCancelledJobOrderStatus,
-    isJobOrderStatus,
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
 import { isProductionSchedulingStatus } from "../../sales-order/_status";
 import { ensureJobOrderReceipt } from "../_finished-goods-ledger";
+import { recordShiftRunSession } from "../_shift-run-session-service";
 
 // Helper to decode user ID from session cookie
 async function getUserIdFromSession(): Promise<number> {
@@ -270,7 +270,7 @@ export async function GET(request: Request) {
 }
 
 // POST handler: Logs the shift yield, consumes hard-staged reservations, records genealogy, and updates Job Order status.
-export async function POST(request: Request) {
+async function legacyShiftRunPost(request: Request) {
     try {
         const todayStr = await getTodayDateString();
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
@@ -316,6 +316,12 @@ export async function POST(request: Request) {
         }
         if (isCancelledJobOrderStatus(canonicalJoStatus)) {
             return NextResponse.json({ error: `Job Order ${joId} is cancelled and cannot accept a shift run.` }, { status: 409 });
+        }
+        if (canonicalJoStatus !== JOB_ORDER_STATUS.IN_PRODUCTION) {
+            return NextResponse.json({
+                error: `Job Order ${joId} must be In Production before a shift run can be recorded. Start it from a Picked Job Order first.`,
+                code: "JOB_ORDER_NOT_IN_PRODUCTION"
+            }, { status: 409 });
         }
         const producedProductId = Number(joData.product_id);
         if (!joData.branch_id) {
@@ -849,15 +855,10 @@ export async function POST(request: Request) {
             modified_at: manilaTimestamp
         };
 
-        if (isJobFullyFinished) {
-            joUpdatePayload.status = JOB_ORDER_STATUS.COMPLETED;
-        } else if (!isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING)) {
-            joUpdatePayload.status = JOB_ORDER_STATUS.IN_PROGRESS;
-        }
-
-        const expectedStatus = isJobFullyFinished
-            ? JOB_ORDER_STATUS.COMPLETED
-            : (isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.IN_PROGRESS, JOB_ORDER_STATUS.ONGOING) ? canonicalJoStatus : JOB_ORDER_STATUS.IN_PROGRESS);
+        // A shift run never completes the Job Order lifecycle. The operator
+        // must explicitly invoke Complete Production after all planned output
+        // and routing operations are recorded.
+        const expectedStatus = JOB_ORDER_STATUS.IN_PRODUCTION;
 
         // Keep the PATCH response unscoped. This Directus instance rejects scoped
         // update responses when other records in the collection contain nulls in
@@ -876,39 +877,6 @@ export async function POST(request: Request) {
 
         if (!hasExpectedCompletedQuantity || persistedStatus !== expectedStatus) {
             throw new Error(`Job Order ${jobOrderNo} did not persist the expected completion state.`);
-        }
-
-        // 8. RECORD IN MANUFACTURING_JOB_ORDER_STATUS_HISTORY IF COMPLETED OR TRANSITIONED
-        if (isJobFullyFinished && !isJobOrderStatus(canonicalJoStatus, JOB_ORDER_STATUS.COMPLETED)) {
-            const statusHistoryPayload = {
-                job_order_id: Number(joId),
-                old_status: canonicalJoStatus,
-                new_status: JOB_ORDER_STATUS.COMPLETED,
-                changed_by: effectiveEncoderId,
-                changed_at: manilaTimestamp,
-                remarks: `Job Order completed. Target ${targetQuantity.toLocaleString()} pcs reached with final shift run (${goodYield} pcs).`
-            };
-
-            const existingHistoryRows = await directusRows<any>(
-                `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?filter=${encodeURIComponent(JSON.stringify({
-                    _and: [
-                        { job_order_id: { _eq: Number(joId) } },
-                        { new_status: { _eq: JOB_ORDER_STATUS.COMPLETED } }
-                    ]
-                }))}&limit=1`,
-                `Existing completion history lookup for Job Order ${joId}`
-            );
-
-            if (existingHistoryRows.length === 0) {
-                await directusRequest<any>(
-                    `${DIRECTUS_URL}/items/manufacturing_job_order_status_history`,
-                    "Finished status-history insert",
-                    {
-                        method: "POST",
-                        body: JSON.stringify(statusHistoryPayload)
-                    }
-                );
-            }
         }
 
         await reconcileSalesOrderFulfillment(
@@ -942,4 +910,11 @@ export async function POST(request: Request) {
             error: (e as Error).message || "Failed to log shift progress"
         }, { status });
     }
+}
+
+// Production sessions use the exact-reservation recording service. The legacy
+// implementation remains below for historical reference but is no longer the
+// public POST path because it selected reservations by product.
+export async function POST(request: Request) {
+    return recordShiftRunSession(request);
 }

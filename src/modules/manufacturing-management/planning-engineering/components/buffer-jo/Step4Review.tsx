@@ -10,7 +10,9 @@ export interface Step4ReviewProps {
     selectedProduct?: any;
     selectedVersion?: any;
     targetQuantity: number;
+    plannedDate: string;
     dueDate: string;
+    priority: number;
     shiftOption: string;
     totalEstimatedHours: number;
     components: any[];
@@ -28,7 +30,9 @@ export function Step4Review({
     selectedProduct,
     selectedVersion,
     targetQuantity,
+    plannedDate,
     dueDate,
+    priority,
     shiftOption,
     totalEstimatedHours,
     components,
@@ -98,6 +102,12 @@ export function Step4Review({
                                     <Calendar className="h-3.5 w-3.5 text-primary" /> Target Quantity:
                                 </span>
                                 <span className="font-extrabold text-foreground">{targetQuantity.toLocaleString()} units</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground flex items-center gap-1.5">
+                                    <Calendar className="h-3.5 w-3.5 text-primary" /> Planned Production:
+                                </span>
+                                <span className="font-bold text-foreground">{plannedDate || "Not set"}</span>
                             </div>
                             <div className="flex items-center justify-between">
                                 <span className="text-muted-foreground flex items-center gap-1.5">

@@ -281,8 +281,9 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        const activeStatuses = "Pending,For Picking,Picking,Picked,Approved,Audited";
         const clinvRes = await fetch(
-            `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_in]=${uniqueIds.join(",")}&filter[consolidator_id][is_delete][_eq]=0&limit=-1&fields=invoice_id`,
+            `${DIRECTUS_URL}/items/consolidator_invoices?filter[invoice_id][_in]=${uniqueIds.join(",")}&filter[consolidator_id][is_delete][_eq]=0&filter[consolidator_id][status][_in]=${activeStatuses}&limit=-1&fields=invoice_id`,
             { headers: directusHeaders, cache: "no-store" }
         );
         if (!clinvRes.ok) {
@@ -291,7 +292,7 @@ export async function POST(req: NextRequest) {
         const linked: { invoice_id: number }[] = (await clinvRes.json()).data || [];
         if (linked.length > 0) {
             const alreadyLinked = linked.map((l) => l.invoice_id);
-            return NextResponse.json({ message: `Documents already in another batch: ${alreadyLinked.join(", ")}` }, { status: 409 });
+            return NextResponse.json({ message: `Documents already in another active batch: ${alreadyLinked.join(", ")}` }, { status: 409 });
         }
 
         if (detCheck.length === 0) {

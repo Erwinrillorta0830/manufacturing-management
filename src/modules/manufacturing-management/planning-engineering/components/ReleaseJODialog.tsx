@@ -37,6 +37,8 @@ interface ReleaseJODialogProps {
     setJoNumber: (val: string) => void;
     targetQuantity: number;
     setTargetQuantity: (val: number) => void;
+    plannedDate: string;
+    setPlannedDate: (val: string) => void;
     dueDate: string;
     setDueDate: (val: string) => void;
     shiftOption: string;
@@ -46,8 +48,11 @@ interface ReleaseJODialogProps {
     releasingJO: boolean;
     handleConfirmRelease: (
         selectedSubAssemblyVersions?: Record<number, number>,
-        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>
+        groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
+        initialize?: boolean
     ) => void;
+    priority: number;
+    setPriority: (val: number) => void;
     assignments: Record<number, number[]>;
     setAssignments: React.Dispatch<React.SetStateAction<Record<number, number[]>>>;
 }
@@ -63,10 +68,14 @@ export function ReleaseJODialog({
     setJoNumber,
     targetQuantity: targetQuantityProp,
     setTargetQuantity,
+    plannedDate,
+    setPlannedDate,
     dueDate,
     setDueDate,
     shiftOption,
     setShiftOption,
+    priority,
+    setPriority,
     remarks,
     setRemarks,
     releasingJO,
@@ -188,9 +197,9 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen]);
 
-    // Fetch BOM & Routing details on Step 2
+    // Fetch BOM & Routing details on dialog open
     useEffect(() => {
-        if (isConfirmOpen && selectedLines.length > 0 && currentStep >= 2 && !hasLoadedDetails) {
+        if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
                 try {
@@ -209,7 +218,11 @@ export function ReleaseJODialog({
                         setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
                         setInventories(normalizeInventoryMap(data.inventories));
                         if (data.bom) {
-                            setBomBaseQty(Number(data.bom.base_quantity || 1));
+                            const baseQty = Number(data.bom.base_quantity || 1);
+                            setBomBaseQty(baseQty);
+                            if (!isMultiRelease && baseQty > 0) {
+                                setTargetQuantity(baseQty);
+                            }
                         }
                         setHasLoadedDetails(true);
                     }
@@ -221,7 +234,7 @@ export function ReleaseJODialog({
             };
             loadDetails();
         }
-    }, [isConfirmOpen, selectedLines, currentStep, selectedBranchId, hasLoadedDetails]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
@@ -304,15 +317,24 @@ export function ReleaseJODialog({
 
     const containerMetrics = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
-        const first = selectedLines[0];
-        const prodObj = first.product_id as any;
+        const first = selectedLines[0] as any;
+        const prodObj = first?.product_id;
         if (!prodObj) return null;
+        const verObj = first?.version_id || first?.bom_version_id || first?.version;
         return calculateContainerizationMetrics(
             prodObj.product_name || prodObj.product_code || "Product",
             targetQuantity,
-            prodObj.unit_of_measurement_count
+            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
+            verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
+            verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
+            verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
+            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
+            verObj?.sacks_per_mix || verObj?.sacks_per_batch,
+            verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
+            components,
+            bomBaseQty
         );
-    }, [selectedLines, targetQuantity]);
+    }, [selectedLines, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
@@ -602,6 +624,18 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Target Branch:</span>
                                         <span className="font-semibold text-foreground">{selectedBranch?.branch_name}</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Target UOM:</span>
+                                        <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
+                                    </div>
+                                    <div className="flex justify-between pt-1 border-t border-border/50">
+                                        <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
+                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
+                                        <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -617,33 +651,57 @@ export function ReleaseJODialog({
                                         />
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                            Target Production Quantity
-                                        </label>
-                                        <Input
-                                            type="number"
-                                            value={targetQuantity}
-                                            min={1}
-                                            max={maxAvailableQuantity}
-                                            step="any"
-                                            onChange={(e) => {
-                                                const next = Number(e.target.value);
-                                                setTargetQuantity(Number.isFinite(next)
-                                                    ? Math.min(maxAvailableQuantity, Math.max(0, next))
-                                                    : 0);
-                                            }}
-                                            disabled={isMultiRelease}
-                                            className="h-9 font-semibold bg-card border-input text-foreground"
-                                        />
-                                        <p className="text-[10px] text-muted-foreground">
-                                            {isMultiRelease
-                                                ? "The full remaining quantity for this product/BOM group will be released."
-                                                : `Enter a quantity from 1 through ${maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.`}
-                                        </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Ordered Quantity (From SO)
+                                            </label>
+                                            <Input
+                                                type="text"
+                                                value={maxAvailableQuantity.toLocaleString()}
+                                                readOnly
+                                                disabled
+                                                className="h-9 font-semibold bg-muted text-muted-foreground border-input font-mono"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Target Production Quantity
+                                            </label>
+                                            <Input
+                                                type="number"
+                                                value={targetQuantity}
+                                                min={1}
+                                                step="any"
+                                                onChange={(e) => {
+                                                    const next = Number(e.target.value);
+                                                    setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                }}
+                                                disabled={isMultiRelease}
+                                                className="h-9 font-semibold bg-card border-input text-foreground font-mono"
+                                            />
+                                        </div>
                                     </div>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        {isMultiRelease
+                                            ? "The full remaining quantity for this product/BOM group will be released."
+                                            : `Prefilled based on recipe batch size (${bomBaseQty.toLocaleString()}). Total ordered quantity requested in Sales Order is ${maxAvailableQuantity.toLocaleString()} units.`}
+                                    </p>
 
                                     <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Planned Production Date
+                                            </label>
+                                            <Input
+                                                type="date"
+                                                value={plannedDate}
+                                                onChange={(e) => setPlannedDate(e.target.value)}
+                                                className="h-9 font-semibold bg-card border-input text-foreground"
+                                                required
+                                            />
+                                        </div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Due Date
@@ -655,7 +713,9 @@ export function ReleaseJODialog({
                                                 className="h-9 font-semibold bg-card border-input text-foreground"
                                             />
                                         </div>
+                                    </div>
 
+                                    <div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Shift Option (Hours)
@@ -1169,6 +1229,10 @@ export function ReleaseJODialog({
                                         </span>
                                     </div>
                                     <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Planned Production Date:</span>
+                                        <span className="font-semibold text-foreground">{plannedDate || "Not set"}</span>
+                                    </div>
+                                    <div className="flex justify-between">
                                         <span className="text-muted-foreground">Target Quantity:</span>
                                         <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
                                     </div>
@@ -1201,7 +1265,7 @@ export function ReleaseJODialog({
                                     )}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground">
-                                    Review the details above, then confirm to release the Job Order and lock FIFO material reservations.
+                                    Review the details above, then save the Job Order as Draft or initialize it for material picking.
                                 </p>
                             </div>
                         )}
@@ -1242,32 +1306,57 @@ export function ReleaseJODialog({
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
-                            <Button
-                                size="sm"
-                                onClick={() => handleConfirmRelease(
-                                    selectedSubAssemblyVersions,
-                                    isMultiRelease
-                                        ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
-                                            group.key,
-                                            {
-                                                subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
-                                                assignments: groupAssignments[group.key] || {}
-                                            }
-                                        ]))
-                                        : undefined
-                                )}
-                                disabled={releasingJO}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
-                            >
-                                {releasingJO ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Releasing...
-                                    </>
-                                ) : (
-                                    "Confirm & Release"
-                                )}
-                            </Button>
+                            <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        false
+                                    )}
+                                    disabled={releasingJO}
+                                    className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
+                                >
+                                    {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                                    Save Draft
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={() => handleConfirmRelease(
+                                        selectedSubAssemblyVersions,
+                                        isMultiRelease
+                                            ? Object.fromEntries(normalizedReleaseGroups.map((group) => [
+                                                group.key,
+                                                {
+                                                    subAssemblyVersions: groupSubAssemblyVersions[group.key] || {},
+                                                    assignments: groupAssignments[group.key] || {}
+                                                }
+                                            ]))
+                                            : undefined,
+                                        true
+                                    )}
+                                    disabled={releasingJO || !plannedDate || priority < 0}
+                                    className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
+                                >
+                                    {releasingJO ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                            Initializing...
+                                        </>
+                                    ) : (
+                                        "Initialize JO"
+                                    )}
+                                </Button>
+                            </>
                         )}
                     </div>
                 </DialogFooter>

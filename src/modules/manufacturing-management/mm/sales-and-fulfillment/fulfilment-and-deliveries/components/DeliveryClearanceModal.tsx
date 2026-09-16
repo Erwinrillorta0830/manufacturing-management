@@ -114,7 +114,12 @@ export default function DeliveryClearanceModal({
             const hasReturnItems = (ord.items || []).some((i) => i.returned_quantity > 0);
             const isAllUnfulfilled =
                 (ord.items || []).length > 0 &&
-                (ord.items || []).every((i) => i.received_quantity === 0 && i.returned_quantity === i.ordered_quantity);
+                (ord.items || []).every((i) => {
+                    const target = i.invoiced_quantity !== undefined && i.invoiced_quantity !== null
+                        ? Number(i.invoiced_quantity)
+                        : Number(i.ordered_quantity || 0);
+                    return i.received_quantity === 0 && i.returned_quantity === target && target > 0;
+                });
 
             let derivedStatus = ord.fulfillment_status;
             if (savedOrder?.fulfillment_status) {
@@ -354,13 +359,24 @@ export default function DeliveryClearanceModal({
 
     const isMissingRequiredRemarks = missingRemarksOrders.length > 0;
 
-    // Check quantity validity across all orders and items (do not block variances, only invalid negative numbers)
+    // Check quantity validity across all orders and items
     const validationIssues = useMemo(() => {
         const issues: string[] = [];
         orders.forEach((ord) => {
             ord.items.forEach((item, itemIdx) => {
                 if (item.received_quantity < 0 || item.returned_quantity < 0) {
                     issues.push(`Order ${ord.order_no} Line ${itemIdx + 1}: Quantities cannot be negative.`);
+                }
+                if (item.returned_quantity > 0 && item.reservations && item.reservations.length > 0) {
+                    const physicalDispatched = item.reservations.reduce(
+                        (sum, r) => sum + (Number(r.picked_quantity) || 0),
+                        0
+                    );
+                    const targetReturn = physicalDispatched > 0 ? Math.min(item.returned_quantity, physicalDispatched) : item.returned_quantity;
+                    const totalAlloc = item.reservations.reduce((sum, r) => sum + (Number(r.returned_quantity) || 0), 0);
+                    if (totalAlloc !== targetReturn) {
+                        issues.push(`Order ${ord.order_no} "${item.product_name}": ${totalAlloc} allocated of ${targetReturn} returned. Please balance batch allocations.`);
+                    }
                 }
             });
         });
@@ -580,7 +596,9 @@ export default function DeliveryClearanceModal({
                     returned_quantity: item.returned_quantity,
                     has_concern: item.has_concern,
                     concern_notes: item.concern_notes,
-                    reservations: item.reservations,
+                    reservations: item.returned_quantity === 0 && item.reservations
+                        ? item.reservations.map((r) => ({ ...r, returned_quantity: 0 }))
+                        : item.reservations,
                 })),
             })),
         };

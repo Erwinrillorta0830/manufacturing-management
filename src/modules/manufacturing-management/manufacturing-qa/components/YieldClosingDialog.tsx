@@ -37,15 +37,13 @@ interface YieldClosingDialogProps {
     yieldQty: string;
     setYieldQty: (qty: string) => void;
     lotNumber: string;
-    setLotNumber: (lot: string) => void;
     eligibleLots: EligibleFinishedGoodsLot[];
     selectedMmLotId: string;
     setSelectedMmLotId: (lotId: string) => void;
     loadingEligibleLots: boolean;
+    yieldTraceabilityReady: boolean;
     manufacturingDate: string;
-    setManufacturingDate: (date: string) => void;
     expiryDate: string;
-    setExpiryDate: (date: string) => void;
     unitCost: string;
     setUnitCost: (cost: string) => void;
     yieldMaterialsLoading: boolean;
@@ -74,15 +72,13 @@ export function YieldClosingDialog({
     yieldQty,
     setYieldQty,
     lotNumber,
-    setLotNumber,
     eligibleLots,
     selectedMmLotId,
     setSelectedMmLotId,
     loadingEligibleLots,
+    yieldTraceabilityReady,
     manufacturingDate,
-    setManufacturingDate,
     expiryDate,
-    setExpiryDate,
     unitCost,
     setUnitCost,
     yieldMaterialsLoading,
@@ -328,6 +324,11 @@ export function YieldClosingDialog({
 
                         {/* Inputs */}
                         <div className="grid grid-cols-2 gap-4">
+                            {!yieldTraceabilityReady && (
+                                <div className="col-span-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                                    Output traceability has not been recorded for this yield. Complete the Batch &amp; Lot Traceability Log in the In-Process QA audit before closing.
+                                </div>
+                            )}
                             <div className="col-span-2 space-y-1.5">
                                 <Label htmlFor="yieldQty" className="font-semibold text-xs">
                                     Final Packaging Yield Quantity (Y) <span className="text-destructive">*</span>
@@ -357,7 +358,7 @@ export function YieldClosingDialog({
                                     value={selectedMmLotId}
                                     onValueChange={setSelectedMmLotId}
                                     loading={loadingEligibleLots}
-                                    disabled={actionLoading || branchActionLoading}
+                                    disabled
                                     placeholder="Select storage lot..."
                                     className="min-h-11 w-full justify-between text-sm"
                                 />
@@ -371,7 +372,7 @@ export function YieldClosingDialog({
                                     id="lotNo"
                                     placeholder="e.g. BATCH-2026-001"
                                     value={lotNumber}
-                                    onChange={e => setLotNumber(e.target.value)}
+                                    readOnly
                                     className="min-h-11 text-sm font-mono"
                                 />
                             </div>
@@ -384,7 +385,7 @@ export function YieldClosingDialog({
                                     id="mfgDate"
                                     type="date"
                                     value={manufacturingDate}
-                                    onChange={e => setManufacturingDate(e.target.value)}
+                                    readOnly
                                     className="min-h-11 text-sm"
                                 />
                             </div>
@@ -397,7 +398,7 @@ export function YieldClosingDialog({
                                     id="expiry"
                                     type="date"
                                     value={expiryDate}
-                                    onChange={e => setExpiryDate(e.target.value)}
+                                    readOnly
                                     className="min-h-11 text-sm"
                                 />
                             </div>
@@ -429,7 +430,7 @@ export function YieldClosingDialog({
                     <Button 
                         variant="default"
                         onClick={() => handleSubmitYieldClosing(hasLeftovers ? { acknowledge: true } : undefined)}
-                        disabled={actionLoading || branchActionLoading || yieldMaterialsLoading || loadingReturnPreview || Boolean(yieldMaterialsError) || !postingBranchId || !selectedMmLotId || !lotNumber.trim() || requiresReturnAck || (hasLeftovers && requiresReturnDestination)}
+                        disabled={actionLoading || branchActionLoading || yieldMaterialsLoading || loadingReturnPreview || Boolean(yieldMaterialsError) || !postingBranchId || !yieldTraceabilityReady || !selectedMmLotId || !lotNumber.trim() || requiresReturnAck || (hasLeftovers && requiresReturnDestination)}
                         className="min-h-11 text-sm font-semibold gap-1.5"
                     >
                         {yieldMaterialsLoading ? (

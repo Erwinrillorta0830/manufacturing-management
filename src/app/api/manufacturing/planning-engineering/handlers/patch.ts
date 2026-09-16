@@ -3,7 +3,19 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { assertJobOrderStatus, isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
+
+async function patchActorId(): Promise<number> {
+    try {
+        const token = (await cookies()).get("vos_access_token")?.value;
+        const payload = token ? JSON.parse(Buffer.from(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")) : {};
+        const id = Number(payload?.id || payload?.user_id || payload?.sub);
+        return Number.isSafeInteger(id) && id > 0 ? id : 24;
+    } catch {
+        return 24;
+    }
+}
 
 async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<NextResponse | null> {
     const numericId = Number(jobOrderId);
@@ -18,13 +30,35 @@ async function cancelledJobOrderResponse(jobOrderId: number | string): Promise<N
     return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} is cancelled and cannot be updated.` }, { status: 409 });
 }
 
+async function productionMutationResponse(jobOrderId: number | string): Promise<NextResponse | null> {
+    const numericId = Number(jobOrderId);
+    const path = Number.isSafeInteger(numericId) && numericId > 0
+        ? `/items/manufacturing_job_orders/${numericId}?fields=job_order_id,job_order_no,status`
+        : `/items/manufacturing_job_orders?filter[job_order_no][_eq]=${encodeURIComponent(String(jobOrderId))}&fields=job_order_id,job_order_no,status&limit=1`;
+    const response = await fetch(`${DIRECTUS_URL}${path}`, { headers, cache: "no-store" });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => ({}));
+    const record = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
+    if (!record) return null;
+    if (isCancelledJobOrderStatus(record.status)) {
+        return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} is cancelled and cannot be updated.`, code: "JOB_ORDER_CANCELLED" }, { status: 409 });
+    }
+    if (isJobOrderStatus(record.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD)) {
+        return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} is on hold and cannot accept production changes until the hold is resolved.`, code: "PRODUCTION_ON_HOLD" }, { status: 409 });
+    }
+    if (isJobOrderStatus(record.status, JOB_ORDER_STATUS.PRODUCTION_COMPLETED, JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, JOB_ORDER_STATUS.CLOSED)) {
+        return NextResponse.json({ error: `Job Order ${record.job_order_no || jobOrderId} has completed production and cannot be updated.`, code: "PRODUCTION_COMPLETED" }, { status: 409 });
+    }
+    return null;
+}
+
 async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextResponse | null> {
     const routeRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id`, { headers, cache: "no-store" });
     if (!routeRes.ok) return null;
     const route = (await routeRes.json()).data;
     const jobOrderId = Number(route?.job_order_id);
     if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) return null;
-    return cancelledJobOrderResponse(jobOrderId);
+    return productionMutationResponse(jobOrderId);
 }
 
 export async function handlePATCH(request: Request) {
@@ -33,7 +67,7 @@ export async function handlePATCH(request: Request) {
 
         // 0. Workstation breakdown handler
         if (body.action === "breakdown") {
-            const { jobOrderId, haltedStepId, yieldQty, haltReason, materials } = body;
+            const { jobOrderId, haltedStepId, yieldQty, haltReason } = body;
             const parsedJobOrderId = Number(jobOrderId);
             const trimmedHaltReason = typeof haltReason === "string" ? haltReason.trim() : "";
 
@@ -45,33 +79,15 @@ export async function handlePATCH(request: Request) {
                 return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
             }
 
-            const cancelledResponse = await cancelledJobOrderResponse(parsedJobOrderId);
-            if (cancelledResponse) return cancelledResponse;
+            const productionResponse = await productionMutationResponse(parsedJobOrderId);
+            if (productionResponse) return productionResponse;
 
-            const joPatchRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${parsedJobOrderId}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({
-                    status: JOB_ORDER_STATUS.ON_HOLD,
-                    actual_quantity_produced: Number(yieldQty),
-                    remarks: `Halted at step ${haltedStepId}. Reason: ${trimmedHaltReason}`
-                })
+            await executeJobOrderWorkflow(parsedJobOrderId, {
+                action: "place-on-hold",
+                actorUserId: await patchActorId(),
+                idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
+                remarks: `Halted at step ${haltedStepId}. Reported yield: ${Number(yieldQty || 0)}. Reason: ${trimmedHaltReason}`
             });
-            if (!joPatchRes.ok) {
-                throw new Error(`Failed to update Job Order status to On Hold: ${joPatchRes.status}`);
-            }
-
-            if (materials && Array.isArray(materials)) {
-                for (const mat of materials) {
-                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials/${mat.materialId}`, {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({
-                            actual_consumed_quantity: Number(mat.consumedQty)
-                        })
-                    }).catch(err => console.error(`Failed to patch material ${mat.materialId}:`, err));
-                }
-            }
 
             return NextResponse.json({ success: true, message: "Workstation breakdown reported successfully." });
         }
@@ -161,16 +177,11 @@ export async function handlePATCH(request: Request) {
                             }
 
                             if (modified) {
-                                const allDaysCompleted = dailyBreakdown.every((d: DailyBreakdownItem) => d.status === "Completed");
                                 const joStatusPatch: Record<string, unknown> = { daily_breakdown: dailyBreakdown };
-                                if (allDaysCompleted) {
-                                    joStatusPatch.status = JOB_ORDER_STATUS.FINISHED;
-                                } else {
-                                    const anyDayStarted = dailyBreakdown.some((d: DailyBreakdownItem) => d.status === "Ongoing" || d.status === "Completed");
-                                    if (anyDayStarted && !isJobOrderStatus(jo.status, JOB_ORDER_STATUS.ONGOING, JOB_ORDER_STATUS.FINISHED, JOB_ORDER_STATUS.CANCELLED)) {
-                                        joStatusPatch.status = JOB_ORDER_STATUS.ONGOING;
-                                    }
-                                }
+                                // Completing a routing step updates the daily
+                                // breakdown only. Lifecycle transitions are
+                                // explicit workflow actions, so a shift/task
+                                // update cannot silently complete a JO.
 
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders/${jo.job_order_id}`, {
                                     method: "PATCH",
@@ -430,8 +441,8 @@ export async function handlePATCH(request: Request) {
             return NextResponse.json({ error: "Missing joId or patch data" }, { status: 400 });
         }
 
-        const cancelledResponse = await cancelledJobOrderResponse(joId);
-        if (cancelledResponse) return cancelledResponse;
+        const productionResponse = await productionMutationResponse(joId);
+        if (productionResponse) return productionResponse;
 
         if (patch.branch_id !== undefined || patch.branchId !== undefined) {
             return NextResponse.json({
@@ -440,9 +451,15 @@ export async function handlePATCH(request: Request) {
             }, { status: 409 });
         }
 
+        if (patch.status !== undefined) {
+            return NextResponse.json({
+                error: "Job Order lifecycle status must be changed through the workflow action endpoint.",
+                code: "WORKFLOW_ACTION_REQUIRED"
+            }, { status: 409 });
+        }
+
         // Map camelCase patch fields to snake_case fields
         const dbPatch: Record<string, unknown> = {};
-        if (patch.status !== undefined) dbPatch.status = assertJobOrderStatus(patch.status);
         if (patch.bom !== undefined) dbPatch.bom = patch.bom;
         if (patch.components !== undefined) dbPatch.components = patch.components;
         if (patch.routings !== undefined) dbPatch.routings = patch.routings;
