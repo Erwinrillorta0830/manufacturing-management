@@ -25,6 +25,7 @@ import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/containerization-helper";
 import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
+import { calculateNetRunTime } from "../../finished-goods/costing";
 
 interface ReleaseJODialogProps {
     isConfirmOpen: boolean;
@@ -231,6 +232,18 @@ export function ReleaseJODialog({
                             setBomBaseQty(baseQty);
                             if (!isMultiRelease && baseQty > 0) {
                                 setTargetQuantity(baseQty);
+                            }
+                            const rawShift = data.bom.net_run_time ?? data.bom.shift_hours ?? data.bom.shift_option ?? data.bom.target_shift_hours;
+                            if (rawShift && Number(rawShift) > 0) {
+                                setShiftOption(String(Number(rawShift).toFixed(1)));
+                            } else {
+                                const netRunTime = calculateNetRunTime(
+                                    Number(data.bom.shift_hours) || 18,
+                                    Number(data.bom.shift_minutes) || 0,
+                                    Number(data.bom.downtime_minutes) || 16,
+                                    Number(data.bom.downtime_seconds) || 7
+                                ).netProductionHours;
+                                setShiftOption(netRunTime.toFixed(1));
                             }
                         }
                         setHasLoadedDetails(true);
@@ -645,7 +658,13 @@ export function ReleaseJODialog({
                                     </div>
                                     <div className="flex justify-between pt-1 border-t border-border/50">
                                         <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
-                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                        {loadingDetails ? (
+                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-xs flex items-center gap-1">
+                                                <Loader2 className="h-3 w-3 animate-spin text-emerald-600" /> Loading...
+                                            </span>
+                                        ) : (
+                                            <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                        )}
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
@@ -681,21 +700,35 @@ export function ReleaseJODialog({
                                         </div>
 
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                                Target Production Quantity
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                                                <span>Target Production Quantity</span>
+                                                {loadingDetails && (
+                                                    <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
+                                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
+                                                        loading batch size...
+                                                    </span>
+                                                )}
                                             </label>
-                                            <Input
-                                                type="number"
-                                                value={targetQuantity}
-                                                min={1}
-                                                step="any"
-                                                onChange={(e) => {
-                                                    const next = Number(e.target.value);
-                                                    setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
-                                                }}
-                                                disabled={isMultiRelease}
-                                                className="h-9 font-semibold bg-card border-input text-foreground font-mono"
-                                            />
+                                            <div className="relative">
+                                                <Input
+                                                    type="number"
+                                                    value={loadingDetails ? "" : (targetQuantity || "")}
+                                                    min={1}
+                                                    step="any"
+                                                    onChange={(e) => {
+                                                        const next = Number(e.target.value);
+                                                        setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                    }}
+                                                    disabled={isMultiRelease || loadingDetails}
+                                                    placeholder={loadingDetails ? "Calculating batch size..." : "e.g. 1000"}
+                                                    className="h-9 font-semibold bg-card border-input text-foreground font-mono"
+                                                />
+                                                {loadingDetails && (
+                                                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
+                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                     <p className="text-[10px] text-muted-foreground">
@@ -732,20 +765,34 @@ export function ReleaseJODialog({
 
                                     <div>
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                                Shift Option (Hours)
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                                                <span>Shift Option (Hours)</span>
+                                                {loadingDetails && (
+                                                    <span className="text-[9px] text-muted-foreground font-normal flex items-center gap-1 lowercase">
+                                                        <Loader2 className="h-2.5 w-2.5 animate-spin text-primary" />
+                                                        calculating...
+                                                    </span>
+                                                )}
                                             </label>
-                                            <Input
-                                                type="number"
-                                                step="0.1"
-                                                min="0.1"
-                                                max="24"
-                                                value={shiftOption}
-                                                onChange={(e) => setShiftOption(e.target.value)}
-                                                className="h-9 font-semibold bg-card border-input text-foreground font-mono"
-                                                placeholder="e.g. 8.0"
-                                                required
-                                            />
+                                            <div className="relative">
+                                                <Input
+                                                    type="number"
+                                                    step="any"
+                                                    min="0.1"
+                                                    max="24"
+                                                    value={shiftOption}
+                                                    disabled={loadingDetails}
+                                                    onChange={(e) => setShiftOption(e.target.value)}
+                                                    className="h-9 font-semibold bg-card border-input text-foreground font-mono"
+                                                    placeholder={loadingDetails ? "Calculating from recipe..." : "e.g. 17.7"}
+                                                    required
+                                                />
+                                                {loadingDetails && (
+                                                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
+                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
