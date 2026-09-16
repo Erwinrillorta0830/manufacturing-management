@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../versions-helper";
+import { getDraftById } from "../../drafts/drafts-helper";
 import { ProductVersion, RouteStep, RouteBOMItem, VersionPosition } from "@/modules/manufacturing-management/finished-goods/types";
 
 export const runtime = "nodejs";
@@ -31,25 +32,66 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Invalid targetVersionId parameter" }, { status: 400 });
         }
 
-        // 1. Fetch target version to get product_id
+        // 1. Fetch target version or draft to get product_id and specification details
+        let productId = 0;
+        let targetBOM: { version: ProductVersion | null; routes: RouteStep[] } = { version: null, routes: [] };
+        let sourceBaseVersionId: number | null = null;
+
         const targetRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${targetVersionId}`, { headers, cache: "no-store" });
-        if (!targetRes.ok) {
-            return NextResponse.json({ error: `Target version with ID ${targetVersionId} not found` }, { status: 404 });
+        if (targetRes.ok) {
+            const targetVerData = (await targetRes.json()).data;
+            productId = Number(targetVerData.product_id);
+            targetBOM = await getBOMDetailsForVersion(productId, targetVersionId);
+        } else {
+            // Check if target is a draft
+            const draft = await getDraftById(targetVersionId, { includeDeleted: false });
+            if (draft) {
+                productId = Number(draft.product_id);
+                sourceBaseVersionId = draft.source_version_id || null;
+                const draftRoutes = (draft.routes || []) as unknown as RouteStep[];
+                targetBOM = {
+                    version: {
+                        version_id: draft.draft_id,
+                        version_name: `${draft.version_name} (Draft)`,
+                        product_id: draft.product_id,
+                        base_quantity: draft.base_quantity,
+                        expected_yield_percentage: draft.expected_yield_percentage,
+                        custom_overhead: draft.custom_overhead,
+                        status: draft.status,
+                        uom_id: draft.uom_id,
+                        is_active: false,
+                        is_primary: false,
+                        routes: draftRoutes,
+                        labor_positions: (draft.labor_positions || []) as unknown as VersionPosition[],
+                        overhead_items: (draft.overheads || []) as unknown as ProductVersion["overhead_items"]
+                    } as unknown as ProductVersion,
+                    routes: draftRoutes.map((r, idx) => ({
+                        ...r,
+                        sequence_order: r.sequence_order || idx + 1,
+                        bom_items: (r.bom_items || []).map((b) => ({
+                            ...b,
+                            quantity_required: b.quantity_required ?? (b as unknown as { quantity?: number }).quantity ?? 0,
+                            wastage_factor_percentage: b.wastage_factor_percentage ?? (b as unknown as { wastage_percentage?: number }).wastage_percentage ?? 0
+                        }))
+                    }))
+                };
+            } else {
+                return NextResponse.json({ error: `Target version or draft with ID ${targetVersionId} not found` }, { status: 404 });
+            }
         }
-        const targetVerData = (await targetRes.json()).data;
-        const productId = Number(targetVerData.product_id);
 
         if (!productId || isNaN(productId)) {
             return NextResponse.json({ error: "Target version does not belong to a valid product" }, { status: 400 });
         }
 
-        // 2. Fetch BOM details for target and base versions
-        const targetBOM = await getBOMDetailsForVersion(productId, targetVersionId);
-
+        // 2. Fetch BOM details for base version
         let baseBOM: { version: ProductVersion | null; routes: RouteStep[] };
-        if (baseVersionIdParam && !isNaN(Number(baseVersionIdParam))) {
-            const baseVersionId = Number(baseVersionIdParam);
-            baseBOM = await getBOMDetailsForVersion(productId, baseVersionId);
+        const effectiveBaseVerId = baseVersionIdParam && !isNaN(Number(baseVersionIdParam))
+            ? Number(baseVersionIdParam)
+            : sourceBaseVersionId;
+
+        if (effectiveBaseVerId && !isNaN(effectiveBaseVerId)) {
+            baseBOM = await getBOMDetailsForVersion(productId, effectiveBaseVerId);
         } else {
             baseBOM = await getActiveVersionForProduct(productId);
         }

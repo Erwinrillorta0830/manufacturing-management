@@ -80,6 +80,8 @@ function isReservableQaStatus(value: unknown): boolean {
  */
 export interface AvailableInventoryLotOptions {
     movementRows?: NormalizedMmInventoryMovement[];
+    /** Buffer initialization may use physical stock without subtracting other JO reservations. */
+    includeReservations?: boolean;
 }
 
 export async function getAvailableInventoryLots(
@@ -100,17 +102,20 @@ export async function getAvailableInventoryLots(
             branch: numericBranchId,
             product: numericProductId
         });
-    const [springMovements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots, directusMovementsRes] = await Promise.all([
-        movementRowsPromise,
-        fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${numericProductId}&filter[branch_id][_eq]=${numericBranchId}&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,is_reverted,received_quantity,mm_lot_id,expiry_date,manufacturing_date,created_at&limit=-1`, { headers, cache: "no-store" }),
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${numericProductId}&fields=lot_number,qa_status,job_order_id.product_id&limit=-1`, { headers, cache: "no-store" }),
-        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(JSON.stringify({
+    const reservationsResPromise = options.includeReservations === false
+        ? Promise.resolve<Response | null>(null)
+        : fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${encodeURIComponent(JSON.stringify({
             _and: [
                 { product_id: { _eq: numericProductId } },
                 { branch_id: { _eq: numericBranchId } },
                 { jo_material_id: { job_order_id: { status: { _in: ACTIVE_JOB_ORDER_STATUSES } } } }
             ]
-        }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" }),
+        }))}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+    const [springMovements, receiptsRes, yieldsRes, reservationsRes, eligibleStorageLots, inventoryLots, directusMovementsRes] = await Promise.all([
+        movementRowsPromise,
+        fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_eq]=${numericProductId}&filter[branch_id][_eq]=${numericBranchId}&fields=purchase_order_product_id,product_id,batch_no,lot_no,qa_status,is_reverted,received_quantity,mm_lot_id,expiry_date,manufacturing_date,created_at&limit=-1`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][product_id][_eq]=${numericProductId}&fields=lot_number,qa_status,job_order_id.product_id&limit=-1`, { headers, cache: "no-store" }),
+        reservationsResPromise,
         loadMmLots({ branchId: numericBranchId, unitId: productUnitId }),
         loadMmInventoryLots({ branchId: numericBranchId, productId: numericProductId, onlyActive: true }),
         fetch(`${DIRECTUS_URL}/items/inventory_movements?filter[branch_id][_eq]=${numericBranchId}&filter[product_id][_eq]=${numericProductId}&fields=*&limit=-1`, { headers, cache: "no-store" }).catch(() => null)
@@ -129,7 +134,7 @@ export async function getAvailableInventoryLots(
 
     const receipts = receiptsRes.ok ? (await receiptsRes.json()).data || [] : [];
     const yields = yieldsRes.ok ? (await yieldsRes.json()).data || [] : [];
-    const reservations = reservationsRes.ok ? (await reservationsRes.json()).data || [] : [];
+    const reservations = reservationsRes?.ok ? (await reservationsRes.json()).data || [] : [];
     const directusMovements = directusMovementsRes?.ok
         ? (((await directusMovementsRes.json()).data || []) as unknown[])
             .filter((row: unknown): row is Record<string, unknown> => Boolean(row && typeof row === "object"))

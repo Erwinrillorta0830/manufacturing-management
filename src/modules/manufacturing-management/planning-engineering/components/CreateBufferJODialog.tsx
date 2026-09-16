@@ -877,7 +877,8 @@ export function CreateBufferJODialog({
                     ]
                 },
                 salesOrderIds: [],
-                initialize
+                initialize,
+                isBuffer: true
             };
 
             const res = await fetch("/api/manufacturing/planning-engineering", {
@@ -892,6 +893,12 @@ export function CreateBufferJODialog({
             }
 
             const json = await res.json().catch(() => null);
+            if (initialize) {
+                const initializedStatus = String(json?.data?.status || json?.data?.newStatus || "").trim().toLowerCase();
+                if (initializedStatus !== "for picking") {
+                    throw new Error("Buffer Job Order was created but did not reach For Picking. Please refresh the Job Order queue before retrying.");
+                }
+            }
             if (!initialize) {
                 toast.success(`Buffer Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
             } else {
