@@ -86,6 +86,8 @@ export interface JobOrder {
     shift_option?: string;
     sub_assembly_version_map?: any;
     remarks?: string | null;
+    cancellation_image_id?: string | null;
+    cancellation_image_url?: string | null;
     created_by?: number | null;
     created_at?: string | null;
     yield_logs?: any[];
@@ -117,6 +119,8 @@ export interface JobOrderCancellationPreview {
     productName: string;
     branchId: number;
     status: string;
+    cancellationImageId: string | null;
+    cancellationImageUrl: string | null;
     cancellable: boolean;
     canReturnMaterials: boolean;
     blockedReason: string | null;
@@ -132,6 +136,8 @@ export interface JobOrderCancellationResponse {
     jobOrderId: number;
     jobOrderNo: string;
     status: string;
+    cancellationImageId: string | null;
+    cancellationImageUrl: string | null;
     lines: JobOrderMaterialReturnLine[];
     returnedQuantity: number;
     releasedReservationCount: number;
@@ -402,4 +408,6 @@ export interface ShiftRunLogPayload {
     materialsConsumed: ShiftRunMaterialConsumption[];
     varianceReason?: string | null;
     approveVariance?: boolean;
+    /** Optional photo captured at the end of the production shift. */
+    evidenceImage?: File | null;
 }

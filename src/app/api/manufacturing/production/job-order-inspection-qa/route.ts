@@ -12,6 +12,7 @@ import {
     getJobOrderClosureReadiness,
     type JobOrderClosureReadiness,
 } from "../../job-orders/_workflow-service";
+import { productionYieldImageUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,6 +60,15 @@ function numberValue(value: unknown): number {
 
 function textValue(value: unknown): string {
     return String(value ?? "").trim();
+}
+
+function directusFileId(value: unknown): string | null {
+    if (value && typeof value === "object") {
+        const record = value as DirectusRow;
+        return directusFileId(record.id ?? record.file_id);
+    }
+    const id = textValue(value);
+    return id || null;
 }
 
 function dateValue(value: unknown): string | null {
@@ -309,6 +319,10 @@ async function loadJobOrderDetails(id: number) {
             const rejectedQuantity = Math.max(0, numberValue(yieldRow.rejected_quantity));
             const scrapQuantity = Math.max(0, numberValue(yieldRow.scrap_quantity));
             const mmLotId = relationId(yieldRow.mm_lot_id, ["mm_lot_id", "lot_id", "id"]);
+            const evidenceImageFileId = directusFileId(yieldRow.daily_qa_image_id);
+            const evidenceImageRecord = yieldRow.daily_qa_image_id && typeof yieldRow.daily_qa_image_id === "object"
+                ? yieldRow.daily_qa_image_id as DirectusRow
+                : null;
 
             return {
                 ledgerId: currentLedgerId,
@@ -325,6 +339,15 @@ async function loadJobOrderDetails(id: number) {
                 batchNo: textValue(yieldRow.lot_number || yieldRow.batch_no) || null,
                 manufacturingDate: dateValue(yieldRow.manufacturing_date),
                 expiryDate: dateValue(yieldRow.expiry_date),
+                evidenceImage: evidenceImageFileId
+                    ? {
+                        fileId: evidenceImageFileId,
+                        fileName: textValue(evidenceImageRecord?.filename_download || evidenceImageRecord?.title) || null,
+                        mimeType: textValue(evidenceImageRecord?.type) || null,
+                        fileSize: numberValue(evidenceImageRecord?.filesize) || null,
+                        url: productionYieldImageUrl(evidenceImageFileId)
+                    }
+                    : null,
                 qaStatus: assessment?.qaStatus || outcome.status,
                 processQaStatus: assessment?.qaStatus || outcome.status,
                 outcome,
