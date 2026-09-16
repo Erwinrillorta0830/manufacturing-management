@@ -354,8 +354,14 @@ export default function OperatorPanel({
 
                     <div className="flex items-center gap-2 shrink-0">
                         {selectedTask.requires_qa === 1 && (
-                            <Badge variant="outline" className="text-[9px] py-0 px-1 text-amber-600 border-amber-500/20 bg-amber-500/5 font-semibold">
-                                QA Checklist Required
+                            <Badge variant="outline" className={`text-[9px] py-0 px-1 font-semibold ${
+                                selectedTask.qa_status === "Passed"
+                                    ? "text-emerald-700 border-emerald-500/20 bg-emerald-500/5"
+                                    : selectedTask.qa_status === "QA Hold"
+                                    ? "text-rose-700 border-rose-500/20 bg-rose-500/5"
+                                    : "text-amber-600 border-amber-500/20 bg-amber-500/5"
+                            }`}>
+                                {selectedTask.qa_status === "Passed" ? "QA Passed" : selectedTask.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
                             </Badge>
                         )}
                         {groupedOperators.some((o) => o.is_running) && (
