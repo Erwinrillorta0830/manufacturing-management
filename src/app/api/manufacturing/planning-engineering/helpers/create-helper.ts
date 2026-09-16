@@ -36,6 +36,8 @@ export interface CreateJobOrderOptions {
     deferSalesOrderTransition?: boolean;
     /** Creation is always a Draft; initialization is an explicit next action. */
     initialize?: boolean;
+    /** Buffer JOs use physical on-hand stock when initializing; Sales Order JOs remain reservation-aware. */
+    physicalOnHandInitialization?: boolean;
 }
 
 function relationId(value: unknown): number {
@@ -264,8 +266,15 @@ export async function createJobOrder(
             }
         }
 
-        // Dry-Run BOM Explosion & Raw Material Stock Verification
+        const shouldInitialize = options.initialize === true;
+
+        // Dry-Run BOM Explosion & Raw Material Stock Verification. Draft saves
+        // persist the worksheet only; they must not be rejected or annotated
+        // from a point-in-time availability check.
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
+        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && shouldInitialize
+            ? { includeReservations: false }
+            : undefined;
         
         for (const p of finalProductsList) {
             const pId = p.product_id;
@@ -311,16 +320,16 @@ export async function createJobOrder(
                     const compActiveVer = await getActiveVersionForProduct(compProductId);
                     const isSubAssembly = compActiveVer && compActiveVer.version;
 
-                    if (!isSubAssembly) {
+                    if (shouldInitialize && !isSubAssembly) {
                         if (!joData.branch_id) {
                             throw new Error("Cannot verify stock: Job Order is missing branch_id");
                         }
                         const branchId = Number(joData.branch_id);
-                        const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                        const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
                         const netAvailable = availableLots.reduce((total, lot) => total + lot.available, 0);
 
-                        if (netAvailable < quantityRequired) {
-                            const shortage = quantityRequired - netAvailable;
+                        const shortage = Math.max(0, quantityRequired - netAvailable);
+                        if (shortage > 0.000001) {
                             let prodName = `Product #${compProductId}`;
                             try {
                                 const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=product_name`, { headers });
@@ -366,13 +375,12 @@ export async function createJobOrder(
         // invoke the workflow initialize action after the full BOM, routing,
         // and material worksheet are persisted.
         const initialStatus = JOB_ORDER_STATUS.DRAFT;
-        const shouldInitialize = options.initialize === true;
 
         let forcedDraftRemarks = "";
-        if (shortfalls.length > 0) {
-            console.log("[createJobOrder] Shortfall detected. Forcing status to Draft. shortfalls:", shortfalls);
+        if (shouldInitialize && shortfalls.length > 0) {
+            console.log("[createJobOrder] Shortfall detected. Keeping Job Order in Draft. shortfalls:", shortfalls);
             const shortfallMsg = shortfalls.map(s => 
-                `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`
+                `${s.name} (Shortfall: ${s.shortage.toFixed(4)} units)`
             ).join("; ");
             forcedDraftRemarks = ` | Saved as Draft due to raw material shortfalls: ${shortfallMsg}`;
         }
@@ -397,7 +405,7 @@ export async function createJobOrder(
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
-            branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+            branch_id: numericBranchId,
             created_by: joData.created_by ? Number(joData.created_by) : null,
             created_at: formatPhtDateTime(),
             modified_at: null,
@@ -598,7 +606,7 @@ export async function createJobOrder(
                                      throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                                  }
                                  const branchId = Number(joData.branch_id);
-                                 const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                                 const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
 
                                  for (const lot of availableLots) {
                                      if (allocatedQty >= quantityRequired) break;
@@ -652,12 +660,26 @@ export async function createJobOrder(
                                 body: JSON.stringify(matPayload)
                             });
                             
-                            if (matRes.ok) {
-                                const createdMat = (await matRes.json()).data;
-                                const jomId = createdMat.jo_material_id || createdMat.id;
-                                
-                                // Now log specific lot allocations in manufacturing_job_order_allocations
-                                for (const alloc of allocations) {
+                            if (!matRes.ok) {
+                                throw new Error(`Failed to create Job Order material worksheet row: ${matRes.status} - ${await matRes.text()}`);
+                            }
+
+                            const createdMat = (await matRes.json()).data;
+                            const jomId = Number(createdMat?.jo_material_id || createdMat?.id || 0);
+                            if (!jomId) {
+                                throw new Error("Job Order material worksheet row was created without an identifier.");
+                            }
+
+                            // Log specific lot allocations and reservations. These
+                            // writes must succeed before an initialized JO can
+                            // advance to material picking.
+                            for (const alloc of allocations) {
+                                // The legacy allocation collection models a
+                                // Sales Order line and requires
+                                // sales_order_detail_id. Buffer JOs are not
+                                // linked to Sales Orders, so their authoritative
+                                // lot allocation is the reservation below.
+                                if (!options.physicalOnHandInitialization) {
                                     const allocationPayload = {
                                         job_order_id: joIdInt,
                                         job_order_material_id: jomId,
@@ -669,38 +691,42 @@ export async function createJobOrder(
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
                                         created_at: formatPhtDateTime()
                                     };
-                                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
+                                    const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
                                         headers,
                                         body: JSON.stringify(allocationPayload)
-                                    }).catch(err => console.error("Error creating manufacturing_job_order_allocations row:", err));
-
-                                    const reservationPayload: Record<string, unknown> = {
-                                        product_id: compProductId,
-                                         branch_id: joData.branch_id ? Number(joData.branch_id) : null,
-                                         mm_lot_id: alloc.mm_lot_id || null,
-                                         inventory_lot_id: alloc.inventory_lot_id || null,
-                                         batch_no: alloc.batch_no || null,
-                                         expiry_date: alloc.expiry_date || null,
-                                        jo_material_id: jomId,
-                                        reserved_quantity: alloc.allocated,
-                                        actual_used_quantity: 0,
-                                        reservation_status: "SOFT",
-                                        uom_id: uomId || null,
-                                        source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
-                                        created_by: joData.created_by ? Number(joData.created_by) : null
-                                    };
-                                    if (alloc.purchase_order_product_id > 0) {
-                                        reservationPayload.purchase_order_receiving_id = alloc.purchase_order_product_id;
+                                    });
+                                    if (!allocationRes.ok) {
+                                        throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${await allocationRes.text()}`);
                                     }
-                                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify(reservationPayload)
-                                    }).catch(err => console.error("Error creating materials reservation row:", err));
                                 }
-                            } else {
-                                console.error("Error creating manufacturing_job_order_materials row:", await matRes.text());
+
+                                const reservationPayload: Record<string, unknown> = {
+                                    product_id: compProductId,
+                                    branch_id: numericBranchId,
+                                    mm_lot_id: alloc.mm_lot_id || null,
+                                    inventory_lot_id: alloc.inventory_lot_id || null,
+                                    batch_no: alloc.batch_no || null,
+                                    expiry_date: alloc.expiry_date || null,
+                                    jo_material_id: jomId,
+                                    reserved_quantity: alloc.allocated,
+                                    actual_used_quantity: 0,
+                                    reservation_status: "SOFT",
+                                    uom_id: uomId || null,
+                                    source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
+                                    created_by: joData.created_by ? Number(joData.created_by) : null
+                                };
+                                if (alloc.purchase_order_product_id > 0) {
+                                    reservationPayload.purchase_order_receiving_id = alloc.purchase_order_product_id;
+                                }
+                                const reservationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+                                    method: "POST",
+                                    headers,
+                                    body: JSON.stringify(reservationPayload)
+                                });
+                                if (!reservationRes.ok) {
+                                    throw new Error(`Failed to create Job Order material reservation: ${reservationRes.status} - ${await reservationRes.text()}`);
+                                }
                             }
 
                             const shortfall = quantityRequired - allocatedQty;

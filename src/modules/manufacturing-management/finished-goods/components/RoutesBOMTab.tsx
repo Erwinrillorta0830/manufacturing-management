@@ -795,7 +795,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                         const stepNum = index + 1;
                         return (
                             <div
-                                key={r.route_id}
+                                key={r.route_id ? `route-${r.route_id}-${index}` : `route-step-${index}`}
                                 className="rounded-xl border bg-card text-card-foreground shadow-xs overflow-hidden border-muted/50"
                             >
                                 {/* Header */}
@@ -1046,10 +1046,19 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                             aria-label={`Step batch size for step ${stepNum}`}
                                             type="number"
                                             disabled={isVersionLocked}
-                                            value={r.step_batch_size}
+                                            value={r.step_batch_size === undefined || r.step_batch_size === null || isNaN(r.step_batch_size as number) ? "" : r.step_batch_size}
                                             onFocus={(e) => e.target.select()}
                                             onClick={(e) => (e.target as HTMLInputElement).select()}
-                                            onChange={(e) => handleUpdateRoute(r.route_id, "step_batch_size", parseFloat(e.target.value) || 1)}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                handleUpdateRoute(r.route_id, "step_batch_size", val === "" ? ("" as any) : parseFloat(val));
+                                            }}
+                                            onBlur={(e) => {
+                                                const num = parseFloat(e.target.value);
+                                                if (isNaN(num) || num <= 0) {
+                                                    handleUpdateRoute(r.route_id, "step_batch_size", 1);
+                                                }
+                                            }}
                                             className="w-full h-9 px-2.5 rounded-lg border border-muted bg-background text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                         />
                                     </div>
@@ -1113,7 +1122,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {(r.bom_items || []).map((b) => {
+                                                    {(r.bom_items || []).map((b, bIdx) => {
                                                         const compCost = calculateMaterialCost({
                                                             quantity: b.quantity_required,
                                                             unitCost: b.cost_per_unit || 0,
@@ -1121,7 +1130,7 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                         });
                                                         const selectedMaterialType = b.material_type || materialTypeFromProduct(b.product_type, b.has_versions);
                                                         return (
-                                                            <tr key={b.id} className="border-b border-muted/50 hover:bg-muted/5">
+                                                            <tr key={b.id ? `bom-${b.id}-${bIdx}` : `bom-r${r.route_id ?? index}-${bIdx}`} className="border-b border-muted/50 hover:bg-muted/5">
                                                                 <td className="p-1.5 align-middle min-w-[175px]">
                                                                     <MaterialTypeSelect
                                                                         value={selectedMaterialType || ""}
@@ -1151,8 +1160,19 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         type="number"
                                                                         step="0.0001"
                                                                         disabled={isVersionLocked}
-                                                                        value={b.quantity_required}
-                                                                        onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "quantity_required", parseFloat(e.target.value) || 0)}
+                                                                        value={b.quantity_required === undefined || b.quantity_required === null || isNaN(b.quantity_required as number) ? "" : b.quantity_required}
+                                                                        onFocus={(e) => e.target.select()}
+                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            handleUpdateIngredient(r.route_id, b.id, "quantity_required", val === "" ? ("" as any) : parseFloat(val));
+                                                                        }}
+                                                                        onBlur={(e) => {
+                                                                            const num = parseFloat(e.target.value);
+                                                                            if (isNaN(num) || num < 0) {
+                                                                                handleUpdateIngredient(r.route_id, b.id, "quantity_required", 0);
+                                                                            }
+                                                                        }}
                                                                         className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                                     />
                                                                 </td>
@@ -1180,8 +1200,19 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
                                                                         aria-label="Wastage Percentage"
                                                                         type="number"
                                                                         disabled={isVersionLocked}
-                                                                        value={b.wastage_factor_percentage}
-                                                                        onChange={(e) => handleUpdateIngredient(r.route_id, b.id, "wastage_factor_percentage", parseFloat(e.target.value) || 0)}
+                                                                        value={b.wastage_factor_percentage === undefined || b.wastage_factor_percentage === null || isNaN(b.wastage_factor_percentage as number) ? "" : b.wastage_factor_percentage}
+                                                                        onFocus={(e) => e.target.select()}
+                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                                                                        onChange={(e) => {
+                                                                            const val = e.target.value;
+                                                                            handleUpdateIngredient(r.route_id, b.id, "wastage_factor_percentage", val === "" ? ("" as any) : parseFloat(val));
+                                                                        }}
+                                                                        onBlur={(e) => {
+                                                                            const num = parseFloat(e.target.value);
+                                                                            if (isNaN(num) || num < 0) {
+                                                                                handleUpdateIngredient(r.route_id, b.id, "wastage_factor_percentage", 0);
+                                                                            }
+                                                                        }}
                                                                         className="w-full h-8 px-2 border border-muted bg-background text-foreground text-xs rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:bg-muted/30"
                                                                     />
                                                                 </td>

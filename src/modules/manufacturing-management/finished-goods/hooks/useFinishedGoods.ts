@@ -47,7 +47,13 @@ import {
     saveQATemplate,
     normalizeProductActiveState,
     resolveProductMasterStatus,
-    extractId
+    extractId,
+    fetchActiveVersionDraft,
+    fetchActiveDraftsForProduct,
+    initiateVersionDraft,
+    saveVersionDraft,
+    cancelVersionDraft,
+    submitVersionDraftForApproval
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
@@ -135,6 +141,9 @@ export function useFinishedGoods(initialTab: string = "details") {
     const [selectedVersion, setSelectedVersion] = useState<ProductVersion | null>(null);
     const [editedVersionDetails, setEditedVersionDetails] = useState<Partial<ProductVersion>>({});
     const [editedRoutes, setEditedRoutes] = useState<RouteStep[]>([]);
+    const [activeDraft, setActiveDraft] = useState<any | null>(null);
+    const [isCancelRevisionModalOpen, setIsCancelRevisionModalOpen] = useState(false);
+    const [cancellingRevision, setCancellingRevision] = useState(false);
 
     // Registration Modal
     const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
@@ -320,9 +329,31 @@ export function useFinishedGoods(initialTab: string = "details") {
         async function loadVersions() {
             setLoadingBOM(true);
             try {
-                const list = await fetchVersions(numericId);
+                const [list, activeDrafts] = await Promise.all([
+                    fetchVersions(numericId),
+                    fetchActiveDraftsForProduct(numericId).catch(() => [])
+                ]);
                 if (cancelled) return;
-                const sortedList = (list || []).sort((a: any, b: any) => {
+
+                const draftVersions: ProductVersion[] = (activeDrafts || []).map((d: any) => ({
+                    version_id: d.draft_id,
+                    draft_id: d.draft_id,
+                    product_id: d.product_id,
+                    version_name: `${d.version_name}`,
+                    base_quantity: Number(d.base_quantity || 1),
+                    expected_yield_percentage: Number(d.expected_yield_percentage || 100),
+                    custom_overhead: Number(d.custom_overhead || 0),
+                    status: d.status || "Draft",
+                    is_active: false,
+                    is_primary: false,
+                    is_draft: true,
+                    source_version_id: d.source_version_id || null,
+                    created_at: d.created_at,
+                    updated_at: d.updated_at
+                }));
+
+                const combinedList = [...draftVersions, ...(list || [])];
+                const sortedList = combinedList.sort((a: any, b: any) => {
                     const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
                     const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
                     if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
@@ -437,6 +468,89 @@ export function useFinishedGoods(initialTab: string = "details") {
         async function loadRecipe() {
             setLoadingBOM(true);
             try {
+                // Only load draft object if the user selected an item that is an explicit draft
+                let draftObj: any = null;
+                const selectedVerMeta = versions.find((v) => v.version_id === selectedVersionId);
+                const isSelectedADraft = Boolean(selectedVerMeta?.is_draft || (selectedVersionId && selectedVersionId < 0));
+                if (isSelectedADraft) {
+                    try {
+                        const dRes = await fetch(`/api/manufacturing/finished-goods/versions/drafts?draftId=${selectedVersionId}`, { cache: "no-store" });
+                        if (dRes.ok) {
+                            draftObj = (await dRes.json()).draft;
+                        }
+                    } catch { }
+                }
+
+                if (cancelled) return;
+
+                if (draftObj) {
+                    setActiveDraft(draftObj);
+                    setSelectedVersion({
+                        version_id: draftObj.draft_id,
+                        draft_id: draftObj.draft_id,
+                        product_id: draftObj.product_id,
+                        version_name: draftObj.version_name,
+                        base_quantity: draftObj.base_quantity,
+                        expected_yield_percentage: draftObj.expected_yield_percentage,
+                        custom_overhead: draftObj.custom_overhead,
+                        status: draftObj.status,
+                        uom_id: draftObj.uom_id,
+                        is_active: false,
+                        is_primary: false,
+                        is_draft: true,
+                        source_version_id: draftObj.source_version_id
+                    } as any);
+
+                    setEditedVersionDetails({
+                        version_id: draftObj.draft_id,
+                        draft_id: draftObj.draft_id,
+                        version_name: draftObj.version_name,
+                        base_quantity: draftObj.base_quantity,
+                        expected_yield_percentage: draftObj.expected_yield_percentage,
+                        custom_overhead: draftObj.custom_overhead ?? 0,
+                        overhead_items: (draftObj.overheads || []).map((ov: any) => ({
+                            ...ov,
+                            id: String(ov.draft_overhead_id || ov.id),
+                            overhead_name: ov.overhead_name || "Overhead",
+                            cost_per_unit: Number(ov.cost_per_unit ?? ov.cost_allocation ?? ov.cost ?? 0),
+                            is_active: ov.is_active !== undefined ? Boolean(ov.is_active) : true,
+                            remarks: ov.remarks || ov.overhead_name || ""
+                        })),
+                        labor_positions: draftObj.labor_positions || [],
+                        status: draftObj.status,
+                        uom_id: draftObj.uom_id
+                    });
+
+                    const normalizedRoutes = (draftObj.routes || []).map((route: any) => ({
+                        ...route,
+                        run_time_hours: route.run_time_hours != null ? Number(route.run_time_hours) : (route.standard_time_minutes ? Number(route.standard_time_minutes) / 60 : 0),
+                        setup_time_hours: route.setup_time_hours != null ? Number(route.setup_time_hours) : (route.setup_time_minutes ? Number(route.setup_time_minutes) / 60 : 0),
+                        step_batch_size: route.step_batch_size != null ? Number(route.step_batch_size) : (route.batch_capacity != null ? Number(route.batch_capacity) : 1),
+                        bom_items: (route.bom_items || []).map((item: any) => {
+                            let matType = item.material_type;
+                            if (matType && typeof matType === "string") {
+                                const s = matType.toLowerCase().trim();
+                                if (s.includes("pack")) matType = "packaging";
+                                else if (s.includes("sub")) matType = "sub_assembly";
+                                else if (s.includes("finish")) matType = "finished_good";
+                                else if (s.includes("raw")) matType = "raw_material";
+                            }
+                            return {
+                                ...item,
+                                quantity_required: item.quantity_required !== undefined ? Number(item.quantity_required) : Number(item.quantity || 1),
+                                unit_of_measurement: item.unit_of_measurement ?? item.uom_id,
+                                wastage_factor_percentage: item.wastage_factor_percentage !== undefined ? Number(item.wastage_factor_percentage) : Number(item.wastage_percentage || 0),
+                                material_type: matType || materialTypeFromProduct(item.product_type, item.has_versions) || "raw_material"
+                            };
+                        })
+                    }));
+                    setEditedRoutes(normalizedRoutes);
+                    setActiveBOMId(draftObj.draft_id);
+                    setLoadingBOM(false);
+                    return;
+                }
+
+                setActiveDraft(null);
                 const versionObj = await fetchBOMDetails(numericId, selectedVersionId!, debouncedForexRate);
                 if (cancelled) return;
                 if (versionObj) {
@@ -483,7 +597,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                                 operationId: r.operation_id || undefined,
                                 machineHourlyRate: 0,
                                 durationHours: r.run_time_hours,
-                                stepBatchSize: r.step_batch_size || 1,
+                                stepBatchSize: r.step_batch_size ,
                                 requiresQA: !!r.qa_template_id
                             });
 
@@ -604,7 +718,7 @@ export function useFinishedGoods(initialTab: string = "details") {
         setSavingBOM(true);
         setSaveProgress(10);
         setSaveStatus("Validating submission parameters...");
-        
+
         let progress = 10;
         const interval = setInterval(() => {
             if (progress < 90) {
@@ -702,10 +816,10 @@ export function useFinishedGoods(initialTab: string = "details") {
                 setAllCatalogProducts(dataList);
                 const finishedGoods = dataList.filter((p: BFFCatalogProduct) => Number(p.product_type) === 388);
                 const list: Product[] = finishedGoods.map((p: BFFCatalogProduct) => {
-                     const parentId = p.parent_id && typeof p.parent_id === "object"
-                          ? Number((p.parent_id as any).product_id)
-                          : (p.parent_id ? Number(p.parent_id) : null);
-                      return {
+                    const parentId = p.parent_id && typeof p.parent_id === "object"
+                        ? Number((p.parent_id as any).product_id)
+                        : (p.parent_id ? Number(p.parent_id) : null);
+                    return {
                         id: String(p.product_id),
                         sku: p.product_code || `SKU-${p.product_id}`,
                         title: p.product_name,
@@ -732,7 +846,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         product_image: p.product_image || undefined,
 
                         has_versions: !!p.has_versions
-                      };
+                    };
                 });
                 setProducts(list);
 
@@ -943,6 +1057,17 @@ export function useFinishedGoods(initialTab: string = "details") {
             }
         }
 
+        // Validate routing operation steps have operations selected
+        for (let i = 0; i < editedRoutes.length; i++) {
+            const r = editedRoutes[i];
+            const stepNum = r.sequence_order || i + 1;
+            const opId = Number(r.operation_id || 0);
+            if (!opId || opId <= 0) {
+                toast.error(`Route Step #${stepNum}: Please select or specify an Operation before saving.`);
+                return;
+            }
+        }
+
         const invalidBomRow = editedRoutes.flatMap(route => (route.bom_items || []).map((item, index) => ({
             routeId: route.route_id,
             rowNumber: index + 1,
@@ -964,11 +1089,36 @@ export function useFinishedGoods(initialTab: string = "details") {
             }))
         }));
 
+        if (activeDraft) {
+            setSavingBOM(true);
+            setSaveStatus("Saving draft revision...");
+            try {
+                await saveVersionDraft(activeDraft.draft_id, {
+                    details: {
+                        base_quantity: Number(editedVersionDetails.base_quantity ?? 1),
+                        expected_yield_percentage: Number(editedVersionDetails.expected_yield_percentage ?? 100),
+                        custom_overhead: Number(editedVersionDetails.custom_overhead ?? 0)
+                    },
+                    routes: editedRoutes,
+                    laborPositions: editedVersionDetails.labor_positions || [],
+                    overheads: editedVersionDetails.overhead_items || []
+                });
+                setHasUnsavedChanges(false);
+                setSaveStatus("Draft revision saved!");
+                toast.success("Draft revision changes saved.");
+            } catch (err: any) {
+                toast.error(err.message || "Failed to save draft revision");
+            } finally {
+                setSavingBOM(false);
+            }
+            return;
+        }
+
         setEditFieldErrors({});
         setSavingBOM(true);
         setSaveProgress(5);
         setSaveStatus("Updating product details...");
-        
+
         let progress = 5;
         const interval = setInterval(() => {
             if (progress < 90) {
@@ -1025,7 +1175,20 @@ export function useFinishedGoods(initialTab: string = "details") {
 
             let saveSucceeded = false;
 
-            if (selectedVersionId !== null && selectedVersionId < 0) {
+            if (activeDraft) {
+                // Save exclusively to draft tables — never touch production tables
+                await saveVersionDraft(activeDraft.draft_id, {
+                    details: {
+                        base_quantity: Number(editedVersionDetails?.base_quantity ?? 1),
+                        expected_yield_percentage: Number(editedVersionDetails?.expected_yield_percentage ?? 100),
+                        custom_overhead: Number(editedVersionDetails?.custom_overhead ?? 0)
+                    },
+                    routes: routesPayload,
+                    laborPositions: editedVersionDetails?.labor_positions || [],
+                    overheads: editedOverheads
+                });
+                saveSucceeded = true;
+            } else if (selectedVersionId !== null && selectedVersionId < 0) {
                 // Local UI draft version: submit as Draft to MySQL database
                 const draftPayload = {
                     productId: numericProductId,
@@ -1206,7 +1369,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                 ? "Deactivating product versions..."
                 : "Activating version..."
         );
-        
+
         let progress = 10;
         const interval = setInterval(() => {
             if (progress < 90) {
@@ -1260,6 +1423,17 @@ export function useFinishedGoods(initialTab: string = "details") {
             return;
         }
 
+        // 1b. Validate each routing operation step has an operation selected
+        for (let i = 0; i < editedRoutes.length; i++) {
+            const r = editedRoutes[i];
+            const stepNum = r.sequence_order || i + 1;
+            const opId = Number(r.operation_id || 0);
+            if (!opId || opId <= 0) {
+                toast.error(`Cannot submit for approval: Route Step #${stepNum} is missing an Operation. Please select or create an operation.`);
+                return;
+            }
+        }
+
         // 2. Validate BOM ingredients across all routes
         const totalBomItems = editedRoutes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
         if (totalBomItems === 0) {
@@ -1276,8 +1450,8 @@ export function useFinishedGoods(initialTab: string = "details") {
         }))).find(row => !row.materialType || !Number.isFinite(Number(row.item.product_id)) || Number(row.item.product_id) <= 0 || !Number.isFinite(Number(row.item.quantity_required)) || Number(row.item.quantity_required) <= 0);
 
         if (invalidBomRow) {
-            const issue = !invalidBomRow.materialType 
-                ? "select a Material Type" 
+            const issue = !invalidBomRow.materialType
+                ? "select a Material Type"
                 : (!Number.isFinite(Number(invalidBomRow.item.product_id)) || Number(invalidBomRow.item.product_id) <= 0)
                     ? "select a Material"
                     : "enter a valid required quantity (> 0)";
@@ -1304,11 +1478,32 @@ export function useFinishedGoods(initialTab: string = "details") {
         setSaveProgress(20);
         setSaveStatus("Submitting version for approval...");
         try {
-            if (vId < 0) {
-                // Local UI draft version: POST entire package to MySQL database with status: "Pending Approval"
+            if (activeDraft) {
+                // Save any pending draft changes first
+                await saveVersionDraft(activeDraft.draft_id, {
+                    details: {
+                        base_quantity: Number(editedVersionDetails?.base_quantity ?? 1),
+                        expected_yield_percentage: Number(editedVersionDetails?.expected_yield_percentage ?? 100),
+                        custom_overhead: Number(editedVersionDetails?.custom_overhead ?? 0)
+                    },
+                    routes: editedRoutes,
+                    laborPositions: editedVersionDetails?.labor_positions || [],
+                    overheads: editedVersionDetails?.overhead_items || []
+                });
+
+                const res = await submitVersionDraftForApproval(activeDraft.draft_id);
+                if (res.success) {
+                    setSaveProgress(100);
+                    toast.success(`Revision draft for '${selectedVersion?.version_name || vId}' submitted for approval!`);
+                    setActiveDraft((prev: any) => prev ? { ...prev, status: "Pending Approval" } : null);
+                    setSelectedVersion((prev: any) => prev ? { ...prev, status: "Pending Approval" } : null);
+                    setHasUnsavedChanges(false);
+                }
+            } else if (vId < 0) {
+                // Local UI draft version: submit as Draft to MySQL database
                 const payload = {
                     productId: numericProductId,
-                    versionName: (editedVersionDetails?.version_name || currentVer?.version_name || "").trim(),
+                    versionName: (editedVersionDetails?.version_name || currentVer?.version_name || "v1.0").trim(),
                     baseQuantity: Number(editedVersionDetails?.base_quantity ?? currentVer?.base_quantity ?? 1),
                     uomId: Number(editedVersionDetails?.uom_id ?? currentVer?.uom_id) || undefined,
                     expectedYield: Number(editedVersionDetails?.expected_yield_percentage ?? currentVer?.expected_yield_percentage ?? 100),
@@ -1351,6 +1546,182 @@ export function useFinishedGoods(initialTab: string = "details") {
             setSavingBOM(false);
             setSaveProgress(0);
             setSaveStatus("");
+        }
+    };
+
+    const handleInitiateRevisionDraft = async (
+        optionsOrVersionId?: number | {
+            productId: number;
+            sourceVersionId?: number | null;
+            versionName: string;
+            baseQuantity?: number;
+            uomId?: number;
+            expectedYieldPercentage?: number;
+            customOverhead?: number;
+        }
+    ) => {
+        let params: any;
+        if (typeof optionsOrVersionId === "object" && optionsOrVersionId !== null) {
+            params = optionsOrVersionId;
+        } else {
+            const vId = optionsOrVersionId || selectedVersionId;
+            if (!vId) {
+                toast.error("Please select an approved version to revise.");
+                return;
+            }
+            params = {
+                productId: Number(selectedProductId),
+                sourceVersionId: vId,
+                versionName: `v${versions.length + 1}.0`
+            };
+        }
+
+        setSavingBOM(true);
+        setSaveStatus("Creating revision draft...");
+        try {
+            const res = await initiateVersionDraft(params);
+            if (res.draft) {
+                setActiveDraft(res.draft);
+                setSelectedVersion({
+                    version_id: res.draft.draft_id,
+                    draft_id: res.draft.draft_id,
+                    product_id: res.draft.product_id,
+                    version_name: res.draft.version_name,
+                    base_quantity: res.draft.base_quantity,
+                    expected_yield_percentage: res.draft.expected_yield_percentage,
+                    custom_overhead: res.draft.custom_overhead,
+                    status: "Draft",
+                    uom_id: res.draft.uom_id,
+                    is_active: false,
+                    is_primary: false,
+                    is_draft: true,
+                    source_version_id: res.draft.source_version_id
+                } as any);
+
+                setEditedVersionDetails({
+                    version_id: res.draft.draft_id,
+                    draft_id: res.draft.draft_id,
+                    version_name: res.draft.version_name,
+                    base_quantity: res.draft.base_quantity,
+                    expected_yield_percentage: res.draft.expected_yield_percentage,
+                    custom_overhead: res.draft.custom_overhead ?? 0,
+                    overhead_items: res.draft.overheads || [],
+                    labor_positions: res.draft.labor_positions || [],
+                    status: "Draft",
+                    uom_id: res.draft.uom_id
+                });
+
+                const normalizedRoutes = (res.draft.routes || []).map((route: any) => ({
+                    ...route,
+                    bom_items: (route.bom_items || []).map((item: any) => ({
+                        ...item,
+                        material_type: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
+                    }))
+                }));
+                setEditedRoutes(normalizedRoutes);
+                setHasUnsavedChanges(false);
+
+                // Reload versions to show draft in sidebar
+                if (params.productId) {
+                    const [list, activeDrafts] = await Promise.all([
+                        fetchVersions(params.productId),
+                        fetchActiveDraftsForProduct(params.productId).catch(() => [])
+                    ]);
+                    const draftVersions: ProductVersion[] = (activeDrafts || []).map((d: any) => ({
+                        version_id: d.draft_id,
+                        draft_id: d.draft_id,
+                        product_id: d.product_id,
+                        version_name: `${d.version_name}`,
+                        base_quantity: Number(d.base_quantity || 1),
+                        expected_yield_percentage: Number(d.expected_yield_percentage || 100),
+                        custom_overhead: Number(d.custom_overhead || 0),
+                        status: d.status || "Draft",
+                        is_active: false,
+                        is_primary: false,
+                        is_draft: true,
+                        source_version_id: d.source_version_id || null,
+                        created_at: d.created_at,
+                        updated_at: d.updated_at
+                    }));
+                    const combinedList = [...draftVersions, ...(list || [])];
+                    const sortedList = combinedList.sort((a: any, b: any) => {
+                        const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                        const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                        if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                        return b.version_id - a.version_id;
+                    });
+                    setVersions(sortedList);
+                    setSelectedVersionId(res.draft.draft_id);
+                }
+
+                toast.success(`Revision draft initiated: ${res.draft.version_name}`);
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to initiate revision draft");
+        } finally {
+            setSavingBOM(false);
+            setSaveStatus("");
+        }
+    };
+
+    const handleCancelRevisionDraft = async (reason?: string) => {
+        if (!activeDraft) {
+            toast.error("No active revision draft to cancel.");
+            return;
+        }
+        const sourceVersionId = activeDraft.source_version_id;
+        setCancellingRevision(true);
+        try {
+            await cancelVersionDraft(activeDraft.draft_id, reason);
+            setActiveDraft(null);
+            setIsCancelRevisionModalOpen(false);
+            setHasUnsavedChanges(false);
+            toast.success("Revision draft cancelled. Selection returns to unchanged baseline.");
+
+            // Reload versions and return selection to source baseline
+            if (selectedProductId) {
+                const numericId = Number(selectedProductId);
+                const [list, activeDrafts] = await Promise.all([
+                    fetchVersions(numericId),
+                    fetchActiveDraftsForProduct(numericId).catch(() => [])
+                ]);
+                const draftVersions: ProductVersion[] = (activeDrafts || []).map((d: any) => ({
+                    version_id: d.draft_id,
+                    draft_id: d.draft_id,
+                    product_id: d.product_id,
+                    version_name: `${d.version_name}`,
+                    base_quantity: Number(d.base_quantity || 1),
+                    expected_yield_percentage: Number(d.expected_yield_percentage || 100),
+                    custom_overhead: Number(d.custom_overhead || 0),
+                    status: d.status || "Draft",
+                    is_active: false,
+                    is_primary: false,
+                    is_draft: true,
+                    source_version_id: d.source_version_id || null,
+                    created_at: d.created_at,
+                    updated_at: d.updated_at
+                }));
+                const combinedList = [...draftVersions, ...(list || [])];
+                const sortedList = combinedList.sort((a: any, b: any) => {
+                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                    return b.version_id - a.version_id;
+                });
+                setVersions(sortedList);
+                if (sourceVersionId && sortedList.some(v => v.version_id === sourceVersionId)) {
+                    setSelectedVersionId(sourceVersionId);
+                } else if (sortedList.length > 0) {
+                    const activeVer = sortedList.find(v => v.is_active || v.status === "Active");
+                    setSelectedVersionId(activeVer ? activeVer.version_id : sortedList[0].version_id);
+                } else {
+                    setSelectedVersionId(null);
+                }
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to cancel revision draft");
+        } finally {
+            setCancellingRevision(false);
         }
     };
 
@@ -1539,6 +1910,13 @@ export function useFinishedGoods(initialTab: string = "details") {
         handleActivateVersion,
         handleSubmitVersionForApproval,
         handleAddQATemplate,
-        handleSaveQATemplate
+        handleSaveQATemplate,
+        activeDraft,
+        setActiveDraft,
+        isCancelRevisionModalOpen,
+        setIsCancelRevisionModalOpen,
+        cancellingRevision,
+        handleInitiateRevisionDraft,
+        handleCancelRevisionDraft
     };
 }

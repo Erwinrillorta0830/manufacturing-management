@@ -622,6 +622,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
 
 
 export async function handlePOST(request: Request) {
+    let createdJobOrderNo: string | null = null;
     try {
         const body = await request.json();
         const { action } = body;
@@ -645,6 +646,16 @@ export async function handlePOST(request: Request) {
             if (!joData) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
+
+            // Buffer JOs are intentionally initialized against physical stock,
+            // not stock remaining after other JO reservations. The buffer
+            // dialog already applies this rule during direct initialization;
+            // apply the same rule when a saved buffer draft is initialized from
+            // the planning queue.
+            const isBufferJobOrder = String(joData.job_order_no || "")
+                .trim()
+                .toUpperCase()
+                .startsWith("JO-BUF-");
 
             if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
                 return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
@@ -704,7 +715,11 @@ export async function handlePOST(request: Request) {
                 let newlyReservedQty = 0;
                 const newAllocations = [];
 
-                const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                const availableLots = await getAvailableInventoryLots(
+                    compProductId,
+                    branchId,
+                    isBufferJobOrder ? { includeReservations: false } : undefined
+                );
                 for (const lot of availableLots) {
                     if (newlyReservedQty >= needed) break;
 
@@ -762,12 +777,13 @@ export async function handlePOST(request: Request) {
                 }
 
                 const finalReservedQty = reservedQty + newlyReservedQty;
-                if (finalReservedQty < allocatedQty) {
+                const shortage = Math.max(0, allocatedQty - finalReservedQty);
+                if (shortage > 0.000001) {
                     allRequirementsMet = false;
                     const prodName = productNamesMap.get(compProductId) || `Product #${compProductId}`;
                     shortfallsList.push({
                         name: prodName,
-                        shortage: allocatedQty - finalReservedQty
+                        shortage
                     });
                 }
             }
@@ -794,7 +810,7 @@ export async function handlePOST(request: Request) {
                         : "Job Order initialized with an authorized material-shortage override."
                 });
             } else {
-                const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`).join("; ");
+                const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(4)} units)`).join("; ");
                 return NextResponse.json({
                     success: false,
                     error: `Still insufficient raw materials to initialize: ${shortfallMsg}`,
@@ -1480,6 +1496,11 @@ export async function handlePOST(request: Request) {
             return NextResponse.json({ error: "Missing job order configuration" }, { status: 400 });
         }
 
+        const requestedBranchId = Number(jo.branch_id);
+        if (!Number.isSafeInteger(requestedBranchId) || requestedBranchId <= 0) {
+            return NextResponse.json({ error: "A valid target branch is required before creating a Job Order." }, { status: 400 });
+        }
+
         const schedulingValidation = await validateSalesOrderScheduling(jo, salesOrderDetailIds, salesOrderIds);
         const effectiveSalesOrderIds = schedulingValidation.parentOrderIds;
         const forceInitialize = body.force === true || body.forceRelease === true;
@@ -1538,7 +1559,7 @@ export async function handlePOST(request: Request) {
             routings: jo.routings || null,
             allocation_results: jo.allocationResults || null,
             procurement_status: jo.procurementStatus || "Idle",
-            branch_id: jo.branch_id || null,
+            branch_id: requestedBranchId,
             uom_id: jo.uom_id || jo.uomId || null,
             priority: Number(jo.priority ?? 0),
             start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
@@ -1577,8 +1598,12 @@ export async function handlePOST(request: Request) {
             effectiveSalesOrderIds,
             schedulingValidation.detailIds,
             schedulingPlan,
-            { initialize: body.initialize === true }
+            {
+                initialize: body.initialize === true,
+                physicalOnHandInitialization: body.isBuffer === true && body.initialize === true
+            }
         );
+        createdJobOrderNo = result.jo_id ? String(result.jo_id).trim() : null;
         if (body.initialize === true) {
             const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
                 action: "initialize",
@@ -1592,6 +1617,12 @@ export async function handlePOST(request: Request) {
         }
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
+        if (createdJobOrderNo) {
+            const cleanupSucceeded = await deleteJobOrder(createdJobOrderNo);
+            if (!cleanupSucceeded) {
+                console.error(`[Planning Engineering] Failed to clean up newly created Job Order ${createdJobOrderNo} after initialization failure.`);
+            }
+        }
         console.error("API Error in planning-engineering POST:", e);
         if (e instanceof PlanningConflictError || e instanceof SalesOrderAllocationConflictError) {
             return NextResponse.json({ error: e.message }, { status: 409 });

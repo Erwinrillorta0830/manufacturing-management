@@ -33,6 +33,7 @@ import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { StationStartScanner } from "./components/StationStartScanner";
+import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
@@ -121,6 +122,7 @@ export default function ProductionWorkflowModule() {
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [scannerJobOrder, setScannerJobOrder] = useState<any | null>(null);
+    const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isKioskMode, setIsKioskMode] = useState(false);
@@ -436,6 +438,17 @@ export default function ProductionWorkflowModule() {
                                         <Building2 className="mr-1.5 h-4 w-4" /> Assign Workstation
                                     </Button>
                                 )}
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
+                                    && sortedTasks.length > 1
+                                    && sortedTasks.some((task) => !task.status || task.status === "Pending") && (
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setIsRouteAssignmentOpen(true)}
+                                        className="border-primary/40 text-primary hover:bg-primary/10 font-bold h-10 text-xs px-5 shadow-sm transition-all duration-200 flex items-center"
+                                    >
+                                        <GitBranch className="mr-1.5 h-4 w-4" /> Assign Workstations per Route
+                                    </Button>
+                                )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
                                     <Button
                                         onClick={handleReleaseDraftJO}
@@ -584,6 +597,7 @@ export default function ProductionWorkflowModule() {
                                         handleStopTimer={handleStopTimer}
                                         handleSaveManualHours={handleSaveManualHours}
                                         handleCompleteStepClick={handleCompleteStepClick}
+                                        onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
                                         readOnly={isProductionReadOnly}
                                     />
                                 );
@@ -592,6 +606,17 @@ export default function ProductionWorkflowModule() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {selectedJobOrder && (
+                <RouteWorkstationAssignmentDialog
+                    open={isRouteAssignmentOpen}
+                    onOpenChange={setIsRouteAssignmentOpen}
+                    jobOrder={selectedJobOrder}
+                    onSaved={() => {
+                        void fetchJobs(selectedJobOrder.jo_id, true);
+                    }}
+                />
+            )}
 
             {/* --- STATION START SCANNER MODAL --- */}
             <StationStartScanner

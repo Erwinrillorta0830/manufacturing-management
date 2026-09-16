@@ -61,6 +61,14 @@ export function NetRequirementsTable({
                             Calculating requirements...
                         </span>
                     </div>
+                ) : selectedBranchId === null ? (
+                    <div className="flex flex-col items-center justify-center py-16 px-4 text-center text-muted-foreground">
+                        <Info className="h-8 w-8 text-muted-foreground/60 mb-2" />
+                        <span className="text-sm font-semibold">Select a target branch first.</span>
+                        <span className="text-xs max-w-sm mt-1">
+                            Branch-scoped on-hand and safety-stock calculations will load after an explicit branch selection.
+                        </span>
+                    </div>
                 ) : netRequirements.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 px-4 text-center text-muted-foreground">
                         <Info className="h-8 w-8 text-muted-foreground/60 mb-2" />

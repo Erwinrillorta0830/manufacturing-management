@@ -169,6 +169,12 @@ export default function PlanningEngineeringModule() {
         setDeepLinkNotice
     } = usePlanningEngineering();
 
+    const handleTargetBranchChange = (value: string) => {
+        const branchId = Number(value);
+        setSelectedBranchId(Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null);
+    };
+    const hasValidTargetBranch = selectedBranchId !== null && Number.isSafeInteger(selectedBranchId) && selectedBranchId > 0;
+
     const [activeMainTab, setActiveMainTab] = useState<"demand" | "production" | "inventory" | "queue">("demand");
     const [showWorkflowGuide, setShowWorkflowGuide] = useState(true);
     const [isBufferDialogOpen, setIsBufferDialogOpen] = useState(false);
@@ -867,11 +873,11 @@ export default function PlanningEngineeringModule() {
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-bold uppercase text-muted-foreground tracking-wider">Target Branch:</span>
                             <Select
-                                value={String(selectedBranchId || "")}
-                                onValueChange={(val) => setSelectedBranchId(Number(val))}
+                                value={selectedBranchId === null ? "" : String(selectedBranchId)}
+                                onValueChange={handleTargetBranchChange}
                             >
-                                <SelectTrigger className="w-[200px] h-9 font-semibold text-sm">
-                                    <SelectValue placeholder="Select target branch" />
+                                <SelectTrigger className="w-[200px] h-9 font-semibold text-sm" aria-label="Target Branch" aria-required="true">
+                                    <SelectValue placeholder="Select Target Branch..." />
                                 </SelectTrigger>
                                 <SelectContent>
                                     {branches.map((b) => (
@@ -893,6 +899,13 @@ export default function PlanningEngineeringModule() {
                     </Button>
                 </div>
             </div>
+
+            {!loadingBranches && !hasValidTargetBranch && (
+                <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{branches.length > 0 ? "Select Target Branch... to load branch-scoped demand, inventory, and MRP data." : "No active target branches are available. Contact an administrator before creating a Job Order."}</span>
+                </div>
+            )}
 
             {/* Tabs-based Layout Dashboard */}
             <Tabs value={activeMainTab} onValueChange={(val) => setActiveMainTab(val as "demand" | "production" | "inventory" | "queue")} className="w-full space-y-6">
@@ -992,6 +1005,7 @@ export default function PlanningEngineeringModule() {
                                 selectedLines={selectedLines}
                                 releaseGroups={releaseGroups}
                                 mergeValidation={mergeValidation}
+                                hasValidTargetBranch={hasValidTargetBranch}
                                 handleInitiateRelease={handleInitiateRelease}
                                 versionStock={versionStock}
                                 loadingVersionStock={loadingVersionStock}

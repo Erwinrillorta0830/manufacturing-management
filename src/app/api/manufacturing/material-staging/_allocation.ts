@@ -442,8 +442,19 @@ async function loadAllocationContext(payload: AllocationPreviewPayload): Promise
         loadMmInventoryLots({ branchId, onlyActive: true }),
         fetchMmInventoryMovements({ branch: branchId })
     ]);
+    // Spring is the canonical on-hand ledger used by Lot Management. Directus
+    // is only queried for staging audit movements so staged quantities can be
+    // reconstructed without adding legacy consumption rows a second time.
     const directusMovementFilter = encodeURIComponent(JSON.stringify({
-        branch_id: { _eq: branchId }
+        _and: [
+            { branch_id: { _eq: branchId } },
+            {
+                _or: [
+                    { remarks: { _contains: "[MM-MATERIAL-STAGING]" } },
+                    { remarks: { _contains: "[MM-MATERIAL-STAGING-RETURN]" } }
+                ]
+            }
+        ]
     }));
     const directusMovementRows = await directusRows(
         `/items/inventory_movements?filter=${directusMovementFilter}&fields=*&limit=-1`,
