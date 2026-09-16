@@ -116,7 +116,7 @@ export function SalesOrderDetailPanel({
         }));
     };
 
-    if (selectedOrder?.order_status === "Draft") {
+    if (selectedOrder?.order_status === "Draft" || selectedOrder?.order_status === "For Revision") {
         if (loadingDetails) {
             return (
                 <div className="bg-card p-6 space-y-6 flex flex-col rounded-lg border animate-pulse">

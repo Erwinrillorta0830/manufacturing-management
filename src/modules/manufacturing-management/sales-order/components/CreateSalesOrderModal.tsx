@@ -230,18 +230,40 @@ export function CreateSalesOrderModal({
     }, [customerId]);
 
     useEffect(() => {
-        const productIds = [...new Set(items.map(item => Number(item.parent_product_id)).filter(Boolean))];
+        const productIds = [...new Set(items.map(item => Number(item.product_id)).filter(Boolean))];
         const requestId = ++versionRequestRef.current;
         const controller = new AbortController();
-        if (productIds.length === 0) {
-            setVersionStates({});
+
+        // Prune version states for products that are no longer in items
+        setVersionStates(prev => {
+            const currentProductSet = new Set(productIds);
+            const nextStates: Record<number, VersionState> = {};
+            for (const [keyStr, val] of Object.entries(prev)) {
+                const k = Number(keyStr);
+                if (currentProductSet.has(k)) {
+                    nextStates[k] = val;
+                }
+            }
+            // Set loading only for productIds not yet present in nextStates
+            for (const id of productIds) {
+                if (!nextStates[id]) {
+                    nextStates[id] = { status: "loading" };
+                }
+            }
+            return nextStates;
+        });
+
+        const missingProductIds = productIds.filter(id => !versionStates[id] || versionStates[id].status === "loading");
+        if (missingProductIds.length === 0) {
             return () => controller.abort();
         }
 
-        setVersionStates(Object.fromEntries(productIds.map(id => [id, { status: "loading" }])));
-        Promise.all(productIds.map(async productId => {
+        Promise.all(missingProductIds.map(async productId => {
             try {
-                const response = await fetch(`/api/manufacturing/finished-goods/versions?productId=${productId}`, {
+                const selectedProd = products.find(p => Number(p.product_id) === productId);
+                const uomId = selectedProd?.unit_id || null;
+                const url = `/api/manufacturing/finished-goods/versions?productId=${productId}${uomId ? `&uomId=${uomId}` : ""}`;
+                const response = await fetch(url, {
                     signal: controller.signal,
                     cache: "no-store"
                 });
@@ -282,11 +304,17 @@ export function CreateSalesOrderModal({
             }
         })).then(results => {
             if (requestId !== versionRequestRef.current) return;
-            setVersionStates(Object.fromEntries(results.filter(Boolean) as Array<readonly [number, VersionState]>));
+            const validResults = results.filter(Boolean) as Array<readonly [number, VersionState]>;
+            if (validResults.length > 0) {
+                setVersionStates(prev => ({
+                    ...prev,
+                    ...Object.fromEntries(validResults)
+                }));
+            }
         });
 
         return () => controller.abort();
-    }, [items.map(item => item.parent_product_id).join(","), customerOverrides]);
+    }, [items.map(item => item.product_id).join(","), customerOverrides]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -435,9 +463,11 @@ export function CreateSalesOrderModal({
     }, [paymentTermId, deliveryDate, paymentTerms]);
 
     const handleAddItem = () => {
+        const fgType = productTypes.find(t => String(t.name).toLowerCase().includes("finished"));
+        const defaultTypeId = fgType ? Number(fgType.id) : (productTypes[0] ? Number(productTypes[0].id) : 0);
         setItems(prev => [...prev, {
             line_id: nextLineIdRef.current++,
-            product_type_id: 0,
+            product_type_id: defaultTypeId,
             parent_product_id: 0,
             product_id: 0,
             quantity: 1,
@@ -544,7 +574,8 @@ export function CreateSalesOrderModal({
                 unit_price: unitPrice,
                 discount_type: discountType,
                 discount_amount: discountAmount,
-                discount_percent: discountPercent
+                discount_percent: discountPercent,
+                bom_version_id: undefined
             } : item));
     };
 
@@ -947,8 +978,8 @@ export function CreateSalesOrderModal({
                                         <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
                                             <th className="py-2.5 px-4 w-[15%]">Product Type</th>
                                             <th className="py-2.5 px-4 w-[18%]">Product</th>
-                                            <th className="py-2.5 px-4 w-[13%]">Version</th>
                                             <th className="py-2.5 px-4 w-24">UOM</th>
+                                            <th className="py-2.5 px-4 w-[13%]">Version</th>
                                             <th className="py-2.5 px-4 text-right w-20">Qty</th>
                                             <th className="py-2.5 px-4 text-right w-24">Unit Price</th>
                                             <th className="py-2.5 px-4 text-left w-24">Discount Type</th>
@@ -991,13 +1022,24 @@ export function CreateSalesOrderModal({
                                                 const otherSelectedVariantIds = items
                                                     .map((it, idx) => idx !== trueIndex ? it.product_id : 0)
                                                     .filter(id => id > 0);
+                                                const isFinishedGoods = Boolean(
+                                                    item.product_type_id &&
+                                                    productTypes.find(t => Number(t.id) === Number(item.product_type_id))
+                                                        ?.name?.toLowerCase().includes("finished")
+                                                );
                                                 const parentOptions = products
                                                     .filter(product => product.is_parent)
                                                     .filter(p => {
-                                                        if (item.product_type_id && Number(p.product_type) !== item.product_type_id) return false;
-                                                        const totalVariants = products.filter(child => Number(child.parent_product_id) === Number(p.product_id)).length || 1;
-                                                        const usedVariantsCount = items.filter((it, idx) => idx !== trueIndex && Number(it.parent_product_id) === Number(p.product_id) && it.product_id > 0).length;
-                                                        return usedVariantsCount < totalVariants;
+                                                        if (item.product_type_id) {
+                                                            const rawT = typeof p.product_type === "object" && p.product_type !== null ? (p.product_type as any).id : p.product_type;
+                                                            if (rawT !== undefined && rawT !== null && String(rawT) !== String(item.product_type_id)) return false;
+                                                        }
+                                                        if (isFinishedGoods) {
+                                                            const parentHasVer = Boolean(p.has_active_version);
+                                                            const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
+                                                            if (!parentHasVer && !childHasVer) return false;
+                                                        }
+                                                        return true;
                                                     })
                                                     .map(p => ({
                                                         value: String(p.product_id),
@@ -1007,11 +1049,22 @@ export function CreateSalesOrderModal({
                                                     .filter(product => Number(product.parent_product_id) === Number(item.parent_product_id))
                                                     .filter(product => Number(product.product_id) === Number(item.product_id)
                                                         || !otherSelectedVariantIds.includes(Number(product.product_id)))
+                                                    .filter(product => {
+                                                        if (!isFinishedGoods) return true;
+                                                        return Boolean(product.has_active_uom_version);
+                                                    })
                                                     .sort((a, b) => Number(b.is_parent) - Number(a.is_parent) || Number(a.unit_count) - Number(b.unit_count))
                                                     .map(product => ({
                                                         value: String(product.product_id),
                                                         label: formatUomLabel(product, products)
                                                     }));
+
+                                                const activeVerState = (Number(item.product_id) > 0 && versionStates[item.product_id]?.status === "resolved" && versionStates[item.product_id]?.versions?.length)
+                                                    ? versionStates[item.product_id]
+                                                    : (Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.status === "resolved" && versionStates[item.parent_product_id]?.versions?.length)
+                                                    ? versionStates[item.parent_product_id]
+                                                    : versionStates[item.product_id] || versionStates[item.parent_product_id];
+
                                                 return (
                                                     <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
                                                         <td className="block overflow-visible p-0 md:table-cell md:p-3">
@@ -1044,28 +1097,6 @@ export function CreateSalesOrderModal({
                                                             />
                                                             {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
                                                         </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
-                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                            {Number(item.parent_product_id) > 0 && versionStates[item.parent_product_id]?.versions && versionStates[item.parent_product_id]!.versions!.length > 0 ? (
-                                                                versionStates[item.parent_product_id]?.status === "loading" ? (
-                                                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                                ) : versionStates[item.parent_product_id]?.status === "resolved" ? (
-                                                                    <select
-                                                                        value={item.bom_version_id || versionStates[item.parent_product_id]?.defaultVersionId || ""}
-                                                                        onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
-                                                                        className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
-                                                                    >
-                                                                        {versionStates[item.parent_product_id]?.versions?.map((v: any) => (
-                                                                            <option key={v.version_id} value={v.version_id}>
-                                                                                {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === versionStates[item.parent_product_id]?.defaultVersionId ? "(Default)" : ""}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
-                                                                ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
-                                                            ) : (
-                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
-                                                            )}
-                                                        </td>
                                                         <td className="block overflow-visible p-0 md:table-cell md:w-44 md:min-w-44 md:p-3">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Unit of Measure</span>
                                                             <CreatableSelect
@@ -1081,6 +1112,28 @@ export function CreateSalesOrderModal({
                                                             />
                                                             {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
                                                             {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
+                                                        </td>
+                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                            <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
+                                                            {activeVerState?.versions && activeVerState.versions.length > 0 ? (
+                                                                activeVerState.status === "loading" ? (
+                                                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                                ) : activeVerState.status === "resolved" ? (
+                                                                    <select
+                                                                        value={item.bom_version_id || activeVerState.defaultVersionId || ""}
+                                                                        onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
+                                                                        className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
+                                                                    >
+                                                                        {activeVerState.versions.map((v: any) => (
+                                                                            <option key={v.version_id} value={v.version_id}>
+                                                                                {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                            ) : (
+                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                            )}
                                                         </td>
                                                         <td className="block p-0 md:table-cell md:w-20 md:p-3 md:text-right">
                                                             <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Qty</label>
