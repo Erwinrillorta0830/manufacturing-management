@@ -151,7 +151,7 @@ export function ReleasedJobQueue({
                         {filteredJobOrders.length}
                     </Badge>
                 </CardTitle>
-                <CardDescription>Job Orders currently in production on the shop floor</CardDescription>
+                <CardDescription>Staged and In Production Job Orders on the shop floor</CardDescription>
             </CardHeader>
             
             <CardContent className="space-y-4">
@@ -194,7 +194,7 @@ export function ReleasedJobQueue({
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground text-sm border-2 border-dashed rounded-lg">
                         <AlertCircle className="mx-auto h-8 w-8 mb-2 text-muted-foreground/60" />
-                        <p>No In Production Job Orders found.</p>
+                        <p>No staged or In Production Job Orders found.</p>
                         <p className="text-xs mt-1">Try a different search or branch, or clear the filters.</p>
                         {onClearFilters && (
                             <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-3 h-8 text-xs">

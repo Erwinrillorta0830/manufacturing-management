@@ -9,6 +9,7 @@ import {
     Loader2,
     PackageCheck,
     RefreshCw,
+    Search,
 } from "lucide-react";
 import {
     AlertDialog,
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPhtDate, formatPhtTimestamp } from "../shared/pht-date";
 import { useDailyYieldAudit } from "./hooks/useDailyYieldAudit";
@@ -127,13 +129,26 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                     <div className="flex items-start gap-3">
                         <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><PackageCheck className="h-5 w-5" /></div>
                         <div>
-                            <h1 className="text-lg font-bold tracking-tight">JO Daily Yields</h1>
-                            <p className="text-xs text-muted-foreground">Review daily production yields, complete in-process QA, and move Sales Orders with enough QA-passed output to consolidation.</p>
+                            <h1 className="text-lg font-bold tracking-tight">Job Order Inspection QA</h1>
+                            <p className="text-xs text-muted-foreground">Review daily production yields and complete in-process QA for each Job Order.</p>
                         </div>
                     </div>
                     <Button type="button" variant="outline" onClick={() => void jobOrderState.refresh()} disabled={jobOrderState.loading} className="min-h-10 gap-2 self-start sm:self-auto">
                         <RefreshCw className={`h-4 w-4 ${jobOrderState.loading ? "animate-spin" : ""}`} /> Refresh
                     </Button>
+                </div>
+
+                <div className="border-b px-4 py-3">
+                    <div className="relative max-w-xl">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            aria-label="Search Job Orders"
+                            placeholder="Search Job Order or Product..."
+                            value={jobOrderState.searchQuery}
+                            onChange={(event) => jobOrderState.setSearchQuery(event.target.value)}
+                            className="h-10 pl-9"
+                        />
+                    </div>
                 </div>
 
                 {jobOrderState.loading ? (
@@ -150,6 +165,15 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                         <p className="text-sm font-medium">No daily yields are available.</p>
                         <p className="text-xs">Yield-bearing Job Orders will appear here after a production session is recorded.</p>
                     </div>
+                ) : jobOrderState.filteredJobOrders.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground" role="status">
+                        <Search className="h-8 w-8 opacity-50" />
+                        <p className="text-sm font-medium">No Job Orders match your search.</p>
+                        <p className="text-xs">Try a different Job Order number or product name.</p>
+                        <Button type="button" variant="outline" size="sm" onClick={() => jobOrderState.setSearchQuery("")}>
+                            Clear search
+                        </Button>
+                    </div>
                 ) : (
                     <div className="overflow-x-auto">
                         <Table>
@@ -165,7 +189,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {jobOrderState.jobOrders.map((jobOrder) => (
+                                {jobOrderState.filteredJobOrders.map((jobOrder) => (
                                     <TableRow key={jobOrder.jobOrderId}>
                                         <TableCell>
                                             <div className="font-mono font-bold text-primary">{jobOrder.jobOrderNo}</div>
@@ -197,7 +221,7 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                     <DialogHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0 space-y-1">
                             <DialogTitle className="flex items-center gap-2 text-primary"><PackageCheck className="h-5 w-5 shrink-0" /> {details?.jobOrderNo || jobOrderState.selectedJobOrder?.jobOrderNo || "Job Order Details"}</DialogTitle>
-                            <DialogDescription className="text-xs">Daily yield QA and linked Sales Order fulfillment details.</DialogDescription>
+                            <DialogDescription className="text-xs">Daily yield QA and Job Order closure details.</DialogDescription>
                         </div>
                         {details && canClose ? (
                             <Button
@@ -284,48 +308,6 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                                 </div>
                             </section>
 
-                            <section className="rounded-xl border">
-                                <div className="border-b p-4">
-                                    <h3 className="font-bold">Sales Order Fulfillment</h3>
-                                    <p className="mt-1 text-xs text-muted-foreground">A Sales Order can move to consolidation only after every detail line has enough QA-passed output.</p>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Sales Order Number</TableHead>
-                                                <TableHead className="text-right">Ordered Qty</TableHead>
-                                                <TableHead className="text-right">Produced Quantity</TableHead>
-                                                <TableHead className="sticky right-0 z-20 min-w-[190px] bg-card text-right shadow-[-8px_0_12px_-12px_hsl(var(--foreground)/0.45)]">For Consolidation</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {details.salesOrders.length === 0 ? (
-                                                <TableRow><TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">No linked Sales Orders were found.</TableCell></TableRow>
-                                            ) : details.salesOrders.map((salesOrder) => {
-                                                const actionLoading = jobOrderState.consolidatingOrderId === salesOrder.orderId;
-                                                return (
-                                                    <TableRow key={salesOrder.orderId}>
-                                                        <TableCell><div className="font-mono font-semibold text-primary">{salesOrder.orderNo}</div><div className="mt-1 text-[11px] text-muted-foreground">{salesOrder.status}</div></TableCell>
-                                                        <TableCell className="text-right font-mono">{quantity(salesOrder.orderedQuantity)}</TableCell>
-                                                        <TableCell className="text-right font-mono font-semibold">{quantity(salesOrder.producedQuantity)}</TableCell>
-                                                        <TableCell className="sticky right-0 z-10 min-w-[190px] bg-card text-right shadow-[-8px_0_12px_-12px_hsl(var(--foreground)/0.45)]">
-                                                            <div className="flex flex-col items-end gap-1.5">
-                                                                <Button type="button" size="sm" variant={salesOrder.canMoveToConsolidation ? "default" : "outline"} disabled={!salesOrder.canMoveToConsolidation || actionLoading} onClick={() => void jobOrderState.handleMoveToConsolidation(salesOrder.orderId)} title={salesOrder.blockedReason || "Move Sales Order to For Consolidation."} className="min-h-9 gap-2">
-                                                                    {actionLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                                                                    <PackageCheck className="h-4 w-4" />
-                                                                    {actionLoading ? "Updating..." : salesOrder.status === "For Consolidation" ? "Already Consolidated" : "For Consolidation"}
-                                                                </Button>
-                                                                {!salesOrder.canMoveToConsolidation && salesOrder.blockedReason && <span className="max-w-[260px] text-[10px] text-muted-foreground">{salesOrder.blockedReason}</span>}
-                                                            </div>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                );
-                                            })}
-                                        </TableBody>
-                                    </Table>
-                                </div>
-                            </section>
                         </div>
                     ) : null}
                 </DialogContent>

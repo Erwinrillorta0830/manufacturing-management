@@ -26,7 +26,7 @@ interface CreateBufferJODialogProps {
     onOpenChange: (open: boolean) => void;
     branches: Branch[];
     initialBranchId: number | null;
-    onSuccess: () => void;
+    onSuccess: (jobOrderNo: string) => void | Promise<void>;
 }
 
 export function CreateBufferJODialog({
@@ -899,6 +899,10 @@ export function CreateBufferJODialog({
                     throw new Error("Buffer Job Order was created but did not reach For Picking. Please refresh the Job Order queue before retrying.");
                 }
             }
+            const createdJobOrderNo = String(json?.data?.jo_id || json?.data?.job_order_no || joNumber).trim();
+            if (!createdJobOrderNo) {
+                throw new Error("The created Buffer Job Order did not return a valid reference.");
+            }
             if (!initialize) {
                 toast.success(`Buffer Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
             } else {
@@ -910,7 +914,7 @@ export function CreateBufferJODialog({
                 Number(targetQuantity)
             );
             onOpenChange(false);
-            onSuccess();
+            await onSuccess(createdJobOrderNo);
         } catch (err: any) {
             console.error("Error creating manual job order:", err);
             toast.error(err.message || "An error occurred during Job Order creation & release.");
