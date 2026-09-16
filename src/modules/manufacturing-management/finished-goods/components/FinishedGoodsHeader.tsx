@@ -8,8 +8,8 @@ import {
     Save,
     Loader2,
     Package,
- 
-    Send
+    Send,
+    Undo2
 } from "lucide-react";
 import { Product, ProductVersion } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
@@ -33,6 +33,8 @@ export interface FinishedGoodsHeaderProps {
     selectedVersion?: ProductVersion | null;
     onCreateRevision?: (version: ProductVersion) => void;
     onSubmitForApproval?: (versionId?: number) => void;
+    onCancelRevision?: () => void;
+    activeDraft?: any | null;
 }
 
 export function FinishedGoodsHeader({
@@ -51,8 +53,10 @@ export function FinishedGoodsHeader({
     onRequestSwitchProduct,
     isVersionLocked = false,
     selectedVersion,
- 
-    onSubmitForApproval
+    onCreateRevision,
+    onSubmitForApproval,
+    onCancelRevision,
+    activeDraft
 }: FinishedGoodsHeaderProps) {
 
     // Build hierarchical product options (Parent & Child variants)
@@ -209,19 +213,6 @@ export function FinishedGoodsHeader({
                         </button>
                     )} */}
 
-                    {/* Submit for Approval Button (when version is editable draft/revision) */}
-                    {!isVersionLocked && selectedVersion && (selectedVersion.status === "Draft" || selectedVersion.status === "Revision" || selectedVersion.status === "Revision Required" || selectedVersion.version_id < 0) && onSubmitForApproval && (
-                        <button
-                            type="button"
-                            onClick={() => onSubmitForApproval(selectedVersion.version_id)}
-                            disabled={savingBOM}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-semibold shadow-2xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Submit this draft/revision recipe for QA and engineering approval"
-                        >
-                            <Send className="h-3.5 w-3.5" />
-                            Submit for Approval
-                        </button>
-                    )}
 
                     <button
                         type="button"

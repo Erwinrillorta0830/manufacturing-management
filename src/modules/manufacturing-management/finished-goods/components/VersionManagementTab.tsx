@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle } from "lucide-react";
+import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle, Undo2 } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
@@ -33,6 +33,8 @@ export interface VersionManagementTabProps {
     onSetPrimary?: (versionId: number, versionName?: string) => void;
     onSubmitForApproval?: (versionId?: number) => void;
     onCreateRevision?: (version: ProductVersion) => void;
+    onCancelRevision?: () => void;
+    activeDraft?: any | null;
 }
 
 export function VersionManagementTab({
@@ -55,11 +57,14 @@ export function VersionManagementTab({
     isVersionLocked = false,
     onSetPrimary,
     onSubmitForApproval,
-    onCreateRevision
+    onCreateRevision,
+    onCancelRevision,
+    activeDraft
 }: VersionManagementTabProps) {
     const [userSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
     const versionSubTab = activeTab === "routes_bom" ? "routes_bom" : userSubTab;
 
+    const hasActiveDraft = Boolean(activeDraft);
     const isPrimary = Boolean(selectedVersion?.is_primary);
     const isActive = selectedVersion?.status === "Active" || selectedVersion?.is_active === true;
     const isRevision = selectedVersion?.status === "Revision" || selectedVersion?.status === "Revision Required";
@@ -112,7 +117,7 @@ export function VersionManagementTab({
             )}
 
             {/* 3. Active Version Banner */}
-            {isActive && selectedVersion && (
+            {isActive && selectedVersion && !hasActiveDraft && !isRevision && (
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex-wrap">
                     <div className="flex items-center gap-3 min-w-0">
                         <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -157,14 +162,19 @@ export function VersionManagementTab({
                 </div>
             )}
 
-            {/* 4. Revision Required Banner (Editable) */}
-            {isRevision && selectedVersion && !isVersionLocked && (
+            {/* 4. Revision Required / Active Draft Banner (Editable) */}
+            {(isRevision || hasActiveDraft) && selectedVersion && !isVersionLocked && (
                 <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex-wrap">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                         <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
-                                Revision Required (In Editor) — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                                {hasActiveDraft ? "Revision Draft (In Editor)" : "Revision Required (In Editor)"} — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                                {hasActiveDraft && (
+                                    <span className="ml-2 bg-amber-500/20 text-amber-800 dark:text-amber-200 border border-amber-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                                        Draft #{activeDraft.draft_id}
+                                    </span>
+                                )}
                             </p>
                             {(selectedVersion.approval_remarks || selectedVersion.rejection_reason) && (
                                 <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-1 font-medium bg-amber-500/15 p-2 rounded-lg border border-amber-500/20">
@@ -172,25 +182,39 @@ export function VersionManagementTab({
                                 </p>
                             )}
                             <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 mt-1">
-                                This version is under revision and can be edited. Update the BOM, workstation routings, labor standards, and overheads below. When finished, click <strong>&quot;Submit for Approval&quot;</strong> to resubmit for review.
+                                {hasActiveDraft
+                                    ? "You are working on an isolated revision draft. Production job orders continue using the approved baseline until this draft is submitted and approved by QA."
+                                    : "This version is under revision and can be edited. Update the BOM, workstation routings, labor standards, and overheads below. When finished, click \"Submit for Approval\" to resubmit for review."}
                             </p>
                         </div>
                     </div>
-                    {onSubmitForApproval && selectedVersionId !== null && (
-                        <button
-                            type="button"
-                            onClick={() => onSubmitForApproval(selectedVersionId)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0 self-center"
-                            title="Resubmit for QA Approval"
-                        >
-                            <Send className="h-3.5 w-3.5" /> Submit for Approval
-                        </button>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0 self-center">
+                        {onCancelRevision && (
+                            <button
+                                type="button"
+                                onClick={onCancelRevision}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 hover:bg-destructive/20 text-destructive px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Discard draft modifications and restore the approved baseline"
+                            >
+                                <Undo2 className="h-3.5 w-3.5" /> Cancel Revision Draft
+                            </button>
+                        )}
+                        {onSubmitForApproval && selectedVersionId !== null && (
+                            <button
+                                type="button"
+                                onClick={() => onSubmitForApproval(selectedVersionId)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Resubmit for QA Approval"
+                            >
+                                <Send className="h-3.5 w-3.5" /> Submit for Approval
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
 
             {/* 5. In-Memory Draft Info Banner */}
-            {!isVersionLocked && !isRevision && selectedVersionId !== null && (selectedVersionId < 0 || selectedVersion?.status === "Draft") && (
+            {!isVersionLocked && !isRevision && !hasActiveDraft && selectedVersionId !== null && (selectedVersionId < 0 || selectedVersion?.status === "Draft") && (
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 flex-wrap">
                     <div className="flex items-center gap-3 min-w-0">
                         <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />

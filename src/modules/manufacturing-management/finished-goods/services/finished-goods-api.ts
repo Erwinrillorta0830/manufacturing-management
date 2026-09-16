@@ -555,6 +555,129 @@ export async function createItemClassification(name: string): Promise<{ success:
     return res.json();
 }
 
+/**
+ * Fetch the active draft for a version, if one exists.
+ * Filters out logically deleted items (is_deleted = 0) for operational editing.
+ */
+export async function fetchActiveVersionDraft(versionId: number): Promise<any | null> {
+    const res = await fetch(`/api/manufacturing/finished-goods/versions/drafts?versionId=${versionId}`, {
+        cache: "no-store"
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.draft || null;
+}
+/**
+ * Fetch all active drafts for a given product.
+ */
+export async function fetchActiveDraftsForProduct(productId: number): Promise<any[]> {
+    const res = await fetch(`/api/manufacturing/finished-goods/versions/drafts?productId=${productId}`, {
+        cache: "no-store"
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.drafts || [];
+}
+
+/**
+ * Instantiate a new draft revision branching from an approved baseline or scratch.
+ */
+export async function initiateVersionDraft(
+    params: number | {
+        productId: number;
+        sourceVersionId?: number | null;
+        versionName: string;
+        baseQuantity?: number;
+        uomId?: number;
+        expectedYieldPercentage?: number;
+        customOverhead?: number;
+    }
+): Promise<{ success: boolean; draftId: number; draft: any }> {
+    const body = typeof params === "number" ? { versionId: params } : params;
+    const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to initiate draft revision");
+    }
+    return res.json();
+}
+
+/**
+ * Save in-progress draft changes (routes, BOM, labor, overheads) using logical deletion.
+ */
+export async function saveVersionDraft(
+    draftId: number,
+    payload: {
+        details?: any;
+        routes?: any[];
+        laborPositions?: any[];
+        overheads?: any[];
+    }
+): Promise<{ success: boolean }> {
+    const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            draftId,
+            action: "save",
+            ...payload
+        })
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to save draft changes");
+    }
+    return res.json();
+}
+
+/**
+ * Soft-cancel a draft revision without deleting records or corrupting the approved baseline.
+ */
+export async function cancelVersionDraft(
+    draftId: number,
+    reason?: string
+): Promise<{ success: boolean }> {
+    const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            draftId,
+            action: "cancel",
+            reason
+        })
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to cancel draft revision");
+    }
+    return res.json();
+}
+
+/**
+ * Submit an active draft revision for QA review.
+ */
+export async function submitVersionDraftForApproval(
+    draftId: number
+): Promise<{ success: boolean }> {
+    const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            draftId,
+            action: "submit"
+        })
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to submit draft for approval");
+    }
+    return res.json();
+}
+
 
 
 

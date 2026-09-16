@@ -46,6 +46,7 @@ import {
     QualityTabSkeleton
 } from "./components/FinishedGoodsSkeleton";
 import { ConfirmActionModal, ConfirmActionModalProps } from "./components/ConfirmActionModal";
+import { CancelRevisionModal } from "./components/CancelRevisionModal";
 
 const tabs = [
     { id: "details", label: "Product Details", icon: FileText },
@@ -68,8 +69,8 @@ export default function FinishedGoodsModule() {
         isOpen: false,
         title: "",
         description: "",
-        onConfirm: () => {},
-        onCancel: () => {}
+        onConfirm: () => { },
+        onCancel: () => { }
     });
 
     const {
@@ -147,7 +148,14 @@ export default function FinishedGoodsModule() {
         editedVersionDetails,
         setEditedVersionDetails,
         handleCustomOverheadChange,
-        allCatalogProducts
+        allCatalogProducts,
+        activeDraft,
+        setActiveDraft,
+        isCancelRevisionModalOpen,
+        setIsCancelRevisionModalOpen,
+        cancellingRevision,
+        handleInitiateRevisionDraft,
+        handleCancelRevisionDraft
     } = useFinishedGoods(initialTab);
 
     const requestedProductId = searchParams.get("productId");
@@ -205,7 +213,7 @@ export default function FinishedGoodsModule() {
                 sequence: r.sequence_order,
                 name: `Step ${r.sequence_order}`,
                 operationId: r.operation_id || undefined,
-                stepBatchSize: r.step_batch_size || 1,
+                stepBatchSize: r.step_batch_size,
                 machineHourlyRate: machineRate,
                 durationHours: r.run_time_hours,
                 requiresQA: !!r.qa_template_id
@@ -291,7 +299,7 @@ export default function FinishedGoodsModule() {
 
     const [revisionSourceVersion, setRevisionSourceVersion] = useState<ProductVersion | null>(null);
 
-    const handleOpenRevisionModal = (baseVer?: ProductVersion | null) => {
+    const handleOpenRevisionModal = async (baseVer?: ProductVersion | null) => {
         const sourceVer = baseVer || selectedVersion;
         if (!sourceVer) {
             toast.error("Please select a base specification version to revise.");
@@ -313,7 +321,7 @@ export default function FinishedGoodsModule() {
         setRevisionSourceVersion(sourceVer);
         setVersionForm({
             versionName: suggestedName,
-            baseQuantity: Number(sourceVer.base_quantity) || 1,
+            baseQuantity: Number(sourceVer.base_quantity),
             uomId: sourceVer.uom_id ? Number(sourceVer.uom_id) : matchedUomId,
             expectedYield: Number(sourceVer.expected_yield_percentage) || 100,
             baseVersionId: String(sourceVer.version_id)
@@ -891,10 +899,12 @@ export default function FinishedGoodsModule() {
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
-                isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
+                isVersionLocked={(selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected") && !activeDraft}
                 selectedVersion={selectedVersion}
                 onCreateRevision={handleOpenRevisionModal}
                 onSubmitForApproval={handlePromptSubmitForApproval}
+                onCancelRevision={() => setIsCancelRevisionModalOpen(true)}
+                activeDraft={activeDraft}
             />
 
             <div className="flex flex-1 min-h-0 overflow-hidden border rounded-b-xl">
@@ -1003,19 +1013,17 @@ export default function FinishedGoodsModule() {
                                                 }
                                                 setSelectedVersionId(v.version_id);
                                             }}
-                                            className={`p-3 rounded-xl border transition-all cursor-pointer relative flex flex-col gap-2 ${
-                                                isSelected
-                                                    ? "bg-card border-primary shadow-xs ring-1 ring-primary/25"
-                                                    : "bg-background/80 border-border hover:bg-muted/70 hover:border-muted-foreground/30"
-                                            }`}
+                                            className={`p-3 rounded-xl border transition-all cursor-pointer relative flex flex-col gap-2 ${isSelected
+                                                ? "bg-card border-primary shadow-xs ring-1 ring-primary/25"
+                                                : "bg-background/80 border-border hover:bg-muted/70 hover:border-muted-foreground/30"
+                                                }`}
                                         >
                                             {/* Row 1: Full Version Name + Primary Badge */}
                                             <div className="flex items-start justify-between gap-2">
                                                 <div className="min-w-0 flex-1">
                                                     <span
-                                                        className={`text-xs font-bold break-all leading-snug ${
-                                                            isSelected ? "text-primary font-extrabold" : "text-foreground"
-                                                        }`}
+                                                        className={`text-xs font-bold break-all leading-snug ${isSelected ? "text-primary font-extrabold" : "text-foreground"
+                                                            }`}
                                                         title={v.version_name}
                                                     >
                                                         {v.version_name}
@@ -1106,11 +1114,10 @@ export default function FinishedGoodsModule() {
                                     <button
                                         type="button"
                                         onClick={() => handleTabChange(tab.id)}
-                                        className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer whitespace-nowrap ${
-                                            isActive
-                                                ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
-                                                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-t-lg"
-                                        }`}
+                                        className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all -mb-[1px] cursor-pointer whitespace-nowrap ${isActive
+                                            ? "border-primary text-primary bg-background rounded-t-lg shadow-xs"
+                                            : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded-t-lg"
+                                            }`}
                                     >
                                         <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
                                         <span>{tab.label}</span>
@@ -1244,10 +1251,12 @@ export default function FinishedGoodsModule() {
                                                     qaTemplates={qaTemplates}
                                                     units={units}
                                                     setHasUnsavedChanges={setHasUnsavedChanges}
-                                                    isVersionLocked={selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected"}
+                                                    isVersionLocked={(selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected") && !activeDraft}
                                                     onSetPrimary={handlePromptSetPrimary}
                                                     onSubmitForApproval={handlePromptSubmitForApproval}
                                                     onCreateRevision={handleOpenRevisionModal}
+                                                    onCancelRevision={() => setIsCancelRevisionModalOpen(true)}
+                                                    activeDraft={activeDraft}
                                                 />
                                             )}
 
@@ -1402,9 +1411,21 @@ export default function FinishedGoodsModule() {
 
                             {/* Form */}
                             <form
-                                onSubmit={(e) => {
+                                onSubmit={async (e) => {
                                     e.preventDefault();
-                                    handleRegisterNewVersion(versionForm);
+                                    if (revisionSourceVersion) {
+                                        await handleInitiateRevisionDraft({
+                                            productId: Number(selectedProductId),
+                                            sourceVersionId: revisionSourceVersion.version_id,
+                                            versionName: versionForm.versionName.trim(),
+                                            baseQuantity: Number(versionForm.baseQuantity) || 1,
+                                            uomId: Number(versionForm.uomId) || undefined,
+                                            expectedYieldPercentage: Number(versionForm.expectedYield) || 100
+                                        });
+                                        setIsVersionModalOpen(false);
+                                    } else {
+                                        handleRegisterNewVersion(versionForm);
+                                    }
                                 }}
                                 className="p-6 space-y-4 text-xs"
                             >
@@ -1599,6 +1620,16 @@ export default function FinishedGoodsModule() {
 
             {/* Custom Confirmation Modal */}
             <ConfirmActionModal {...confirmModal} />
+
+            {/* Cancel Revision Confirmation Modal */}
+            <CancelRevisionModal
+                isOpen={isCancelRevisionModalOpen}
+                onClose={() => setIsCancelRevisionModalOpen(false)}
+                onConfirm={handleCancelRevisionDraft}
+                isCancelling={cancellingRevision}
+                versionName={selectedVersion?.version_name}
+                draftId={activeDraft?.draft_id}
+            />
         </motion.div>
     );
 }
