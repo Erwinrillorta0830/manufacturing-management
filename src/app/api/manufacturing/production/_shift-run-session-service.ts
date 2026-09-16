@@ -14,6 +14,10 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
+import {
+    productionYieldImageUrl,
+    validateProductionYieldImage
+} from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 
 const EPSILON = 0.000001;
 
@@ -283,6 +287,56 @@ function normalizeSessionInput(body: any): SessionInput {
     };
 }
 
+interface ShiftRunRequestData {
+    body: Record<string, unknown>;
+    image: File | null;
+}
+
+function isFileValue(value: FormDataEntryValue | null): value is File {
+    return typeof File !== "undefined" && value instanceof File;
+}
+
+async function readShiftRunRequest(request: Request): Promise<ShiftRunRequestData> {
+    const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+
+    if (contentType.includes("multipart/form-data")) {
+        const formData = await request.formData();
+        const payloadValue = formData.get("payload");
+        if (typeof payloadValue !== "string") {
+            throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_REQUIRED", "The production session payload is required.");
+        }
+
+        let body: unknown;
+        try {
+            body = JSON.parse(payloadValue);
+        } catch {
+            throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload is not valid JSON.");
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+            throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload must be an object.");
+        }
+
+        const imageValue = formData.get("image");
+        if (imageValue !== null && !isFileValue(imageValue)) {
+            throw new ProductionSessionError(400, "SHIFT_RUN_IMAGE_INVALID", "The shift evidence image is invalid.");
+        }
+
+        return { body: body as Record<string, unknown>, image: isFileValue(imageValue) ? imageValue : null };
+    }
+
+    let body: unknown;
+    try {
+        body = await request.json();
+    } catch {
+        throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload is not valid JSON.");
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new ProductionSessionError(400, "SHIFT_RUN_PAYLOAD_INVALID", "The production session payload must be an object.");
+    }
+
+    return { body: body as Record<string, unknown>, image: null };
+}
+
 function sessionSourceKey(input: SessionInput): string {
     return `production-session:${input.joId}:${input.sessionKey}`;
 }
@@ -372,6 +426,65 @@ async function directusRows<T = any>(pathname: string, label: string): Promise<T
     const rows = await directusRequest<unknown>(pathname, label);
     if (!Array.isArray(rows)) throw new DirectusSessionPersistenceError(`${label} returned an invalid collection response.`);
     return rows as T[];
+}
+
+function directusFileId(value: unknown): string | null {
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return directusFileId(record.id ?? record.file_id);
+    }
+    const id = textValue(value);
+    return id || null;
+}
+
+function directusFileHeaders(): Record<string, string> {
+    return headers.Authorization ? { Authorization: headers.Authorization } : {};
+}
+
+async function uploadProductionYieldImage(file: File, joId: number, sessionKey: string): Promise<string> {
+    const formData = new FormData();
+    formData.set("file", file, file.name);
+    formData.set("title", `JO ${joId} shift evidence ${sessionKey}`.slice(0, 180));
+
+    let response: Response;
+    try {
+        response = await fetch(`${DIRECTUS_URL}/files`, {
+            method: "POST",
+            headers: directusFileHeaders(),
+            body: formData,
+            cache: "no-store"
+        });
+    } catch (error) {
+        throw new DirectusSessionPersistenceError(`Shift evidence image upload could not reach Manufacturing Directus: ${(error as Error).message}`);
+    }
+
+    const responseText = await response.text();
+    let payload: any = null;
+    try { payload = responseText ? JSON.parse(responseText) : null; } catch { payload = null; }
+    if (!response.ok) {
+        throw new DirectusSessionPersistenceError(
+            `Shift evidence image upload failed with HTTP ${response.status}: ${responseText || "No response body"}`,
+            response.status >= 400 && response.status < 500 ? response.status : 502
+        );
+    }
+
+    const fileId = directusFileId(payload?.data);
+    if (!fileId) {
+        throw new DirectusSessionPersistenceError("Shift evidence image upload returned no file identifier.");
+    }
+    return fileId;
+}
+
+async function deleteProductionYieldImage(fileId: string): Promise<void> {
+    try {
+        await fetch(`${DIRECTUS_URL}/files/${encodeURIComponent(fileId)}`, {
+            method: "DELETE",
+            headers: directusFileHeaders(),
+            cache: "no-store"
+        });
+    } catch (error) {
+        console.error(`Unable to clean up unreferenced shift evidence image ${fileId}:`, error);
+    }
 }
 
 interface SessionActor {
@@ -815,6 +928,7 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
     const persistedMmLotId = numberId(ledger.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) || null;
     const persistedManufacturingDate = textValue(ledger.manufacturing_date) || null;
     const persistedExpiryDate = textValue(ledger.expiry_date) || null;
+    const evidenceImageFileId = directusFileId(ledger.daily_qa_image_id);
 
     return {
         success: true,
@@ -834,6 +948,9 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
         mmLotId: persistedMmLotId,
         manufacturingDate: persistedManufacturingDate,
         expiryDate: persistedExpiryDate,
+        evidenceImage: evidenceImageFileId
+            ? { fileId: evidenceImageFileId, url: productionYieldImageUrl(evidenceImageFileId) }
+            : null,
         remarks: input.remarks,
         varianceTolerancePct,
         qaStatus: "Pending",
@@ -866,8 +983,16 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
 }
 
 export async function recordShiftRunSession(request: Request): Promise<NextResponse> {
+    let uploadedImageId: string | null = null;
+    let imageAttached = false;
     try {
-        const body = await request.json();
+        const { body, image } = await readShiftRunRequest(request);
+        if (image) {
+            const imageError = validateProductionYieldImage(image);
+            if (imageError) {
+                throw new ProductionSessionError(422, "SHIFT_RUN_IMAGE_INVALID", imageError);
+            }
+        }
         const input = normalizeSessionInput(body);
         const actor = await getSessionActor();
         const actorId = actor.actorId;
@@ -1132,7 +1257,12 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         }
 
         const persistedFinishedBatchNo = existingLedger ? textValue(existingLedger.lot_number) || null : null;
-        const ledger = existingLedger || await directusRequest<any>(
+        const existingImageId = directusFileId(existingLedger?.daily_qa_image_id);
+        if (image && !existingImageId) {
+            uploadedImageId = await uploadProductionYieldImage(image, input.joId, input.sessionKey);
+        }
+
+        let ledger = existingLedger || await directusRequest<any>(
             `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger`,
             `Create production session for Job Order ${input.joId}`,
             {
@@ -1160,12 +1290,26 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                     production_date: input.productionDate,
                     manufacturing_date: null,
                     expiry_date: null,
-                    remarks: input.remarks
+                    remarks: input.remarks,
+                    daily_qa_image_id: uploadedImageId
                 })
             }
         );
         const ledgerId = numberId(ledger.ledger_id ?? ledger.id);
         if (!ledgerId) throw new DirectusSessionPersistenceError("Production session insert returned no ledger identifier.");
+        if (uploadedImageId && !existingLedger) {
+            imageAttached = true;
+        }
+
+        if (uploadedImageId && existingLedger) {
+            await directusRequest(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger/${encodeURIComponent(String(ledgerId))}`,
+                `Attach shift evidence image to production session ${ledgerId}`,
+                { method: "PATCH", body: JSON.stringify({ daily_qa_image_id: uploadedImageId }) }
+            );
+            ledger = { ...existingLedger, daily_qa_image_id: uploadedImageId };
+            imageAttached = true;
+        }
 
         if (!textValue(ledger.request_hash)) {
             await directusRequest(
@@ -1206,6 +1350,9 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             variancePolicy.tolerancePct
         ));
     } catch (error) {
+        if (uploadedImageId && !imageAttached) {
+            await deleteProductionYieldImage(uploadedImageId);
+        }
         console.error("Error in production shift-run session:", error);
         if (error instanceof ProductionSessionError) {
             return NextResponse.json({ success: false, error: error.message, code: error.code, details: error.details }, { status: error.status });

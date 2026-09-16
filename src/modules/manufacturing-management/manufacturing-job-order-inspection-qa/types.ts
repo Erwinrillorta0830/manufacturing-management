@@ -40,6 +40,13 @@ export interface JobOrderDailyYieldRecord {
     batchNo: string | null;
     manufacturingDate: string | null;
     expiryDate: string | null;
+    evidenceImage: {
+        fileId: string;
+        fileName: string | null;
+        mimeType: string | null;
+        fileSize: number | null;
+        url: string;
+    } | null;
     qaStatus: DailyQAOutcomeStatus;
     processQaStatus: DailyQAOutcomeStatus;
     outcome: {

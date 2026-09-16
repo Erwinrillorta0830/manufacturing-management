@@ -149,6 +149,8 @@ export interface JobOrder {
     cancelled_at?: string | null;
     cancelled_by?: number | null;
     cancellation_reason?: string | null;
+    cancellation_image_id?: string | null;
+    cancellation_image_url?: string | null;
     remarks?: string | null;
     actual_quantity_produced?: number;
     quantity?: number;

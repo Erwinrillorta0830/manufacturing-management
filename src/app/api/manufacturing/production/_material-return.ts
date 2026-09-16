@@ -11,6 +11,7 @@ import {
     resolveOrCreateMmInventoryLot,
     MmInventoryLotRecord
 } from "@/app/api/manufacturing/services/mm-lots.service";
+import { jobOrderCancellationImageUrl } from "./job-order-cancellation/_image";
 
 const QUANTITY_EPSILON = 0.000001;
 const STAGING_MARKER = "[MM-MATERIAL-STAGING]";
@@ -70,6 +71,8 @@ export interface JobOrderCancellationPreview {
     productName: string;
     branchId: number;
     status: string;
+    cancellationImageId: string | null;
+    cancellationImageUrl: string | null;
     cancellable: boolean;
     canReturnMaterials: boolean;
     blockedReason: string | null;
@@ -85,6 +88,8 @@ export interface JobOrderCancellationResponse {
     jobOrderId: number;
     jobOrderNo: string;
     status: string;
+    cancellationImageId: string | null;
+    cancellationImageUrl: string | null;
     lines: JobOrderMaterialReturnLine[];
     returnedQuantity: number;
     releasedReservationCount: number;
@@ -104,6 +109,10 @@ export interface ResolvedJobOrder {
     branchId: number;
     status: string;
     primaryWorkCenterId: number;
+    cancelledAt: string | null;
+    cancelledBy: number | null;
+    cancellationReason: string | null;
+    cancellationImageId: string | null;
 }
 
 interface StagedEntry {
@@ -272,7 +281,7 @@ export async function fetchJobOrder(joId: string | number): Promise<ResolvedJobO
         ? `filter[job_order_id][_eq]=${numericId}`
         : `filter[job_order_no][_eq]=${encodeURIComponent(String(joId))}`;
     const rows = await directusGet<RawRecord[]>(
-        `/items/manufacturing_job_orders?${filter}&fields=job_order_id,job_order_no,product_id,branch_id,status,primary_work_center_id&limit=1`,
+        `/items/manufacturing_job_orders?${filter}&fields=job_order_id,job_order_no,product_id,branch_id,status,primary_work_center_id,cancelled_at,cancelled_by,cancellation_reason,cancellation_image_id&limit=1`,
         "load the Job Order"
     );
     const row = rows[0];
@@ -285,7 +294,15 @@ export async function fetchJobOrder(joId: string | number): Promise<ResolvedJobO
         productId: num(row.product_id),
         branchId: num(row.branch_id),
         status: normalizeJobOrderStatus(row.status) || String(row.status || "").trim(),
-        primaryWorkCenterId: num(row.primary_work_center_id)
+        primaryWorkCenterId: num(row.primary_work_center_id),
+        cancelledAt: typeof row.cancelled_at === "string" ? row.cancelled_at : null,
+        cancelledBy: Number.isSafeInteger(Number(row.cancelled_by)) && Number(row.cancelled_by) > 0
+            ? Number(row.cancelled_by)
+            : null,
+        cancellationReason: typeof row.cancellation_reason === "string" ? row.cancellation_reason : null,
+        cancellationImageId: typeof row.cancellation_image_id === "string" && row.cancellation_image_id.trim()
+            ? row.cancellation_image_id.trim()
+            : null
     };
 }
 
@@ -701,13 +718,20 @@ async function executeCancellation(
         writer?: MaterialReturnWriter;
         eventKey?: string;
         workflowAction?: string;
+        cancellationImageId?: string | null;
     }
 ): Promise<JobOrderCancellationExecution> {
     const createdMovementIds: number[] = [];
     const createdInventoryLotIds: number[] = [];
     const reservationSnapshots: ReservationSnapshot[] = [];
     const materialSnapshots: ReleaseTarget[] = [];
-    let joStatusSnapshot: string | null = null;
+    let cancellationSnapshot: {
+        status: string;
+        cancelledAt: string | null;
+        cancelledBy: number | null;
+        cancellationReason: string | null;
+        cancellationImageId: string | null;
+    } | null = null;
     let statusHistoryId: number | null = null;
     let succeeded = false;
     const materialReturnWriter = options.writer || defaultMaterialReturnWriter;
@@ -770,13 +794,19 @@ async function executeCancellation(
                 failures.push(`status history ${statusHistoryId}: ${errorMessage(error)}`);
             }
         }
-        if (options.writeStatus && joStatusSnapshot) {
+        if (options.writeStatus && cancellationSnapshot) {
             try {
                 await directusWrite(
                     `/items/manufacturing_job_orders/${jobOrder.jobOrderId}`,
                     "PATCH",
-                    { status: joStatusSnapshot },
-                    `restore Job Order ${jobOrder.jobOrderNo} status`
+                    {
+                        status: cancellationSnapshot.status,
+                        cancelled_at: cancellationSnapshot.cancelledAt,
+                        cancelled_by: cancellationSnapshot.cancelledBy,
+                        cancellation_reason: cancellationSnapshot.cancellationReason,
+                        cancellation_image_id: cancellationSnapshot.cancellationImageId
+                    },
+                    `restore Job Order ${jobOrder.jobOrderNo} cancellation fields`
                 );
             } catch (error) {
                 failures.push(`Job Order ${jobOrder.jobOrderId}: ${errorMessage(error)}`);
@@ -967,7 +997,13 @@ async function executeCancellation(
         }
 
         if (options.writeStatus) {
-            joStatusSnapshot = jobOrder.status;
+            cancellationSnapshot = {
+                status: jobOrder.status,
+                cancelledAt: jobOrder.cancelledAt,
+                cancelledBy: jobOrder.cancelledBy,
+                cancellationReason: jobOrder.cancellationReason,
+                cancellationImageId: jobOrder.cancellationImageId
+            };
             const cancelledAt = new Date().toISOString();
             await directusWrite(
                 `/items/manufacturing_job_orders/${jobOrder.jobOrderId}`,
@@ -976,7 +1012,8 @@ async function executeCancellation(
                     status: JOB_ORDER_STATUS.CANCELLED,
                     cancelled_at: cancelledAt,
                     cancelled_by: options.actorUserId,
-                    cancellation_reason: options.reason
+                    cancellation_reason: options.reason,
+                    cancellation_image_id: options.cancellationImageId ?? null
                 },
                 `cancel Job Order ${jobOrder.jobOrderNo}`
             );
@@ -1004,7 +1041,7 @@ async function executeCancellation(
             || reservationSnapshots.length > 0
             || materialSnapshots.length > 0
             || statusHistoryId !== null
-            || joStatusSnapshot !== null;
+            || cancellationSnapshot !== null;
         if (hasWrites) {
             await compensate();
         }
@@ -1016,6 +1053,12 @@ async function executeCancellation(
             jobOrderId: jobOrder.jobOrderId,
             jobOrderNo: jobOrder.jobOrderNo,
             status: options.writeStatus ? JOB_ORDER_STATUS.CANCELLED : jobOrder.status,
+            cancellationImageId: options.writeStatus
+                ? (options.cancellationImageId ?? null)
+                : jobOrder.cancellationImageId,
+            cancellationImageUrl: jobOrderCancellationImageUrl(
+                options.writeStatus ? (options.cancellationImageId ?? null) : jobOrder.cancellationImageId
+            ),
             lines: computed.lines,
             returnedQuantity,
             releasedReservationCount: computed.reservationReleaseTargets.length,
@@ -1063,6 +1106,8 @@ export async function previewJobOrderCancellation(joId: string | number): Promis
         productName,
         branchId: jobOrder.branchId,
         status,
+        cancellationImageId: jobOrder.cancellationImageId,
+        cancellationImageUrl: jobOrderCancellationImageUrl(jobOrder.cancellationImageId),
         cancellable,
         canReturnMaterials,
         blockedReason,
@@ -1076,6 +1121,7 @@ export async function cancelJobOrderAndReturnMaterials(input: {
     reason: string;
     actorUserId?: number | null;
     eventKey?: string;
+    cancellationImageId?: string | null;
 }): Promise<JobOrderCancellationExecution> {
     const jobOrder = await fetchJobOrder(input.joId);
     if (isCancelledJobOrderStatus(jobOrder.status)) {
@@ -1100,7 +1146,7 @@ export async function cancelJobOrderAndReturnMaterials(input: {
         );
     }
 
-    const computed = await computeCancellation(jobOrder);
+    const computed = await computeJobOrderMaterialReturns(jobOrder);
     if (computed.reconciliationError) {
         throw new JobOrderCancellationError(
             computed.reconciliationError,
@@ -1114,7 +1160,8 @@ export async function cancelJobOrderAndReturnMaterials(input: {
         actorUserId: input.actorUserId ?? null,
         writeStatus: true,
         eventKey: input.eventKey,
-        workflowAction: "cancel"
+        workflowAction: "cancel",
+        cancellationImageId: input.cancellationImageId ?? null
     });
 }
 

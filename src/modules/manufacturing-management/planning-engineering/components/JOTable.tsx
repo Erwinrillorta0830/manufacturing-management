@@ -19,6 +19,7 @@ export interface JOTableProps {
     familyGroups: FamilyGroup[];
     loadingJobs: boolean;
     handleOpenDetails: (jo: any) => void;
+    readOnly?: boolean;
 }
 
 function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
@@ -48,12 +49,15 @@ export function JOTable({
     unreleasedJobs,
     familyGroups,
     loadingJobs,
-    handleOpenDetails
+    handleOpenDetails,
+    readOnly = false
 }: JOTableProps) {
     if (unreleasedJobs.length === 0) {
         return (
             <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg bg-muted/20">
-                No Job Orders in this branch yet. Release a Sales Order demand line above, or create a Buffer JO to start the workflow.
+                {readOnly
+                    ? "No cancelled Job Orders found for this branch."
+                    : "No Job Orders in this branch yet. Release a Sales Order demand line above, or create a Buffer JO to start the workflow."}
             </div>
         );
     }
@@ -137,7 +141,16 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <div className="flex items-center justify-center gap-1.5">
-                                            {journey.nextAction?.href && !journey.nextAction.blockedReason ? (
+                                            {readOnly ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleOpenDetails(jo)}
+                                                    className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                >
+                                                    View Details
+                                                </Button>
+                                            ) : journey.nextAction?.href && !journey.nextAction.blockedReason ? (
                                                 <Button asChild size="sm" className="h-8 text-xs font-semibold">
                                                     <Link href={journey.nextAction.href}>{journey.nextAction.label}</Link>
                                                 </Button>
@@ -153,14 +166,16 @@ export function JOTable({
                                                     {journey.nextAction?.label || "Manage / View Details"}
                                                 </Button>
                                             )}
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                onClick={() => handleOpenDetails(jo)}
-                                                className="h-8 text-xs text-muted-foreground"
-                                            >
-                                                Details
-                                            </Button>
+                                            {!readOnly && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => handleOpenDetails(jo)}
+                                                    className="h-8 text-xs text-muted-foreground"
+                                                >
+                                                    Details
+                                                </Button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
@@ -204,7 +219,7 @@ export function JOTable({
                                                 onClick={() => handleOpenDetails(fg.parentJo)}
                                                 className="h-7 text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm px-3"
                                             >
-                                                Manage Entire Family ({1 + fg.childJos.length} JOs)
+                                                {readOnly ? "View Details" : `Manage Entire Family (${1 + fg.childJos.length} JOs)`}
                                             </Button>
                                         </div>
                                     </td>
@@ -265,7 +280,7 @@ export function JOTable({
                                             onClick={() => handleOpenDetails(fg.parentJo)}
                                             className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
                                         >
-                                            Manage Family
+                                            {readOnly ? "View Details" : "Manage Family"}
                                         </Button>
                                     </td>
                                 </tr>
