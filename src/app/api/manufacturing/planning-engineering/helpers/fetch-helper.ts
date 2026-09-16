@@ -269,6 +269,23 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             return "Pending";
         };
 
+        const hasCommittedShiftProgress = (jobOrderId: number, routeId: number): boolean => {
+            return mfgYieldLedger.some((ledger: any) => {
+                if (getRelationId(ledger.job_order_id, ["job_order_id"]) !== jobOrderId
+                    || getRelationId(ledger.jo_route_id, ["jo_route_id"]) !== routeId) {
+                    return false;
+                }
+
+                const commitStatus = String(ledger.commit_status ?? "").trim().toUpperCase();
+                if (commitStatus && commitStatus !== "COMMITTED") return false;
+
+                const outputQuantity = Number(ledger.yield_quantity || 0)
+                    + Number(ledger.rejected_quantity || 0)
+                    + Number(ledger.scrap_quantity || 0);
+                return outputQuantity > 0;
+            });
+        };
+
         // Map them together
         return jos.map((jo: any) => {
             const joNo = jo.job_order_no;
@@ -326,7 +343,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                             is_team_lead: false
                         }));
                     
-                    const taskQAs = qaLogs.filter((q: any) => Number(q.jo_route_id) === Number(task.jo_route_id));
+                    const taskQAs = qaLogs.filter((q: any) =>
+                        getRelationId(q.job_order_id, ["job_order_id"]) === joIdInt
+                        && getRelationId(q.jo_route_id, ["jo_route_id"]) === Number(task.jo_route_id)
+                    );
                     const op = operations.find((o: any) => Number(o.id) === Number(task.operation_id));
                     const taskName = op?.operation_name || "Production Step";
 
@@ -354,6 +374,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         || isEnabledFlag(masterRoute?.requires_qa)
                         || qaTemplateId !== null;
                     const qaStatus = reqQA ? qaStatusByRoute(joIdInt, Number(task.jo_route_id)) : null;
+                    const shiftProgressExists = hasCommittedShiftProgress(joIdInt, Number(task.jo_route_id));
                     const routeId = masterRoutingId || taskRoutingId;
                     const stepBoms = routeId ? mfgRoutesBom.filter((b: any) => Number(b.route_id) === Number(routeId)) : [];
                     
@@ -390,6 +411,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         work_center_name: workCenterId ? workCenterNameById.get(workCenterId) || null : null,
                         completed_at: task.completed_at,
                         requires_qa: reqQA ? 1 : 0,
+                        qa_record_exists: taskQAs.length > 0,
+                        shift_progress_exists: shiftProgressExists,
                         qa_status: qaStatus,
                         assignments: taskAssigns,
                         qa_logs: taskQAs,

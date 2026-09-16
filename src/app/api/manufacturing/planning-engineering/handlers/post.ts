@@ -647,6 +647,16 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
 
+            // Buffer JOs are intentionally initialized against physical stock,
+            // not stock remaining after other JO reservations. The buffer
+            // dialog already applies this rule during direct initialization;
+            // apply the same rule when a saved buffer draft is initialized from
+            // the planning queue.
+            const isBufferJobOrder = String(joData.job_order_no || "")
+                .trim()
+                .toUpperCase()
+                .startsWith("JO-BUF-");
+
             if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
                 return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
             }
@@ -705,7 +715,11 @@ export async function handlePOST(request: Request) {
                 let newlyReservedQty = 0;
                 const newAllocations = [];
 
-                const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                const availableLots = await getAvailableInventoryLots(
+                    compProductId,
+                    branchId,
+                    isBufferJobOrder ? { includeReservations: false } : undefined
+                );
                 for (const lot of availableLots) {
                     if (newlyReservedQty >= needed) break;
 
@@ -763,12 +777,13 @@ export async function handlePOST(request: Request) {
                 }
 
                 const finalReservedQty = reservedQty + newlyReservedQty;
-                if (finalReservedQty < allocatedQty) {
+                const shortage = Math.max(0, allocatedQty - finalReservedQty);
+                if (shortage > 0.000001) {
                     allRequirementsMet = false;
                     const prodName = productNamesMap.get(compProductId) || `Product #${compProductId}`;
                     shortfallsList.push({
                         name: prodName,
-                        shortage: allocatedQty - finalReservedQty
+                        shortage
                     });
                 }
             }
@@ -795,7 +810,7 @@ export async function handlePOST(request: Request) {
                         : "Job Order initialized with an authorized material-shortage override."
                 });
             } else {
-                const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`).join("; ");
+                const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(4)} units)`).join("; ");
                 return NextResponse.json({
                     success: false,
                     error: `Still insufficient raw materials to initialize: ${shortfallMsg}`,

@@ -5,6 +5,7 @@ import {
     Clock,
     Play,
     Square,
+    ClipboardCheck,
     CheckCircle2,
     ShieldAlert,
     User,
@@ -76,6 +77,8 @@ export function OperationStepTracker({
                     const isCompleted = task.status === "Completed";
                     const isOngoing = task.status === "Ongoing" || task.status === "In Progress";
                     const isQAHold = task.status === "QA Hold";
+                    const hasQARecord = task.qa_record_exists === true;
+                    const hasShiftProgress = task.shift_progress_exists === true;
 
                     const taskOperators = routeOperators.filter((op) => op.task_id === task.id);
                     const activeTimers = taskOperators.filter((op) => op.started_at !== null && op.stopped_at === null);
@@ -164,38 +167,56 @@ export function OperationStepTracker({
 
                             {/* QA Gate Indicator */}
                             {task.requires_qa === 1 ? (
-                                <div className={`flex items-center justify-between text-[10px] p-1.5 rounded-lg border font-semibold ${
-                                    task.qa_status === "Passed"
-                                        ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20"
-                                        : task.qa_status === "QA Hold"
-                                        ? "text-rose-700 dark:text-rose-400 bg-rose-500/5 border-rose-500/20"
-                                        : "text-amber-600 dark:text-amber-400 bg-amber-500/5 border-amber-500/20"
-                                }`}>
-                                    <span className="flex items-center gap-1">
-                                        {task.qa_status === "Passed" ? (
-                                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                                        ) : task.qa_status === "QA Hold" ? (
-                                            <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
-                                        ) : (
-                                            <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
-                                        )}
-                                        {task.qa_status === "Passed" ? "QA Passed" : task.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
-                                    </span>
-                                    <Button asChild size="xs" variant="ghost" className={`h-5 text-[10px] px-1.5 ${
+                                hasQARecord || hasShiftProgress ? (
+                                    <div className={`flex items-center justify-between text-[10px] p-1.5 rounded-lg border font-semibold ${
                                         task.qa_status === "Passed"
-                                            ? "text-emerald-700 hover:text-emerald-800"
+                                            ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20"
                                             : task.qa_status === "QA Hold"
-                                            ? "text-rose-700 hover:text-rose-800"
-                                            : "text-amber-600 hover:text-amber-700"
+                                            ? "text-rose-700 dark:text-rose-400 bg-rose-500/5 border-rose-500/20"
+                                            : "text-amber-600 dark:text-amber-400 bg-amber-500/5 border-amber-500/20"
                                     }`}>
-                                        <Link
-                                            href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
-                                            onClick={(e) => e.stopPropagation()}
+                                        <span className="flex items-center gap-1">
+                                            {task.qa_status === "Passed" ? (
+                                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                            ) : task.qa_status === "QA Hold" ? (
+                                                <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
+                                            ) : (
+                                                <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                                            )}
+                                            {task.qa_status === "Passed" ? "QA Passed" : task.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
+                                        </span>
+                                        <Button asChild size="xs" variant="ghost" className={`h-5 text-[10px] px-1.5 ${
+                                            task.qa_status === "Passed"
+                                                ? "text-emerald-700 hover:text-emerald-800"
+                                                : task.qa_status === "QA Hold"
+                                                ? "text-rose-700 hover:text-rose-800"
+                                                : "text-amber-600 hover:text-amber-700"
+                                        }`}>
+                                            <Link
+                                                href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                {task.qa_status === "Passed" ? "View QA" : "Audit"}
+                                            </Link>
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-end rounded-lg border border-primary/20 bg-primary/5 p-1.5">
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            variant="outline"
+                                            className="h-6 w-full whitespace-nowrap text-[10px] font-bold text-primary hover:text-primary"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onOpenShiftLogModal();
+                                            }}
                                         >
-                                            {task.qa_status === "Passed" ? "View QA" : "Audit"}
-                                        </Link>
-                                    </Button>
-                                </div>
+                                            <ClipboardCheck className="mr-1 h-3.5 w-3.5 shrink-0" />
+                                            Enter End-of-Shift / Step Progress
+                                        </Button>
+                                    </div>
+                                )
                             ) : (
                                 !isCompleted && !readOnly && (
                                     <div className="flex items-center justify-between text-[10px] text-muted-foreground bg-muted/20 p-1.5 rounded-lg border border-border/50 font-semibold">

@@ -371,7 +371,16 @@ export async function getAvailableInventoryLots(
     return availableLots;
 }
 
-export async function getProductInventoryAndSafetyStock(productIds: number[], branchId: number) {
+export interface ProductInventoryOptions {
+    /** Buffer planning uses physical stock without subtracting other JO reservations. */
+    includeReservations?: boolean;
+}
+
+export async function getProductInventoryAndSafetyStock(
+    productIds: number[],
+    branchId: number,
+    options: ProductInventoryOptions = {}
+) {
     if (!branchId) {
         throw new Error("Missing required branchId in getProductInventoryAndSafetyStock");
     }
@@ -404,7 +413,9 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
             }
         }));
 
-        const allProductIds = productIds.length > 0 ? productIds : products.map((p: any) => Number(p.product_id)).filter(Boolean);
+        const allProductIds: number[] = productIds.length > 0
+            ? productIds
+            : products.map((p: any) => Number(p.product_id)).filter((id: number) => id > 0);
 
         // Extract parent IDs for version checking
         const parentIds = products.map((p: any) => {
@@ -428,20 +439,32 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
         );
         const movementProductType = productTypeIds.size === 1 ? [...productTypeIds][0] : null;
 
-        const [recRes, yieldRes, movements, versionsRes, unitsRes] = await Promise.all([
+        // Request only the products used by this BOM. Fetching the complete
+        // branch ledger for a multi-material BOM can take longer than the
+        // wizard's client timeout even though the final response is valid.
+        const movementRequests = allProductIds.length > 0
+            ? allProductIds.map((productId) => fetchMmInventoryMovements({
+                branch: bId,
+                product: productId,
+                productType: movementProductType
+            }))
+            : [fetchMmInventoryMovements({
+                branch: bId,
+                product: null,
+                productType: movementProductType
+            })];
+
+        const [recRes, yieldRes, movementResponses, versionsRes, unitsRes] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/purchase_order_receiving?${recFilter}filter[branch_id][_eq]=${bId}&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?${yieldFilter}fields=*,job_order_id.product_id,job_order_id.job_order_no&limit=-1`, { headers, cache: "no-store" }),
-            fetchMmInventoryMovements({
-                branch: bId,
-                product: allProductIds.length === 1 ? allProductIds[0] : null,
-                productType: movementProductType
-            }),
+            Promise.all(movementRequests),
             fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
         ]);
 
         const receipts = recRes.ok ? (await recRes.json()).data || [] : [];
         const yields = yieldRes.ok ? (await yieldRes.json()).data || [] : [];
+        const movements = movementResponses.flat();
         const versionData = versionsRes.ok ? (await versionsRes.json()).data || [] : [];
         const unitsData = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
 
@@ -452,7 +475,7 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
 
         // Batch fetch reservations for all products by product_id & batch_no
         const lotReservationsMap: Record<string, number> = {};
-        if (allProductIds.length > 0) {
+        if (options.includeReservations !== false && allProductIds.length > 0) {
             try {
                 const resFilter = encodeURIComponent(JSON.stringify({
                     _and: [
@@ -467,13 +490,17 @@ export async function getProductInventoryAndSafetyStock(productIds: number[], br
                         ] } } } }
                     ]
                 }));
-                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,purchase_order_receiving_id,purchase_order_receiving_id.lot_no,purchase_order_receiving_id.batch_no,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
+                // Keep this field list aligned with the reservation-aware
+                // availability helper. Asking for purchase_order_receiving_id
+                // makes Directus reject the entire query for the manufacturing
+                // service token, which previously made reservations disappear
+                // from the wizard while initialization still saw them.
+                const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,mm_lot_id,inventory_lot_id,reserved_quantity&limit=-1`, { headers, cache: "no-store" });
                 if (resRes.ok) {
                     const resData = (await resRes.json()).data || [];
                     resData.forEach((r: any) => {
                         const pId = Number(r.product_id);
-                        const porObj = r.purchase_order_receiving_id;
-                        const batchNo = r.batch_no || (typeof porObj === 'object' ? (porObj?.batch_no || porObj?.lot_no) : null);
+                        const batchNo = r.batch_no;
                         if (pId && batchNo) {
                             const key = `${pId}:${batchNo}`;
                             lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
