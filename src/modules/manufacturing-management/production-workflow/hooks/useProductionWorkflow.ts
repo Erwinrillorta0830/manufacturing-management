@@ -1,5 +1,6 @@
 /* eslint-disable */
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview } from "../types";
 import {
@@ -19,6 +20,7 @@ import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
 export function useProductionWorkflow() {
+    const searchParams = useSearchParams();
     // --- State Variables ---
     const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
     const [users, setUsers] = useState<User[]>([]);
@@ -36,6 +38,11 @@ export function useProductionWorkflow() {
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const selectedJobOrderIdRef = useRef(selectedJobOrderId);
+
+    useEffect(() => {
+        selectedJobOrderIdRef.current = selectedJobOrderId;
+    }, [selectedJobOrderId]);
 
     // Operator Assignment State
     const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("");
@@ -65,10 +72,15 @@ export function useProductionWorkflow() {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION));
     }, [jobOrders]);
 
+    // Terminal scope: staged (Picked) and In Production Job Orders.
+    const terminalJobOrders = useMemo(() => {
+        return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION));
+    }, [jobOrders]);
+
     // Get current Job Order object. The details modal follows the queue scope.
     const selectedJobOrder = useMemo(() => {
-        return inProductionJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
-    }, [inProductionJobOrders, selectedJobOrderId]);
+        return terminalJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
+    }, [terminalJobOrders, selectedJobOrderId]);
 
     // Sorted routing steps for selected Job Order
     const sortedTasks = useMemo(() => {
@@ -92,22 +104,21 @@ export function useProductionWorkflow() {
 
     // Deep link support: /mm/production-workflow?jo=JO-XXXX selects the Job Order.
     useEffect(() => {
-        if (typeof window === "undefined") return;
-        const params = new URLSearchParams(window.location.search);
-        setPendingDeepLinkJo(params.get("jo"));
-    }, []);
+        const joParam = searchParams.get("jo");
+        if (joParam) setPendingDeepLinkJo(joParam);
+    }, [searchParams]);
 
     useEffect(() => {
         if (!pendingDeepLinkJo || loadingJobs) return;
-        const match = inProductionJobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
+        const match = terminalJobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
         if (match) {
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
         } else {
-            toast.info("Only Job Orders in Production can be opened in this terminal.");
+            toast.info("Only staged or In Production Job Orders can be opened in this terminal.");
         }
         setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, loadingJobs, inProductionJobOrders]);
+    }, [pendingDeepLinkJo, loadingJobs, terminalJobOrders]);
 
     // Fetch Job Orders
     const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {
@@ -122,9 +133,9 @@ export function useProductionWorkflow() {
             ));
             setJobOrders(activeJobs);
 
-            const nextId = selectIdAfterFetch || selectedJobOrderId || "";
+            const nextId = selectIdAfterFetch || selectedJobOrderIdRef.current || "";
             const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
-            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) {
                 setSelectedJobOrderId(nextJobOrder.jo_id);
             } else {
                 setSelectedJobOrderId("");
@@ -135,7 +146,7 @@ export function useProductionWorkflow() {
         } finally {
             if (!silent) setLoadingJobs(false);
         }
-    }, [selectedJobOrderId]);
+    }, []);
 
     // Fetch User Master List (Operators)
     const loadUsersList = async () => {
@@ -713,7 +724,7 @@ export function useProductionWorkflow() {
     }, [selectedJobOrder, fetchJobs]);
 
     const filteredJobOrders = useMemo(() => {
-        return inProductionJobOrders.filter((jo) => {
+        return terminalJobOrders.filter((jo) => {
             const matchesSearch =
                 jo.jo_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 jo.product_name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -727,7 +738,7 @@ export function useProductionWorkflow() {
 
             return true;
         });
-    }, [inProductionJobOrders, searchQuery, selectedBranchFilter]);
+    }, [terminalJobOrders, searchQuery, selectedBranchFilter]);
 
     return {
         jobOrders,

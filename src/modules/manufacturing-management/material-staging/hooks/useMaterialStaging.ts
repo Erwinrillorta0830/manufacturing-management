@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
     AllocatedLot,
@@ -18,6 +19,7 @@ import { createMaterialStagingOperationId } from "../utils/operation-id";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
 export function useMaterialStaging() {
+    const router = useRouter();
     const [jobOrders, setJobOrders] = useState<StagingJobOrder[]>([]);
     const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
     const [branches, setBranches] = useState<Branch[]>([]);
@@ -45,6 +47,7 @@ export function useMaterialStaging() {
     } | null>(null);
     const [transferring, setTransferring] = useState(false);
     const [batchStageResult, setBatchStageResult] = useState<BatchStageResult | null>(null);
+    const [fullyStagedJobOrderNo, setFullyStagedJobOrderNo] = useState<string | null>(null);
     const [stageProgressLabel, setStageProgressLabel] = useState<string | null>(null);
     const [debouncedSearch, setDebouncedSearch] = useState("");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
@@ -84,11 +87,13 @@ export function useMaterialStaging() {
             if (response.stats) setStats(response.stats);
             setHasSuccessfulLoad(true);
             if (showToast) toast.success("Material staging data refreshed");
+            return response.data;
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to load material staging data";
             console.error("Failed to load material staging data:", error);
             setLoadError(message);
             toast.error(message);
+            return null;
         } finally {
             setLoading(false);
         }
@@ -129,6 +134,7 @@ export function useMaterialStaging() {
 
     const handleDismissBatchStageResult = useCallback(() => {
         setBatchStageResult(null);
+        setFullyStagedJobOrderNo(null);
     }, []);
 
     const handleOpenAllocationModal = useCallback((jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => {
@@ -157,7 +163,34 @@ export function useMaterialStaging() {
             });
             toast.success(result.message || "Material staged successfully.");
             handleCloseAllocationModal();
-            await loadData();
+            const stagedJobOrderSnapshot = jobOrders.find(candidate => candidate.job_order_id === result.data.job_order_id) || null;
+            const refreshed = await loadData();
+            const refreshedJobOrder = refreshed?.find(candidate => candidate.job_order_id === result.data.job_order_id);
+            const isFullyStaged = result.data.all_materials_staged === true || refreshedJobOrder?.all_staged === true;
+            if (isFullyStaged) {
+                const stillListed = (refreshed || []).some(candidate => candidate.job_order_id === result.data.job_order_id);
+                if (!stillListed && stagedJobOrderSnapshot) {
+                    setJobOrders((current) => {
+                        if (current.some(candidate => candidate.job_order_id === stagedJobOrderSnapshot.job_order_id)) return current;
+                        return [
+                            {
+                                ...stagedJobOrderSnapshot,
+                                status: "Picked",
+                                all_staged: true,
+                                staged_materials_count: stagedJobOrderSnapshot.total_materials_count
+                            },
+                            ...current
+                        ];
+                    });
+                }
+                setSelectedStatusFilter("all");
+                setSelectedJobOrderId(result.data.job_order_id);
+            }
+            setFullyStagedJobOrderNo(
+                isFullyStaged
+                    ? (result.data.job_order_no || refreshedJobOrder?.job_order_no || stagedJobOrderSnapshot?.job_order_no || null)
+                    : null
+            );
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Material staging failed.");
             throw error;
@@ -165,7 +198,7 @@ export function useMaterialStaging() {
             setTransferring(false);
             setStageProgressLabel(null);
         }
-    }, [handleCloseAllocationModal, loadData]);
+    }, [handleCloseAllocationModal, jobOrders, loadData]);
 
     const handleStageAllAvailable = useCallback(async (jobOrder: StagingJobOrder) => {
         if (isJobOrderStatus(jobOrder.status, JOB_ORDER_STATUS.CANCELLED)) {
@@ -230,7 +263,33 @@ export function useMaterialStaging() {
                 material_results: result.data.material_results
             });
             toast.success(`Auto FEFO staged all available material for JO #${jobOrder.job_order_no}.`);
-            await loadData();
+            const refreshed = await loadData();
+            const refreshedJobOrder = refreshed?.find(candidate => candidate.job_order_id === jobOrder.job_order_id);
+            const isFullyStaged = result.data.all_materials_staged === true || refreshedJobOrder?.all_staged === true;
+            if (isFullyStaged) {
+                const stillListed = (refreshed || []).some(candidate => candidate.job_order_id === jobOrder.job_order_id);
+                if (!stillListed) {
+                    setJobOrders((current) => {
+                        if (current.some(candidate => candidate.job_order_id === jobOrder.job_order_id)) return current;
+                        return [
+                            {
+                                ...jobOrder,
+                                status: "Picked",
+                                all_staged: true,
+                                staged_materials_count: jobOrder.total_materials_count
+                            },
+                            ...current
+                        ];
+                    });
+                }
+                setSelectedStatusFilter("all");
+                setSelectedJobOrderId(jobOrder.job_order_id);
+            }
+            setFullyStagedJobOrderNo(
+                isFullyStaged
+                    ? (result.data.job_order_no || jobOrder.job_order_no || refreshedJobOrder?.job_order_no || null)
+                    : null
+            );
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Batch staging failed.");
         } finally {
@@ -238,6 +297,10 @@ export function useMaterialStaging() {
             setStageProgressLabel(null);
         }
     }, [loadData]);
+
+    const handleProceedToProduction = useCallback((jobOrderNo: string) => {
+        router.push(`/mm/production-workflow?jo=${encodeURIComponent(jobOrderNo)}`);
+    }, [router]);
 
     return {
         jobOrders,
@@ -263,12 +326,14 @@ export function useMaterialStaging() {
         activeAllocationItem,
         transferring,
         batchStageResult,
+        fullyStagedJobOrderNo,
         stageProgressLabel,
         handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
+        handleProceedToProduction,
         refreshData: loadData
     };
 }

@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import {
     acceptedQuantityByJobOrder,
     buildQAYieldAssessments,
-    loadSalesOrderQACoverage,
 } from "../_qa-accepted-output";
 import {
     isCancelledJobOrderStatus,
@@ -152,11 +151,6 @@ function formatJobOrderStatus(value: unknown): string {
     return normalizeJobOrderStatus(value) || textValue(value) || "Unknown";
 }
 
-function isCancelledAllocation(row: DirectusRow): boolean {
-    const status = textValue(row.status || row.reservation_status).toLowerCase();
-    return ["cancelled", "canceled", "void", "inactive"].includes(status);
-}
-
 async function loadJobOrderSummaries() {
     const [jobOrders, yields, products, routes, inspections] = await Promise.all([
         readRows(
@@ -236,7 +230,7 @@ async function loadJobOrderSummaries() {
 }
 
 async function loadJobOrderDetails(id: number) {
-    const [jobOrder, yields, inspections, routes, allocations, products, operations] = await Promise.all([
+    const [jobOrder, yields, inspections, routes, products, operations] = await Promise.all([
         readRecord(
             `/items/manufacturing_job_orders/${encodeURIComponent(String(id))}?fields=*`,
             `Job Order ${id} lookup`
@@ -252,10 +246,6 @@ async function loadJobOrderDetails(id: number) {
         readRows(
             `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=*`,
             `Routing lookup for Job Order ${id}`
-        ),
-        readRows(
-            `/items/manufacturing_job_order_allocations?filter[job_order_id][_eq]=${encodeURIComponent(String(id))}&limit=-1&fields=*`,
-            `Sales Order allocation lookup for Job Order ${id}`
         ),
         readRows(
             "/items/products?limit=-1&fields=product_id,product_name,product_code",
@@ -359,93 +349,6 @@ async function loadJobOrderDetails(id: number) {
         lotName: row.mmLotId ? textValue(mmLotsById.get(row.mmLotId)?.lot_name) || `Lot #${row.mmLotId}` : null
     }));
 
-    const activeAllocations = allocations.filter((allocation) => !isCancelledAllocation(allocation));
-    const allocationDetailIds = Array.from(new Set(
-        activeAllocations
-            .map((allocation) => relationId(allocation.sales_order_detail_id, ["detail_id", "id"]))
-            .filter(Boolean)
-    ));
-    const linkedDetails = allocationDetailIds.length > 0
-        ? await readRows(
-            `/items/sales_order_details?filter[detail_id][_in]=${allocationDetailIds.join(",")}&limit=-1&fields=*`,
-            "Linked Sales Order detail lookup"
-        )
-        : [];
-    const linkedDetailsById = new Map<number, DirectusRow>(
-        linkedDetails.map((detail) => [relationId(detail.detail_id, ["detail_id", "id"]), detail])
-    );
-    const parentOrderIds = Array.from(new Set(
-        linkedDetails
-            .map((detail) => relationId(detail.order_id, ["order_id", "id"]))
-            .filter(Boolean)
-    ));
-    const salesOrders = parentOrderIds.length > 0
-        ? await readRows(
-            `/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&limit=-1&fields=*`,
-            "Sales Order lookup"
-        )
-        : [];
-    const salesOrdersById = new Map<number, DirectusRow>(
-        salesOrders.map((order) => [relationId(order.order_id, ["order_id", "id"]), order])
-    );
-    const allDetails = parentOrderIds.length > 0
-        ? await readRows(
-            `/items/sales_order_details?filter[order_id][_in]=${parentOrderIds.join(",")}&limit=-1&fields=*`,
-            "Sales Order fulfillment detail lookup"
-        )
-        : [];
-    const allDetailsByOrder = new Map<number, DirectusRow[]>();
-    allDetails.forEach((detail) => {
-        const orderId = relationId(detail.order_id, ["order_id", "id"]);
-        if (!orderId) return;
-        const current = allDetailsByOrder.get(orderId) || [];
-        current.push(detail);
-        allDetailsByOrder.set(orderId, current);
-    });
-
-    const linkedOrderIds = new Set<number>();
-    activeAllocations.forEach((allocation) => {
-        const detailId = relationId(allocation.sales_order_detail_id, ["detail_id", "id"]);
-        const detail = linkedDetailsById.get(detailId);
-        const orderId = relationId(detail?.order_id, ["order_id", "id"]);
-        if (orderId) linkedOrderIds.add(orderId);
-    });
-
-    const linkedSalesOrders = (await Promise.all(Array.from(linkedOrderIds)
-        .map(async (orderId) => {
-            const order = salesOrdersById.get(orderId);
-            const details = allDetailsByOrder.get(orderId) || [];
-            const orderedQuantity = details.reduce(
-                (sum, detail) => sum + Math.max(0, numberValue(detail.ordered_quantity ?? detail.quantity)),
-                0
-            );
-            const coverage = await loadSalesOrderQACoverage(orderId, details);
-            const producedQuantity = coverage.producedQuantity;
-            const fulfilled = coverage.fulfilled;
-            const status = textValue(order?.order_status) || "Unknown";
-            const alreadyConsolidated = status === "For Consolidation";
-            const canMoveToConsolidation = status === "In Production" && fulfilled;
-
-            return {
-                orderId,
-                orderNo: textValue(order?.order_no) || `SO-${orderId}`,
-                status,
-                orderedQuantity,
-                producedQuantity,
-                fulfilled,
-                linkedDetailCount: details.length,
-                canMoveToConsolidation,
-                blockedReason: alreadyConsolidated
-                    ? "Already in For Consolidation."
-                    : status !== "In Production"
-                        ? `Sales Order is ${status}.`
-                        : !fulfilled
-                            ? "Every Sales Order line must have enough QA-passed output."
-                            : null
-            };
-        })))
-        .sort((left, right) => left.orderNo.localeCompare(right.orderNo, undefined, { numeric: true }));
-
     let closeReadiness: JobOrderClosureReadiness;
     try {
         closeReadiness = await getJobOrderClosureReadiness(id);
@@ -476,7 +379,6 @@ async function loadJobOrderDetails(id: number) {
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
         routes: routeModels,
         dailyYields,
-        salesOrders: linkedSalesOrders,
         closeReadiness
     };
 }
