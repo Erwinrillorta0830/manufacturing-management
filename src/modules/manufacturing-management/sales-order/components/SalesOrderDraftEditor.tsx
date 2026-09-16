@@ -392,7 +392,7 @@ export function SalesOrderDraftEditor({
                 const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
                 const isFinishedGood = typeObj?.name === 'Finished Goods';
                 if (isFinishedGood) {
-                    const versionState = versionStates[item.parent_product_id];
+                    const versionState = versionStates[item.product_id] || versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
                     if (versionState?.status === "unavailable") lineErrors.product = "No active BOM version is available.";
                 }
@@ -405,6 +405,23 @@ export function SalesOrderDraftEditor({
         if (grandTotal <= 0 && items.length > 0) errors.dueDate = "Total net amount must be greater than ₱0.00.";
 
         setFormErrors(errors);
+        if (!valid) {
+            const itemErrorValues = Object.values(errors.items || {});
+            const priceError = itemErrorValues.some(err => Boolean(err.unit_price));
+            const qtyError = itemErrorValues.some(err => Boolean(err.quantity));
+            const uomError = itemErrorValues.some(err => Boolean(err.uom));
+            const prodError = itemErrorValues.some(err => Boolean(err.product));
+
+            if (priceError) {
+                toast.error("Please ensure all order items have a Unit Price greater than ₱0.00.");
+            } else if (qtyError) {
+                toast.error("Please enter a valid Quantity greater than 0 for all items.");
+            } else if (uomError || prodError) {
+                toast.error("Please ensure all items have a valid Product, UOM, and BOM Version selected.");
+            } else if (errors.poNo || errors.customerId || errors.branchId || errors.paymentTermId || errors.userId || errors.deliveryDate) {
+                toast.error("Please fill in all required header fields.");
+            }
+        }
         return valid;
     };
 
@@ -715,7 +732,16 @@ export function SalesOrderDraftEditor({
                                                  const childHasVer = products.some(child => Number(child.parent_product_id) === Number(p.product_id) && Boolean(child.has_active_version));
                                                  if (!parentHasVer && !childHasVer) return false;
                                              }
-                                            return true;
+                                             // Check if parent still has at least one selectable UOM variant
+                                             const isCurrentParent = Number(p.product_id) === Number(item.parent_product_id);
+                                             if (!isCurrentParent) {
+                                                 const availableVariants = products
+                                                     .filter(child => Number(child.parent_product_id) === Number(p.product_id))
+                                                     .filter(child => !otherSelectedVariantIds.includes(Number(child.product_id)))
+                                                     .filter(child => !isFinishedGoods || Boolean(child.has_active_uom_version));
+                                                 if (availableVariants.length === 0) return false;
+                                             }
+                                             return true;
                                         })
                                         .map(p => ({ value: String(p.product_id), label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})` }));
                                     const uomOptions = products.filter(p => Number(p.parent_product_id) === Number(item.parent_product_id))
@@ -766,7 +792,16 @@ export function SalesOrderDraftEditor({
                                             </td>
                                             <td className="block p-0 md:table-cell md:w-28 md:p-3 md:text-right">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-muted-foreground bg-muted/50 border rounded-lg">{item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                                <div className={`h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono border rounded-lg ${
+                                                    formErrors.items?.[item.line_id]?.unit_price 
+                                                        ? "border-destructive bg-destructive/10 text-destructive" 
+                                                        : "text-muted-foreground bg-muted/50 border-input"
+                                                }`}>
+                                                    {item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                                {formErrors.items?.[item.line_id]?.unit_price && (
+                                                    <p className="mt-1 text-[10px] text-destructive font-normal text-right">Price is ₱0.00</p>
+                                                )}
                                             </td>
                                             <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Discount</span>
