@@ -561,7 +561,10 @@ export function UpdateSalesReturnModal({
   const handleDetailChange = (index: number, field: keyof SalesReturnItem, value: string | number | null) => {
     setDetails((prev) => {
       const newDetails = [...prev];
-      const item = { ...newDetails[index], [field]: value };
+      const parsedValue = (field === "agreedPrice" || field === "unitPrice" || field === "quantity") && value !== "" && value !== null
+        ? Number(value)
+        : value;
+      const item = { ...newDetails[index], [field]: parsedValue };
 
       const qty = Number(item.quantity || 0);
       const price = Number(item.unitPrice || 0);
@@ -901,6 +904,12 @@ export function UpdateSalesReturnModal({
         items: details.map(item => ({
           ...item,
           quantity: Number(item.quantity || 0),
+          unitPrice: Number(item.unitPrice || 0),
+          agreedPrice: item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice || 0),
+          priceVariance: Number(item.priceVariance || 0),
+          grossAmount: Number(item.grossAmount || 0),
+          discountAmount: Number(item.discountAmount || 0),
+          totalAmount: Number(item.totalAmount || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),

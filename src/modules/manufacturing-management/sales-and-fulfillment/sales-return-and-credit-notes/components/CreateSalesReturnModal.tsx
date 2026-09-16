@@ -1045,6 +1045,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         items: items.map(item => ({
           ...item,
           quantity: Number(item.quantity || 0),
+          unitPrice: Number(item.unitPrice || 0),
+          agreedPrice: item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice || 0),
+          priceVariance: Number(item.priceVariance || 0),
+          grossAmount: Number(item.grossAmount || 0),
+          discountAmount: Number(item.discountAmount || 0),
+          totalAmount: Number(item.totalAmount || 0),
           manufacturing_date: item.manufacturing_date || null,
           expiry_date: item.expiry_date || null,
         })),
@@ -1176,12 +1182,15 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   ) => {
     setItems((prev) => {
       const updated = [...prev];
-      const item = { ...updated[index], [field]: value } as SalesReturnItem;
+      const parsedValue = (field === "agreedPrice" || field === "unitPrice" || field === "quantity") && value !== "" && value !== null
+        ? Number(value)
+        : value;
+      const item = { ...updated[index], [field]: parsedValue } as SalesReturnItem;
 
       if (field === "quantity" || field === "unitPrice" || field === "agreedPrice") {
-        const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice;
-        item.grossAmount = Math.round(item.quantity * agPrice * 100) / 100;
-        item.priceVariance = Math.round(((item.unitPrice || 0) - agPrice) * item.quantity * 100) / 100;
+        const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice || 0);
+        item.grossAmount = Math.round(Number(item.quantity || 0) * agPrice * 100) / 100;
+        item.priceVariance = Math.round(((Number(item.unitPrice) || 0) - agPrice) * Number(item.quantity || 0) * 100) / 100;
         if (item.discountType) {
           const selectedOption = lineDiscountOptions.find(
             (d) => d.id.toString() === item.discountType?.toString(),
