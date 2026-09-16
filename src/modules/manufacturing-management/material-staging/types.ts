@@ -140,6 +140,7 @@ export interface StagingCommitResponse {
         lines: AllocationLine[];
         movement_ids: number[];
         reservation_ids: number[];
+        all_materials_staged?: boolean;
         material_results: BatchStageMaterialResult[];
     };
 }

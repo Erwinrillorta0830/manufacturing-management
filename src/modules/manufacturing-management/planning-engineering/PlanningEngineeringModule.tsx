@@ -137,6 +137,7 @@ export default function PlanningEngineeringModule() {
         joNumber,
         setJoNumber,
         loadInitialData,
+        openCreatedJobOrder,
         salesOrderLines,
         salesOrderGroups,
         productionSalesOrderGroups,
@@ -1114,7 +1115,7 @@ export default function PlanningEngineeringModule() {
                 onOpenChange={setIsBufferDialogOpen}
                 branches={branches}
                 initialBranchId={selectedBranchId}
-                onSuccess={loadInitialData}
+                onSuccess={openCreatedJobOrder}
             />
 
             {/* Direct Allocation Confirmation Dialog */}
