@@ -231,5 +231,26 @@ export const disbursementProvider = {
         if (!res.ok) throw new Error("Failed to fetch next doc no");
         const data = await res.json();
         return data.nextDocNo;
+    },
+
+    getUsers: async (): Promise<{ id: number; name: string; firstName?: string; lastName?: string }[]> => {
+        try {
+            let res = await fetch("/api/manufacturing/financial-management/cash-issuance/users");
+            if (!res.ok) {
+                res = await fetch("/api/manufacturing/financial-management/collection-posting/master-data/users");
+            }
+            if (!res.ok) return [];
+            const data = await res.json();
+            if (!Array.isArray(data)) return [];
+            return data.map((u: { id?: number; user_id?: number; name?: string; firstName?: string; lastName?: string; user_fname?: string; user_lname?: string }) => {
+                const id = Number(u.id || u.user_id);
+                const firstName = u.firstName || u.user_fname || "";
+                const lastName = u.lastName || u.user_lname || "";
+                const name = u.name || `${firstName} ${lastName}`.trim() || `User #${id}`;
+                return { id, name, firstName, lastName };
+            }).filter(u => typeof u.id === "number" && !Number.isNaN(u.id));
+        } catch {
+            return [];
+        }
     }
 };

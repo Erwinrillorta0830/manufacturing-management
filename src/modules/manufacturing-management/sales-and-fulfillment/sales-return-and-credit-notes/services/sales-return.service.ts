@@ -100,7 +100,9 @@ export async function fetchReturnDetails(
   // Build aggregate discount percentage map from junction + line_discount tables
   const discountPercentMap = await buildDiscountPercentMap();
 
-  return rawItems.map((detail: any) => {
+  const productGroupMap = new Map<string, SalesReturnItem>();
+
+  rawItems.forEach((detail: any) => {
     const product =
       typeof detail.product_id === "object" && detail.product_id !== null
         ? detail.product_id
@@ -109,6 +111,7 @@ export async function fetchReturnDetails(
             product_name: `Unknown (ID: ${detail.product_id})`,
           };
 
+    const pId = Number(product.product_id || detail.product_id);
     const unitId =
       typeof product.unit_of_measurement === "object"
         ? product.unit_of_measurement?.unit_id
@@ -127,57 +130,109 @@ export async function fetchReturnDetails(
         ? product.product_type.name || null
         : productTypeMap.get(Number(product.product_type)) || null;
 
-    return {
-      id: detail.detail_id || detail.id,
-      productId: product.product_id,
-      code: product.product_code || "N/A",
-      description:
-        product.product_name || product.description || "Unknown Item",
-      unit: unit ? unit.unit_shortcut : "Pcs",
-      unit_id: unitId ? Number(unitId) : undefined,
-      quantity: Number(detail.quantity),
-      unitPrice: Number(detail.unit_price),
-      agreedPrice: detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : Number(detail.unit_price),
-      priceVariance: detail.price_variance ? Number(detail.price_variance) : 0,
-      grossAmount: Number(detail.gross_amount),
-      discountType: detail.discount_type ? Number(detail.discount_type) : "",
-      discountAmount: (() => {
-        const discId = detail.discount_type
-          ? Number(detail.discount_type)
-          : null;
-        if (!discId) return 0;
-        const percentage = discountPercentMap.get(discId) || 0;
-        const gross = Number(detail.quantity) * Number(detail.unit_price);
-        return Math.round(gross * (percentage / 100) * 100) / 100;
-      })(),
-      totalAmount: (() => {
-        const gross = Number(detail.quantity) * Number(detail.unit_price);
-        const discId = detail.discount_type
-          ? Number(detail.discount_type)
-          : null;
-        if (!discId) return gross;
-        const percentage = discountPercentMap.get(discId) || 0;
-        return Math.round((gross - gross * (percentage / 100)) * 100) / 100;
-      })(),
-      lot_id: detail.lot_id ? Number(detail.lot_id) : null,
-      batch: detail.batch || null,
-      manufacturing_date: detail.manufacturing_date ? String(detail.manufacturing_date).substring(0, 10) : null,
-      expiry_date: detail.expiry_date ? String(detail.expiry_date).substring(0, 10) : null,
-      reason: detail.reason || "",
-      sales_return_type_id: detail.sales_return_type_id
-        ? Number(detail.sales_return_type_id)
-        : "",
-      returnType: returnTypeObj ? returnTypeObj.type_name : "Good Order",
-      product_type: productTypeId ? Number(productTypeId) : null,
-      product_type_name: productTypeName,
-      priceA: product.priceA,
-      priceB: product.priceB,
-      priceC: product.priceC,
-      priceD: product.priceD,
-      priceE: product.priceE,
-      unitMultiplier: product.unit_of_measurement_count || 1,
-    } as SalesReturnItem;
+    const itemQty = Number(detail.quantity || 0);
+    const unitPrice = Number(detail.unit_price || 0);
+    const agreedPrice = detail.agreed_price !== undefined && detail.agreed_price !== null ? Number(detail.agreed_price) : unitPrice;
+    const discId = detail.discount_type ? Number(detail.discount_type) : null;
+    const lotIdNum = detail.lot_id ? Number(detail.lot_id) : 0;
+    const lotNameStr = detail.lot_id?.lot_name || `Lot #${lotIdNum}`;
+    const batchStr = detail.batch ? String(detail.batch).trim() : "";
+    const mfgStr = detail.manufacturing_date ? String(detail.manufacturing_date).substring(0, 10) : null;
+    const expStr = detail.expiry_date ? String(detail.expiry_date).substring(0, 10) : null;
+
+    const batchObj = {
+      inventory_lot_id: detail.inventory_lot_id ? Number(detail.inventory_lot_id) : undefined,
+      batch_no: batchStr,
+      quantity: itemQty,
+      manufacturing_date: mfgStr,
+      expiry_date: expStr,
+      qa_status: 'GOOD' as const,
+    };
+
+    const groupKey = `${pId}_${unitPrice}_${agreedPrice}_${discId || ''}_${detail.sales_return_type_id || ''}`;
+    const existing = productGroupMap.get(groupKey);
+
+    if (!existing) {
+      const lotGroup: any = lotIdNum > 0 ? {
+        lot_id: lotIdNum,
+        lot_name: lotNameStr,
+        max_batch_capacity: 10,
+        unit_id: unitId ? Number(unitId) : null,
+        unit_name: unit ? unit.unit_shortcut : "Pcs",
+        allocated_quantity: itemQty,
+        batches: batchStr ? [batchObj] : [],
+      } : null;
+
+      const gross = itemQty * agreedPrice;
+      const percentage = discId ? discountPercentMap.get(discId) || 0 : 0;
+      const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
+      const variance = Math.round((unitPrice - agreedPrice) * itemQty * 100) / 100;
+
+      productGroupMap.set(groupKey, {
+        id: detail.detail_id || detail.id,
+        productId: pId,
+        code: product.product_code || "N/A",
+        description: product.product_name || product.description || "Unknown Item",
+        unit: unit ? unit.unit_shortcut : "Pcs",
+        unit_id: unitId ? Number(unitId) : undefined,
+        quantity: itemQty,
+        unitPrice,
+        agreedPrice,
+        priceVariance: variance,
+        grossAmount: gross,
+        discountType: discId || "",
+        discountAmount: discountAmt,
+        totalAmount: Math.round((gross - discountAmt) * 100) / 100,
+        lot_id: lotIdNum || null,
+        batch: batchStr || null,
+        manufacturing_date: mfgStr,
+        expiry_date: expStr,
+        reason: detail.reason || "",
+        sales_return_type_id: detail.sales_return_type_id ? Number(detail.sales_return_type_id) : "",
+        returnType: returnTypeObj ? returnTypeObj.type_name : "Good Order",
+        product_type: productTypeId ? Number(productTypeId) : null,
+        product_type_name: productTypeName,
+        priceA: product.priceA,
+        priceB: product.priceB,
+        priceC: product.priceC,
+        priceD: product.priceD,
+        priceE: product.priceE,
+        unitMultiplier: product.unit_of_measurement_count || 1,
+        lot_allocations: lotGroup ? [lotGroup] : [],
+      } as SalesReturnItem);
+    } else {
+      existing.quantity = (Number(existing.quantity) || 0) + itemQty;
+      const newGross = Number(existing.quantity) * Number(existing.agreedPrice ?? existing.unitPrice);
+      const percentage = existing.discountType ? discountPercentMap.get(Number(existing.discountType)) || 0 : 0;
+      existing.grossAmount = newGross;
+      existing.discountAmount = Math.round(newGross * (percentage / 100) * 100) / 100;
+      existing.totalAmount = Math.round((newGross - existing.discountAmount) * 100) / 100;
+      existing.priceVariance = Math.round((Number(existing.unitPrice) - Number(existing.agreedPrice ?? existing.unitPrice)) * Number(existing.quantity) * 100) / 100;
+
+      if (lotIdNum > 0) {
+        if (!existing.lot_allocations) existing.lot_allocations = [];
+        let existingLotGroup = existing.lot_allocations.find((lg: any) => Number(lg.lot_id) === lotIdNum);
+        if (!existingLotGroup) {
+          existingLotGroup = {
+            lot_id: lotIdNum,
+            lot_name: lotNameStr,
+            max_batch_capacity: 10,
+            unit_id: unitId ? Number(unitId) : null,
+            unit_name: unit ? unit.unit_shortcut : "Pcs",
+            allocated_quantity: 0,
+            batches: [],
+          };
+          existing.lot_allocations.push(existingLotGroup);
+        }
+        existingLotGroup.allocated_quantity = (existingLotGroup.allocated_quantity || 0) + itemQty;
+        if (batchStr) {
+          existingLotGroup.batches.push(batchObj);
+        }
+      }
+    }
   });
+
+  return Array.from(productGroupMap.values());
 }
 
 /**
@@ -536,7 +591,34 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
     }
   }
 
-  const detailPromises = payload.items.map(async (item: any) => {
+  const explodedItems: any[] = [];
+  for (const item of payload.items) {
+    if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+      for (const group of item.lot_allocations) {
+        for (const b of (group.batches || [])) {
+          const bQty = Number(b.quantity || 0);
+          if (bQty > 0) {
+            explodedItems.push({
+              ...item,
+              lot_id: group.lot_id ? Number(group.lot_id) : item.lot_id,
+              lot_name: group.lot_name || item.lot_name,
+              inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : undefined,
+              batch: String(b.batch_no || item.batch || "").trim(),
+              quantity: bQty,
+              manufacturing_date: b.manufacturing_date || item.manufacturing_date,
+              expiry_date: b.expiry_date || item.expiry_date,
+              qa_status: b.qa_status || item.qa_status,
+              lot_allocations: undefined,
+            });
+          }
+        }
+      }
+    } else {
+      explodedItems.push(item);
+    }
+  }
+
+  const detailPromises = explodedItems.map(async (item: any) => {
     const matchedType = returnTypes.find(
       (t: API_SalesReturnType) => t.type_name === item.returnType,
     );
@@ -719,25 +801,45 @@ export async function updateReturn(
     }
   }
 
-  // Handle detail items: delete removed, update existing, create new
-  const currentItems = await fetchReturnDetails(
-    payload.returnId,
-    payload.returnNo,
-  );
+  // Handle detail items: delete removed/existing, recreate with exploded items
+  const currentDetailsRes = await repo.getRawReturnDetails(payload.returnNo);
+  const currentDbDetails = (currentDetailsRes.data || []) as any[];
 
-  const payloadIds = payload.items
-    .filter((item: any) => typeof item.id === "number")
-    .map((item: any) => item.id);
-
-  const itemsToDelete = currentItems.filter(
-    (dbItem) => !payloadIds.includes(dbItem.id),
-  );
-
-  for (const item of itemsToDelete) {
-    if (item.id) await repo.deleteReturnDetail(item.id as number);
+  for (const dbItem of currentDbDetails) {
+    const detailId = dbItem.detail_id || dbItem.id;
+    if (detailId) {
+      await repo.deleteReturnDetail(Number(detailId));
+    }
   }
 
+  const explodedItems: any[] = [];
   for (const item of payload.items) {
+    if (Array.isArray(item.lot_allocations) && item.lot_allocations.length > 0) {
+      for (const group of item.lot_allocations) {
+        for (const b of (group.batches || [])) {
+          const bQty = Number(b.quantity || 0);
+          if (bQty > 0) {
+            explodedItems.push({
+              ...item,
+              lot_id: group.lot_id ? Number(group.lot_id) : item.lot_id,
+              lot_name: group.lot_name || item.lot_name,
+              inventory_lot_id: b.inventory_lot_id ? Number(b.inventory_lot_id) : undefined,
+              batch: String(b.batch_no || item.batch || "").trim(),
+              quantity: bQty,
+              manufacturing_date: b.manufacturing_date || item.manufacturing_date,
+              expiry_date: b.expiry_date || item.expiry_date,
+              qa_status: b.qa_status || item.qa_status,
+              lot_allocations: undefined,
+            });
+          }
+        }
+      }
+    } else {
+      explodedItems.push(item);
+    }
+  }
+
+  for (const item of explodedItems) {
     const matchedType = returnTypes.find(
       (t: API_SalesReturnType) => t.type_name === item.returnType,
     );
@@ -759,18 +861,9 @@ export async function updateReturn(
 
     let finalInventoryLotId = null;
     if (item.batch && item.lot_id) {
-      if (typeof item.id === "number") {
-        const currentDbItem = currentItems.find((d: any) => d.id === item.id);
-        if (currentDbItem && currentDbItem.batch !== item.batch) {
-          if (currentDbItem.inventory_lot_id) {
-            await repo.updateInventoryLotStatus(Number(currentDbItem.inventory_lot_id), "INACTIVE");
-          }
-        }
-      }
-
       finalInventoryLotId = await syncInventoryLot(
         Number(item.lot_id),
-        Number(item.productId || item.product_id),
+        Number(item.productId || item.product_id || item.id),
         payload.branchId ? Number(payload.branchId) : 0,
         item.batch,
         payload.returnNo,
@@ -781,6 +874,8 @@ export async function updateReturn(
     }
 
     const detailPayload = {
+      return_no: payload.returnNo,
+      product_id: Number(item.productId || item.product_id || item.id),
       quantity: Number(item.quantity),
       unit_price: Number(item.unitPrice),
       agreed_price: agPrice,
@@ -797,28 +892,12 @@ export async function updateReturn(
       unit_id: item.unit_id ? Number(item.unit_id) : null,
       manufacturing_date: item.manufacturing_date || null,
       expiry_date: item.expiry_date || null,
+      created_at: nowPH(),
       updated_at: nowPH(),
+      status: "Draft",
     };
 
-    if (!item.id || typeof item.id === "string" || String(item.id).startsWith("added-")) {
-      try {
-        await repo.createReturnDetail({
-          ...detailPayload,
-          return_no: payload.returnNo,
-          product_id: Number(item.productId || item.product_id),
-          created_at: nowPH(),
-          status: "Draft",
-        });
-      } catch (err: any) {
-        throw new Error(`Failed to create duplicate item (product ${item.productId}): ${err.message}`);
-      }
-    } else {
-      try {
-        await repo.updateReturnDetail(item.id, detailPayload);
-      } catch (err: any) {
-        throw new Error(`Failed to update item ID ${item.id}: ${err.message}`);
-      }
-    }
+    await repo.createReturnDetail(detailPayload);
   }
 
   return { success: true };

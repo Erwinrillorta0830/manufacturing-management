@@ -1126,6 +1126,7 @@ export async function commitAllocation(
                 lines: prepared.preview.proposed_allocations,
                 movement_ids: movementIds,
                 reservation_ids: reservationIds,
+                all_materials_staged: allMaterialsStaged,
                 material_results: materialResults
             }
         };

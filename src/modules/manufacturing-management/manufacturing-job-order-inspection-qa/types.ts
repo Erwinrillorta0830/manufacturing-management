@@ -50,18 +50,6 @@ export interface JobOrderDailyYieldRecord {
     audits: Record<string, unknown>[];
 }
 
-export interface SalesOrderFulfillmentSummary {
-    orderId: number;
-    orderNo: string;
-    status: string;
-    orderedQuantity: number;
-    producedQuantity: number;
-    fulfilled: boolean;
-    linkedDetailCount: number;
-    canMoveToConsolidation: boolean;
-    blockedReason: string | null;
-}
-
 export interface JobOrderClosureBlocker {
     code: string;
     message: string;
@@ -77,7 +65,6 @@ export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     completedQuantity: number;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];
-    salesOrders: SalesOrderFulfillmentSummary[];
     closeReadiness: JobOrderClosureReadiness;
 }
 

@@ -64,10 +64,14 @@ export async function GET(request: Request) {
         }
 
         const statusFilter = searchParams.get("status");
+        const uomIdStr = searchParams.get("uomId");
 
         let url = `${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&limit=-1`;
         if (statusFilter) {
             url += `&filter[status][_eq]=${encodeURIComponent(statusFilter)}`;
+        }
+        if (uomIdStr && !isNaN(parseInt(uomIdStr))) {
+            url += `&filter[uom_id][_eq]=${encodeURIComponent(uomIdStr)}`;
         }
         let res: Response | null = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {

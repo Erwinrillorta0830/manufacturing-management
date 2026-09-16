@@ -52,6 +52,16 @@ export default function SettlementMasterList() {
         debounceSearch, statusFilter, collectorFilter, page, size, sortField, sortDirection
     );
 
+    const uniqueUsers = React.useMemo(() => {
+        const seen = new Set<string>();
+        return users.filter(u => {
+            const fullName = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || `User ${u.id}`;
+            if (seen.has(fullName.toUpperCase())) return false;
+            seen.add(fullName.toUpperCase());
+            return true;
+        });
+    }, [users]);
+
     const handleOpenSettlement = (id: number) => {
         setSelectedPouchId(id);
         setIsCommandCenterOpen(true);
@@ -123,11 +133,12 @@ export default function SettlementMasterList() {
                                             <Check className={cn("mr-2 h-3 w-3", collectorFilter === "all" ? "opacity-100" : "opacity-0")} />
                                             All Remitters
                                         </CommandItem>
-                                        {users.map(u => {
-                                            const fullName = `${u.firstName} ${u.lastName}`.trim();
+                                        {uniqueUsers.map(u => {
+                                            const fullName = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || `User ${u.id}`;
+                                            const isSelected = collectorFilter.toUpperCase() === fullName.toUpperCase();
                                             return (
-                                                <CommandItem key={u.id} value={fullName} onSelect={() => { setCollectorFilter(fullName); setCollectorOpen(false); setPage(1); }} className="text-xs cursor-pointer">
-                                                    <Check className={cn("mr-2 h-3 w-3", collectorFilter.toUpperCase() === fullName.toUpperCase() ? "opacity-100" : "opacity-0")} />
+                                                <CommandItem key={u.id} value={`${fullName} ${u.id}`} onSelect={() => { setCollectorFilter(fullName); setCollectorOpen(false); setPage(1); }} className="text-xs cursor-pointer">
+                                                    <Check className={cn("mr-2 h-3 w-3", isSelected ? "opacity-100" : "opacity-0")} />
                                                     {fullName}
                                                 </CommandItem>
                                             );

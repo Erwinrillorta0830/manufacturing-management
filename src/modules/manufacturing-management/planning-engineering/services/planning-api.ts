@@ -116,6 +116,7 @@ export interface ReleaseJOPayload {
 export interface ReleaseJOResult {
     job_order_id?: number | null;
     jo_id?: string | null;
+    job_order_no?: string | null;
     status?: string;
     shortfalls?: Array<{ name: string; required: number; available: number; shortage: number }>;
 }

@@ -66,7 +66,7 @@ export default async function ManufacturingJobOrderInspectionQAPage() {
                             <BreadcrumbList className="min-w-0 overflow-hidden">
                                 <BreadcrumbItem className="hidden shrink-0 md:block"><BreadcrumbLink href="#">Manufacturing</BreadcrumbLink></BreadcrumbItem>
                                 <BreadcrumbSeparator className="hidden shrink-0 md:block" />
-                                <BreadcrumbItem className="min-w-0 overflow-hidden"><BreadcrumbPage className="max-w-[56vw] truncate sm:max-w-[60vw] md:max-w-none">JO Daily Yields</BreadcrumbPage></BreadcrumbItem>
+                                <BreadcrumbItem className="min-w-0 overflow-hidden"><BreadcrumbPage className="max-w-[56vw] truncate sm:max-w-[60vw] md:max-w-none">Job Order Inspection QA</BreadcrumbPage></BreadcrumbItem>
                             </BreadcrumbList>
                         </Breadcrumb>
                     </div>
