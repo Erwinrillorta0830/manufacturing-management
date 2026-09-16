@@ -158,6 +158,7 @@ export async function GET(req: NextRequest) {
         consolidatorQs.set("limit", "-1");
         consolidatorQs.set("sort", "-created_at,-id");
         consolidatorQs.set("filter[is_delete][_eq]", "0");
+        consolidatorQs.set("filter[status][_in]", "Dispatched,Completed,Delivered,Approved,Audited");
 
         if (branchIdParam && branchIdParam !== "All") {
             consolidatorQs.set("filter[branch_id][_eq]", branchIdParam);
@@ -1152,8 +1153,15 @@ export async function GET(req: NextRequest) {
                                 invoiceMapById.get(orderId) ||
                                 null;
 
+                            // An order still in "For Consolidation" belongs in Consolidation Planning (or reconsolidation / redispatch)
+                            if (so?.order_status === "For Consolidation") {
+                                hasUninvoicedOrder = true;
+                                break;
+                            }
+
                             const isInvoicedStatus =
                                 so &&
+                                so.order_status !== "For Consolidation" &&
                                 so.order_status !== "For Invoicing" &&
                                 so.order_status !== "Draft" &&
                                 so.order_status !== "Pending" &&
@@ -1602,7 +1610,7 @@ export async function GET(req: NextRequest) {
                             orders: childOrders,
                         };
                     })
-                    .filter((r): r is NonNullable<typeof r> => r !== null && (r.total_orders > 0 || r.status === "Dispatched" || r.status === "Delivered" || r.status === "Completed" || r.status === "Approved" || r.status === "Audited"));
+                    .filter((r): r is NonNullable<typeof r> => r !== null && r.total_orders > 0 && (r.status === "Dispatched" || r.status === "Delivered" || r.status === "Completed" || r.status === "Approved" || r.status === "Audited"));
 
         // 12. Compute Overall Metrics across entire consolidations dataset
         const totalDispatched = records.length;
@@ -1635,7 +1643,7 @@ export async function GET(req: NextRequest) {
                 (statusFilter === "Dispatched" && r.status === "Dispatched") ||
                 (statusFilter === "Approved" && r.status === "Approved") ||
                 (statusFilter === "Audited" && r.status === "Audited") ||
-                (statusFilter === "Pending" && (r.status === "Pending" || r.fulfillment_status === "Pending")) ||
+                (statusFilter === "Pending" && r.fulfillment_status === "Pending") ||
                 (statusFilter === "Fulfilled" && r.fulfillment_status === "Fulfilled") ||
                 (statusFilter === "Fulfilled with Concerns" && r.fulfillment_status === "Fulfilled with Concerns") ||
                 (statusFilter === "Fulfilled with Returns" && r.fulfillment_status === "Fulfilled with Returns") ||

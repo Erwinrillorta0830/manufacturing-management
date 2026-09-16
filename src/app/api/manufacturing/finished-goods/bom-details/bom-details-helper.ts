@@ -83,6 +83,20 @@ export async function saveActiveBOMDetails(
 }
 
 export async function validateRoutesAndBOM(routes: any[]): Promise<void> {
+    // Validate each route step has an operation
+    for (let i = 0; i < routes.length; i++) {
+        const route = routes[i];
+        const stepNum = route.sequence_order || route.step_number || i + 1;
+        const opId = Number(route.operation_id || route.operationId || 0);
+        const opName = String(route.operation_name || route.stage || route.name || "").trim();
+        if ((!opId || opId <= 0) && !opName) {
+            throw new BOMValidationError(
+                `Route Step #${stepNum}: Please select or specify an Operation before saving.`,
+                { routeIndex: i, stepNum, field: "operation_id" }
+            );
+        }
+    }
+
     const bomRows = routes.flatMap((route: any, routeIndex: number) =>
             (route.bom_items || route.ingredients || []).map((item: any, rowIndex: number) => ({
                 item,
@@ -190,7 +204,7 @@ export async function syncVersionLaborPositions(
         for (const pItem of laborPositions) {
             const posPayload = {
                 version_id: versionId,
-                position_id: pItem.position_id || pItem.positionId || (typeof pItem.id === "number" && pItem.id > 0 ? pItem.id : null),
+                position_id: pItem.position_id != null ? Number(pItem.position_id) : (pItem.positionId != null ? Number(pItem.positionId) : null),
                 position_name: String(pItem.position_name || pItem.positionName || "Operator"),
                 category: pItem.category || "direct_labor",
                 manpower_count: Math.max(1, Number(pItem.manpower_count || 1)),
@@ -227,10 +241,16 @@ export async function syncRoutesAndBOM(
     try {
         await validateRoutesAndBOM(routes);
 
-        // 0. Fetch units to map shortcuts to IDs
-        const resUnits = await fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" });
+        // 0. Fetch units, operations, and work centers to ensure relational integrity
+        const [resUnits, resOps, resWc] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1`, { headers, cache: "no-store" })
+        ]);
         const unitsList = resUnits.ok ? (await resUnits.json()).data || [] : [];
         const unitsMap = new Map<string, number>(unitsList.map((u: any) => [u.unit_shortcut.toLowerCase(), u.unit_id]));
+        const opsList: { id: number; operation_name: string }[] = resOps.ok ? (await resOps.json()).data || [] : [];
+        const wcList: { work_center_id: number; work_center_name: string }[] = resWc.ok ? (await resWc.json()).data || [] : [];
 
         // 1. Fetch existing routes in DB for this version
         const getUrl = `${DIRECTUS_URL}/items/manufacturing_routes?filter[version_id][_eq]=${versionId}&limit=-1`;
@@ -259,7 +279,7 @@ export async function syncRoutesAndBOM(
 
         for (const step of routes) {
             const stepId = step.route_id || step.id;
-            const isNewRoute = !stepId || isNaN(Number(stepId)) || Number(stepId) < 0;
+            const isNewRoute = !stepId || isNaN(Number(stepId)) || Number(stepId) <= 0;
 
             const positions = Array.isArray(step.positions) ? step.positions : (Array.isArray(step.labor_positions) ? step.labor_positions : []);
             if (!explicitLaborPositions && positions.length > 0) {
@@ -275,10 +295,50 @@ export async function syncRoutesAndBOM(
                 ? positions.reduce((sum: number, p: any) => sum + (Math.max(1, Number(p.manpower_count || 1)) * Number(p.hourly_rate || 0) * runHours), 0)
                 : Number(step.expected_labor_cost || 0);
 
+            // Resolve operation_id to prevent null validation failure in manufacturing_routes
+            let resolvedOpId = Number(step.operation_id || step.operationId || 0);
+            if (!resolvedOpId || isNaN(resolvedOpId) || resolvedOpId <= 0) {
+                const opName = String(step.stage || step.operation_name || step.name || "").trim();
+                if (opName) {
+                    const matched = opsList.find(o => o.operation_name.trim().toLowerCase() === opName.toLowerCase());
+                    if (matched) {
+                        resolvedOpId = Number(matched.id);
+                    } else {
+                        try {
+                            const newOpRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_operations`, {
+                                method: "POST",
+                                headers,
+                                body: JSON.stringify({ operation_name: opName })
+                            });
+                            if (newOpRes.ok) {
+                                const newOpData = await newOpRes.json();
+                                resolvedOpId = Number(newOpData.data.id);
+                                opsList.push({ id: resolvedOpId, operation_name: opName });
+                            }
+                        } catch (e) {
+                            console.error("Failed to auto-create operation for route step:", e);
+                        }
+                    }
+                }
+            }
+            if (!resolvedOpId || isNaN(resolvedOpId) || resolvedOpId <= 0) {
+                if (opsList.length > 0) {
+                    resolvedOpId = Number(opsList[0].id);
+                } else {
+                    throw new Error(`Route step #${step.sequence_order || step.sequence || 1} is missing a required Operation.`);
+                }
+            }
+
+            // Resolve work_center_id (required by manufacturing_routes schema)
+            let resolvedWcId = Number(step.work_center_id || step.workCenterId || 0);
+            if ((!resolvedWcId || isNaN(resolvedWcId) || resolvedWcId <= 0) && wcList.length > 0) {
+                resolvedWcId = Number(wcList[0].work_center_id);
+            }
+
             const routePayload = {
                 version_id: versionId,
-                work_center_id: step.work_center_id || null,
-                operation_id: step.operation_id || step.operationId || null,
+                work_center_id: resolvedWcId || null,
+                operation_id: resolvedOpId,
                 sequence_order: Number(step.sequence_order || step.sequence || 0),
                 setup_time_hours: Number(step.setup_time_hours || 0),
                 run_time_hours: runHours,
@@ -331,7 +391,7 @@ export async function syncRoutesAndBOM(
 
             // Create or Update BOM items
             for (const bItem of uiBomItems) {
-                const isNewBomItem = !bItem.id || isNaN(Number(bItem.id)) || Number(bItem.id) < 0;
+                const isNewBomItem = !bItem.id || isNaN(Number(bItem.id)) || Number(bItem.id) <= 0;
 
                 let uomId: number | null = null;
                 const rawUom = bItem.unit_of_measurement || bItem.uomId || bItem.uom;
@@ -402,20 +462,35 @@ export async function syncVersionOverheadItems(versionId: number, overheadItems:
             await fetch(`${DIRECTUS_URL}/items/product_version_overheads/${item.id}`, { method: "DELETE", headers }).catch(() => {});
         }
 
+        // Fetch available overhead types to dynamically map overhead_type_id by name if missing
+        const typesRes = await fetch(`${DIRECTUS_URL}/items/overhead_types?limit=-1`, { headers, cache: "no-store" }).catch(() => null);
+        const typesList: any[] = typesRes && typesRes.ok ? (await typesRes.json()).data || [] : [];
+        const typeByName = new Map(typesList.map((t: any) => [String(t.overhead_name || "").toLowerCase().trim(), Number(t.id)]));
+        const defaultTypeId = typesList.length > 0 ? Number(typesList[0].id) : 1;
+
         for (const item of overheadItems) {
-            const cost = Number(item.cost_per_unit || item.cost || 0);
-            const typeId = Number(item.overhead_type_id || item.typeId || 0);
-            const is_active = item.is_active !== undefined ? Boolean(item.is_active) : true;
+            const cost = Number(item.cost_per_unit ?? item.cost ?? item.cost_allocation ?? 0);
+            let typeId = Number(item.overhead_type_id || item.typeId || 0);
             const remarks = item.overhead_name || item.remarks || "";
+            if (typeId <= 0 && remarks) {
+                const matched = typeByName.get(remarks.toLowerCase().trim());
+                if (matched) {
+                    typeId = matched;
+                }
+            }
+            if (typeId <= 0) {
+                typeId = defaultTypeId;
+            }
+            const is_active = item.is_active !== undefined ? Boolean(item.is_active) : true;
 
             await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
                 method: "POST",
                 headers,
                 body: JSON.stringify({
                     version_id: versionId,
-                    overhead_type_id: typeId > 0 ? typeId : 1,
+                    overhead_type_id: typeId,
                     cost,
-                    allocation_basis: "per_unit",
+                    allocation_basis: item.allocation_basis || "per_unit",
                     is_active,
                     remarks
                 })
