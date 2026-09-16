@@ -36,6 +36,7 @@ export interface JobOrderWorkflowCommand {
     idempotencyKey: string;
     remarks?: string;
     resolutionRemarks?: string;
+    terminationImageId?: string | null;
     workCenterId?: number | null;
     overrideReason?: string;
     force?: boolean;
@@ -99,6 +100,9 @@ function workflowRequestHash(command: JobOrderWorkflowCommand): string {
         action: command.action,
         remarks: text(command.remarks),
         resolutionRemarks: text(command.resolutionRemarks),
+        ...(command.action === "terminate-production"
+            ? { terminationImageAttached: Boolean(text(command.terminationImageId)) }
+            : {}),
         workCenterId: command.workCenterId ?? null,
         overrideReason: text(command.overrideReason),
         force: command.force === true
@@ -186,7 +190,7 @@ function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "complete-production": return JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
-        case "terminate-production": return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
+        case "terminate-production": return JOB_ORDER_STATUS.CANCELLED;
         case "begin-qa-reconciliation": return JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
         case "close": return JOB_ORDER_STATUS.CLOSED;
         case "cancel": return JOB_ORDER_STATUS.CANCELLED;
@@ -680,9 +684,12 @@ async function writeTransition(
     } else if (command.action === "start-production") {
         lifecycleFields.production_started_at = now;
         lifecycleFields.production_started_by = command.actorUserId;
-    } else if (command.action === "complete-production" || command.action === "terminate-production") {
+    } else if (command.action === "complete-production") {
         lifecycleFields.production_completed_at = now;
         lifecycleFields.production_completed_by = command.actorUserId;
+    } else if (command.action === "terminate-production") {
+        lifecycleFields.cancelled_at = now;
+        lifecycleFields.cancelled_by = command.actorUserId;
     } else if (command.action === "begin-qa-reconciliation") {
         lifecycleFields.qa_started_at = now;
         lifecycleFields.qa_started_by = command.actorUserId;
@@ -700,6 +707,12 @@ async function writeTransition(
                 status: nextStatus,
                 modified_at: jobOrder.modified_at ?? null,
                 ...lifecycleFields,
+                ...(command.action === "terminate-production"
+                    ? {
+                        termination_image_id: command.terminationImageId,
+                        cancellation_reason: suppliedRemarks
+                    }
+                    : {}),
                 ...(command.action === "start-production" && command.workCenterId ? { primary_work_center_id: command.workCenterId } : {}),
                 ...(command.action === "place-on-hold" || command.action === "resume-production" || command.action === "terminate-production" ? { remarks: transitionRemarks } : {})
             })
@@ -729,7 +742,18 @@ async function writeTransition(
         return {
             jobOrderId,
             jobOrderNo,
-            jobOrder: { ...jobOrder, status: nextStatus },
+            jobOrder: {
+                ...jobOrder,
+                status: nextStatus,
+                ...(command.action === "terminate-production"
+                    ? {
+                        termination_image_id: command.terminationImageId,
+                        cancelled_at: now,
+                        cancelled_by: command.actorUserId,
+                        cancellation_reason: suppliedRemarks
+                    }
+                    : {})
+            },
             action: command.action,
             previousStatus,
             status: nextStatus,
@@ -751,12 +775,18 @@ async function writeTransition(
                 remarks: jobOrder.remarks ?? null
             } : {})
         };
+        if (command.action === "terminate-production") {
+            rollbackFields.termination_image_id = jobOrder.termination_image_id ?? null;
+            rollbackFields.cancelled_at = jobOrder.cancelled_at ?? null;
+            rollbackFields.cancelled_by = jobOrder.cancelled_by ?? null;
+            rollbackFields.cancellation_reason = jobOrder.cancellation_reason ?? null;
+        }
         const lifecycleFieldByAction: Partial<Record<JobOrderWorkflowAction, string>> = {
             initialize: "initialized",
             "complete-staging": "picked",
             "start-production": "production_started",
             "complete-production": "production_completed",
-            "terminate-production": "production_completed",
+            "terminate-production": "cancelled",
             "begin-qa-reconciliation": "qa_started",
             close: "closed"
         };
@@ -848,6 +878,13 @@ export async function executeJobOrderWorkflow(
 
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
+    }
+    if (command.action === "terminate-production" && !text(command.terminationImageId)) {
+        throw new JobOrderWorkflowError(
+            "A termination evidence image is required.",
+            422,
+            "TERMINATION_IMAGE_REQUIRED"
+        );
     }
     if (command.action === "resume-production" && !text(command.resolutionRemarks)) {
         throw new JobOrderWorkflowError("A resolution remark is required before resuming production.", 400, "WORKFLOW_RESOLUTION_REQUIRED");

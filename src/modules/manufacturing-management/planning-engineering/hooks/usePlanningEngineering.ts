@@ -653,7 +653,7 @@ export function usePlanningEngineering() {
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(0);
+        setTargetQuantity(totalRemaining);
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);

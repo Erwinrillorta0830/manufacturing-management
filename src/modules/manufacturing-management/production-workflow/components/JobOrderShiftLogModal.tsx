@@ -77,9 +77,8 @@ export function JobOrderShiftLogModal({
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
 
     const selectedTask = sortedTasks.find((task) => task.id === targetTaskId) || activeStep;
-    const stationId = Number(selectedTask?.work_center_id || selectedJobOrder?.primary_work_center_id || 0) || null;
-    const stationLabel = selectedTask?.work_center_name
-        || selectedJobOrder?.primary_work_center_name
+    const stationId = Number(selectedJobOrder?.primary_work_center_id || 0) || null;
+    const stationLabel = selectedJobOrder?.primary_work_center_name
         || (stationId ? `Work Center #${stationId}` : "Unassigned");
 
     const totalPlannedHours = selectedJobOrder?.routing_tasks 
