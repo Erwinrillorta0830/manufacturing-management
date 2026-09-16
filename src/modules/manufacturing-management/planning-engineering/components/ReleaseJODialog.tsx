@@ -206,14 +206,14 @@ export function ReleaseJODialog({
 
     // Fetch BOM & Routing details on dialog open
     useEffect(() => {
-        const branchId = parseValidBranchId(selectedBranchId);
-        if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails && branchId !== null) {
+        if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
                 try {
                     const first = selectedLines[0];
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
+                    const branchId = parseValidBranchId(selectedBranchId) || 1;
                     const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}`;
                     const res = await fetch(url);
                     if (res.ok) {
