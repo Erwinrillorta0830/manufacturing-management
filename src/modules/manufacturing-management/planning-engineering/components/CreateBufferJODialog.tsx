@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
+import { calculateNetRunTime } from "../../finished-goods/costing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -278,6 +279,18 @@ export function CreateBufferJODialog({
                 const baseQty = Number(verObj.base_quantity ?? verObj.baseQuantity ?? 0);
                 if (baseQty > 0) {
                     setTargetQuantity(baseQty);
+                }
+                const rawShift = verObj.net_run_time ?? verObj.shift_hours ?? verObj.shift_option ?? verObj.target_shift_hours;
+                if (rawShift && Number(rawShift) > 0) {
+                    setShiftOption(String(Number(rawShift).toFixed(1)));
+                } else {
+                    const netRunTime = calculateNetRunTime(
+                        Number(verObj.shift_hours) || 18,
+                        Number(verObj.shift_minutes) || 0,
+                        Number(verObj.downtime_minutes) || 16,
+                        Number(verObj.downtime_seconds) || 7
+                    ).netProductionHours;
+                    setShiftOption(netRunTime.toFixed(1));
                 }
             }
         }

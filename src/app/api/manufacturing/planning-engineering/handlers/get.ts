@@ -1268,7 +1268,8 @@ export async function handleGET(request: Request) {
                 bom_id: version.version_id,
                 bom_name: version.version_name,
                 base_quantity: version.base_quantity,
-                expected_yield_percentage: version.expected_yield_percentage
+                expected_yield_percentage: version.expected_yield_percentage,
+                shift_hours: (version as any).shift_hours ?? (version as any).shift_option ?? (version as any).target_shift_hours ?? null
             };
 
             // Resolve the work centers used by the selected recipe so costing can apply machine rates.
