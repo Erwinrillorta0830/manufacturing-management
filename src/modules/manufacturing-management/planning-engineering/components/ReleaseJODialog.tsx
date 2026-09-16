@@ -213,6 +213,7 @@ export function ReleaseJODialog({
                     const first = selectedLines[0];
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
+                    const branchId = parseValidBranchId(selectedBranchId) || 1;
                     const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}`;
                     const res = await fetch(url);
                     if (res.ok) {
