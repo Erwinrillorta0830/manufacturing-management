@@ -29,7 +29,9 @@ interface OperationStepTrackerProps {
     routeOperators: RouteOperatorRecord[];
     users: UserType[];
     onOpenShiftLogModal: () => void;
+    onOpenAudit: (taskId: number) => void;
     onOpenQAModal: (taskId: number) => void;
+    openingAuditTaskId?: number | null;
     readOnly?: boolean;
 }
 
@@ -41,7 +43,9 @@ export function OperationStepTracker({
     routeOperators,
     users,
     onOpenShiftLogModal,
+    onOpenAudit,
     onOpenQAModal,
+    openingAuditTaskId = null,
     readOnly = false
 }: OperationStepTrackerProps) {
     const getUserName = (uId: number) => {
@@ -185,20 +189,39 @@ export function OperationStepTracker({
                                             )}
                                             {task.qa_status === "Passed" ? "QA Passed" : task.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
                                         </span>
-                                        <Button asChild size="xs" variant="ghost" className={`h-5 text-[10px] px-1.5 ${
-                                            task.qa_status === "Passed"
-                                                ? "text-emerald-700 hover:text-emerald-800"
-                                                : task.qa_status === "QA Hold"
-                                                ? "text-rose-700 hover:text-rose-800"
-                                                : "text-amber-600 hover:text-amber-700"
-                                        }`}>
-                                            <Link
-                                                href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
-                                                onClick={(e) => e.stopPropagation()}
+                                        {task.qa_status === "Passed" ? (
+                                            <Button asChild size="xs" variant="ghost" className="h-5 text-[10px] px-1.5 text-emerald-700 hover:text-emerald-800">
+                                                <Link
+                                                    href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    View QA
+                                                </Link>
+                                            </Button>
+                                        ) : task.qa_status === "QA Hold" ? (
+                                            <Button asChild size="xs" variant="ghost" className="h-5 text-[10px] px-1.5 text-rose-700 hover:text-rose-800">
+                                                <Link
+                                                    href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    Review QA
+                                                </Link>
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                type="button"
+                                                size="xs"
+                                                variant="ghost"
+                                                disabled={openingAuditTaskId === task.id}
+                                                className="h-5 text-[10px] px-1.5 text-amber-600 hover:text-amber-700"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onOpenAudit(task.id);
+                                                }}
                                             >
-                                                {task.qa_status === "Passed" ? "View QA" : "Audit"}
-                                            </Link>
-                                        </Button>
+                                                {openingAuditTaskId === task.id ? "Opening..." : "Audit"}
+                                            </Button>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="flex items-center justify-end rounded-lg border border-primary/20 bg-primary/5 p-1.5">

@@ -32,6 +32,9 @@ import { JobOrderProgressSummary } from "./components/JobOrderProgressSummary";
 import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
+import { DailyYieldAuditDialog } from "../manufacturing-job-order-inspection-qa/components/DailyYieldAuditDialog";
+import { useDailyYieldAudit } from "../manufacturing-job-order-inspection-qa/hooks/useDailyYieldAudit";
+import { fetchJobOrderDailyYieldDetails } from "../manufacturing-job-order-inspection-qa/services/job-order-inspection-qa-api";
 import { StationStartScanner } from "./components/StationStartScanner";
 import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
@@ -128,6 +131,41 @@ export default function ProductionWorkflowModule() {
     const [isKioskMode, setIsKioskMode] = useState(false);
     const [viewMode, setViewMode] = useState<"queue" | "tracker">("queue");
     const [workflowAction, setWorkflowAction] = useState<ProductionWorkflowAction | null>(null);
+    const [openingAuditTaskId, setOpeningAuditTaskId] = useState<number | null>(null);
+
+    const handleAuditSaved = React.useCallback(async () => {
+        await fetchJobs(selectedJobOrderId, true);
+    }, [fetchJobs, selectedJobOrderId]);
+
+    const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
+    const { openAudit: openDailyYieldAudit } = dailyYieldAuditState;
+
+    const handleOpenPendingAudit = React.useCallback(async (taskId: number) => {
+        if (openingAuditTaskId !== null) return;
+
+        const jobOrderId = Number(selectedJobOrder?.order_id || selectedJobOrder?.job_order_id || 0);
+        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
+            toast.error("The selected Job Order has no valid identifier for QA audit.");
+            return;
+        }
+
+        setOpeningAuditTaskId(taskId);
+        try {
+            const details = await fetchJobOrderDailyYieldDetails(jobOrderId);
+            const pendingYield = details.dailyYields.find((yieldRecord) => yieldRecord.qaStatus === "Pending");
+
+            if (!pendingYield) {
+                toast.error("No pending daily-yield audit is available for this Job Order.");
+                return;
+            }
+
+            openDailyYieldAudit(pendingYield, details, taskId);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to load the pending daily-yield audit.");
+        } finally {
+            setOpeningAuditTaskId(null);
+        }
+    }, [openingAuditTaskId, openDailyYieldAudit, selectedJobOrder]);
 
     const isMountedRef = React.useRef(true);
 
@@ -571,7 +609,9 @@ export default function ProductionWorkflowModule() {
                                 routeOperators={routeOperators}
                                 users={users}
                                 onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
+                                onOpenAudit={handleOpenPendingAudit}
                                 onOpenQAModal={(taskId) => handleCompleteStepClick(taskId)}
+                                openingAuditTaskId={openingAuditTaskId}
                                 readOnly={isProductionReadOnly}
                             />
                         )}
@@ -683,6 +723,9 @@ export default function ProductionWorkflowModule() {
                 submittingQA={submittingQA}
                 handleSubmitQA={handleSubmitQA}
             />
+
+            {/* --- IN-PROCESS DAILY YIELD QA AUDIT MODAL --- */}
+            <DailyYieldAuditDialog controller={dailyYieldAuditState} />
 
             {/* --- JOB ORDER CANCELLATION / RAW MATERIAL RETURN MODAL --- */}
             <JobOrderCancellationModal

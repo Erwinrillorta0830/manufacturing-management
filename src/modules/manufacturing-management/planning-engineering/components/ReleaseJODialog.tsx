@@ -215,7 +215,7 @@ export function ReleaseJODialog({
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
                     const branchId = parseValidBranchId(selectedBranchId) || 1;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}&usePhysicalOnHand=true`;
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();

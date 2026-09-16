@@ -122,7 +122,8 @@ export function usePlanningEngineering() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     action: "initialize",
-                    joId
+                    joId,
+                    usePhysicalOnHand: true
                 })
             });
             const data = await res.json();
@@ -143,6 +144,7 @@ export function usePlanningEngineering() {
                         body: JSON.stringify({
                             action: "initialize",
                             joId,
+                            usePhysicalOnHand: true,
                             force: true,
                             overrideReason: "Authorized planning shortage override"
                         })
@@ -672,6 +674,7 @@ export function usePlanningEngineering() {
                 const result = await releaseMultipleJobOrders({
                     action: "release-multiple",
                     initialize,
+                    usePhysicalOnHand: initialize,
                     baseJoNumber: joNumber,
                     shared: { branchId, plannedDate, dueDate, priority, shiftOption, remarks },
                     jobs: releaseGroups.map((group) => {
@@ -728,7 +731,8 @@ export function usePlanningEngineering() {
                     },
                     salesOrderIds: uniqueSalesOrderIds,
                     salesOrderDetailIds: selectedLines.map((line) => line.detail_id),
-                    initialize
+                    initialize,
+                    usePhysicalOnHand: initialize
                 });
                 createdJobOrderNo = String(result.jo_id || result.job_order_no || joNumber).trim();
 
