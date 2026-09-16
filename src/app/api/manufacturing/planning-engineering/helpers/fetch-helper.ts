@@ -58,8 +58,13 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=-1&sort=-changed_at&fields=*`,
             { headers: headersNoCache }
         ).catch(() => null);
+        const workCentersPromise = fetch(
+            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name`,
+            { headers: headersNoCache }
+        ).catch(() => null);
         const responses = await Promise.all(fetchList);
         const statusHistoryResponse = await statusHistoryPromise;
+        const workCentersResponse = await workCentersPromise;
 
         const jos = responses[0].ok ? (await responses[0].json()).data || [] : [];
         const josos = responses[1].ok ? (await responses[1].json()).data || [] : [];
@@ -72,6 +77,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const invMovements = await movementPromise;
         const statusHistoryRows = statusHistoryResponse?.ok
             ? (await statusHistoryResponse.json()).data || []
+            : [];
+        const workCenterRows = workCentersResponse?.ok
+            ? (await workCentersResponse.json()).data || []
             : [];
 
         let mfgRoutings = [];
@@ -206,6 +214,14 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             unitsMap.set(Number(u.unit_id), u);
         });
 
+        const workCenterNameById = new Map<number, string>();
+        workCenterRows.forEach((workCenter: any) => {
+            const workCenterId = getRelationId(workCenter.work_center_id, ["work_center_id"]);
+            if (workCenterId > 0) {
+                workCenterNameById.set(workCenterId, String(workCenter.work_center_name || ""));
+            }
+        });
+
         // Map them together
         return jos.map((jo: any) => {
             const joNo = jo.job_order_no;
@@ -284,6 +300,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     const masterRoutingId = getRelationId(masterRoute?.route_id, ["route_id", "routing_id"]);
                     const masterQaTemplateId = getRelationId(masterRoute?.qa_template_id, ["qa_template_id", "template_id"]);
                     const qaTemplateId = persistedQaTemplateId || masterQaTemplateId || null;
+                    const persistedWorkCenterId = getRelationId(task.work_center_id, ["work_center_id"]);
+                    const masterWorkCenterId = getRelationId(masterRoute?.work_center_id, ["work_center_id"]);
+                    const workCenterId = persistedWorkCenterId || masterWorkCenterId || null;
                     const reqQA = isEnabledFlag(task.requires_qa)
                         || isEnabledFlag(masterRoute?.requires_qa)
                         || qaTemplateId !== null;
@@ -319,6 +338,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         actual_run_hours: totalHours > 0 ? totalHours : Number(task.actual_run_hours || 0),
                         step_batch_size: Number(task.step_batch_size || 1),
                         run_time_hours_factor: Number(task.run_time_hours_factor || 0),
+                        work_center_id: workCenterId,
+                        work_center_name: workCenterId ? workCenterNameById.get(workCenterId) || null : null,
                         completed_at: task.completed_at,
                         requires_qa: reqQA ? 1 : 0,
                         assignments: taskAssigns,

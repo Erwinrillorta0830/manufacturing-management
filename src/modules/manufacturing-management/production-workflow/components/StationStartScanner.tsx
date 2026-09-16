@@ -14,15 +14,18 @@ import {
     RefreshCw,
     X,
     Maximize2,
-    Minimize2
+    Minimize2,
+    GitBranch
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { JobOrder, WorkCenter, StationScanResponse } from "../types";
-import { scanStationStart, fetchWorkCenters, type WorkCenterApplicabilitySource } from "../services/production-api";
+import { scanStationStart, fetchWorkCenters, type RouteWorkCenterOption, type WorkCenterApplicabilitySource } from "../services/production-api";
+import { RouteWorkstationAssignmentDialog } from "./RouteWorkstationAssignmentDialog";
 import { toast } from "sonner";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -64,6 +67,7 @@ export function StationStartScanner({
 }: StationStartScannerProps) {
     const [workCenters, setWorkCenters] = useState<WorkCenter[]>([]);
     const [workCenterSource, setWorkCenterSource] = useState<WorkCenterApplicabilitySource | null>(null);
+    const [routeOptions, setRouteOptions] = useState<RouteWorkCenterOption[]>([]);
     const [loadingWc, setLoadingWc] = useState(false);
 
     // Scanned values
@@ -71,6 +75,8 @@ export function StationStartScanner({
     const [scannedJoBarcode, setScannedJoBarcode] = useState("");
     const [selectedWc, setSelectedWc] = useState<WorkCenter | null>(null);
     const [selectedJo, setSelectedJo] = useState<JobOrder | null>(null);
+    const [selectedRouteId, setSelectedRouteId] = useState<number | null>(null);
+    const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [scanResult, setScanResult] = useState<StationScanResponse | null>(null);
@@ -84,15 +90,18 @@ export function StationStartScanner({
             const result = await fetchWorkCenters(jobOrder ? (jobOrder.order_id || jobOrder.job_order_id || jobOrder.jo_id) : undefined);
             setWorkCenters(result.data);
             setWorkCenterSource(result.source);
+            setRouteOptions(result.routeOptions || []);
             return result;
         } catch (err: any) {
             toast.error(err.message || "Failed to load work centers");
             setWorkCenters([]);
             setWorkCenterSource(jobOrder ? "NONE" : null);
+            setRouteOptions([]);
             return {
                 data: [] as WorkCenter[],
                 applicableWorkCenterIds: [] as number[],
-                source: (jobOrder ? "NONE" : "ALL") as WorkCenterApplicabilitySource
+                source: (jobOrder ? "NONE" : "ALL") as WorkCenterApplicabilitySource,
+                routeOptions: []
             };
         } finally {
             setLoadingWc(false);
@@ -106,11 +115,17 @@ export function StationStartScanner({
         setScannedWcBarcode("");
         setScannedJoBarcode("");
         setSelectedWc(null);
+        setSelectedRouteId(null);
+        setIsRouteAssignmentOpen(false);
 
         const prefill = initialJobOrder || null;
         setSelectedJo(prefill);
         if (prefill) {
             setScannedJoBarcode(prefill.job_order_no || prefill.jo_id);
+            const prefillRoutes = prefill.routing_tasks || prefill.routingTasks || [];
+            if (prefillRoutes.length === 1) {
+                setSelectedRouteId(Number(prefillRoutes[0].id || prefillRoutes[0].jo_route_id) || null);
+            }
         }
 
         void loadWorkCentersFor(prefill).finally(() => {
@@ -122,7 +137,14 @@ export function StationStartScanner({
         setSelectedJo(jobOrder);
         setScannedJoBarcode(jobOrder ? (jobOrder.job_order_no || jobOrder.jo_id) : "");
         setScanResult(null);
+        setSelectedRouteId(null);
+        setSelectedWc(null);
+        setScannedWcBarcode("");
         const result = await loadWorkCentersFor(jobOrder);
+        const jobOrderRoutes = jobOrder?.routing_tasks || jobOrder?.routingTasks || [];
+        if (jobOrderRoutes.length === 1) {
+            setSelectedRouteId(Number(jobOrderRoutes[0].id || jobOrderRoutes[0].jo_route_id) || null);
+        }
         setSelectedWc((previous) => {
             if (!previous) return previous;
             const stillApplicable = result.data.some((center) => Number(center.work_center_id) === Number(previous.work_center_id));
@@ -134,13 +156,65 @@ export function StationStartScanner({
         });
     };
 
+    const selectedJoRoutes = React.useMemo(() => {
+        const routes = selectedJo?.routing_tasks || selectedJo?.routingTasks || [];
+        return [...routes].sort((left, right) => left.sequence_order - right.sequence_order);
+    }, [selectedJo]);
+
+    const openJoRoutes = React.useMemo(() => selectedJoRoutes.filter((route) => {
+        const status = String(route.status || "").trim().toLowerCase();
+        return !status || status === "pending" || status === "ongoing" || status === "in progress";
+    }), [selectedJoRoutes]);
+
+    const selectedRoute = selectedJoRoutes.find((route) => Number(route.id || route.jo_route_id) === Number(selectedRouteId)) || null;
+    const selectedRouteOption = routeOptions.find((option) => option.joRouteId === Number(selectedRouteId));
+    const selectedRouteWorkCenterIds = selectedRouteOption?.workCenterIds?.length
+        ? selectedRouteOption.workCenterIds
+        : selectedRoute?.work_center_id
+            ? [Number(selectedRoute.work_center_id)]
+            : [];
+    const visibleWorkCenters = selectedRoute
+        ? workCenters.filter((workCenter) => selectedRouteWorkCenterIds.includes(Number(workCenter.work_center_id)))
+        : selectedJoRoutes.length > 1
+            ? []
+            : workCenters;
+
+    const handleRouteSelection = (value: string) => {
+        const nextRouteId = Number(value) || null;
+        setSelectedRouteId(nextRouteId);
+        const nextOption = routeOptions.find((option) => option.joRouteId === nextRouteId);
+        const nextRoute = selectedJoRoutes.find((route) => Number(route.id || route.jo_route_id) === nextRouteId);
+        const nextAllowedIds = nextOption?.workCenterIds?.length
+            ? nextOption.workCenterIds
+            : nextRoute?.work_center_id
+                ? [Number(nextRoute.work_center_id)]
+                : [];
+
+        if (selectedWc && !nextAllowedIds.includes(Number(selectedWc.work_center_id))) {
+            setSelectedWc(null);
+            setScannedWcBarcode("");
+        }
+        if (nextAllowedIds.length === 1) {
+            const matchingWorkCenter = workCenters.find((workCenter) => Number(workCenter.work_center_id) === nextAllowedIds[0]);
+            if (matchingWorkCenter) {
+                setSelectedWc(matchingWorkCenter);
+                setScannedWcBarcode(matchingWorkCenter.barcode || `WC-${matchingWorkCenter.work_center_id}`);
+            }
+        }
+    };
+
     // Handle Work Center Barcode Enter
     const handleWcBarcodeSubmit = (e?: React.FormEvent) => {
         if (e) e.preventDefault();
         const code = scannedWcBarcode.trim();
         if (!code) return;
 
-        const matched = workCenters.find((w) => {
+        if (selectedJoRoutes.length > 1 && !selectedRouteId) {
+            toast.error("Select a routing step before verifying its workstation.");
+            return;
+        }
+
+        const matched = visibleWorkCenters.find((w) => {
             const assetBarcode = w.asset?.barcode || w.barcode || "";
             const wcCode = `WC-${String(w.work_center_id).padStart(3, "0")}`;
             const wcCodeShort = `WC-${w.work_center_id}`;
@@ -193,6 +267,10 @@ export function StationStartScanner({
 
     // Trigger Final Station Start Execution
     const handleExecuteStationStart = async () => {
+        if (selectedJoRoutes.length > 1 && !selectedRouteId) {
+            toast.error("Select a routing step before starting a multi-route Job Order.");
+            return;
+        }
         if (!selectedWc && !scannedWcBarcode) {
             toast.error("Please scan or select a Work Center Station.");
             wcInputRef.current?.focus();
@@ -210,7 +288,8 @@ export function StationStartScanner({
                 workCenterBarcode: selectedWc?.barcode || scannedWcBarcode,
                 workCenterId: selectedWc?.work_center_id,
                 jobOrderBarcode: selectedJo?.job_order_no || selectedJo?.jo_id || scannedJoBarcode,
-                jobOrderId: selectedJo?.order_id || selectedJo?.job_order_id
+                jobOrderId: selectedJo?.order_id || selectedJo?.job_order_id,
+                joRouteId: selectedRouteId || undefined
             };
 
             const response = await scanStationStart(payload);
@@ -230,6 +309,7 @@ export function StationStartScanner({
     };
 
     return (
+        <>
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="w-[96vw] md:w-full md:max-w-[1100px] max-h-[94vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
                 {/* Header */}
@@ -311,7 +391,9 @@ export function StationStartScanner({
                                 </CardTitle>
                                 <CardDescription className="text-[11px]">
                                     {selectedJo
-                                        ? "Only work stations configured for this product version's routing are shown"
+                                        ? selectedRoute
+                                            ? "Only the workstation configured for the selected route is shown"
+                                            : "Select a route to narrow the workstation list"
                                         : "Scan station asset tag, RFID, or tap a station below"}
                                 </CardDescription>
                             </CardHeader>
@@ -369,7 +451,7 @@ export function StationStartScanner({
                                                 <div className="col-span-3 py-4 text-center text-xs text-muted-foreground">
                                                     <Loader2 className="h-4 w-4 animate-spin mx-auto mb-1" /> Loading stations...
                                                 </div>
-                                            ) : workCenters.map((wc) => (
+                                            ) : visibleWorkCenters.map((wc) => (
                                                 <button
                                                     key={wc.work_center_id}
                                                     type="button"
@@ -389,6 +471,11 @@ export function StationStartScanner({
                                                     </span>
                                                 </button>
                                             ))}
+                                            {!loadingWc && selectedJo && selectedJoRoutes.length > 1 && !selectedRouteId && (
+                                                <div className="col-span-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-[11px] font-semibold text-blue-700 dark:text-blue-400">
+                                                    Select a routing step below before choosing its workstation.
+                                                </div>
+                                            )}
                                         </div>
                                         )}
                                     </div>
@@ -448,16 +535,28 @@ export function StationStartScanner({
                                                 {selectedJo.product_name} • Qty: {selectedJo.quantity.toLocaleString()} pcs
                                             </span>
                                         </div>
-                                        <Button
-                                            variant="ghost"
-                                            size="xs"
-                                            onClick={() => {
-                                                void selectJobOrder(null);
-                                            }}
-                                            className="h-7 text-xs text-muted-foreground hover:text-red-500"
-                                        >
-                                            <X className="h-3.5 w-3.5" />
-                                        </Button>
+                                        <div className="flex items-center gap-1">
+                                            {selectedJoRoutes.length > 1 && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="xs"
+                                                    onClick={() => setIsRouteAssignmentOpen(true)}
+                                                    className="h-7 text-[10px] font-bold"
+                                                >
+                                                    <GitBranch className="mr-1 h-3 w-3" /> Assign Routes
+                                                </Button>
+                                            )}
+                                            <Button
+                                                variant="ghost"
+                                                size="xs"
+                                                onClick={() => {
+                                                    void selectJobOrder(null);
+                                                }}
+                                                className="h-7 text-xs text-muted-foreground hover:text-red-500"
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="space-y-1.5">
@@ -498,6 +597,57 @@ export function StationStartScanner({
                         </Card>
                     </div>
 
+                    {selectedJo && selectedJoRoutes.length > 0 && (
+                        <Card className="border-primary/30 bg-primary/[0.02]">
+                            <CardHeader className="p-4 pb-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <CardTitle className="flex items-center gap-2 text-sm font-bold">
+                                            <GitBranch className="h-4 w-4 text-primary" /> Step 3: Select Routing Step
+                                        </CardTitle>
+                                        <CardDescription className="text-[11px]">
+                                            Multi-route Job Orders must identify the route before the station can be started.
+                                        </CardDescription>
+                                    </div>
+                                    {selectedJoRoutes.length > 1 && (
+                                        <Badge variant="outline" className="shrink-0 text-[10px] font-bold">
+                                            {openJoRoutes.length} open route{openJoRoutes.length === 1 ? "" : "s"}
+                                        </Badge>
+                                    )}
+                                </div>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-2">
+                                <Select
+                                    value={selectedRouteId ? String(selectedRouteId) : ""}
+                                    onValueChange={handleRouteSelection}
+                                >
+                                    <SelectTrigger className="h-10 w-full text-xs" data-testid="station-route-select">
+                                        <SelectValue placeholder={selectedJoRoutes.length > 1 ? "Select a route step" : "Route step"} />
+                                    </SelectTrigger>
+                                    <SelectContent position="popper" className="min-w-[360px]">
+                                        {openJoRoutes.map((route) => {
+                                            const id = Number(route.id || route.jo_route_id);
+                                            const option = routeOptions.find((routeOption) => routeOption.joRouteId === id);
+                                            const stationId = option?.workCenterIds?.[0] || route.work_center_id;
+                                            const station = workCenters.find((workCenter) => Number(workCenter.work_center_id) === Number(stationId));
+                                            return (
+                                                <SelectItem key={id} value={String(id)}>
+                                                    Step {route.sequence_order} · {route.name} · {station?.work_center_name || (stationId ? `Work Center #${stationId}` : "Unassigned")}
+                                                </SelectItem>
+                                            );
+                                        })}
+                                    </SelectContent>
+                                </Select>
+                                {selectedRoute && (
+                                    <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
+                                        <ArrowRight className="h-3.5 w-3.5 text-primary" />
+                                        Starting {selectedRoute.name} at {selectedRoute.work_center_name || (selectedRoute.work_center_id ? `Work Center #${selectedRoute.work_center_id}` : "the assigned workstation")}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
+
                     {/* Summary & Start Button Action Strip */}
                     <div className="p-4 bg-gradient-to-r from-card via-card to-muted/20 border border-border/80 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">
                         <div className="flex items-center gap-3">
@@ -510,7 +660,7 @@ export function StationStartScanner({
                                 </span>
                                 <span className="font-extrabold text-sm text-foreground">
                                     {selectedWc && selectedJo 
-                                        ? `Ready to launch ${selectedJo.job_order_no || selectedJo.jo_id} on ${selectedWc.work_center_name}`
+                                        ? `Ready to launch ${selectedJo.job_order_no || selectedJo.jo_id}${selectedRoute ? ` · Step ${selectedRoute.sequence_order}` : ""} on ${selectedWc.work_center_name}`
                                         : "Scan or select both Work Center Station and Job Order to proceed"}
                                 </span>
                             </div>
@@ -526,7 +676,7 @@ export function StationStartScanner({
                             </Button>
                             <Button
                                 onClick={handleExecuteStationStart}
-                                disabled={isSubmitting || (!selectedWc && !scannedWcBarcode) || (!selectedJo && !scannedJoBarcode) || (Boolean(selectedJo) && !loadingWc && workCenters.length === 0)}
+                                disabled={isSubmitting || (!selectedWc && !scannedWcBarcode) || (!selectedJo && !scannedJoBarcode) || (Boolean(selectedJo) && selectedJoRoutes.length > 1 && !selectedRouteId) || (Boolean(selectedJo) && !loadingWc && workCenters.length === 0)}
                                 className="h-11 text-xs font-extrabold px-6 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20 w-1/2 sm:w-auto"
                             >
                                 {isSubmitting ? (
@@ -544,5 +694,31 @@ export function StationStartScanner({
                 </div>
             </DialogContent>
         </Dialog>
+        <RouteWorkstationAssignmentDialog
+            open={isRouteAssignmentOpen}
+            onOpenChange={setIsRouteAssignmentOpen}
+            jobOrder={selectedJo}
+            onSaved={(savedRoutes) => {
+                setSelectedJo((previous) => {
+                    if (!previous) return previous;
+                    const currentRoutes = previous.routing_tasks || previous.routingTasks || [];
+                    const savedById = new Map(savedRoutes.map((route) => [route.joRouteId, route]));
+                    const updatedRoutes = currentRoutes.map((route) => {
+                        const saved = savedById.get(Number(route.id || route.jo_route_id));
+                        return saved
+                            ? { ...route, work_center_id: saved.workCenterId, work_center_name: saved.workCenterName }
+                            : route;
+                    });
+                    return { ...previous, routing_tasks: updatedRoutes, routingTasks: updatedRoutes };
+                });
+                setRouteOptions((previous) => previous.map((option) => {
+                    const saved = savedRoutes.find((route) => route.joRouteId === option.joRouteId);
+                    return saved
+                        ? { ...option, currentWorkCenterId: saved.workCenterId }
+                        : option;
+                }));
+            }}
+        />
+        </>
     );
 }

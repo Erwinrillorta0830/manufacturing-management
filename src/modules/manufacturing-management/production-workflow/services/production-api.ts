@@ -209,10 +209,21 @@ export async function scanStationStart(payload: StationScanPayload): Promise<Sta
 
 export type WorkCenterApplicabilitySource = "VERSION_ROUTING" | "JO_ROUTES" | "NONE" | "ALL";
 
+export interface RouteWorkCenterOption {
+    joRouteId: number;
+    sequenceOrder: number;
+    operationId: number | null;
+    status: string | null;
+    currentWorkCenterId: number | null;
+    workCenterIds: number[];
+    source: "VERSION_ROUTING" | "JO_ROUTES" | "NONE";
+}
+
 export interface WorkCenterListResponse {
     data: WorkCenter[];
     applicableWorkCenterIds: number[];
     source: WorkCenterApplicabilitySource;
+    routeOptions: RouteWorkCenterOption[];
 }
 
 export async function fetchWorkCenters(jobOrderId?: number | string | null): Promise<WorkCenterListResponse> {
@@ -226,8 +237,50 @@ export async function fetchWorkCenters(jobOrderId?: number | string | null): Pro
     return {
         data: json.data || [],
         applicableWorkCenterIds: Array.isArray(json.applicableWorkCenterIds) ? json.applicableWorkCenterIds : [],
-        source: hasJobOrder ? (json.source || "NONE") : "ALL"
+        source: hasJobOrder ? (json.source || "NONE") : "ALL",
+        routeOptions: Array.isArray(json.routeOptions) ? json.routeOptions : []
     };
+}
+
+export interface RouteWorkCenterAssignment {
+    joRouteId: number;
+    workCenterId: number;
+}
+
+export interface RouteWorkCenterAssignmentResponse {
+    success: boolean;
+    data?: {
+        jobOrderId: number;
+        routes: Array<{
+            joRouteId: number;
+            sequenceOrder: number;
+            operationId: number | null;
+            status: string;
+            workCenterId: number;
+            workCenterName: string | null;
+        }>;
+    };
+    error?: string;
+}
+
+export async function assignRouteWorkCenters(
+    jobOrderId: number | string,
+    assignments: RouteWorkCenterAssignment[]
+): Promise<RouteWorkCenterAssignmentResponse["data"]> {
+    const res = await fetch("/api/manufacturing/planning-engineering", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            action: "assign-route-workcenters",
+            jobOrderId,
+            assignments
+        })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+        throw new Error(data?.error || "Failed to save route workstation assignments.");
+    }
+    return data.data;
 }
 
 export async function fetchJobOrderStatusHistory(joId: string | number): Promise<JobOrderStatusHistoryRecord[]> {
