@@ -55,10 +55,10 @@ import {
 // Import Child Modals
 import { ProductLookupModal } from "./ProductLookupModal";
 import {
-  LotBatchSelectionModal,
-  type LotBatchSelectionResult,
-  type FormSiblingAllocation,
-} from "./LotBatchSelectionModal";
+  SalesReturnLotBatchModal,
+  LotBatchSelectionResult,
+  FormSiblingAllocation,
+} from "./SalesReturnLotBatchModal";
 // Import API Client & Helpers
 import { SalesReturnApiClient } from "../services/sales-return.api-client";
 import { resolveFinalDiscount } from "../services/sales-return.helpers";
@@ -333,6 +333,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       product_id: item.productId,
       product_name: item.description,
       product_code: item.code,
+      product_type: item.product_type || item.product_type_name,
+      category_name: item.category_name || undefined,
+      product_category: item.product_category,
       quantity: item.quantity,
       lot_id: item.lot_id,
       lot_name: item.lot_name,
@@ -366,26 +369,26 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
    * Resolves the correct unit price based on the selected salesman's priceType.
    * Falls back to priceA if the specific price type is not available.
    */
-  const resolvePrice = useCallback((item: SalesReturnItem | Record<string, unknown>, currentPriceType: string, catalogPrices?: ProductPerPriceType[]): number => {
+  const resolvePrice = useCallback((item: SalesReturnItem | Product, currentPriceType: string, catalogPrices?: ProductPerPriceType[]): number => {
     const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
 
     // For SalesReturnItem mapped structure
-    if (pt && Array.isArray((item as SalesReturnItem).availablePrices)) {
-      const priceRecord = (item as SalesReturnItem).availablePrices!.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
+    if (pt && "availablePrices" in item && Array.isArray(item.availablePrices)) {
+      const priceRecord = item.availablePrices.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
       if (priceRecord && priceRecord.price !== undefined) {
         return Math.round(Number(priceRecord.price) * 100) / 100;
       }
     }
 
     // For raw Product data during updateDiscounts
-    if (pt && Array.isArray(catalogPrices)) {
-      const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number((item as Record<string, unknown>).product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+    if (pt && Array.isArray(catalogPrices) && "product_id" in item && item.product_id !== undefined) {
+      const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number(item.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
       if (priceRecord && priceRecord.price !== undefined) {
         return Math.round(Number(priceRecord.price) * 100) / 100;
       }
     }
 
-    const price = Number((item as Record<string, unknown>).unitPrice) || 0;
+    const price = "unitPrice" in item && typeof item.unitPrice === "number" ? item.unitPrice : 0;
     return Math.round(price * 100) / 100;
   }, [priceTypeOptions]);
 
@@ -511,7 +514,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               const productInfo = catalog.products?.find((p: Product) => Number(p.product_id) === Number(item.productId));
               if (!productInfo) return item;
 
-              const newUnitPrice = resolvePrice(productInfo as unknown as Record<string, unknown>, priceType, catalog.productPrices);
+              const newUnitPrice = resolvePrice(productInfo, priceType, catalog.productPrices);
               const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
               const newGross = Math.round(item.quantity * agPrice * 100) / 100;
 
@@ -571,9 +574,13 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       setPriceType("A");
     }
 
-    const linkedBranch = branches.find((b) => b.id === salesman.branchId);
+    const linkedBranch = branches.find((b) => 
+      Number(b.id) === Number(salesman.branchId) ||
+      (b.branch_code && salesman.branchId && String(b.branch_code).trim().toLowerCase() === String(salesman.branchId).trim().toLowerCase()) ||
+      (b.name && salesman.branchId && String(b.name).trim().toLowerCase() === String(salesman.branchId).trim().toLowerCase())
+    );
     setBranchName(linkedBranch ? linkedBranch.name : "");
-    setBranchId(linkedBranch ? Number(linkedBranch.id) : null);
+    setBranchId(linkedBranch ? Number(linkedBranch.id) : (salesman.branchId && !isNaN(Number(salesman.branchId)) ? Number(salesman.branchId) : null));
     setIsSalesmanOpen(false);
     setOrderNo("");
     setOrderSearch("");
@@ -758,7 +765,11 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
               }
 
-              const linkedBranch = branches.find((b) => b.id === foundSalesman.branchId);
+              const linkedBranch = branches.find((b) => 
+                Number(b.id) === Number(foundSalesman.branchId) ||
+                (b.branch_code && foundSalesman.branchId && String(b.branch_code).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase()) ||
+                (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
+              );
               if (linkedBranch) {
                 setBranchName(linkedBranch.name);
                 setBranchId(Number(linkedBranch.id));
@@ -790,13 +801,24 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         );
         setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
       }
-      const linkedBranch = branches.find((b) => b.id === foundSalesman.branchId);
+      const linkedBranch = branches.find((b) => 
+        Number(b.id) === Number(foundSalesman.branchId) ||
+        (b.branch_code && foundSalesman.branchId && String(b.branch_code).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase()) ||
+        (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
+      );
       if (linkedBranch) {
         setBranchName(linkedBranch.name);
         setBranchId(Number(linkedBranch.id));
       }
     } else if (targetBranchName) {
       setBranchName(targetBranchName);
+      const matchedBranch = branches.find((b) => 
+        b.name.trim().toLowerCase() === targetBranchName.trim().toLowerCase() ||
+        (b.branch_code && b.branch_code.trim().toLowerCase() === targetBranchName.trim().toLowerCase())
+      );
+      if (matchedBranch) {
+        setBranchId(Number(matchedBranch.id));
+      }
     }
 
     // 5. Pre-fill products summary from clearance items
@@ -1085,15 +1107,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           }
           updated[existingIndex] = existing;
         } else {
-          const resultRecord = item as Record<string, unknown>;
           const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === productId);
 
           let unitPrice = 0;
           if (invoiceItem) {
              unitPrice = Number(invoiceItem.unit_price);
           } else {
-             const priceKey = `price${priceType}`;
-             unitPrice = Math.round((Number(resultRecord[priceKey]) || Number(resultRecord.unitPrice) || 0) * 100) / 100;
+             const priceKey = `price${priceType}` as keyof SalesReturnItem;
+             unitPrice = Math.round((Number(item[priceKey]) || Number(item.unitPrice) || 0) * 100) / 100;
           }
 
           const incomingDiscountType = item.discountType || "";
@@ -1116,9 +1137,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             productId,
             product_id: productId,
             code: item.code || "N/A",
-            description: item.description || "Unknown Item",
+            description: item.description || item.product_name || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
+            unit_id: item.unit_id ? Number(item.unit_id) : (item.unit_of_measurement ? Number(item.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: unitPrice,
             agreedPrice: unitPrice,
@@ -1133,6 +1154,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
             expiry_date: "",
             reason: "",
             returnType: "",
+            product_type: item.product_type || null,
+            product_type_name: item.product_type_name || null,
+            product_category: item.product_category,
+            category_name: item.category_name,
           } as SalesReturnItem);
         }
       });
@@ -2273,7 +2298,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
       {/* LOT & BATCH SELECTION MODAL */}
       {activeLotBatchIndex !== null && activeLotBatchIndex >= 0 && items[activeLotBatchIndex] && (
-        <LotBatchSelectionModal
+        <SalesReturnLotBatchModal
           open={lotBatchModalOpen}
           onOpenChange={setLotBatchModalOpen}
           branchId={branchId ? Number(branchId) : undefined}
@@ -2282,6 +2307,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           productCode={items[activeLotBatchIndex].code}
           productUomId={items[activeLotBatchIndex].unit_id}
           productUomName={items[activeLotBatchIndex].unit}
+          productType={items[activeLotBatchIndex].product_type || items[activeLotBatchIndex].product_type_name}
+          productCategory={items[activeLotBatchIndex].product_category}
+          categoryName={items[activeLotBatchIndex].category_name as string | undefined}
           requestedQuantity={items[activeLotBatchIndex].quantity}
           adjustmentType="IN"
           initialValues={{

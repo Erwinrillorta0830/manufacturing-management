@@ -72,10 +72,10 @@ import {
   LotOption,
 } from "../types/sales-return.types";
 import {
-  LotBatchSelectionModal,
+  SalesReturnLotBatchModal,
   LotBatchSelectionResult,
   FormSiblingAllocation,
-} from "./LotBatchSelectionModal";
+} from "./SalesReturnLotBatchModal";
 import { ProductLookupModal } from "./ProductLookupModal";
 import { SalesReturnPrintSlip } from "./SalesReturnPrintSlip";
 import { createRoot } from "react-dom/client";
@@ -386,6 +386,9 @@ export function UpdateSalesReturnModal({
       product_id: item.productId,
       product_name: item.description,
       product_code: item.code,
+      product_type: item.product_type || item.product_type_name,
+      category_name: item.category_name as string | undefined,
+      product_category: item.product_category,
       quantity: item.quantity,
       lot_id: item.lot_id,
       lot_name: item.lot_name,
@@ -688,7 +691,6 @@ export function UpdateSalesReturnModal({
           }
 
           const variance = Math.round((price - agPrice) * qty * 100) / 100;
-          const resultRecord = item as Record<string, unknown>;
 
           updated.push({
             id: `added-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`,
@@ -696,7 +698,7 @@ export function UpdateSalesReturnModal({
             code: item.code || "N/A",
             description: item.description || item.product_name || "Unknown Item",
             unit: item.unit || "Pcs",
-            unit_id: item.unit_id ? Number(item.unit_id) : (resultRecord.unit_of_measurement ? Number(resultRecord.unit_of_measurement) : undefined),
+            unit_id: item.unit_id ? Number(item.unit_id) : (item.unit_of_measurement ? Number(item.unit_of_measurement) : undefined),
             quantity: qty,
             unitPrice: price,
             agreedPrice: agPrice,
@@ -712,7 +714,7 @@ export function UpdateSalesReturnModal({
             reason: "",
             returnType: "",
             product_type: item.product_type || null,
-            product_type_name: item.product_type_name || (resultRecord.product_type_name as string) || null,
+            product_type_name: item.product_type_name || null,
           });
         }
       });
@@ -2215,18 +2217,26 @@ export function UpdateSalesReturnModal({
 
       {/* LOT & BATCH SELECTION MODAL */}
       {activeLotBatchIndex !== null && activeLotBatchIndex >= 0 && details[activeLotBatchIndex] && (
-        <LotBatchSelectionModal
+        <SalesReturnLotBatchModal
           open={lotBatchModalOpen}
           onOpenChange={setLotBatchModalOpen}
           branchId={(() => {
             const s = salesmenOptions.find((opt) => String(opt.id) === String(headerData.salesmanId));
-            return s?.branchId ? Number(s.branchId) : undefined;
+            const b = branches.find((br) => 
+              Number(br.id) === Number(s?.branchId) ||
+              (br.branch_code && s?.branchId && String(br.branch_code).trim().toLowerCase() === String(s.branchId).trim().toLowerCase()) ||
+              (br.name && s?.branchId && String(br.name).trim().toLowerCase() === String(s.branchId).trim().toLowerCase())
+            );
+            return b ? Number(b.id) : (s?.branchId && !isNaN(Number(s.branchId)) ? Number(s.branchId) : undefined);
           })()}
           productId={details[activeLotBatchIndex].productId}
           productName={details[activeLotBatchIndex].description}
           productCode={details[activeLotBatchIndex].code}
           productUomId={details[activeLotBatchIndex].unit_id}
           productUomName={details[activeLotBatchIndex].unit}
+          productType={details[activeLotBatchIndex].product_type || details[activeLotBatchIndex].product_type_name}
+          productCategory={details[activeLotBatchIndex].product_category}
+          categoryName={details[activeLotBatchIndex].category_name as string | undefined}
           requestedQuantity={details[activeLotBatchIndex].quantity}
           adjustmentType="IN"
           initialValues={{
