@@ -22,6 +22,7 @@ export function useJobOrderInspectionQA() {
     const [consolidatingOrderId, setConsolidatingOrderId] = useState<number | null>(null);
     const [closingJobOrderId, setClosingJobOrderId] = useState<number | null>(null);
     const closeIdempotencyKeys = useRef(new Map<number, string>());
+    const handledDeepLink = useRef<string | null>(null);
 
     const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
         setLoading(true);
@@ -75,6 +76,24 @@ export function useJobOrderInspectionQA() {
         setDetailsError(null);
         setSelectedJobOrder(jobOrder);
     }, []);
+
+    useEffect(() => {
+        if (loading || typeof window === "undefined") return;
+
+        const requestedJobOrder = String(new URLSearchParams(window.location.search).get("jo") || "").trim();
+        if (!requestedJobOrder || handledDeepLink.current === requestedJobOrder) return;
+
+        handledDeepLink.current = requestedJobOrder;
+        const match = jobOrders.find((jobOrder) =>
+            jobOrder.jobOrderNo.trim().toLowerCase() === requestedJobOrder.toLowerCase()
+        );
+
+        if (match) {
+            openDetails(match);
+        } else {
+            toast.error(`Job Order ${requestedJobOrder} was not found in JO Daily Yields.`);
+        }
+    }, [jobOrders, loading, openDetails]);
 
     const closeDetails = useCallback(() => {
         setSelectedJobOrder(null);

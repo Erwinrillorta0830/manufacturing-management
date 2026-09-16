@@ -192,6 +192,70 @@ async function persistOutputTraceability(
     }
 }
 
+function isCompletedRouteStatus(value: unknown): boolean {
+    return ["completed", "done", "closed"].includes(textValue(value).toLowerCase());
+}
+
+async function syncPassedQARoutes(
+    jobOrderId: number,
+    routeRows: any[],
+    inspectionRows: any[],
+    submittedInspections: any[],
+    completedAt: string
+): Promise<number[]> {
+    const submittedRouteIds = new Set<number>();
+
+    for (const entry of submittedInspections) {
+        const rawRouteId = entry?.joRouteId;
+        if (rawRouteId === undefined || rawRouteId === null || rawRouteId === "") continue;
+
+        const routeId = relationId(rawRouteId, ["joRouteId", "jo_route_id", "id"]);
+        if (!routeId) {
+            throw new DailyQAValidationError(422, "INVALID_ROUTE_REFERENCE", "Every QA audit must reference a valid routing step.");
+        }
+        submittedRouteIds.add(routeId);
+    }
+
+    if (submittedRouteIds.size === 0) return [];
+
+    const routesById = new Map<number, Record<string, any>>(
+        routeRows.map((route: Record<string, any>) => [
+            relationId(route.jo_route_id, ["jo_route_id", "id"]),
+            route
+        ])
+    );
+    const completedRouteIds: number[] = [];
+
+    for (const routeId of submittedRouteIds) {
+        const route = routesById.get(routeId);
+        const routeJobOrderId = relationId(route?.job_order_id, ["job_order_id", "id"]);
+        if (!route || routeJobOrderId !== jobOrderId) {
+            throw new DailyQAValidationError(422, "INSPECTION_ROUTE_MISMATCH", "The QA audit references a routing step from a different Job Order.");
+        }
+
+        const routeInspections = inspectionRows.filter((inspection: Record<string, any>) => (
+            relationId(inspection.jo_route_id, ["jo_route_id", "id"]) === routeId
+        ));
+        const routeOutcome = deriveDailyQAOutcome(routeInspections, [routeId]);
+        if (routeOutcome.status !== "Passed") continue;
+
+        if (!isCompletedRouteStatus(route.status)) {
+            await patchDirectusRecord(
+                `/items/manufacturing_job_order_routes/${encodeURIComponent(String(routeId))}`,
+                {
+                    status: "Completed",
+                    completed_at: completedAt
+                },
+                `Complete QA routing step ${routeId}`
+            );
+        }
+
+        completedRouteIds.push(routeId);
+    }
+
+    return completedRouteIds;
+}
+
 async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> {
     const [yieldResponse, inspectionsResponse, jobOrdersResponse, routesResponse, productsResponse] = await Promise.all([
         fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1&sort=-logged_at`, { headers, cache: "no-store" }),
@@ -450,12 +514,26 @@ export async function POST(request: Request) {
         }
 
         // Fetch all routes (steps) for this Job Order
-        const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store" });
-        const routes = routesRes.ok ? (await routesRes.json()).data || [] : [];
+        const routesRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,status,completed_at,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store" });
+        if (!routesRes.ok) {
+            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_FAILED", `Job Order routing lookup failed with HTTP ${routesRes.status}.`);
+        }
+        const routesPayload = await routesRes.json().catch(() => null);
+        if (!Array.isArray(routesPayload?.data)) {
+            throw new DailyQAValidationError(502, "ROUTE_LOOKUP_INVALID", "Job Order routing lookup returned an invalid response.");
+        }
+        const routes = routesPayload.data;
 
         // Fetch all daily QA inspections for this ledgerId
         const inspectionsFetch = await fetch(`${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?filter[ledger_id][_eq]=${ledgerId}`, { headers, cache: "no-store" });
-        const inspections = inspectionsFetch.ok ? (await inspectionsFetch.json()).data || [] : [];
+        if (!inspectionsFetch.ok) {
+            throw new DailyQAValidationError(502, "INSPECTION_LOOKUP_FAILED", `Daily QA inspection lookup failed with HTTP ${inspectionsFetch.status}.`);
+        }
+        const inspectionsPayload = await inspectionsFetch.json().catch(() => null);
+        if (!Array.isArray(inspectionsPayload?.data)) {
+            throw new DailyQAValidationError(502, "INSPECTION_LOOKUP_INVALID", "Daily QA inspection lookup returned an invalid response.");
+        }
+        const inspections = inspectionsPayload.data;
 
         // Use the same precedence as the Daily QA queue: failures take priority over
         // incomplete audits, and only fully released passing audits become Passed.
@@ -464,6 +542,14 @@ export async function POST(request: Request) {
             routes.map((route: any) => route.jo_route_id)
         );
         const finalLedgerStatus = outcome.status;
+
+        const completedRouteIds = await syncPassedQARoutes(
+            jobOrderId,
+            routes,
+            inspections,
+            inspectionsList,
+            timestamp
+        );
 
         if (outcome.hasFailure) {
             // 1. Update the Job Order status to "On Hold" and fail the request if
@@ -561,6 +647,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
             success: true,
             message: "Daily yield QA inspection logged successfully.",
+            completedRouteIds,
             outputMetadata
         });
     } catch (e) {
