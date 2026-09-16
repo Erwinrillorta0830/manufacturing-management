@@ -8,6 +8,13 @@ import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
 import { ProductVersion, RouteStep, OperationType, OverheadType, WorkCenter, QATemplate, Unit, BFFCatalogProduct } from "../types";
 
+export interface ActiveDraftInfo {
+    draft_id?: number | string;
+    version_name?: string;
+    status?: string;
+    [key: string]: unknown;
+}
+
 export interface VersionManagementTabProps {
     selectedProductId?: string;
     selectedVersionId: number | null;
@@ -34,7 +41,7 @@ export interface VersionManagementTabProps {
     onSubmitForApproval?: (versionId?: number) => void;
     onCreateRevision?: (version: ProductVersion) => void;
     onCancelRevision?: () => void;
-    activeDraft?: any | null;
+    activeDraft?: ActiveDraftInfo | null;
 }
 
 export function VersionManagementTab({
@@ -172,7 +179,7 @@ export function VersionManagementTab({
                                 {hasActiveDraft ? "Revision Draft (In Editor)" : "Revision Required (In Editor)"} — <span className="font-extrabold">{selectedVersion.version_name}</span>
                                 {hasActiveDraft && (
                                     <span className="ml-2 bg-amber-500/20 text-amber-800 dark:text-amber-200 border border-amber-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
-                                        Draft #{activeDraft.draft_id}
+                                        Draft #{String(activeDraft?.draft_id ?? "")}
                                     </span>
                                 )}
                             </p>

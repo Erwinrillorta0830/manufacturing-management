@@ -7,9 +7,7 @@ import {
     Plus,
     Save,
     Loader2,
-    Package,
-    Send,
-    Undo2
+    Package
 } from "lucide-react";
 import { Product, ProductVersion } from "../types";
 import { CreatableSelect } from "./CreatableSelect";
@@ -34,7 +32,7 @@ export interface FinishedGoodsHeaderProps {
     onCreateRevision?: (version: ProductVersion) => void;
     onSubmitForApproval?: (versionId?: number) => void;
     onCancelRevision?: () => void;
-    activeDraft?: any | null;
+    activeDraft?: Record<string, unknown> | null;
 }
 
 export function FinishedGoodsHeader({
@@ -51,12 +49,7 @@ export function FinishedGoodsHeader({
     setSelectedProductId,
     selectedProduct,
     onRequestSwitchProduct,
-    isVersionLocked = false,
-    selectedVersion,
-    onCreateRevision,
-    onSubmitForApproval,
-    onCancelRevision,
-    activeDraft
+    isVersionLocked = false
 }: FinishedGoodsHeaderProps) {
 
     // Build hierarchical product options (Parent & Child variants)

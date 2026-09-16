@@ -44,11 +44,11 @@ export async function GET(request: Request) {
             const draft = await getActiveDraftForVersion(versionId, { includeDeleted: isDiffView });
             return NextResponse.json({ draft });
         }
-
         return NextResponse.json({ error: "Missing required query parameter: draftId, productId, or versionId" }, { status: 400 });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("API Error in GET /versions/drafts:", err);
-        return NextResponse.json({ error: err?.message || "Failed to fetch version draft" }, { status: 500 });
+        const errMsg = err instanceof Error ? err.message : "Failed to fetch version draft";
+        return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }
 
@@ -94,9 +94,10 @@ export async function POST(request: Request) {
             status: draft.status,
             draft
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("API Error in POST /versions/drafts:", err);
-        return NextResponse.json({ error: err?.message || "Failed to initiate version draft" }, { status: 400 });
+        const errMsg = err instanceof Error ? err.message : "Failed to initiate version draft";
+        return NextResponse.json({ error: errMsg }, { status: 400 });
     }
 }
 
@@ -147,8 +148,9 @@ export async function PATCH(request: Request) {
         }
 
         return NextResponse.json({ error: "Invalid action. Supported actions: 'save', 'cancel', 'submit'." }, { status: 400 });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("API Error in PATCH /versions/drafts:", err);
-        return NextResponse.json({ error: err?.message || "Failed to process draft update" }, { status: 500 });
+        const errMsg = err instanceof Error ? err.message : "Failed to process draft update";
+        return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }

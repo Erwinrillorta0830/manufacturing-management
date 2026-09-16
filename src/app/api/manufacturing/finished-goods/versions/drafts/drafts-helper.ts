@@ -1,7 +1,7 @@
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { getBOMDetailsForVersion } from "../versions-helper";
 import { syncRoutesAndBOM, syncVersionOverheadItems } from "../../bom-details/bom-details-helper";
-import { materialTypeFromProduct, isMaterialTypeCompatible } from "@/modules/manufacturing-management/finished-goods/material-types";
+import { materialTypeFromProduct, isMaterialTypeCompatible, type MaterialType } from "@/modules/manufacturing-management/finished-goods/material-types";
 
 /**
  * ============================================================================
@@ -41,9 +41,9 @@ export interface VersionDraftHeader {
 }
 
 export interface VersionDraftFull extends VersionDraftHeader {
-    routes: any[];
-    labor_positions: any[];
-    overheads: any[];
+    routes: Record<string, unknown>[];
+    labor_positions: Record<string, unknown>[];
+    overheads: Record<string, unknown>[];
 }
 
 function getNowInPhtISO(): string {
@@ -72,11 +72,11 @@ export async function getDraftById(
         // 1. Fetch draft routes
         const routesUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes?filter[draft_id][_eq]=${draftId}${delFilter}&sort=sequence_order&limit=-1`;
         const routesRes = await fetch(routesUrl, { headers, cache: "no-store" });
-        const routes: any[] = routesRes.ok ? (await routesRes.json()).data || [] : [];
+        const routes: Record<string, unknown>[] = routesRes.ok ? (await routesRes.json()).data || [] : [];
 
         // 2. Fetch draft BOM items for these routes
         const routeIds = routes.map(r => r.draft_route_id).filter(Boolean);
-        let bomItems: any[] = [];
+        let bomItems: Record<string, unknown>[] = [];
         if (routeIds.length > 0) {
             const bomUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_in]=${routeIds.join(",")}${delFilter}&limit=-1`;
             const bomRes = await fetch(bomUrl, { headers, cache: "no-store" });
@@ -88,13 +88,13 @@ export async function getDraftById(
             fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
         ]);
-        const opsList: any[] = opsRes.ok ? (await opsRes.json()).data || [] : [];
-        const unitsList: any[] = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
+        const opsList: Record<string, unknown>[] = opsRes.ok ? (await opsRes.json()).data || [] : [];
+        const unitsList: Record<string, unknown>[] = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
 
-        const opsById = new Map<number, string>(opsList.map((o: any) => [Number(o.id), String(o.operation_name)]));
-        const opsByName = new Map<string, number>(opsList.map((o: any) => [String(o.operation_name).toLowerCase().trim(), Number(o.id)]));
+        const opsById = new Map<number, string>(opsList.map((o) => [Number(o.id), String(o.operation_name)]));
+        const opsByName = new Map<string, number>(opsList.map((o) => [String(o.operation_name).toLowerCase().trim(), Number(o.id)]));
         const unitsById = new Map<number, { unit_shortcut?: string; unit_name?: string }>(
-            unitsList.map((u: any) => [Number(u.unit_id), { unit_shortcut: u.unit_shortcut, unit_name: u.unit_name }])
+            unitsList.map((u) => [Number(u.unit_id), { unit_shortcut: u.unit_shortcut as string | undefined, unit_name: u.unit_name as string | undefined }])
         );
 
         // Fetch product metadata for BOM component lines
@@ -110,21 +110,24 @@ export async function getDraftById(
                 fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter=${versionFilter}&fields=product_id&limit=-1`, { headers, cache: "no-store" })
             ]);
 
-            const products = productsRes.ok ? (await productsRes.json()).data || [] : [];
-            productMap = new Map(products.map((p: any) => [
-                Number(p.product_id),
-                {
-                    product_name: p.product_name || "",
-                    product_code: p.product_code || "",
-                    product_type: p.product_type != null ? Number(p.product_type) : null,
-                    uom: p.unit_of_measurement?.unit_shortcut || p.unit_of_measurement?.unit_name || "",
-                    uomId: p.unit_of_measurement?.unit_id ? Number(p.unit_of_measurement.unit_id) : undefined
-                }
-            ]));
+            const products: Record<string, unknown>[] = productsRes.ok ? (await productsRes.json()).data || [] : [];
+            productMap = new Map(products.map((p) => {
+                const uomObj = p.unit_of_measurement as { unit_id?: number; unit_shortcut?: string; unit_name?: string } | undefined;
+                return [
+                    Number(p.product_id),
+                    {
+                        product_name: (p.product_name as string) || "",
+                        product_code: (p.product_code as string) || "",
+                        product_type: p.product_type != null ? Number(p.product_type) : null,
+                        uom: uomObj?.unit_shortcut || uomObj?.unit_name || "",
+                        uomId: uomObj?.unit_id ? Number(uomObj.unit_id) : undefined
+                    }
+                ];
+            }));
 
             if (productVersionsRes.ok) {
-                const pvData = (await productVersionsRes.json()).data || [];
-                versionedProductIds = new Set(pvData.map((pv: any) => Number(pv.product_id)).filter((id: number) => Number.isFinite(id) && id > 0));
+                const pvData: Record<string, unknown>[] = (await productVersionsRes.json()).data || [];
+                versionedProductIds = new Set(pvData.map((pv) => Number(pv.product_id)).filter((id: number) => Number.isFinite(id) && id > 0));
             }
         }
 
@@ -171,7 +174,7 @@ export async function getDraftById(
                         else if (s.includes("finish")) matType = "finished_good";
                         else if (s.includes("raw")) matType = "raw_material";
                     }
-                    if (!matType || !isMaterialTypeCompatible(matType as any, pInfo?.product_type, hasVersions)) {
+                    if (!matType || !isMaterialTypeCompatible(matType as MaterialType, pInfo?.product_type, hasVersions)) {
                         matType = expectedMatType;
                     }
 
@@ -202,7 +205,7 @@ export async function getDraftById(
         // 3. Fetch draft labor positions
         const posUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions?filter[draft_id][_eq]=${draftId}${delFilter}&limit=-1`;
         const posRes = await fetch(posUrl, { headers, cache: "no-store" });
-        const laborPositions: any[] = posRes.ok ? (await posRes.json()).data || [] : [];
+        const laborPositions: Record<string, unknown>[] = posRes.ok ? (await posRes.json()).data || [] : [];
         const mappedPositions = laborPositions.map(p => ({
             ...p,
             id: p.draft_pos_id,
@@ -224,7 +227,7 @@ export async function getDraftById(
         // 4. Fetch draft overheads
         const ovhUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads?filter[draft_id][_eq]=${draftId}${delFilter}&limit=-1`;
         const ovhRes = await fetch(ovhUrl, { headers, cache: "no-store" });
-        const overheads: any[] = ovhRes.ok ? (await ovhRes.json()).data || [] : [];
+        const overheads: Record<string, unknown>[] = ovhRes.ok ? (await ovhRes.json()).data || [] : [];
         const mappedOverheads = overheads.map(o => ({
             ...o,
             id: String(o.draft_overhead_id),
@@ -317,14 +320,14 @@ export async function createDraft(options: {
     }
 
     // 1. Source Version Validation (Ownership Verification)
-    let sourceVer: any = null;
+    let sourceVer: Record<string, unknown> | null = null;
     if (sourceVersionId) {
         const sourceVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${sourceVersionId}`, { headers, cache: "no-store" });
         if (!sourceVerRes.ok) {
             throw new Error(`Source production version #${sourceVersionId} not found.`);
         }
         sourceVer = (await sourceVerRes.json()).data;
-        if (Number(sourceVer.product_id) !== Number(productId)) {
+        if (Number(sourceVer?.product_id) !== Number(productId)) {
             throw new Error(`Source version #${sourceVersionId} does not belong to product #${productId}.`);
         }
     }
@@ -382,9 +385,9 @@ export async function createDraft(options: {
     const draftId = createdDraft.draft_id;
 
     // 6. If branching from a source version, clone its historical specification baseline
-    const createdRoutes: any[] = [];
-    const createdPositions: any[] = [];
-    const createdOverheads: any[] = [];
+    const createdRoutes: Record<string, unknown>[] = [];
+    const createdPositions: Record<string, unknown>[] = [];
+    const createdOverheads: Record<string, unknown>[] = [];
 
     if (sourceVersionId) {
         const baseline = await getBOMDetailsForVersion(productId, sourceVersionId);
@@ -397,23 +400,23 @@ export async function createDraft(options: {
             fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" })
         ]);
-        const opsList: any[] = opsRes.ok ? (await opsRes.json()).data || [] : [];
-        const unitsList: any[] = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
-        const opsById = new Map<number, string>(opsList.map((o: any) => [Number(o.id), String(o.operation_name)]));
+        const opsList: Record<string, unknown>[] = opsRes.ok ? (await opsRes.json()).data || [] : [];
+        const unitsList: Record<string, unknown>[] = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
+        const opsById = new Map<number, string>(opsList.map((o) => [Number(o.id), String(o.operation_name)]));
         const unitsMap = new Map<string, number>();
-        unitsList.forEach((u: any) => {
+        unitsList.forEach((u) => {
             if (u.unit_shortcut) unitsMap.set(String(u.unit_shortcut).toLowerCase().trim(), Number(u.unit_id));
             if (u.unit_name) unitsMap.set(String(u.unit_name).toLowerCase().trim(), Number(u.unit_id));
         });
 
         for (let i = 0; i < routes.length; i++) {
-            const r = routes[i] as any;
+            const r = routes[i] as unknown as Record<string, unknown>;
             const opId = r.operation_id ? Number(r.operation_id) : (r.operationId ? Number(r.operationId) : null);
-            const opName = (opId ? opsById.get(opId) : null) || r.operation_name || r.stage || (opId ? `Operation #${opId}` : `Step ${r.sequence_order || i + 1}`);
+            const opName = (opId ? opsById.get(opId) : null) || r.operation_name || r.stage || (opId ? `Operation #${opId}` : `Step ${(r.sequence_order as number) || i + 1}`);
 
             const routePayload = {
                 draft_id: draftId,
-                sequence_order: r.sequence_order || i + 1,
+                sequence_order: (r.sequence_order as number) || i + 1,
                 operation_name: opName,
                 work_center_id: r.work_center_id ? Number(r.work_center_id) : null,
                 standard_time_minutes: r.run_time_hours != null ? Math.round(Number(r.run_time_hours) * 60 * 100) / 100 : (r.standard_time_minutes ? Number(r.standard_time_minutes) : 0),
@@ -436,8 +439,8 @@ export async function createDraft(options: {
                 const createdRoute = (await rRes.json()).data;
                 const draftRouteId = createdRoute.draft_route_id;
 
-                const createdBomItems: any[] = [];
-                const bomItems = r.bom_items || [];
+                const createdBomItems: Record<string, unknown>[] = [];
+                const bomItems = (r.bom_items || []) as unknown as Record<string, unknown>[];
                 for (const b of bomItems) {
                     let resolvedUomId = 1;
                     const rawUom = b.unit_of_measurement ?? b.uom_id ?? b.uom;
@@ -449,8 +452,8 @@ export async function createDraft(options: {
                         }
                     }
 
-                    const expectedMatType = materialTypeFromProduct(b.product_type, b.has_versions) || "raw_material";
-                    let matType = b.material_type || expectedMatType;
+                    const expectedMatType = materialTypeFromProduct(b.product_type as number | string | null, b.has_versions as boolean | null) || "raw_material";
+                    let matType = (b.material_type as string) || expectedMatType;
                     if (matType && typeof matType === "string") {
                         const s = matType.toLowerCase().trim();
                         if (s.includes("pack")) matType = "packaging";
@@ -458,7 +461,7 @@ export async function createDraft(options: {
                         else if (s.includes("finish")) matType = "finished_good";
                         else if (s.includes("raw")) matType = "raw_material";
                     }
-                    if (!matType || !isMaterialTypeCompatible(matType as any, b.product_type, b.has_versions)) {
+                    if (!matType || !isMaterialTypeCompatible(matType as MaterialType, b.product_type as number | string | null, b.has_versions as boolean | null)) {
                         matType = expectedMatType;
                     }
 
@@ -528,12 +531,12 @@ export async function createDraft(options: {
 
         // Clone overheads
         for (const ovhItem of overheads) {
-            const ovh = ovhItem as any;
+            const ovh = ovhItem as unknown as Record<string, unknown>;
             const ovhPayload = {
                 draft_id: draftId,
-                overhead_name: ovh.overhead_name || ovh.remarks || "Overhead",
+                overhead_name: (ovh.overhead_name as string) || (ovh.remarks as string) || "Overhead",
                 cost_allocation: Number(ovh.cost_per_unit ?? ovh.cost ?? 0),
-                allocation_basis: ovh.allocation_basis || "per_unit",
+                allocation_basis: (ovh.allocation_basis as string) || "per_unit",
                 is_deleted: 0,
                 created_by: userId || null,
                 created_at: getNowInPhtISO()
@@ -568,10 +571,10 @@ export async function createDraft(options: {
 export async function saveDraftDetails(
     draftId: number,
     data: {
-        details?: any;
-        routes?: any[];
-        labor_positions?: any[];
-        overheads?: any[];
+        details?: Record<string, unknown>;
+        routes?: Record<string, unknown>[];
+        labor_positions?: Record<string, unknown>[];
+        overheads?: Record<string, unknown>[];
     },
     userId?: number | null
 ): Promise<{ success: boolean; error?: string }> {
@@ -608,7 +611,7 @@ export async function saveDraftDetails(
     // 2. Sync Routes & BOM items with logical deletion
     if (data.routes && Array.isArray(data.routes)) {
         const exRoutesRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
-        const existingRoutes: any[] = exRoutesRes.ok ? (await exRoutesRes.json()).data || [] : [];
+        const existingRoutes: Record<string, unknown>[] = exRoutesRes.ok ? (await exRoutesRes.json()).data || [] : [];
         const incomingRouteIds = new Set(data.routes.map(r => Number(r.draft_route_id || r.route_id || 0)).filter(Boolean));
 
         // Soft-delete routes not in payload
@@ -621,7 +624,7 @@ export async function saveDraftDetails(
                 });
                 // Soft-delete all BOM items under this route
                 const bomsRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_eq]=${exR.draft_route_id}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
-                const boms: any[] = bomsRes.ok ? (await bomsRes.json()).data || [] : [];
+                const boms: Record<string, unknown>[] = bomsRes.ok ? (await bomsRes.json()).data || [] : [];
                 for (const b of boms) {
                     await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${b.draft_bom_id}`, {
                         method: "PATCH",
@@ -634,7 +637,7 @@ export async function saveDraftDetails(
 
         // Insert or update incoming routes
         for (let i = 0; i < data.routes.length; i++) {
-            const r: any = data.routes[i];
+            const r = data.routes[i];
             const rId = Number(r.draft_route_id || r.route_id || 0);
 
             let activeDraftRouteId = rId;
@@ -681,8 +684,8 @@ export async function saveDraftDetails(
             // Sync BOM items under this route
             if (activeDraftRouteId > 0 && r.bom_items && Array.isArray(r.bom_items)) {
                 const exBomsRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_eq]=${activeDraftRouteId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
-                const existingBoms: any[] = exBomsRes.ok ? (await exBomsRes.json()).data || [] : [];
-                const incomingBoms: any[] = r.bom_items;
+                const existingBoms: Record<string, unknown>[] = exBomsRes.ok ? (await exBomsRes.json()).data || [] : [];
+                const incomingBoms: Record<string, unknown>[] = (r.bom_items || []) as unknown as Record<string, unknown>[];
                 const incomingBomIds = new Set(incomingBoms.map(b => Number(b.draft_bom_id || b.bom_item_id || b.id || 0)).filter(Boolean));
 
                 // Soft-delete BOM items removed from this route
@@ -705,8 +708,8 @@ export async function saveDraftDetails(
                         quantity: Number(b.quantity_required ?? b.quantity ?? 1),
                         uom_id: Number(b.unit_of_measurement || b.uom_id || b.unit_id || 1),
                         wastage_percentage: Number(b.wastage_factor_percentage ?? b.wastage_percentage ?? 0),
-                        material_type: b.material_type || "Raw Material",
-                        notes: b.notes || null,
+                        material_type: (b.material_type as string) || "Raw Material",
+                        notes: (b.notes as string) || null,
                         cost_per_unit: Number(b.cost_per_unit || 0),
                         is_deleted: 0
                     };
@@ -740,7 +743,7 @@ export async function saveDraftDetails(
     // 3. Sync Direct Labor Positions with logical deletion
     if (data.labor_positions && Array.isArray(data.labor_positions)) {
         const exPosRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
-        const existingPositions: any[] = exPosRes.ok ? (await exPosRes.json()).data || [] : [];
+        const existingPositions: Record<string, unknown>[] = exPosRes.ok ? (await exPosRes.json()).data || [] : [];
         const incomingPosIds = new Set(data.labor_positions.map(p => Number(p.draft_pos_id || p.id || 0)).filter(Boolean));
 
         for (const exP of existingPositions) {
@@ -758,8 +761,8 @@ export async function saveDraftDetails(
             const basePosPayload = {
                 draft_id: draftId,
                 position_id: p.position_id || null,
-                position_name: p.position_name || "Operator",
-                category: p.category || "direct_labor",
+                position_name: (p.position_name as string) || "Operator",
+                category: (p.category as string) || "direct_labor",
                 manpower_count: Number(p.manpower_count || 1),
                 hourly_rate: Number(p.hourly_rate || 0),
                 hours_required: Number(p.hours_required || 0),
@@ -799,7 +802,7 @@ export async function saveDraftDetails(
     // 4. Sync Overheads with logical deletion
     if (data.overheads && Array.isArray(data.overheads)) {
         const exOvhRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
-        const existingOverheads: any[] = exOvhRes.ok ? (await exOvhRes.json()).data || [] : [];
+        const existingOverheads: Record<string, unknown>[] = exOvhRes.ok ? (await exOvhRes.json()).data || [] : [];
         const incomingOvhIds = new Set(data.overheads.map(o => Number(o.draft_overhead_id || o.id || 0)).filter(Boolean));
 
         for (const exO of existingOverheads) {
@@ -911,7 +914,7 @@ export async function submitDraftForApproval(
         return { success: false, error: "At least one workstation routing step is required before submitting." };
     }
 
-    const totalBom = fullDraft.routes.reduce((sum, r) => sum + (r.bom_items || []).length, 0);
+    const totalBom = fullDraft.routes.reduce((sum, r) => sum + (Array.isArray(r.bom_items) ? r.bom_items.length : 0), 0);
     if (totalBom === 0) {
         return { success: false, error: "At least one BOM ingredient component is required before submitting." };
     }
@@ -1048,20 +1051,20 @@ export async function applyApprovedDraft(
         const newVersionId = Number(createdVersion.version_id);
 
         // 7. Migrate active draft routes and BOM components (WHERE is_deleted = 0)
-        const activeRoutes = (draft.routes || []).map((r: any) => ({
+        const activeRoutes = (draft.routes || []).map((r) => ({
             ...r,
             route_id: 0,
             id: 0,
             draft_route_id: undefined,
             operation_id: r.operation_id ? Number(r.operation_id) : (r.operationId ? Number(r.operationId) : null),
-            step_number: r.sequence_order || r.step_number,
-            stage: r.operation_name || r.stage,
+            step_number: (r.sequence_order as number) || (r.step_number as number),
+            stage: (r.operation_name as string) || (r.stage as string),
             setup_time_hours: Number(r.setup_time_hours || 0),
             run_time_hours: Number(r.run_time_hours || 0),
             step_batch_size: Number(r.step_batch_size || 1),
-            bom_items: (r.bom_items || []).filter((b: any) => !b.is_deleted).map((b: any) => {
-                const expectedMatType = materialTypeFromProduct(b.product_type, b.has_versions) || "raw_material";
-                let matType = b.material_type || expectedMatType;
+            bom_items: ((r.bom_items as Record<string, unknown>[]) || []).filter((b) => !b.is_deleted).map((b) => {
+                const expectedMatType = materialTypeFromProduct(b.product_type as number | string | null, b.has_versions as boolean | null) || "raw_material";
+                let matType = (b.material_type as string) || expectedMatType;
                 if (matType && typeof matType === "string") {
                     const s = matType.toLowerCase().trim();
                     if (s.includes("pack")) matType = "packaging";
@@ -1069,7 +1072,7 @@ export async function applyApprovedDraft(
                     else if (s.includes("finish")) matType = "finished_good";
                     else if (s.includes("raw")) matType = "raw_material";
                 }
-                if (!matType || !isMaterialTypeCompatible(matType as any, b.product_type, b.has_versions)) {
+                if (!matType || !isMaterialTypeCompatible(matType as MaterialType, b.product_type as number | string | null, b.has_versions as boolean | null)) {
                     matType = expectedMatType;
                 }
                 return {
@@ -1090,21 +1093,21 @@ export async function applyApprovedDraft(
             })
         }));
 
-        const activePositions = (draft.labor_positions || []).filter((p: any) => !p.is_deleted).map((p: any) => ({
+        const activePositions = (draft.labor_positions || []).filter((p) => !p.is_deleted).map((p) => ({
             ...p,
             id: 0,
             draft_pos_id: undefined,
             position_id: p.position_id != null ? Number(p.position_id) : null
         }));
 
-        const activeOverheads = (draft.overheads || []).filter((o: any) => !o.is_deleted).map((o: any) => ({
+        const activeOverheads = (draft.overheads || []).filter((o) => !o.is_deleted).map((o) => ({
             ...o,
             id: 0,
             draft_overhead_id: undefined,
-            overhead_name: o.overhead_name || o.remarks || "Overhead",
+            overhead_name: (o.overhead_name as string) || (o.remarks as string) || "Overhead",
             cost_per_unit: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
             cost: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
-            allocation_basis: o.allocation_basis || "per_unit",
+            allocation_basis: (o.allocation_basis as string) || "per_unit",
             is_active: o.is_active !== undefined ? Boolean(o.is_active) : true
         }));
 
@@ -1134,9 +1137,10 @@ export async function applyApprovedDraft(
         });
 
         return { success: true, newVersionId };
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Error in applyApprovedDraft:", err);
-        return { success: false, error: err?.message || "Failed to apply approved draft to production tables" };
+        const errMsg = err instanceof Error ? err.message : "Failed to apply approved draft to production tables";
+        return { success: false, error: errMsg };
     }
 }
 
@@ -1173,8 +1177,9 @@ export async function rejectDraft(
         });
 
         return { success: true };
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Error in rejectDraft:", err);
-        return { success: false, error: err?.message || "Failed to mark draft as rejected" };
+        const errMsg = err instanceof Error ? err.message : "Failed to mark draft as rejected";
+        return { success: false, error: errMsg };
     }
 }

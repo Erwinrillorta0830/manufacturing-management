@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
         // 1. Fetch target version or draft to get product_id and specification details
         let productId = 0;
-        let targetBOM: { version: ProductVersion | null; routes: any[] } = { version: null, routes: [] };
+        let targetBOM: { version: ProductVersion | null; routes: RouteStep[] } = { version: null, routes: [] };
         let sourceBaseVersionId: number | null = null;
 
         const targetRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${targetVersionId}`, { headers, cache: "no-store" });
@@ -48,6 +48,7 @@ export async function GET(request: Request) {
             if (draft) {
                 productId = Number(draft.product_id);
                 sourceBaseVersionId = draft.source_version_id || null;
+                const draftRoutes = (draft.routes || []) as unknown as RouteStep[];
                 targetBOM = {
                     version: {
                         version_id: draft.draft_id,
@@ -60,17 +61,17 @@ export async function GET(request: Request) {
                         uom_id: draft.uom_id,
                         is_active: false,
                         is_primary: false,
-                        routes: draft.routes as any,
-                        labor_positions: draft.labor_positions as any,
-                        overhead_items: draft.overheads as any
-                    } as any,
-                    routes: (draft.routes || []).map((r: any) => ({
+                        routes: draftRoutes,
+                        labor_positions: (draft.labor_positions || []) as unknown as VersionPosition[],
+                        overhead_items: (draft.overheads || []) as unknown as ProductVersion["overhead_items"]
+                    } as unknown as ProductVersion,
+                    routes: draftRoutes.map((r, idx) => ({
                         ...r,
-                        step_number: r.sequence_order || r.step_number,
-                        bom_items: (r.bom_items || []).map((b: any) => ({
+                        sequence_order: r.sequence_order || idx + 1,
+                        bom_items: (r.bom_items || []).map((b) => ({
                             ...b,
-                            quantity_required: b.quantity ?? b.quantity_required ?? 0,
-                            wastage_factor_percentage: b.wastage_percentage ?? b.wastage_factor_percentage ?? 0
+                            quantity_required: b.quantity_required ?? (b as unknown as { quantity?: number }).quantity ?? 0,
+                            wastage_factor_percentage: b.wastage_factor_percentage ?? (b as unknown as { wastage_percentage?: number }).wastage_percentage ?? 0
                         }))
                     }))
                 };

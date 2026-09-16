@@ -40,6 +40,23 @@ interface DirectusUser {
     user_lname?: string | null;
 }
 
+interface DirectusDraftItem {
+    draft_id: number;
+    product_id: number;
+    source_version_id?: number | null;
+    version_name: string;
+    base_quantity?: number;
+    expected_yield_percentage?: number;
+    status: string;
+    created_by?: number | null;
+    created_at?: string;
+    submitted_at?: string;
+    reviewed_by?: number | null;
+    reviewed_at?: string;
+    remarks?: string | null;
+    cancellation_reason?: string | null;
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -62,7 +79,7 @@ export async function GET(request: Request) {
         const verJson = await verRes.json();
         const rawVersions: DirectusProductVersion[] = verJson.data || [];
 
-        const rawDrafts: any[] = draftRes && draftRes.ok ? ((await draftRes.json()).data || []) : [];
+        const rawDrafts: DirectusDraftItem[] = draftRes && draftRes.ok ? ((await draftRes.json()).data || []) : [];
 
         const productsMap = new Map<number, { product_name: string; product_code: string; category_name: string }>();
         if (prodRes.ok) {
@@ -144,10 +161,10 @@ export async function GET(request: Request) {
                 rejection_reason: v.remarks || v.rejection_reason || null,
                 revision_notes: v.remarks || v.approval_remarks || null,
                 remarks: v.remarks || null,
-                base_version_id: null,
+                base_version_id: null as number | null,
                 approved_by_name: approvedByName,
                 is_draft: false,
-                draft_id: null
+                draft_id: null as number | null
             };
         });
 
@@ -270,13 +287,13 @@ export async function POST(request: Request) {
 
         // Check if this is a draft in product_manufacturing_version_draft
         let isDraftTarget = Boolean(isDraft || draftId);
-        let draftRecord: any = null;
+        let draftRecord: Record<string, unknown> | null = null;
 
         if (!isDraftTarget) {
             const checkDraftRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${targetId}`, { headers, cache: "no-store" });
             if (checkDraftRes.ok) {
                 draftRecord = (await checkDraftRes.json()).data;
-                if (draftRecord && draftRecord.status === "Pending Approval") {
+                if (draftRecord && (draftRecord as { status?: string }).status === "Pending Approval") {
                     isDraftTarget = true;
                 }
             }
