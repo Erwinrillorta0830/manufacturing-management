@@ -622,6 +622,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
 
 
 export async function handlePOST(request: Request) {
+    let createdJobOrderNo: string | null = null;
     try {
         const body = await request.json();
         const { action } = body;
@@ -1582,8 +1583,12 @@ export async function handlePOST(request: Request) {
             effectiveSalesOrderIds,
             schedulingValidation.detailIds,
             schedulingPlan,
-            { initialize: body.initialize === true }
+            {
+                initialize: body.initialize === true,
+                physicalOnHandInitialization: body.isBuffer === true && body.initialize === true
+            }
         );
+        createdJobOrderNo = result.jo_id ? String(result.jo_id).trim() : null;
         if (body.initialize === true) {
             const workflow = await executeJobOrderWorkflow(result.job_order_id || 0, {
                 action: "initialize",
@@ -1597,6 +1602,12 @@ export async function handlePOST(request: Request) {
         }
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
+        if (createdJobOrderNo) {
+            const cleanupSucceeded = await deleteJobOrder(createdJobOrderNo);
+            if (!cleanupSucceeded) {
+                console.error(`[Planning Engineering] Failed to clean up newly created Job Order ${createdJobOrderNo} after initialization failure.`);
+            }
+        }
         console.error("API Error in planning-engineering POST:", e);
         if (e instanceof PlanningConflictError || e instanceof SalesOrderAllocationConflictError) {
             return NextResponse.json({ error: e.message }, { status: 409 });

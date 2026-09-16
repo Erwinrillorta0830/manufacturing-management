@@ -77,6 +77,7 @@ export async function fetchJobMaterials(joId: number | string, signal?: AbortSig
 
 export interface ReleaseJOPayload {
     initialize?: boolean;
+    isBuffer?: boolean;
     idempotencyKey?: string;
     force?: boolean;
     overrideReason?: string;
