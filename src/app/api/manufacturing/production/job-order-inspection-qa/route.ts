@@ -9,6 +9,10 @@ import {
     isCancelledJobOrderStatus,
     normalizeJobOrderStatus,
 } from "@/modules/manufacturing-management/job-order-status";
+import {
+    getJobOrderClosureReadiness,
+    type JobOrderClosureReadiness,
+} from "../../job-orders/_workflow-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -442,6 +446,20 @@ async function loadJobOrderDetails(id: number) {
         })))
         .sort((left, right) => left.orderNo.localeCompare(right.orderNo, undefined, { numeric: true }));
 
+    let closeReadiness: JobOrderClosureReadiness;
+    try {
+        closeReadiness = await getJobOrderClosureReadiness(id);
+    } catch (error) {
+        console.error(`Unable to determine close readiness for Job Order ${id}:`, error);
+        closeReadiness = {
+            ready: false,
+            blockers: [{
+                code: "CLOSURE_VALIDATION_UNAVAILABLE",
+                message: "Close readiness could not be verified. Retry before closing this Job Order."
+            }]
+        };
+    }
+
     return {
         jobOrderId: id,
         jobOrderNo: textValue(jobOrder.job_order_no) || `JO-${id}`,
@@ -458,7 +476,8 @@ async function loadJobOrderDetails(id: number) {
         latestYieldAt: timestampValue(dailyYields[0]?.loggedAt || dailyYields[0]?.productionDate),
         routes: routeModels,
         dailyYields,
-        salesOrders: linkedSalesOrders
+        salesOrders: linkedSalesOrders,
+        closeReadiness
     };
 }
 

@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, DirectusJobOrder, getUomCountForProduct } from "./shared";
 import { getBOMDetailsForVersion, getActiveVersionForProduct } from "../../finished-goods/versions/versions-helper";
-import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getTodayDateString, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { getAvailableInventoryLots } from "./inventory-helper";
 import {
     isCancelledJobOrderStatus,
@@ -36,6 +36,8 @@ export interface CreateJobOrderOptions {
     deferSalesOrderTransition?: boolean;
     /** Creation is always a Draft; initialization is an explicit next action. */
     initialize?: boolean;
+    /** Buffer JOs use physical on-hand stock when initializing; Sales Order JOs remain reservation-aware. */
+    physicalOnHandInitialization?: boolean;
 }
 
 function relationId(value: unknown): number {
@@ -266,6 +268,9 @@ export async function createJobOrder(
 
         // Dry-Run BOM Explosion & Raw Material Stock Verification
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
+        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && options.initialize
+            ? { includeReservations: false }
+            : undefined;
         
         for (const p of finalProductsList) {
             const pId = p.product_id;
@@ -316,7 +321,7 @@ export async function createJobOrder(
                             throw new Error("Cannot verify stock: Job Order is missing branch_id");
                         }
                         const branchId = Number(joData.branch_id);
-                        const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                        const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
                         const netAvailable = availableLots.reduce((total, lot) => total + lot.available, 0);
 
                         if (netAvailable < quantityRequired) {
@@ -397,9 +402,10 @@ export async function createJobOrder(
             sub_assembly_version_map: (joData as any).sub_assembly_version_map 
                 ? (typeof (joData as any).sub_assembly_version_map === "object" ? JSON.stringify((joData as any).sub_assembly_version_map) : (joData as any).sub_assembly_version_map) 
                 : ((joData as any).subAssemblyVersionMap ? JSON.stringify((joData as any).subAssemblyVersionMap) : null),
-            branch_id: joData.branch_id ? Number(joData.branch_id) : null,
+            branch_id: numericBranchId,
             created_by: joData.created_by ? Number(joData.created_by) : null,
-            created_at: new Date().toISOString(),
+            created_at: formatPhtDateTime(),
+            modified_at: null,
             remarks: (joData.remarks || `Consolidated production run. Shift: ${joData.shift_option || "8"}`) + forcedDraftRemarks
         };
 
@@ -430,7 +436,7 @@ export async function createJobOrder(
                 event_key: `create:${joNoStr}`,
                 remarks: "Initial Job Order Creation",
                 changed_by: joData.created_by ? Number(joData.created_by) : null,
-                changed_at: new Date().toISOString()
+                changed_at: formatPhtDateTime()
             })
         });
         if (!historyRes.ok) {
@@ -557,7 +563,7 @@ export async function createJobOrder(
                                     operator_id: Number(uId),
                                     logged_hours: 0,
                                     hourly_rate: userRate,
-                                    logged_at: new Date().toISOString()
+                                    logged_at: formatPhtDateTime()
                                 };
                                 await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
                                     method: "POST",
@@ -597,7 +603,7 @@ export async function createJobOrder(
                                      throw new Error("Cannot allocate raw materials: Job Order is missing branch_id");
                                  }
                                  const branchId = Number(joData.branch_id);
-                                 const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                                 const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
 
                                  for (const lot of availableLots) {
                                      if (allocatedQty >= quantityRequired) break;
@@ -651,12 +657,26 @@ export async function createJobOrder(
                                 body: JSON.stringify(matPayload)
                             });
                             
-                            if (matRes.ok) {
-                                const createdMat = (await matRes.json()).data;
-                                const jomId = createdMat.jo_material_id || createdMat.id;
-                                
-                                // Now log specific lot allocations in manufacturing_job_order_allocations
-                                for (const alloc of allocations) {
+                            if (!matRes.ok) {
+                                throw new Error(`Failed to create Job Order material worksheet row: ${matRes.status} - ${await matRes.text()}`);
+                            }
+
+                            const createdMat = (await matRes.json()).data;
+                            const jomId = Number(createdMat?.jo_material_id || createdMat?.id || 0);
+                            if (!jomId) {
+                                throw new Error("Job Order material worksheet row was created without an identifier.");
+                            }
+
+                            // Log specific lot allocations and reservations. These
+                            // writes must succeed before an initialized JO can
+                            // advance to material picking.
+                            for (const alloc of allocations) {
+                                // The legacy allocation collection models a
+                                // Sales Order line and requires
+                                // sales_order_detail_id. Buffer JOs are not
+                                // linked to Sales Orders, so their authoritative
+                                // lot allocation is the reservation below.
+                                if (!options.physicalOnHandInitialization) {
                                     const allocationPayload = {
                                         job_order_id: joIdInt,
                                         job_order_material_id: jomId,
@@ -666,40 +686,44 @@ export async function createJobOrder(
                                         reservation_type: "SOFT",
                                         status: "ACTIVE",
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
-                                        created_at: new Date().toISOString()
+                                        created_at: formatPhtDateTime()
                                     };
-                                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
+                                    const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
                                         headers,
                                         body: JSON.stringify(allocationPayload)
-                                    }).catch(err => console.error("Error creating manufacturing_job_order_allocations row:", err));
-
-                                    const reservationPayload: Record<string, unknown> = {
-                                        product_id: compProductId,
-                                         branch_id: joData.branch_id ? Number(joData.branch_id) : null,
-                                         mm_lot_id: alloc.mm_lot_id || null,
-                                         inventory_lot_id: alloc.inventory_lot_id || null,
-                                         batch_no: alloc.batch_no || null,
-                                         expiry_date: alloc.expiry_date || null,
-                                        jo_material_id: jomId,
-                                        reserved_quantity: alloc.allocated,
-                                        actual_used_quantity: 0,
-                                        reservation_status: "SOFT",
-                                        uom_id: uomId || null,
-                                        source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
-                                        created_by: joData.created_by ? Number(joData.created_by) : null
-                                    };
-                                    if (alloc.purchase_order_product_id > 0) {
-                                        reservationPayload.purchase_order_receiving_id = alloc.purchase_order_product_id;
+                                    });
+                                    if (!allocationRes.ok) {
+                                        throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${await allocationRes.text()}`);
                                     }
-                                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify(reservationPayload)
-                                    }).catch(err => console.error("Error creating materials reservation row:", err));
                                 }
-                            } else {
-                                console.error("Error creating manufacturing_job_order_materials row:", await matRes.text());
+
+                                const reservationPayload: Record<string, unknown> = {
+                                    product_id: compProductId,
+                                    branch_id: numericBranchId,
+                                    mm_lot_id: alloc.mm_lot_id || null,
+                                    inventory_lot_id: alloc.inventory_lot_id || null,
+                                    batch_no: alloc.batch_no || null,
+                                    expiry_date: alloc.expiry_date || null,
+                                    jo_material_id: jomId,
+                                    reserved_quantity: alloc.allocated,
+                                    actual_used_quantity: 0,
+                                    reservation_status: "SOFT",
+                                    uom_id: uomId || null,
+                                    source_event_key: `jo:${joIdInt}:reserve:${jomId}:${alloc.purchase_order_product_id || 0}:${alloc.mm_lot_id || 0}:${alloc.batch_no || ""}`,
+                                    created_by: joData.created_by ? Number(joData.created_by) : null
+                                };
+                                if (alloc.purchase_order_product_id > 0) {
+                                    reservationPayload.purchase_order_receiving_id = alloc.purchase_order_product_id;
+                                }
+                                const reservationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations`, {
+                                    method: "POST",
+                                    headers,
+                                    body: JSON.stringify(reservationPayload)
+                                });
+                                if (!reservationRes.ok) {
+                                    throw new Error(`Failed to create Job Order material reservation: ${reservationRes.status} - ${await reservationRes.text()}`);
+                                }
                             }
 
                             const shortfall = quantityRequired - allocatedQty;
@@ -852,7 +876,7 @@ export async function createJobOrder(
                         sales_order_detail_id: detailId,
                         allocated_quantity: allocationQuantity,
                         reservation_type: "SOFT",
-                        created_at: new Date().toISOString(),
+                        created_at: formatPhtDateTime(),
                         created_by: joData.created_by ? Number(joData.created_by) : null
                     })
                 });

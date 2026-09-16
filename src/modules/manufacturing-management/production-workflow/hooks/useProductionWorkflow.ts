@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview, matchesProductionWorkflowStatus } from "../types";
+import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -33,7 +33,6 @@ export function useProductionWorkflow() {
     const [loadingJobs, setLoadingJobs] = useState(true);
     const [loadingOperators, setLoadingOperators] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState<string>("Active");
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
@@ -62,10 +61,14 @@ export function useProductionWorkflow() {
     const [cancellationError, setCancellationError] = useState<string | null>(null);
     const [workflowSubmitting, setWorkflowSubmitting] = useState(false);
 
-    // Get current Job Order object
+    const inProductionJobOrders = useMemo(() => {
+        return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION));
+    }, [jobOrders]);
+
+    // Get current Job Order object. The details modal follows the queue scope.
     const selectedJobOrder = useMemo(() => {
-        return jobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
-    }, [jobOrders, selectedJobOrderId]);
+        return inProductionJobOrders.find((jo) => jo.jo_id === selectedJobOrderId) || null;
+    }, [inProductionJobOrders, selectedJobOrderId]);
 
     // Sorted routing steps for selected Job Order
     const sortedTasks = useMemo(() => {
@@ -95,15 +98,16 @@ export function useProductionWorkflow() {
     }, []);
 
     useEffect(() => {
-        if (!pendingDeepLinkJo || jobOrders.length === 0) return;
-        const match = jobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
+        if (!pendingDeepLinkJo || loadingJobs) return;
+        const match = inProductionJobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
         if (match) {
-            setStatusFilter("All");
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
+        } else {
+            toast.info("Only Job Orders in Production can be opened in this terminal.");
         }
         setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, jobOrders]);
+    }, [pendingDeepLinkJo, loadingJobs, inProductionJobOrders]);
 
     // Fetch Job Orders
     const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {
@@ -117,10 +121,11 @@ export function useProductionWorkflow() {
                 JOB_ORDER_STATUS.PLANNING
             ));
             setJobOrders(activeJobs);
-            
-            if (activeJobs.length > 0) {
-                const nextId = selectIdAfterFetch || selectedJobOrderId || "";
-                setSelectedJobOrderId(nextId);
+
+            const nextId = selectIdAfterFetch || selectedJobOrderId || "";
+            const nextJobOrder = activeJobs.find((jo) => jo.jo_id === nextId);
+            if (nextJobOrder && isJobOrderStatus(nextJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+                setSelectedJobOrderId(nextJobOrder.jo_id);
             } else {
                 setSelectedJobOrderId("");
                 setSelectedTaskId(null);
@@ -693,7 +698,7 @@ export function useProductionWorkflow() {
             const successMessage: Record<typeof action, string> = {
                 "place-on-hold": "Production placed on hold.",
                 "resume-production": "Production resumed.",
-                "complete-production": "Production completed and sent for QA reconciliation.",
+                "complete-production": "Production completed and sent directly to QA and reconciliation.",
                 "terminate-production": "Production terminated. Remaining WIP is ready for reconciliation or return."
             };
             toast.success(successMessage[action]);
@@ -708,7 +713,7 @@ export function useProductionWorkflow() {
     }, [selectedJobOrder, fetchJobs]);
 
     const filteredJobOrders = useMemo(() => {
-        return jobOrders.filter((jo) => {
+        return inProductionJobOrders.filter((jo) => {
             const matchesSearch =
                 jo.jo_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 jo.product_name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -720,9 +725,9 @@ export function useProductionWorkflow() {
                 return false;
             }
 
-            return matchesProductionWorkflowStatus(jo.status, statusFilter);
+            return true;
         });
-    }, [jobOrders, searchQuery, statusFilter, selectedBranchFilter]);
+    }, [inProductionJobOrders, searchQuery, selectedBranchFilter]);
 
     return {
         jobOrders,
@@ -737,8 +742,7 @@ export function useProductionWorkflow() {
         loadingOperators,
         searchQuery,
         setSearchQuery,
-        statusFilter,
-        setStatusFilter,
+        inProductionJobOrders,
         selectedAssigneeId,
         setSelectedAssigneeId,
         manualHours,

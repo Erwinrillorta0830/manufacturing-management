@@ -66,7 +66,7 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
 
     // Refetch whenever the Job Order changes or production activity updates its
     // output counters (the terminal refetches jobs after shift runs/starts).
-    const activityKey = `${jobOrder.producedQty ?? 0}:${jobOrder.completed_quantity ?? 0}:${(jobOrder as any).yield_logs?.length ?? 0}`;
+    const activityKey = `${jobOrder.productionOutputQuantity ?? 0}:${jobOrder.producedQty ?? 0}:${jobOrder.completed_quantity ?? 0}:${(jobOrder as any).yield_logs?.length ?? 0}`;
 
     const load = useCallback(async () => {
         if (!jobOrderId) return;

@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
-import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
+import { resolveApplicableRouteWorkCenters } from "../../production/station-scan/_applicable-work-centers";
 
 async function patchActorId(): Promise<number> {
     try {
@@ -61,9 +62,184 @@ async function cancelledJobOrderResponseForTask(taskId: number): Promise<NextRes
     return productionMutationResponse(jobOrderId);
 }
 
+function positiveInteger(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse> {
+    const jobOrderId = positiveInteger(body.jobOrderId ?? body.joId);
+    if (!jobOrderId) {
+        return NextResponse.json({ error: "A valid jobOrderId is required." }, { status: 400 });
+    }
+
+    if (!Array.isArray(body.assignments) || body.assignments.length === 0) {
+        return NextResponse.json({ error: "At least one route workstation assignment is required." }, { status: 400 });
+    }
+
+    const jobOrderResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_orders/${jobOrderId}?fields=job_order_id,job_order_no,status,version_id`,
+        { headers, cache: "no-store" }
+    );
+    if (!jobOrderResponse.ok) {
+        return NextResponse.json({ error: `Job Order ${jobOrderId} was not found.` }, { status: 404 });
+    }
+
+    const jobOrder = (await jobOrderResponse.json().catch(() => ({}))).data;
+    const normalizedStatus = normalizeJobOrderStatus(jobOrder?.status);
+    if (!normalizedStatus) {
+        return NextResponse.json({ error: "The Job Order has an unknown status and cannot receive route workstation assignments." }, { status: 409 });
+    }
+    if (!isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+        return NextResponse.json({
+            error: `Job Order ${jobOrder?.job_order_no || jobOrderId} must be Picked or In Production before route workstations can be assigned.`,
+            code: "ROUTE_WORKCENTER_ASSIGNMENT_STATUS_NOT_ALLOWED"
+        }, { status: 409 });
+    }
+
+    const routesResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id,sequence_order,operation_id,routing_id,work_center_id,status&sort=sequence_order&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!routesResponse.ok) {
+        return NextResponse.json({ error: "Job Order route data is temporarily unavailable." }, { status: 502 });
+    }
+
+    const routes = (await routesResponse.json().catch(() => ({}))).data;
+    if (!Array.isArray(routes) || routes.length === 0) {
+        return NextResponse.json({ error: `Job Order ${jobOrder?.job_order_no || jobOrderId} has no routing steps to assign.` }, { status: 409 });
+    }
+
+    const routeById = new Map<number, any>();
+    routes.forEach((route: any) => {
+        const routeId = positiveInteger(route.jo_route_id || route.id);
+        if (routeId > 0) routeById.set(routeId, route);
+    });
+
+    const parsedAssignments: Array<{ joRouteId: number; workCenterId: number }> = [];
+    const seenRouteIds = new Set<number>();
+    for (const assignment of body.assignments) {
+        const joRouteId = positiveInteger(assignment?.joRouteId ?? assignment?.taskId ?? assignment?.id);
+        const workCenterId = positiveInteger(assignment?.workCenterId);
+        if (!joRouteId || !workCenterId) {
+            return NextResponse.json({ error: "Each assignment requires a valid joRouteId and workCenterId." }, { status: 400 });
+        }
+        if (seenRouteIds.has(joRouteId)) {
+            return NextResponse.json({ error: `Route ${joRouteId} was included more than once.` }, { status: 400 });
+        }
+        seenRouteIds.add(joRouteId);
+        parsedAssignments.push({ joRouteId, workCenterId });
+    }
+
+    const routeOptions = await resolveApplicableRouteWorkCenters(jobOrder);
+    const routeOptionById = new Map(routeOptions.map((option) => [option.joRouteId, option]));
+    const requestedWorkCenterIds = [...new Set(parsedAssignments.map((assignment) => assignment.workCenterId))];
+    const workCentersResponse = await fetch(
+        `${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${requestedWorkCenterIds.join(",")}&fields=work_center_id,work_center_name,is_active&limit=-1`,
+        { headers, cache: "no-store" }
+    );
+    if (!workCentersResponse.ok) {
+        return NextResponse.json({ error: "Workstation data is temporarily unavailable." }, { status: 502 });
+    }
+
+    const workCenters = (await workCentersResponse.json().catch(() => ({}))).data;
+    const workCenterById = new Map<number, any>();
+    if (Array.isArray(workCenters)) {
+        workCenters.forEach((workCenter: any) => {
+            const workCenterId = positiveInteger(workCenter.work_center_id || workCenter.id);
+            if (workCenterId > 0) workCenterById.set(workCenterId, workCenter);
+        });
+    }
+
+    // Validate every row before writing any assignment so an invalid route or
+    // workstation cannot partially update the Job Order's routing plan.
+    for (const assignment of parsedAssignments) {
+        const route = routeById.get(assignment.joRouteId);
+        if (!route) {
+            return NextResponse.json({
+                error: `Route ${assignment.joRouteId} does not belong to Job Order ${jobOrder?.job_order_no || jobOrderId}.`,
+                code: "ROUTE_NOT_IN_JOB_ORDER"
+            }, { status: 422 });
+        }
+
+        const routeStatus = String(route.status || "Pending").trim().toLowerCase();
+        if (routeStatus !== "pending") {
+            return NextResponse.json({
+                error: `Route ${route.sequence_order || assignment.joRouteId} is ${route.status || "not pending"} and cannot be reassigned.`,
+                code: "ROUTE_WORKCENTER_ASSIGNMENT_STATUS_NOT_ALLOWED"
+            }, { status: 409 });
+        }
+
+        const workCenter = workCenterById.get(assignment.workCenterId);
+        const isInactive = workCenter && (workCenter.is_active === false || Number(workCenter.is_active) === 0);
+        if (!workCenter || isInactive) {
+            return NextResponse.json({
+                error: `Work Center #${assignment.workCenterId} is not an active workstation.`,
+                code: "WORK_CENTER_NOT_ACTIVE"
+            }, { status: 422 });
+        }
+
+        const routeOption = routeOptionById.get(assignment.joRouteId);
+        if (!routeOption || routeOption.workCenterIds.length === 0) {
+            return NextResponse.json({
+                error: `Route ${route.sequence_order || assignment.joRouteId} has no configured workstation in the product version routing.`,
+                code: "ROUTE_WORKCENTER_NOT_CONFIGURED"
+            }, { status: 409 });
+        }
+        if (!routeOption.workCenterIds.includes(assignment.workCenterId)) {
+            return NextResponse.json({
+                error: `Work Center "${workCenter.work_center_name || `#${assignment.workCenterId}`}" is not configured for route ${route.sequence_order || assignment.joRouteId}.`,
+                code: "ROUTE_WORKCENTER_NOT_APPLICABLE",
+                applicableWorkCenterIds: routeOption.workCenterIds
+            }, { status: 422 });
+        }
+    }
+
+    const updatedRoutes: Array<Record<string, unknown>> = [];
+    for (const assignment of parsedAssignments) {
+        const route = routeById.get(assignment.joRouteId);
+        if (positiveInteger(route.work_center_id) !== assignment.workCenterId) {
+            const response = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${assignment.joRouteId}`,
+                {
+                    method: "PATCH",
+                    headers,
+                    body: JSON.stringify({ work_center_id: assignment.workCenterId })
+                }
+            );
+            if (!response.ok) {
+                return NextResponse.json({ error: `Failed to save workstation assignment for route ${route.sequence_order || assignment.joRouteId}.` }, { status: 502 });
+            }
+            const payload = await response.json().catch(() => ({}));
+            Object.assign(route, payload.data || {}, { work_center_id: assignment.workCenterId });
+        }
+
+        updatedRoutes.push({
+            joRouteId: assignment.joRouteId,
+            sequenceOrder: Number(route.sequence_order || 0),
+            operationId: positiveInteger(route.operation_id) || null,
+            status: route.status || "Pending",
+            workCenterId: assignment.workCenterId,
+            workCenterName: workCenterById.get(assignment.workCenterId)?.work_center_name || null
+        });
+    }
+
+    return NextResponse.json({
+        success: true,
+        data: {
+            jobOrderId,
+            routes: updatedRoutes
+        }
+    });
+}
+
 export async function handlePATCH(request: Request) {
     try {
         const body = await request.json();
+
+        if (body.action === "assign-route-workcenters") {
+            return handleRouteWorkCenterAssignment(body);
+        }
 
         // 0. Workstation breakdown handler
         if (body.action === "breakdown") {

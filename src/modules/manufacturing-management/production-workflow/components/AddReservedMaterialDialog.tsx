@@ -36,7 +36,14 @@ function formatQuantity(value: number): string {
 }
 
 function candidateKey(candidate: MaterialCandidateLot): string {
-    return `${candidate.receipt_id ?? "mfg"}:${candidate.lot_no}:${candidate.expiry_date || ""}`;
+    return [
+        candidate.source_type || "UNKNOWN",
+        candidate.receipt_id ?? "NO-RECEIPT",
+        candidate.mm_lot_id ?? "NO-MM-LOT",
+        candidate.inventory_lot_id ?? "NO-INVENTORY-LOT",
+        candidate.lot_no,
+        candidate.expiry_date || ""
+    ].join(":");
 }
 
 export function AddReservedMaterialDialog({
@@ -101,15 +108,22 @@ export function AddReservedMaterialDialog({
         setSubmitting(true);
         setError(null);
         try {
-            const sourceType = selectedLot.receipt_no === "MANUFACTURING" ? "MANUFACTURING" : "RAW_MATERIAL";
-            const candidateId = Number(selectedLot.receipt_id || 0);
+            const sourceType = selectedLot.source_type === "MANUFACTURING" || selectedLot.receipt_no === "MANUFACTURING"
+                ? "MANUFACTURING"
+                : "RAW_MATERIAL";
+            const candidateReceiptId = Number(selectedLot.receipt_id || 0);
+            const candidateMmLotId = Number(selectedLot.mm_lot_id || 0);
+            const candidateInventoryLotId = Number(selectedLot.inventory_lot_id || 0);
             const response = await addReservedMaterial({
                 jobOrderId: target.jobOrderId,
                 joMaterialId: target.joMaterialId,
                 productId: target.productId,
                 sourceType,
-                receiptId: sourceType === "RAW_MATERIAL" ? candidateId : null,
-                mmLotId: sourceType === "MANUFACTURING" ? candidateId : null,
+                receiptId: sourceType === "RAW_MATERIAL" && candidateReceiptId > 0 ? candidateReceiptId : null,
+                mmLotId: candidateMmLotId > 0
+                    ? candidateMmLotId
+                    : sourceType === "MANUFACTURING" && candidateReceiptId > 0 ? candidateReceiptId : null,
+                inventoryLotId: candidateInventoryLotId > 0 ? candidateInventoryLotId : null,
                 batchNo: selectedLot.lot_no,
                 uomId: target.uomId,
                 quantity: effectiveQuantity,
@@ -182,7 +196,8 @@ export function AddReservedMaterialDialog({
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-muted/40 text-[10px] font-bold uppercase text-muted-foreground">
                                         <tr>
-                                            <th className="p-2.5">Lot / Batch</th>
+                                            <th className="p-2.5">Storage lot</th>
+                                            <th className="p-2.5">Batch</th>
                                             <th className="p-2.5">Source</th>
                                             <th className="p-2.5">Expiry</th>
                                             <th className="p-2.5 text-right">Available</th>
@@ -200,9 +215,15 @@ export function AddReservedMaterialDialog({
                                                         setError(null);
                                                     }}
                                                     className={`cursor-pointer transition-colors ${isSelected ? "bg-emerald-500/10" : "hover:bg-muted/40"}`}
+                                                    aria-selected={isSelected}
                                                 >
+                                                    <td className="p-2.5 font-semibold text-foreground">
+                                                        {candidate.storage_lot_name || "Unnamed storage lot"}
+                                                    </td>
                                                     <td className="p-2.5 font-mono font-bold text-foreground">{candidate.lot_no}</td>
-                                                    <td className="p-2.5 text-[11px] text-muted-foreground">{candidate.receipt_no || "Receiving"}</td>
+                                                    <td className="p-2.5 text-[11px] text-muted-foreground">
+                                                        {candidate.receipt_no || (candidate.source_type === "INVENTORY" ? "Inventory movement" : "Receiving")}
+                                                    </td>
                                                     <td className="p-2.5 text-[11px] text-muted-foreground">{candidate.expiry_date || "N/A"}</td>
                                                     <td className="p-2.5 text-right font-mono font-bold">
                                                         {formatQuantity(Number(candidate.available || 0))}

@@ -7,7 +7,8 @@ import {
     JOB_ORDER_STATUS,
     normalizeJobOrderStatus
 } from "@/modules/manufacturing-management/job-order-status";
-import { isValidQaStatus, isExpired, normalizeBatchNo } from "@/app/api/manufacturing/material-staging/_stock";
+import { isValidQaStatus, isExpired, normalizeBatchNo, normalizeDirectusStagingMovement } from "@/app/api/manufacturing/material-staging/_stock";
+import { fetchMmInventoryMovements, type NormalizedMmInventoryMovement } from "@/app/api/manufacturing/services/mm-inventory-movements.service";
 
 const EPSILON = 0.000001;
 const SOURCE_BIN = "MAIN-STORE";
@@ -42,6 +43,7 @@ interface WipTopUpInput {
     sourceType: WipTopUpSourceType;
     receiptId: number | null;
     mmLotId: number | null;
+    inventoryLotId: number | null;
     batchNo: string;
     uomId: number | null;
     quantity: number;
@@ -67,8 +69,18 @@ function relationId(value: unknown, key: string): number {
     return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function movementLotReference(row: Record<string, unknown>): number {
+type MovementReferenceRow = {
+    mm_lot_id?: unknown;
+    lot_id?: unknown;
+    inventory_lot_id?: unknown;
+};
+
+function movementLotReference(row: MovementReferenceRow): number {
     return relationId(row.mm_lot_id, "lot_id") || relationId(row.lot_id, "lot_id") || 0;
+}
+
+function movementInventoryLotReference(row: MovementReferenceRow): number {
+    return relationId(row.inventory_lot_id, "inventory_lot_id") || relationId(row.inventory_lot_id, "id") || 0;
 }
 
 function round6(value: number): number {
@@ -103,9 +115,12 @@ function normalizeInput(body: any): WipTopUpInput {
     const mmLotId = body?.mmLotId === undefined || body?.mmLotId === null || body?.mmLotId === ""
         ? null
         : requiredPositiveInteger(body.mmLotId, "Manufacturing lot");
+    const inventoryLotId = body?.inventoryLotId === undefined || body?.inventoryLotId === null || body?.inventoryLotId === ""
+        ? null
+        : requiredPositiveInteger(body.inventoryLotId, "Inventory lot");
 
-    if (sourceType === "RAW_MATERIAL" && !receiptId) {
-        throw new WipTopUpError("A receiving lot is required to add purchased raw materials.", 400, "RECEIVING_LOT_REQUIRED");
+    if (sourceType === "RAW_MATERIAL" && !receiptId && !inventoryLotId && !mmLotId) {
+        throw new WipTopUpError("A receiving or canonical inventory lot is required to add purchased raw materials.", 400, "RECEIVING_LOT_REQUIRED");
     }
     if (sourceType === "MANUFACTURING" && !mmLotId) {
         throw new WipTopUpError("A manufacturing lot is required to add manufactured components.", 400, "MANUFACTURING_LOT_REQUIRED");
@@ -122,6 +137,7 @@ function normalizeInput(body: any): WipTopUpInput {
         sourceType,
         receiptId,
         mmLotId,
+        inventoryLotId,
         batchNo: text(body?.batchNo),
         uomId,
         quantity: round6(quantity),
@@ -212,16 +228,31 @@ async function resolveTransactionTypeId(typeName: string): Promise<number> {
 interface InventoryLotRow extends Record<string, unknown> {
     inventory_lot_id?: unknown;
     lot_id?: unknown;
+    product_id?: unknown;
+    branch_id?: unknown;
     qa_status?: unknown;
     expiry_date?: unknown;
+    manufacturing_date?: unknown;
     batch_no?: unknown;
-    unit_id?: unknown;
     status?: unknown;
 }
 
-async function findInventoryLot(branchId: number, productId: number, lotId: number, batchNo: string): Promise<InventoryLotRow | null> {
+async function findInventoryLot(
+    branchId: number,
+    productId: number,
+    lotId: number | null,
+    batchNo: string,
+    inventoryLotId: number | null = null
+): Promise<InventoryLotRow | null> {
+    const filters = [
+        `filter[product_id][_eq]=${productId}`,
+        `filter[branch_id][_eq]=${branchId}`
+    ];
+    if (inventoryLotId) filters.push(`filter[inventory_lot_id][_eq]=${inventoryLotId}`);
+    if (lotId) filters.push(`filter[lot_id][_eq]=${lotId}`);
+    if (batchNo) filters.push(`filter[batch_no][_eq]=${encodeURIComponent(batchNo)}`);
     const rows = await directusRows<InventoryLotRow>(
-        `/items/mm_inventory_lots?filter[lot_id][_eq]=${lotId}&filter[product_id][_eq]=${productId}&filter[branch_id][_eq]=${branchId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}&fields=inventory_lot_id,lot_id,product_id,batch_no,qa_status,expiry_date,status&limit=1`,
+        `/items/mm_inventory_lots?${filters.join("&")}&fields=inventory_lot_id,lot_id,product_id,branch_id,batch_no,qa_status,expiry_date,manufacturing_date,status&limit=1`,
         "Load inventory lot for WIP top-up"
     );
     const row = rows[0] || null;
@@ -241,38 +272,47 @@ async function resolveProductUomId(productId: number): Promise<number> {
 
 async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: number): Promise<ResolvedTopUpLot> {
     if (input.sourceType === "RAW_MATERIAL") {
-        const receipt = await directusRequest<any>(
-            `/items/purchase_order_receiving/${input.receiptId}?fields=purchase_order_product_id,product_id,branch_id,batch_no,lot_id,mm_lot_id,qa_status,is_reverted,received_quantity,expiry_date`,
-            `Load receiving lot ${input.receiptId}`
-        );
-        const receiptProductId = relationId(receipt?.product_id, "product_id");
-        const receiptBranchId = relationId(receipt?.branch_id, "branch_id") || relationId(receipt?.branch_id, "id");
-        if (receiptProductId && receiptProductId !== input.productId) {
-            throw new WipTopUpError("The selected receiving lot does not match this Job Order material.", 409, "RECEIVING_LOT_PRODUCT_MISMATCH");
+        let receipt: any = null;
+        if (input.receiptId) {
+            receipt = await directusRequest<any>(
+                `/items/purchase_order_receiving/${input.receiptId}?fields=purchase_order_product_id,product_id,branch_id,batch_no,lot_no,lot_id,mm_lot_id,qa_status,is_reverted,received_quantity,expiry_date`,
+                `Load receiving lot ${input.receiptId}`
+            );
+            const receiptProductId = relationId(receipt?.product_id, "product_id");
+            const receiptBranchId = relationId(receipt?.branch_id, "branch_id") || relationId(receipt?.branch_id, "id");
+            if (receiptProductId && receiptProductId !== input.productId) {
+                throw new WipTopUpError("The selected receiving lot does not match this Job Order material.", 409, "RECEIVING_LOT_PRODUCT_MISMATCH");
+            }
+            if (receiptBranchId && receiptBranchId !== branchId) {
+                throw new WipTopUpError("The selected receiving lot belongs to a different branch.", 409, "RECEIVING_LOT_BRANCH_MISMATCH");
+            }
+            if (receipt?.is_reverted === true || Number(receipt?.is_reverted) === 1) {
+                throw new WipTopUpError("The selected receiving lot has been reverted and cannot be issued.", 409, "RECEIVING_LOT_REVERTED");
+            }
+            if (!isValidQaStatus(receipt?.qa_status)) {
+                throw new WipTopUpError("The selected receiving lot is not available for issuance in its QA status.", 409, "LOT_QA_STATUS_BLOCKED");
+            }
         }
-        if (receiptBranchId && receiptBranchId !== branchId) {
-            throw new WipTopUpError("The selected receiving lot belongs to a different branch.", 409, "RECEIVING_LOT_BRANCH_MISMATCH");
-        }
-        if (receipt?.is_reverted === true || Number(receipt?.is_reverted) === 1) {
-            throw new WipTopUpError("The selected receiving lot has been reverted and cannot be issued.", 409, "RECEIVING_LOT_REVERTED");
-        }
-        if (!isValidQaStatus(receipt?.qa_status)) {
-            throw new WipTopUpError("The selected receiving lot is not available for issuance in its QA status.", 409, "LOT_QA_STATUS_BLOCKED");
-        }
-        const batchNo = text(receipt?.batch_no);
+
+        const receiptBatchNo = text(receipt?.batch_no) || text(receipt?.lot_no);
+        const batchNo = receiptBatchNo || input.batchNo;
         if (!batchNo) {
             throw new WipTopUpError("The selected receiving lot has no batch number.", 409, "LOT_BATCH_REQUIRED");
         }
         if (isExpired(receipt?.expiry_date)) {
             throw new WipTopUpError("The selected receiving lot is already expired.", 409, "LOT_EXPIRED");
         }
-        const lotId = relationId(receipt?.mm_lot_id, "lot_id") || relationId(receipt?.lot_id, "lot_id");
-        if (!lotId) {
-            throw new WipTopUpError("The selected receiving lot has no manufacturing lot reference.", 409, "LOT_REFERENCE_REQUIRED");
-        }
-        const inventoryLot = await findInventoryLot(branchId, input.productId, lotId, batchNo);
+        const lotId = relationId(receipt?.mm_lot_id, "lot_id")
+            || relationId(receipt?.lot_id, "lot_id")
+            || input.mmLotId
+            || null;
+        const inventoryLot = await findInventoryLot(branchId, input.productId, lotId, batchNo, input.inventoryLotId);
         if (!inventoryLot) {
             throw new WipTopUpError("This lot has no canonical inventory lot on the receiving branch. Reconcile it in Material Staging before adding materials.", 409, "INVENTORY_LOT_REQUIRED");
+        }
+        const resolvedLotId = relationId(inventoryLot.lot_id, "lot_id") || lotId;
+        if (!resolvedLotId) {
+            throw new WipTopUpError("The selected inventory lot has no manufacturing lot reference.", 409, "LOT_REFERENCE_REQUIRED");
         }
         if (!isValidQaStatus(inventoryLot.qa_status ?? receipt?.qa_status)) {
             throw new WipTopUpError("The inventory lot is not available for issuance in its QA status.", 409, "LOT_QA_STATUS_BLOCKED");
@@ -280,10 +320,14 @@ async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: nu
         if (isExpired(inventoryLot.expiry_date ?? receipt?.expiry_date)) {
             throw new WipTopUpError("The inventory lot is already expired.", 409, "LOT_EXPIRED");
         }
+        const inventoryLotId = relationId(inventoryLot.inventory_lot_id, "inventory_lot_id");
+        if (!inventoryLotId) {
+            throw new WipTopUpError("The selected lot has no canonical inventory lot identifier.", 409, "INVENTORY_LOT_REQUIRED");
+        }
         return {
-            lotId,
-            inventoryLotId: relationId(inventoryLot.inventory_lot_id, "inventory_lot_id"),
-            batchNo,
+            lotId: resolvedLotId,
+            inventoryLotId,
+            batchNo: text(inventoryLot.batch_no) || batchNo,
             expiryDate: text(inventoryLot.expiry_date) || text(receipt?.expiry_date) || null,
             uomId: await resolveProductUomId(input.productId)
         };
@@ -302,7 +346,7 @@ async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: nu
     if (!batchNo) {
         throw new WipTopUpError("The selected manufacturing lot has no batch/lot number.", 409, "LOT_BATCH_REQUIRED");
     }
-    const inventoryLot = await findInventoryLot(branchId, input.productId, lotId, batchNo);
+    const inventoryLot = await findInventoryLot(branchId, input.productId, lotId, batchNo, input.inventoryLotId);
     if (!inventoryLot) {
         throw new WipTopUpError("This manufacturing lot has no canonical inventory lot. Add it from Material Staging instead.", 409, "INVENTORY_LOT_REQUIRED");
     }
@@ -312,22 +356,45 @@ async function resolveTopUpLot(input: WipTopUpInput, jobOrder: any, branchId: nu
     if (isExpired(inventoryLot.expiry_date)) {
         throw new WipTopUpError("The inventory lot is already expired.", 409, "LOT_EXPIRED");
     }
+    const inventoryLotId = relationId(inventoryLot.inventory_lot_id, "inventory_lot_id");
+    if (!inventoryLotId) {
+        throw new WipTopUpError("The selected lot has no canonical inventory lot identifier.", 409, "INVENTORY_LOT_REQUIRED");
+    }
     return {
         lotId,
-        inventoryLotId: relationId(inventoryLot.inventory_lot_id, "inventory_lot_id"),
-        batchNo,
+        inventoryLotId,
+        batchNo: text(inventoryLot.batch_no) || batchNo,
         expiryDate: text(inventoryLot.expiry_date) || null,
         uomId: await resolveProductUomId(input.productId)
     };
 }
 
-async function computeLotBalance(branchId: number, productId: number, lotId: number, batchNo: string): Promise<number> {
-    const movements = await directusRows<any>(
-        `/items/inventory_movements?filter[product_id][_eq]=${productId}&filter[branch_id][_eq]=${branchId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}&fields=product_id,branch_id,mm_lot_id,lot_id,inventory_lot_id,batch_no,quantity&limit=-1`,
-        "Load inventory movements for WIP top-up"
-    );
+async function computeLotBalance(
+    branchId: number,
+    productId: number,
+    lotId: number,
+    batchNo: string,
+    inventoryLotId: number
+): Promise<number> {
+    const [springMovements, directusMovementRows] = await Promise.all([
+        fetchMmInventoryMovements({ branch: branchId, product: productId, batchNo }),
+        directusRows<Record<string, unknown>>(
+            `/items/inventory_movements?filter[product_id][_eq]=${productId}&filter[branch_id][_eq]=${branchId}&filter[batch_no][_eq]=${encodeURIComponent(batchNo)}&fields=*&limit=-1`,
+            "Load inventory movements for WIP top-up"
+        )
+    ]);
+    const normalizedDirectusMovements = directusMovementRows.map(normalizeDirectusStagingMovement);
+    // Keep the Spring ledger authoritative when it has data, matching the
+    // on-hand source used by Lot Management. Directus is only a fallback.
+    const movements: Array<NormalizedMmInventoryMovement | ReturnType<typeof normalizeDirectusStagingMovement>> =
+        springMovements.length > 0 ? springMovements : normalizedDirectusMovements;
     const balance = movements
-        .filter(movement => movementLotReference(movement) === lotId)
+        .filter(movement => {
+            const movementInventoryLotId = movementInventoryLotReference(movement);
+            return movementInventoryLotId > 0
+                ? movementInventoryLotId === inventoryLotId
+                : movementLotReference(movement) === lotId;
+        })
         .reduce((total, movement) => total + Number(movement.quantity || 0), 0);
     return round6(balance);
 }
@@ -340,7 +407,9 @@ async function findExistingReservation(input: WipTopUpInput, lot: ResolvedTopUpL
     return rows.find(row =>
         movementLotReference(row) === lot.lotId
         && normalizeBatchNo(row.batch_no) === normalizeBatchNo(lot.batchNo)
-        && (!lot.inventoryLotId || relationId(row.inventory_lot_id, "inventory_lot_id") === lot.inventoryLotId)
+        && (!lot.inventoryLotId
+            || movementInventoryLotReference(row) === lot.inventoryLotId
+            || movementInventoryLotReference(row) === 0)
     ) || null;
 }
 
@@ -407,7 +476,7 @@ export async function recordWipTopUp(request: Request): Promise<NextResponse> {
         throw new WipTopUpError("The submitted UOM does not match the selected lot.", 409, "LOT_UOM_MISMATCH");
     }
 
-    const balance = await computeLotBalance(branchId, input.productId, lot.lotId, lot.batchNo);
+    const balance = await computeLotBalance(branchId, input.productId, lot.lotId, lot.batchNo, lot.inventoryLotId);
     if (input.quantity > balance + EPSILON) {
         throw new WipTopUpError(
             `Only ${balance.toLocaleString()} units of lot ${lot.batchNo} are on hand; ${input.quantity.toLocaleString()} were requested.`,

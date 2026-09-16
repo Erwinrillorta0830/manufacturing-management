@@ -13,6 +13,12 @@ export interface RouteBOMCosting {
     cost_per_unit: number;
 }
 
+export interface LaborPositionCosting {
+    manpower_count?: number;
+    hourly_rate?: number;
+    hours_required?: number;
+}
+
 export interface UnitCOGSBreakdown {
     baseQuantity: number;
     expectedYieldPercentage: number;
@@ -20,7 +26,9 @@ export interface UnitCOGSBreakdown {
     materialCostPerUnit: number;
     directLaborCostPerUnit: number;
     factoryOverheadCostPerUnit: number;
-    isCustomLaborOverride: boolean;
+    machineOverheadCostPerUnit: number;
+    customOverheadCostPerUnit: number;
+    hasCustomOverhead: boolean;
     baseUnitCOGS: number;
     adjustedUnitCOGS: number;
     targetSellingPrice?: number;
@@ -31,10 +39,11 @@ export interface UnitCOGSBreakdown {
 export function calculateUnitCOGSBreakdown(
     baseQuantity: number,
     expectedYieldPercentage: number | undefined,
-    customOverheadOverride: number | undefined,
+    customOverhead: number | undefined,
     bomItems: RouteBOMCosting[],
     routeSteps: RouteStepCosting[],
-    targetSellingPrice?: number
+    targetSellingPrice?: number,
+    laborPositions: LaborPositionCosting[] = []
 ): UnitCOGSBreakdown {
     const baseQty = Math.max(1, baseQuantity || 1);
     const yieldPercent = (expectedYieldPercentage && expectedYieldPercentage > 0 && expectedYieldPercentage <= 100)
@@ -51,22 +60,28 @@ export function calculateUnitCOGSBreakdown(
     }, 0);
     const materialCostPerUnit = totalMaterialCost / baseQty;
 
-    // 2. Direct Labor Cost per Unit (Calculated from Work Center Operator Rates & Duration)
-    const dynamicLaborCost = routeSteps.reduce((sum, step) => {
-        const hourlyRate = Number(step.work_center_overhead_cost_per_hour || 0);
-        const runHours = Number(step.run_time_hours || 0);
-        const batchSize = Math.max(1, Number(step.step_batch_size || 1));
-        return sum + (hourlyRate * (runHours / batchSize));
-    }, 0) / baseQty;
+    // 2. Direct Labor Cost per Unit (BOM labor standard: manpower x hourly rate x hours)
+    const totalLaborCost = laborPositions.reduce((sum, position) => {
+        const manpower = Math.max(0, Number(position.manpower_count || 0));
+        const hourlyRate = Math.max(0, Number(position.hourly_rate || 0));
+        const hours = Math.max(0, Number(position.hours_required || 0));
+        return sum + (manpower * hourlyRate * hours);
+    }, 0);
+    const directLaborCostPerUnit = totalLaborCost / baseQty;
 
-    const fixedOverride = Number(customOverheadOverride || 0);
-    const isCustomLaborOverride = fixedOverride > 0;
-    
-    // Explicit separation: Direct Labor vs Factory Overhead
-    const directLaborCostPerUnit = isCustomLaborOverride ? fixedOverride : dynamicLaborCost;
-    const factoryOverheadCostPerUnit = isCustomLaborOverride ? 0 : Number(customOverheadOverride || 0);
+    // 3. Factory Overhead Cost per Unit (work center machine rates plus the version custom overhead)
+    const totalMachineOverhead = routeSteps.reduce((sum, step) => {
+        const hourlyRate = Math.max(0, Number(step.work_center_overhead_cost_per_hour || 0));
+        const machineHours = Math.max(0, Number(step.setup_time_hours || 0))
+            + Math.max(0, Number(step.run_time_hours || 0));
+        return sum + (hourlyRate * machineHours);
+    }, 0);
+    const machineOverheadCostPerUnit = totalMachineOverhead / baseQty;
+    const customOverheadCostPerUnit = Math.max(0, Number(customOverhead || 0));
+    const factoryOverheadCostPerUnit = machineOverheadCostPerUnit + customOverheadCostPerUnit;
+    const hasCustomOverhead = customOverheadCostPerUnit > 0;
 
-    // 3. Total COGS calculation
+    // 4. Total COGS calculation
     const baseUnitCOGS = materialCostPerUnit + directLaborCostPerUnit + factoryOverheadCostPerUnit;
     const adjustedUnitCOGS = baseUnitCOGS / yieldFactor;
 
@@ -85,7 +100,9 @@ export function calculateUnitCOGSBreakdown(
         materialCostPerUnit,
         directLaborCostPerUnit,
         factoryOverheadCostPerUnit,
-        isCustomLaborOverride,
+        machineOverheadCostPerUnit,
+        customOverheadCostPerUnit,
+        hasCustomOverhead,
         baseUnitCOGS,
         adjustedUnitCOGS,
         targetSellingPrice,

@@ -211,13 +211,15 @@ export function Step2BOMReview({
                             <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
                             <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
                             <span className="text-[9px] text-muted-foreground block">
-                                {cogsBreakdown.isCustomLaborOverride ? "Fixed Version Override" : "Work Center Hourly Rate"}
+                                BOM Labor Standard
                             </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
                             <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
-                            <span className="text-[9px] text-muted-foreground block">Power, Steam & Depreciation</span>
+                            <span className="text-[9px] text-muted-foreground block">
+                                {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
+                            </span>
                         </div>
                     </div>
                 </div>

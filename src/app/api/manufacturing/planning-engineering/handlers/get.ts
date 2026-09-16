@@ -14,6 +14,7 @@ import { loadYieldMaterials, YieldMaterialsError } from "../../production/_yield
 import { enrichDispositions, readDispositions } from "../../qa/_dispositions";
 import { fetchMmInventoryMovements, movementErrorStatus } from "../../services/mm-inventory-movements.service";
 import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.service";
+import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
@@ -535,14 +536,18 @@ export async function handleGET(request: Request) {
                 }
             }
 
+            function isSubAssemblyProduct(productId: number): boolean {
+                return hasActiveVersionLocal(productId)
+                    || hasAnyVersionLocal(productId)
+                    || hasMfgLotsSet.has(productId);
+            }
+
             // Fetch inventory movements to calculate the true ledger stock
             const stockMap = new Map<number, number>(); // product_id -> sum of passed stock
             const pendingQaMap = new Map<number, number>(); // product_id -> sum of pending QA stock
             const qaHoldMap = new Map<number, number>(); // product_id -> sum of QA hold stock
             const unclassifiedMap = new Map<number, number>();
             let movementStockMap = new Map<string, number>();
-            const movementBatchStockMap = new Map<string, number>();
-            const movementStorageLotStockMap = new Map<string, number>();
             let movements: any[] = [];
 
             if (pIds.length > 0) {
@@ -554,17 +559,6 @@ export async function handleGET(request: Request) {
                     return pIds.includes(productId) && isCompatibleStorageLot(productId, movementMmLotReference(movement));
                 });
                 movementStockMap = sumMovementQuantitiesByStock(movements);
-                movements.forEach((movement: any) => {
-                    const productId = Number(movement.product_id?.product_id || movement.product_id);
-                    const batchNumber = movement.batch_no || "LOT-N/A";
-                    const key = `${productId}:${batchNumber}`;
-                    movementBatchStockMap.set(key, (movementBatchStockMap.get(key) || 0) + Number(movement.quantity || 0));
-                    const storageLotId = movementMmLotReference(movement);
-                    if (storageLotId > 0) {
-                        const storageLotKey = `${productId}:${storageLotId}:${batchNumber}`;
-                        movementStorageLotStockMap.set(storageLotKey, (movementStorageLotStockMap.get(storageLotKey) || 0) + Number(movement.quantity || 0));
-                    }
-                });
 
                 // Aggregate stock maps based on QA Status from batchStatusMap (bypassing inventory_lots)
                 movementStockMap.forEach((qty, key) => {
@@ -647,64 +641,25 @@ export async function handleGET(request: Request) {
                 }
             }
 
-            // Fetch purchase order receiving receipts in batch
-            const receiptsByProduct = new Map<number, any[]>();
-            let validReceiptsAll: any[] = [];
-            if (pIds.length > 0) {
+            // Use the same movement-backed, canonical inventory-lot source as
+            // material staging for raw-material candidates. This includes
+            // stock that came from adjustments/transfers and therefore has no
+            // purchase_order_receiving row.
+            const availableLotsByProduct = new Map<number, Awaited<ReturnType<typeof getAvailableInventoryLots>>>();
+            const rawProductIds = [...new Set(pIds.filter((productId) => !isSubAssemblyProduct(productId)))];
+            await Promise.all(rawProductIds.map(async (productId) => {
                 try {
-                    const receiptsUrl = `${DIRECTUS_URL}/items/purchase_order_receiving?filter[product_id][_in]=${pIds.join(",")}&filter[qa_status][_in]=Passed,Partially Accepted&filter[is_reverted][_eq]=0&filter[received_quantity][_gt]=0&filter[branch_id][_eq]=${branchId}&sort=expiry_date&limit=-1`;
-                    const receiptsRes = await fetch(receiptsUrl, { headers });
-                    if (receiptsRes.ok) {
-                        validReceiptsAll = (await receiptsRes.json()).data || [];
-                        validReceiptsAll.forEach((r: any) => {
-                            const prodId = Number(r.product_id);
-                            if (!isCompatibleStorageLot(prodId, r.mm_lot_id)) return;
-                            if (!receiptsByProduct.has(prodId)) {
-                                receiptsByProduct.set(prodId, []);
-                            }
-                            receiptsByProduct.get(prodId)!.push(r);
-                        });
-                    }
-                } catch (err) {
-                    console.error("Error fetching purchase order receiving receipts:", err);
+                    availableLotsByProduct.set(
+                        productId,
+                        await getAvailableInventoryLots(productId, branchId, {
+                            movementRows: movements.filter((movement) => Number(movement.product_id || movement.productId || 0) === productId)
+                        })
+                    );
+                } catch (error) {
+                    console.error(`Error loading available inventory lots for product ${productId}:`, error);
+                    availableLotsByProduct.set(productId, []);
                 }
-            }
-
-            // Fetch lot reservations map by product_id & batch_no
-            const lotReservationsMap: Record<string, number> = {};
-            if (pIds.length > 0) {
-                try {
-                    const resFilter = encodeURIComponent(JSON.stringify({
-                        _and: [
-                            { product_id: { _in: pIds } },
-                            { branch_id: { _eq: branchId } },
-                            { jo_material_id: { job_order_id: { status: { _in: [
-                                JOB_ORDER_STATUS.PLANNED,
-                                JOB_ORDER_STATUS.DRAFT,
-                                JOB_ORDER_STATUS.RELEASED,
-                                JOB_ORDER_STATUS.IN_PROGRESS,
-                                JOB_ORDER_STATUS.ONGOING,
-                                JOB_ORDER_STATUS.PROCEED,
-                                JOB_ORDER_STATUS.ON_HOLD
-                            ] } } } }
-                        ]
-                    }));
-                    const resRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter=${resFilter}&fields=product_id,batch_no,reserved_quantity&limit=-1`, { headers });
-                    if (resRes.ok) {
-                        const resData = (await resRes.json()).data || [];
-                        resData.forEach((r: any) => {
-                            const prodId = Number(r.product_id);
-                            const batchNo = r.batch_no;
-                            if (prodId && batchNo) {
-                                const key = `${prodId}:${batchNo}`;
-                                lotReservationsMap[key] = (lotReservationsMap[key] || 0) + Number(r.reserved_quantity || 0);
-                            }
-                        });
-                    }
-                } catch (err) {
-                    console.error("Error fetching lot reservations:", err);
-                }
-            }
+            }));
 
             const enriched = mData.map((d: any) => {
                 const compProductId = Number(d.product_id?.product_id || d.product_id);
@@ -756,14 +711,7 @@ export async function handleGET(request: Request) {
                     };
                 });
 
-                // Check if sub assembly
-                let isSubAssembly = hasActiveVersionLocal(compProductId);
-                if (!isSubAssembly) {
-                    isSubAssembly = hasAnyVersionLocal(compProductId);
-                }
-                if (!isSubAssembly) {
-                    isSubAssembly = hasMfgLotsSet.has(compProductId);
-                }
+                const isSubAssembly = isSubAssemblyProduct(compProductId);
 
                 let candidateLots: any[] = [];
                 let lotNo: string | null = null;
@@ -827,36 +775,35 @@ export async function handleGET(request: Request) {
                         receiptNo = "MANUFACTURING";
                     }
                 } else {
-                    const validReceipts = receiptsByProduct.get(compProductId) || [];
-                    candidateLots = validReceipts.map((rec: any) => {
-                        const lotNum = rec.lot_no || rec.batch_no || "LOT-N/A";
-                        const receiptMmLotId = mmLotId(rec.mm_lot_id);
-                        const physicalQty = receiptMmLotId
-                            ? movementStorageLotStockMap.get(`${compProductId}:${receiptMmLotId}:${lotNum}`) || 0
-                            : movementBatchStockMap.get(`${compProductId}:${lotNum}`) || 0;
-                        const recId = Number(rec.purchase_order_product_id);
-                        const alreadyReserved = lotReservationsMap[`${compProductId}:${lotNum}`] || 0;
-                        const netAvailable = Math.max(0, physicalQty - alreadyReserved);
-
-                        const normalizedLotNo = String(lotNum || "").trim();
+                    const availableLots = availableLotsByProduct.get(compProductId) || [];
+                    candidateLots = availableLots.map((lot) => {
+                        const lotNum = lot.batchNo || "LOT-N/A";
+                        const normalizedLotNo = String(lotNum).trim();
                         const matchingReservations = matReservations.filter((mr: any) =>
                             String(mr.batch_no || "").trim() === normalizedLotNo
+                            && (!lot.mmLotId || mmLotId(mr.mm_lot_id) === lot.mmLotId)
+                            && (!lot.inventoryLotId || Number(mr.inventory_lot_id?.inventory_lot_id || mr.inventory_lot_id?.id || mr.inventory_lot_id || 0) === lot.inventoryLotId)
                         );
                         const matchedRes = matchingReservations[0];
-                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id) : null;
+                        const reservationId = matchedRes ? Number(matchedRes.jo_materials_reservation_id || matchedRes.id || 0) || null : null;
                         const reservedQtyForThisLot = matchingReservations.reduce(
                             (total: number, reservation: any) => total + Number(reservation.reserved_quantity || 0),
                             0
                         );
 
                         return {
-                            receipt_id: recId,
-                            receipt_no: rec.receipt_no || "N/A",
+                            receipt_id: lot.purchaseOrderReceivingId,
+                            receipt_no: lot.purchaseOrderReceivingId ? "Receiving" : "Inventory Movement",
+                            source_type: lot.purchaseOrderReceivingId ? "RAW_MATERIAL" : "INVENTORY",
+                            storage_lot_name: lot.storageLotName,
+                            mm_lot_id: lot.mmLotId,
+                            inventory_lot_id: lot.inventoryLotId,
                             lot_no: lotNum,
-                            received_quantity: Number(rec.received_quantity || 0),
-                            physical_quantity: physicalQty,
-                            available: netAvailable,
-                            expiry_date: rec.expiry_date || null,
+                            received_quantity: Number(lot.physicalQuantity ?? lot.available ?? 0),
+                            physical_quantity: Number(lot.physicalQuantity ?? lot.available ?? 0),
+                            available: Number(lot.available || 0),
+                            expiry_date: lot.expiryDate || null,
+                            manufacturing_date: lot.manufacturingDate || null,
                             reservation_id: reservationId,
                             reserved_qty_for_this_lot: reservedQtyForThisLot
                         };
@@ -918,9 +865,22 @@ export async function handleGET(request: Request) {
             }
 
             const targetQuantity = Math.max(0, Number(jobOrder.target_quantity || 0));
-            const producedQuantity = Number(jobOrder.actual_quantity_produced || 0) > 0
-                ? Number(jobOrder.actual_quantity_produced)
-                : Math.max(0, Number(jobOrder.completed_quantity || 0));
+            const yieldLedgerRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${encodeURIComponent(String(numericJoId))}&fields=yield_quantity,rejected_quantity&limit=-1`,
+                { headers, cache: "no-store" }
+            );
+            const yieldLedgerRows: any[] = yieldLedgerRes.ok ? ((await yieldLedgerRes.json()).data || []) : [];
+            const ledgerProductionOutput = yieldLedgerRows.reduce(
+                (sum: number, row: any) => sum
+                    + Math.max(0, Number(row.yield_quantity || 0))
+                    + Math.max(0, Number(row.rejected_quantity || 0)),
+                0
+            );
+            const producedQuantity = yieldLedgerRows.length > 0
+                ? ledgerProductionOutput
+                : Number(jobOrder.actual_quantity_produced || 0) > 0
+                    ? Number(jobOrder.actual_quantity_produced)
+                    : Math.max(0, Number(jobOrder.completed_quantity || 0));
 
             // Raw materials and their WIP reservations.
             const materialsRes = await fetch(
@@ -1253,10 +1213,10 @@ export async function handleGET(request: Request) {
         if (action === "wizard-step-2") {
             const prodId = Number(searchParams.get("productId") || "0");
             const vId = searchParams.get("bomId") ? Number(searchParams.get("bomId")) : undefined;
-            const branchId = Number(searchParams.get("branchId") || "1");
+            const branchId = Number(searchParams.get("branchId") || "0");
 
-            if (!prodId) {
-                return NextResponse.json({ error: "Missing or invalid productId query parameter" }, { status: 400 });
+            if (!prodId || !Number.isSafeInteger(branchId) || branchId <= 0) {
+                return NextResponse.json({ error: "Missing or invalid productId or branchId query parameter" }, { status: 400 });
             }
 
             // Load the selected recipe first. The operations catalog is supplemental display data and
@@ -1311,20 +1271,50 @@ export async function handleGET(request: Request) {
                 expected_yield_percentage: version.expected_yield_percentage
             };
 
+            // Resolve the work centers used by the selected recipe so costing can apply machine rates.
+            const workCenterIds = Array.from(new Set(
+                routes.map((route: any) => Number(route.work_center_id)).filter((id: number) => id > 0)
+            ));
+            const workCentersById = new Map<number, any>();
+            if (workCenterIds.length > 0) {
+                try {
+                    const wcRes = await withTimeout(
+                        fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?filter[work_center_id][_in]=${workCenterIds.join(",")}&fields=work_center_id,work_center_name,overhead_cost_per_hour,capacity_per_hour&limit=-1`, { headers }),
+                        "Selected work centers",
+                        5000
+                    );
+                    const wcRows = wcRes.ok ? (await wcRes.json()).data || [] : [];
+                    wcRows.forEach((wc: any) => workCentersById.set(Number(wc.work_center_id), wc));
+                } catch (error) {
+                    console.warn("Selected work centers could not be loaded for the Step 2 preview:", error);
+                }
+            }
+
             // Map routings
-            const routings = routes.map(r => ({
-                routing_id: r.route_id,
-                bom_id: version.version_id,
-                sequence_order: r.sequence_order,
-                setup_time_hours: r.setup_time_hours,
-                run_time_hours: r.run_time_hours,
-                duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
-                step_batch_size: r.step_batch_size,
-                operation_id: r.operation_id,
-                work_center_id: r.work_center_id,
-                qa_template_id: r.qa_template_id,
-                operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`
-            }));
+            const routings = routes.map(r => {
+                const workCenter = workCentersById.get(Number(r.work_center_id)) || null;
+                return {
+                    routing_id: r.route_id,
+                    bom_id: version.version_id,
+                    sequence_order: r.sequence_order,
+                    setup_time_hours: r.setup_time_hours,
+                    run_time_hours: r.run_time_hours,
+                    duration_hours: Number(r.setup_time_hours || 0) + Number(r.run_time_hours || 0),
+                    step_batch_size: r.step_batch_size,
+                    operation_id: r.operation_id,
+                    work_center_id: r.work_center_id,
+                    qa_template_id: r.qa_template_id,
+                    operation_name: operationsMap.get(Number(r.operation_id)) || `Operation #${r.operation_id}`,
+                    overhead_cost_per_hour: Number(workCenter?.overhead_cost_per_hour || 0),
+                    work_center_name: workCenter?.work_center_name || null,
+                    work_center: workCenter ? {
+                        work_center_id: Number(workCenter.work_center_id),
+                        work_center_name: workCenter.work_center_name || null,
+                        overhead_cost_per_hour: Number(workCenter.overhead_cost_per_hour || 0),
+                        capacity_per_hour: workCenter.capacity_per_hour != null ? Number(workCenter.capacity_per_hour) : null
+                    } : null
+                };
+            });
 
             // Helper to safely extract integer product ID from primitive or object
             const extractProductId = (val: any): number => {
@@ -1401,7 +1391,7 @@ export async function handleGET(request: Request) {
             const productsMap = new Map<number, any>();
             if (allProductIds.length > 0) {
                 const prodRes = await fetch(
-                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${allProductIds.join(",")}&fields=product_id,product_name,product_code,cost_per_unit,unit_of_measurement.unit_shortcut,unit_of_measurement.unit_name,product_category.category_name,product_type&limit=-1`,
                     { headers }
                 );
                 if (prodRes.ok) {
@@ -1425,6 +1415,7 @@ export async function handleGET(request: Request) {
             const components = parentBomItems.map(item => {
                 const pId = extractProductId(item.product_id);
                 const pDetails = productsMap.get(pId);
+                const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
                 return {
                     component_id: item.id,
                     bom_id: version.version_id,
@@ -1433,8 +1424,10 @@ export async function handleGET(request: Request) {
                         product_name: pDetails?.product_name || `Product #${pId}`,
                         product_code: pDetails?.product_code || "",
                         category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
-                        product_type: pDetails?.product_type ?? item.product_type
+                        product_type: pDetails?.product_type ?? item.product_type,
+                        cost_per_unit: unitCost
                     },
+                    cost_per_unit: unitCost,
                     quantity_required: Number(item.quantity_required || 0),
                     wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
                     unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
@@ -1456,6 +1449,7 @@ export async function handleGET(request: Request) {
                 subAssemblyBoms[subProdId] = subItems.map(item => {
                     const cPid = extractProductId(item.product_id);
                     const pDetails = productsMap.get(cPid);
+                    const unitCost = Number(item.cost_per_unit ?? item.landed_cost ?? pDetails?.cost_per_unit ?? 0);
                     return {
                         component_id: item.id,
                         bom_id: subVersionId,
@@ -1465,8 +1459,10 @@ export async function handleGET(request: Request) {
                             product_name: pDetails?.product_name || `Product #${cPid}`,
                             product_code: pDetails?.product_code || "",
                             category_name: resolveCategoryName(pDetails, pDetails?.product_code, pDetails?.product_type ?? item.product_type),
-                            product_type: pDetails?.product_type ?? item.product_type
+                            product_type: pDetails?.product_type ?? item.product_type,
+                            cost_per_unit: unitCost
                         },
+                        cost_per_unit: unitCost,
                         quantity_required: Number(item.quantity_required || 0),
                         wastage_factor_percentage: Number(item.wastage_factor_percentage || 0),
                         unit_of_measurement: pDetails?.unit_of_measurement?.unit_name || pDetails?.unit_of_measurement?.unit_shortcut || "pcs"
@@ -1537,10 +1533,10 @@ export async function handleGET(request: Request) {
 
             const subProdId = Number(searchParams.get("productId") || "0");
             const vId = Number(searchParams.get("versionId") || "0");
-            const branchId = Number(searchParams.get("branchId") || "1");
+            const branchId = Number(searchParams.get("branchId") || "0");
 
-            if (!subProdId || !vId) {
-                return NextResponse.json({ error: "Missing productId or versionId" }, { status: 400 });
+            if (!subProdId || !vId || !Number.isSafeInteger(branchId) || branchId <= 0) {
+                return NextResponse.json({ error: "Missing productId, versionId, or branchId" }, { status: 400 });
             }
 
             const { version, routes } = await getBOMDetailsForVersion(subProdId, vId);
@@ -1770,8 +1766,16 @@ export async function handleGET(request: Request) {
                 remarks: item.remarks || null,
                 createdAt: item.created_at || null,
                 createdBy: item.created_by || null,
+                created_at: item.created_at || null,
+                initializedAt: item.initialized_at || null,
+                initialized_at: item.initialized_at || null,
+                initializedBy: item.initialized_by || null,
+                modifiedAt: item.modified_at || null,
+                modified_at: item.modified_at || null,
+                modifiedBy: item.modified_by || null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
+                productionOutputQuantity: Number(item.production_output_quantity ?? item.produced_quantity ?? 0),
                 yield_logs: item.yield_logs || [],
                 status_history: item.status_history || []
             }));

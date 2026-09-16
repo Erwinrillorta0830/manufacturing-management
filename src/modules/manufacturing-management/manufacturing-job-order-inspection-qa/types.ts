@@ -62,11 +62,23 @@ export interface SalesOrderFulfillmentSummary {
     blockedReason: string | null;
 }
 
+export interface JobOrderClosureBlocker {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+}
+
+export interface JobOrderClosureReadiness {
+    ready: boolean;
+    blockers: JobOrderClosureBlocker[];
+}
+
 export interface JobOrderDailyYieldDetails extends JobOrderDailyYieldSummary {
     completedQuantity: number;
     routes: JobOrderDailyYieldRoute[];
     dailyYields: JobOrderDailyYieldRecord[];
     salesOrders: SalesOrderFulfillmentSummary[];
+    closeReadiness: JobOrderClosureReadiness;
 }
 
 export interface DailyYieldQAParameter {

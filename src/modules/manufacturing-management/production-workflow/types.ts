@@ -1,10 +1,5 @@
 /* eslint-disable */
-import {
-    isJobOrderStatus,
-    JOB_ORDER_STATUS,
-    normalizeJobOrderStatus,
-    type CanonicalJobOrderStatus
-} from "../job-order-status";
+import type { CanonicalJobOrderStatus } from "../job-order-status";
 export interface OperatorAssignment {
     id: number;
     task_id: number;
@@ -67,6 +62,7 @@ export interface JobOrder {
     rejected_quantity?: number;
     producedQty?: number;
     produced_quantity?: number;
+    productionOutputQuantity?: number;
     due_date: string;
     status: CanonicalJobOrderStatus | string;
     branch_id: number;
@@ -145,46 +141,6 @@ export interface JobOrderCancellationPayload {
     joId: string | number;
     reason?: string;
     actorUserId?: number | null;
-}
-
-export const PRODUCTION_WORKFLOW_STATUS_FILTERS = [
-    { value: "Active", label: "Active" },
-    { value: "All", label: "All" },
-    { value: JOB_ORDER_STATUS.FOR_PICKING, label: "For Picking" },
-    { value: JOB_ORDER_STATUS.PICKED, label: "Picked" },
-    { value: JOB_ORDER_STATUS.IN_PRODUCTION, label: "In Production" },
-    { value: "On Hold", label: "On Hold" },
-    { value: "QA Hold", label: "QA Hold" },
-    { value: "Shortage", label: "Shortage" },
-    { value: "Cancelled", label: "Cancelled" },
-    { value: JOB_ORDER_STATUS.PRODUCTION_COMPLETED, label: "Production Completed" },
-    { value: JOB_ORDER_STATUS.FOR_QA_RECONCILIATION, label: "For QA and Reconciliation" }
-] as const;
-
-export function matchesProductionWorkflowStatus(status: string, filter: string): boolean {
-    if (filter === "All") return true;
-    const normalizedStatus = normalizeJobOrderStatus(status);
-    if (!normalizedStatus) return false;
-    if (filter === "Active") {
-        return isJobOrderStatus(
-            normalizedStatus,
-            JOB_ORDER_STATUS.PROCEED,
-            JOB_ORDER_STATUS.RELEASED,
-            JOB_ORDER_STATUS.RESERVED,
-            JOB_ORDER_STATUS.ONGOING,
-            JOB_ORDER_STATUS.IN_PROGRESS
-        );
-    }
-    if (filter === JOB_ORDER_STATUS.FOR_PICKING || filter === "Proceed" || filter === "Released") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.FOR_PICKING);
-    }
-    if (filter === JOB_ORDER_STATUS.PICKED || filter === "Reserved") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.PICKED);
-    }
-    if (filter === JOB_ORDER_STATUS.IN_PRODUCTION || filter === "Ongoing" || filter === "In Progress") {
-        return isJobOrderStatus(normalizedStatus, JOB_ORDER_STATUS.IN_PRODUCTION);
-    }
-    return normalizedStatus === normalizeJobOrderStatus(filter);
 }
 
 export interface User {
@@ -304,6 +260,7 @@ export interface StationScanPayload {
     jobOrderBarcode?: string;
     workCenterId?: number;
     jobOrderId?: number | string;
+    joRouteId?: number;
     operatorId?: number;
     action?: "scan" | "start-station" | "lookup";
 }
@@ -323,11 +280,16 @@ export interface StationScanResponse {
 export interface MaterialCandidateLot {
     receipt_id: number | null;
     receipt_no?: string | null;
+    source_type?: "RAW_MATERIAL" | "MANUFACTURING" | "INVENTORY" | string | null;
+    storage_lot_name?: string | null;
+    mm_lot_id?: number | null;
+    inventory_lot_id?: number | null;
     lot_no: string;
     received_quantity?: number;
     physical_quantity?: number;
     available: number;
     expiry_date?: string | null;
+    manufacturing_date?: string | null;
     reservation_id?: number | string | null;
     reserved_qty_for_this_lot?: number;
 }
@@ -371,6 +333,7 @@ export interface WipTopUpPayload {
     sourceType: "RAW_MATERIAL" | "MANUFACTURING";
     receiptId?: number | null;
     mmLotId?: number | null;
+    inventoryLotId?: number | null;
     batchNo?: string;
     uomId?: number | null;
     quantity: number;

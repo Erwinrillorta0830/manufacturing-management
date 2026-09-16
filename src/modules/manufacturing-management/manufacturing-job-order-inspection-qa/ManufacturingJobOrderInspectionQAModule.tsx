@@ -3,12 +3,23 @@
 import React from "react";
 import {
     AlertCircle,
+    CheckCircle2,
     ClipboardCheck,
     Eye,
     Loader2,
     PackageCheck,
     RefreshCw,
 } from "lucide-react";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
     Dialog,
     DialogContent,
@@ -100,7 +111,14 @@ function DailyYieldRow({
 export default function ManufacturingJobOrderInspectionQAModule() {
     const jobOrderState = useJobOrderInspectionQA();
     const auditState = useDailyYieldAudit({ onSaved: jobOrderState.refresh });
+    const [closeConfirmOpen, setCloseConfirmOpen] = React.useState(false);
     const details = jobOrderState.selectedDetails;
+    const canClose = details?.status === "For QA and Reconciliation";
+    const isClosed = details?.status === "Closed";
+    const closeSubmitting = details
+        ? jobOrderState.closingJobOrderId === details.jobOrderId
+        : false;
+    const closeReady = details?.closeReadiness.ready === true;
 
     return (
         <div className="space-y-5">
@@ -176,9 +194,29 @@ export default function ManufacturingJobOrderInspectionQAModule() {
 
             <Dialog open={Boolean(jobOrderState.selectedJobOrder)} onOpenChange={(open) => { if (!open) jobOrderState.closeDetails(); }}>
                 <DialogContent className="w-[calc(100vw-2rem)] max-w-[1400px] sm:max-w-[1400px] max-h-[calc(100dvh-1rem)] overflow-hidden flex flex-col bg-background text-foreground">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2 text-primary"><PackageCheck className="h-5 w-5" /> {details?.jobOrderNo || jobOrderState.selectedJobOrder?.jobOrderNo || "Job Order Details"}</DialogTitle>
-                        <DialogDescription className="text-xs">Daily yield QA and linked Sales Order fulfillment details.</DialogDescription>
+                    <DialogHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 space-y-1">
+                            <DialogTitle className="flex items-center gap-2 text-primary"><PackageCheck className="h-5 w-5 shrink-0" /> {details?.jobOrderNo || jobOrderState.selectedJobOrder?.jobOrderNo || "Job Order Details"}</DialogTitle>
+                            <DialogDescription className="text-xs">Daily yield QA and linked Sales Order fulfillment details.</DialogDescription>
+                        </div>
+                        {details && canClose ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant={closeReady ? "default" : "outline"}
+                                disabled={!closeReady || closeSubmitting || jobOrderState.detailsLoading}
+                                onClick={() => setCloseConfirmOpen(true)}
+                                title={closeReady ? "Close this Job Order after confirming the completed QA and reconciliation checks." : "Resolve the listed QA and reconciliation blockers before closing this Job Order."}
+                                className="min-h-9 shrink-0 gap-2 self-start"
+                            >
+                                {closeSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                                {closeSubmitting ? "Marking as Closed..." : "Mark as Closed"}
+                            </Button>
+                        ) : details && isClosed ? (
+                            <Button type="button" size="sm" variant="outline" disabled className="min-h-9 shrink-0 gap-2 self-start">
+                                <CheckCircle2 className="h-4 w-4 text-emerald-600" /> JO Closed
+                            </Button>
+                        ) : null}
                     </DialogHeader>
 
                     {jobOrderState.detailsLoading ? (
@@ -198,6 +236,24 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Produced Qty</div><div className="mt-1 font-mono font-semibold">{quantity(details.producedQuantity)}</div></div>
                                 <div><div className="text-[10px] uppercase tracking-wide text-muted-foreground">Yield Records</div><div className="mt-1 font-semibold">{details.dailyYields.length}</div></div>
                             </div>
+
+                            {canClose && (
+                                <div className={`rounded-xl border p-3 text-sm ${closeReady ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`} role="status">
+                                    <div className="flex items-start gap-2">
+                                        {closeReady ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
+                                        <div className="min-w-0">
+                                            <p className="font-semibold">{closeReady ? "Ready to mark as closed" : "Mark as Closed is blocked"}</p>
+                                            {closeReady ? (
+                                                <p className="mt-1 text-xs text-muted-foreground">All daily yields have completed Passed QA outcomes, QA dispositions are resolved, and raw-material WIP is balanced.</p>
+                                            ) : (
+                                                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                                                    {details.closeReadiness.blockers.map((blocker, index) => <li key={`${blocker.code}-${index}`}>{blocker.message}</li>)}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             <section className="rounded-xl border">
                                 <div className="border-b p-4">
@@ -274,6 +330,31 @@ export default function ManufacturingJobOrderInspectionQAModule() {
                     ) : null}
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={closeConfirmOpen} onOpenChange={(open) => { if (!closeSubmitting) setCloseConfirmOpen(open); }}>
+                <AlertDialogContent size="sm">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Mark Job Order as Closed?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will mark {details?.jobOrderNo || "this Job Order"} as Closed after the completed QA and raw-material reconciliation checks. This status change does not create inventory movements or repost finished goods.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={closeSubmitting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={!details || !closeReady || closeSubmitting}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                if (!details) return;
+                                setCloseConfirmOpen(false);
+                                void jobOrderState.handleCloseJobOrder(details.jobOrderId);
+                            }}
+                        >
+                            {closeSubmitting ? "Marking as Closed..." : "Mark as Closed"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <DailyYieldAuditDialog controller={auditState} />
         </div>

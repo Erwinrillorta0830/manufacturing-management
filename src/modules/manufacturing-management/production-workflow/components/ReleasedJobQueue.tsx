@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { JobOrder, PRODUCTION_WORKFLOW_STATUS_FILTERS } from "../types";
+import { JobOrder } from "../types";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
@@ -17,8 +17,6 @@ interface ReleasedJobQueueProps {
     setSelectedJobOrderId: (id: string) => void;
     searchQuery: string;
     setSearchQuery: (q: string) => void;
-    statusFilter: string;
-    setStatusFilter: (f: string) => void;
     loadingJobs: boolean;
     branches: any[];
     selectedBranchFilter: string;
@@ -34,8 +32,6 @@ export function ReleasedJobQueue({
     setSelectedJobOrderId,
     searchQuery,
     setSearchQuery,
-    statusFilter,
-    setStatusFilter,
     loadingJobs,
     branches,
     selectedBranchFilter,
@@ -62,7 +58,7 @@ export function ReleasedJobQueue({
         const parentJo = isChild ? jobOrders.find((j) => Number(j.order_id) === Number(jo.parentJobOrderId)) : null;
         const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
 
-        const producedQty = jo.producedQty ?? jo.completed_quantity ?? 0;
+        const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
         const needsWorkstation = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED) && !jo.primary_work_center_id;
         const workstationLabel = jo.primary_work_center_name
             || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
@@ -155,7 +151,7 @@ export function ReleasedJobQueue({
                         {filteredJobOrders.length}
                     </Badge>
                 </CardTitle>
-                <CardDescription>Job Orders available for staging handoff or active shop-floor execution</CardDescription>
+                <CardDescription>Job Orders currently in production on the shop floor</CardDescription>
             </CardHeader>
             
             <CardContent className="space-y-4">
@@ -190,21 +186,6 @@ export function ReleasedJobQueue({
                     </select>
                 </div>
 
-                {/* Status filters */}
-                <div className="flex flex-wrap gap-1.5 pb-1">
-                    {PRODUCTION_WORKFLOW_STATUS_FILTERS.map((filter) => (
-                        <Button
-                            key={filter.value}
-                            variant={statusFilter === filter.value ? "default" : "outline"}
-                            size="xs"
-                            className="h-7 text-xs px-2.5"
-                            onClick={() => setStatusFilter(filter.value)}
-                        >
-                            {filter.label}
-                        </Button>
-                    ))}
-                </div>
-
                 {/* Job list scrolling wrapper */}
                 {loadingJobs ? (
                     <div className="flex justify-center items-center py-12">
@@ -213,8 +194,8 @@ export function ReleasedJobQueue({
                 ) : filteredJobOrders.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground text-sm border-2 border-dashed rounded-lg">
                         <AlertCircle className="mx-auto h-8 w-8 mb-2 text-muted-foreground/60" />
-                        <p>No matching Job Orders found.</p>
-                        <p className="text-xs mt-1">Try a different status chip or branch, or clear the filters.</p>
+                        <p>No In Production Job Orders found.</p>
+                        <p className="text-xs mt-1">Try a different search or branch, or clear the filters.</p>
                         {onClearFilters && (
                             <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-3 h-8 text-xs">
                                 Clear filters

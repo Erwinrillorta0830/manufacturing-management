@@ -88,6 +88,7 @@ export function ReleaseJODialog({
     const [hasLoadedDetails, setHasLoadedDetails] = useState(false);
     const [routings, setRoutings] = useState<any[]>([]);
     const [components, setComponents] = useState<any[]>([]);
+    const [bomData, setBomData] = useState<any | null>(null);
     const [inventories, setInventories] = useState<Record<number, any>>({});
     const [operators, setOperators] = useState<any[]>([]);
     const [bomBaseQty, setBomBaseQty] = useState(1);
@@ -101,6 +102,11 @@ export function ReleaseJODialog({
     const [groupSubAssemblyVersions, setGroupSubAssemblyVersions] = useState<Record<string, Record<number, number>>>({});
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
+
+    const parseValidBranchId = (value: unknown): number | null => {
+        const branchId = Number(value);
+        return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+    };
 
     const normalizeInventoryMap = (value: any): Record<number, any> => {
         if (!Array.isArray(value)) return value || {};
@@ -160,6 +166,7 @@ export function ReleaseJODialog({
             setCurrentStep(1);
             setRoutings([]);
             setComponents([]);
+            setBomData(null);
             setInventories({});
             setAssignmentsProp({});
             setSearchQuery("");
@@ -197,28 +204,34 @@ export function ReleaseJODialog({
         }
     }, [isConfirmOpen]);
 
-    // Fetch BOM & Routing details on Step 2
+    // Fetch BOM & Routing details on dialog open
     useEffect(() => {
-        if (isConfirmOpen && selectedLines.length > 0 && currentStep >= 2 && !hasLoadedDetails) {
+        if (isConfirmOpen && selectedLines.length > 0 && !hasLoadedDetails) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
                 try {
                     const first = selectedLines[0];
                     const pId = first.product_id.product_id;
                     const bId = first.bom_version_id;
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${selectedBranchId || 1}`;
+                    const branchId = parseValidBranchId(selectedBranchId) || 1;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${pId}&bomId=${bId || ""}&branchId=${branchId}`;
                     const res = await fetch(url);
                     if (res.ok) {
                         const data = await res.json();
                         setRoutings(data.routings || []);
                         setComponents(data.components || []);
+                        setBomData(data.bom || null);
                         setSubAssemblyBoms(data.subAssemblyBoms || {});
                         setSubAssemblyRoutings(data.subAssemblyRoutings || {});
                         setSubAssemblyVersions(data.subAssemblyVersions || {});
                         setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
                         setInventories(normalizeInventoryMap(data.inventories));
                         if (data.bom) {
-                            setBomBaseQty(Number(data.bom.base_quantity || 1));
+                            const baseQty = Number(data.bom.base_quantity || 1);
+                            setBomBaseQty(baseQty);
+                            if (!isMultiRelease && baseQty > 0) {
+                                setTargetQuantity(baseQty);
+                            }
                         }
                         setHasLoadedDetails(true);
                     }
@@ -230,13 +243,18 @@ export function ReleaseJODialog({
             };
             loadDetails();
         }
-    }, [isConfirmOpen, selectedLines, currentStep, selectedBranchId, hasLoadedDetails]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null) {
+            console.error("Cannot load sub-assembly details without a valid target branch.");
+            return;
+        }
         setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
         setLoadingSubVersion(prev => ({ ...prev, [subProdId]: true }));
         try {
-            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${selectedBranchId || 1}`;
+            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${branchId}`;
             const res = await fetch(url);
             if (res.ok) {
                 const data = await res.json();
@@ -313,15 +331,24 @@ export function ReleaseJODialog({
 
     const containerMetrics = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
-        const first = selectedLines[0];
-        const prodObj = first.product_id as any;
+        const first = selectedLines[0] as any;
+        const prodObj = first?.product_id;
         if (!prodObj) return null;
+        const verObj = first?.version_id || first?.bom_version_id || first?.version;
         return calculateContainerizationMetrics(
             prodObj.product_name || prodObj.product_code || "Product",
             targetQuantity,
-            prodObj.unit_of_measurement_count
+            prodObj.unit_of_measurement_count || prodObj.pcs_per_bundle || prodObj.pcs_per_case || prodObj.uom_count,
+            verObj?.expected_yield_percentage || prodObj.expected_yield_percentage,
+            verObj?.scrap_rate || verObj?.scrap_percentage || verObj?.wastage_factor_percentage,
+            verObj?.cutting_unit_weight_grams || verObj?.unit_weight_grams || prodObj.net_weight_grams || prodObj.piece_weight_grams,
+            verObj?.cases_per_pallet || prodObj.cases_per_pallet || prodObj.bundles_per_pallet,
+            verObj?.sacks_per_mix || verObj?.sacks_per_batch,
+            verObj?.batch_weight_per_sack || verObj?.base_batch_weight_grams,
+            components,
+            bomBaseQty
         );
-    }, [selectedLines, targetQuantity]);
+    }, [selectedLines, targetQuantity, components, bomBaseQty]);
 
     const cogsBreakdown = useMemo(() => {
         if (!selectedLines || selectedLines.length === 0) return null;
@@ -332,7 +359,7 @@ export function ReleaseJODialog({
         const bomItemsForCosting = components.map((comp) => ({
             quantity_required: Number(comp.quantity_required || 0),
             wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
-            cost_per_unit: Number(comp.component_product_id?.cost_per_unit || comp.cost_per_unit || 0)
+            cost_per_unit: Number(comp.component_product_id?.cost_per_unit ?? comp.cost_per_unit ?? 0)
         }));
 
         const routeStepsForCosting = routings.map((r) => ({
@@ -341,18 +368,19 @@ export function ReleaseJODialog({
             setup_time_hours: Number(r.setup_time_hours || 0),
             run_time_hours: Number(r.run_time_hours || 0),
             step_batch_size: Number(r.step_batch_size || 1),
-            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour || r.overhead_cost_per_hour || 0)
+            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour ?? r.overhead_cost_per_hour ?? 0)
         }));
 
         return calculateUnitCOGSBreakdown(
             bomBaseQty,
-            (first as any).expected_yield_percentage || prodObj.expected_yield_percentage,
-            (first as any).custom_overhead || prodObj.custom_overhead,
+            bomData?.expected_yield_percentage ?? (first as any).expected_yield_percentage ?? prodObj.expected_yield_percentage,
+            bomData?.custom_overhead ?? (first as any).custom_overhead ?? prodObj.custom_overhead,
             bomItemsForCosting,
             routeStepsForCosting,
-            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0)
+            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0),
+            Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : []
         );
-    }, [selectedLines, components, routings, bomBaseQty]);
+    }, [selectedLines, components, routings, bomBaseQty, bomData]);
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
@@ -615,6 +643,14 @@ export function ReleaseJODialog({
                                         <span className="text-muted-foreground">Target UOM:</span>
                                         <span className="font-semibold text-foreground">{(selectedLines[0].product_id as any)?.uom_name || (selectedLines[0].product_id as any)?.uom || "Pieces"}</span>
                                     </div>
+                                    <div className="flex justify-between pt-1 border-t border-border/50">
+                                        <span className="text-muted-foreground">Recipe Batch Size (Base Qty):</span>
+                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">{bomBaseQty.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Ordered Quantity (from SO):</span>
+                                        <span className="font-bold text-blue-600 dark:text-blue-400 font-mono">{maxAvailableQuantity.toLocaleString()}</span>
+                                    </div>
                                 </div>
 
                                 <div className="space-y-3">
@@ -630,31 +666,43 @@ export function ReleaseJODialog({
                                         />
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                            Target Production Quantity
-                                        </label>
-                                        <Input
-                                            type="number"
-                                            value={targetQuantity}
-                                            min={1}
-                                            max={maxAvailableQuantity}
-                                            step="any"
-                                            onChange={(e) => {
-                                                const next = Number(e.target.value);
-                                                setTargetQuantity(Number.isFinite(next)
-                                                    ? Math.min(maxAvailableQuantity, Math.max(0, next))
-                                                    : 0);
-                                            }}
-                                            disabled={isMultiRelease}
-                                            className="h-9 font-semibold bg-card border-input text-foreground"
-                                        />
-                                        <p className="text-[10px] text-muted-foreground">
-                                            {isMultiRelease
-                                                ? "The full remaining quantity for this product/BOM group will be released."
-                                                : `Enter a quantity from 1 through ${maxAvailableQuantity.toLocaleString()} available units. Allocation is rechecked before posting.`}
-                                        </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Ordered Quantity (From SO)
+                                            </label>
+                                            <Input
+                                                type="text"
+                                                value={maxAvailableQuantity.toLocaleString()}
+                                                readOnly
+                                                disabled
+                                                className="h-9 font-semibold bg-muted text-muted-foreground border-input font-mono"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
+                                                Target Production Quantity
+                                            </label>
+                                            <Input
+                                                type="number"
+                                                value={targetQuantity}
+                                                min={1}
+                                                step="any"
+                                                onChange={(e) => {
+                                                    const next = Number(e.target.value);
+                                                    setTargetQuantity(Number.isFinite(next) && next > 0 ? next : 0);
+                                                }}
+                                                disabled={isMultiRelease}
+                                                className="h-9 font-semibold bg-card border-input text-foreground font-mono"
+                                            />
+                                        </div>
                                     </div>
+                                    <p className="text-[10px] text-muted-foreground">
+                                        {isMultiRelease
+                                            ? "The full remaining quantity for this product/BOM group will be released."
+                                            : `Prefilled based on recipe batch size (${bomBaseQty.toLocaleString()}). Total ordered quantity requested in Sales Order is ${maxAvailableQuantity.toLocaleString()} units.`}
+                                    </p>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1">
@@ -682,22 +730,7 @@ export function ReleaseJODialog({
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
-                                                Priority
-                                            </label>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="1"
-                                                value={priority}
-                                                onChange={(e) => setPriority(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                                                className="h-9 font-semibold bg-card border-input text-foreground"
-                                                required
-                                            />
-                                        </div>
-
+                                    <div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">
                                                 Shift Option (Hours)
@@ -862,13 +895,15 @@ export function ReleaseJODialog({
                                                         <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
                                                         <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">
-                                                            {cogsBreakdown.isCustomLaborOverride ? "Fixed Version Override" : "Work Center Hourly Rate"}
+                                                            BOM Labor Standard
                                                         </span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
                                                         <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
-                                                        <span className="text-[9px] text-muted-foreground block">Power, Steam & Depreciation</span>
+                                                        <span className="text-[9px] text-muted-foreground block">
+                                                            {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
+                                                        </span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1219,10 +1254,6 @@ export function ReleaseJODialog({
                                         <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Priority:</span>
-                                        <span className="font-mono font-bold text-foreground">{priority}</span>
-                                    </div>
-                                    <div className="flex justify-between">
                                         <span className="text-muted-foreground">Due Date:</span>
                                         <span className="font-semibold text-foreground">{dueDate || "Not set"}</span>
                                     </div>
@@ -1316,6 +1347,7 @@ export function ReleaseJODialog({
                                     Save Draft
                                 </Button>
                                 <Button
+                                    variant="outline"
                                     size="sm"
                                     onClick={() => handleConfirmRelease(
                                         selectedSubAssemblyVersions,

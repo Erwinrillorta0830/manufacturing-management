@@ -33,6 +33,7 @@ import { QAChecklistModal } from "./components/QAChecklistModal";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { StationStartScanner } from "./components/StationStartScanner";
+import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
 import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
@@ -60,8 +61,7 @@ export default function ProductionWorkflowModule() {
         loadingOperators,
         searchQuery,
         setSearchQuery,
-        statusFilter,
-        setStatusFilter,
+        inProductionJobOrders,
         selectedAssigneeId,
         setSelectedAssigneeId,
         manualHours,
@@ -112,11 +112,17 @@ export default function ProductionWorkflowModule() {
         handleWorkflowAction
     } = useProductionWorkflow();
 
+    const selectedProductionOutput = selectedJobOrder?.productionOutputQuantity
+        ?? selectedJobOrder?.producedQty
+        ?? selectedJobOrder?.completed_quantity
+        ?? 0;
+
     // UI state
     const [clockedInCount, setClockedInCount] = React.useState(0);
     const [isShiftLogOpen, setIsShiftLogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [scannerJobOrder, setScannerJobOrder] = useState<any | null>(null);
+    const [isRouteAssignmentOpen, setIsRouteAssignmentOpen] = useState(false);
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isKioskMode, setIsKioskMode] = useState(false);
@@ -150,13 +156,10 @@ export default function ProductionWorkflowModule() {
     }, [fetchClockedIn]);
 
     const activeRuns = React.useMemo(() => {
-        return jobOrders.filter((jo) => isJobOrderStatus(
-            jo.status,
-            JOB_ORDER_STATUS.IN_PRODUCTION
-        )).length;
-    }, [jobOrders]);
+        return inProductionJobOrders.length;
+    }, [inProductionJobOrders]);
 
-    const totalRuns = jobOrders.length;
+    const totalRuns = inProductionJobOrders.length;
     const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
     const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
     const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
@@ -192,7 +195,7 @@ export default function ProductionWorkflowModule() {
 
     const completedWorkstations = React.useMemo(() => {
         let count = 0;
-        jobOrders.forEach((jo) => {
+        inProductionJobOrders.forEach((jo) => {
             const tasks = jo.routing_tasks || jo.routingTasks || [];
             tasks.forEach((t) => {
                 if (t.status === "Completed") {
@@ -201,7 +204,7 @@ export default function ProductionWorkflowModule() {
             });
         });
         return count;
-    }, [jobOrders]);
+    }, [inProductionJobOrders]);
 
     const parentJo = selectedJobOrder?.parentJobOrderId ? jobOrders.find((j) => Number(j.order_id) === Number(selectedJobOrder.parentJobOrderId)) : null;
     const parentJoNo = parentJo?.jo_id || null;
@@ -286,12 +289,12 @@ export default function ProductionWorkflowModule() {
             {/* Live Metrics Row */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Active Runs Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Released, ready-to-run, and in-progress Job Orders loaded in this terminal.">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="In-Production Job Orders currently loaded in this terminal.">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active WIP Runs</span>
                         <div className="flex items-baseline gap-2">
                             <span className="text-2xl font-bold tracking-tight text-foreground">{activeRuns}</span>
-                            <span className="text-xs text-muted-foreground">/ {totalRuns} Job Orders</span>
+                            <span className="text-xs text-muted-foreground">/ {totalRuns} In Production JOs</span>
                         </div>
                     </div>
                     <div className="p-3 bg-primary/10 text-primary rounded-xl">
@@ -314,7 +317,7 @@ export default function ProductionWorkflowModule() {
                 </div>
 
                 {/* Completed Workstations Card */}
-                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Routing steps marked Completed across all Job Orders loaded in this terminal.">
+                <div className="flex items-center justify-between p-5 bg-gradient-to-br from-card to-muted/20 border rounded-2xl shadow-sm hover:shadow-md transition-all duration-200" title="Routing steps marked Completed across In-Production Job Orders loaded in this terminal.">
                     <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Completed Operations</span>
                         <div className="flex items-baseline gap-2">
@@ -337,15 +340,12 @@ export default function ProductionWorkflowModule() {
                     setSelectedJobOrderId={setSelectedJobOrderId}
                     searchQuery={searchQuery}
                     setSearchQuery={setSearchQuery}
-                    statusFilter={statusFilter}
-                    setStatusFilter={setStatusFilter}
                     loadingJobs={loadingJobs}
                     branches={branches}
                     selectedBranchFilter={selectedBranchFilter}
                     setSelectedBranchFilter={setSelectedBranchFilter}
                     onClearFilters={() => {
                         setSearchQuery("");
-                        setStatusFilter("Active");
                         setSelectedBranchFilter("All");
                     }}
                     onAssignWorkstation={(jo) => openStationScanner(jo)}
@@ -385,7 +385,7 @@ export default function ProductionWorkflowModule() {
                                     {selectedJobOrder?.order_no || `JO #${selectedJobOrder?.jo_id}`}
                                 </DialogTitle>
                                 <DialogDescription className="text-muted-foreground text-xs sm:text-sm font-medium truncate sm:whitespace-normal">
-                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedJobOrder?.producedQty || selectedJobOrder?.completed_quantity || 0} pcs</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
+                                    Product: <strong className="text-foreground">{selectedJobOrder?.product_name}</strong> • Target: {selectedJobOrder?.quantity.toLocaleString()} pcs • Produced: <span className="font-mono font-bold text-emerald-600">{selectedProductionOutput.toLocaleString()} pcs</span> • Workstation: <strong className={selectedJobOrder?.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>{selectedJobOrder?.primary_work_center_name || (selectedJobOrder?.primary_work_center_id ? `WC #${selectedJobOrder.primary_work_center_id}` : "Unassigned")}</strong>
                                 </DialogDescription>
                                 {selectedJobOrderJourney && (
                                     <JobOrderJourneyBar journey={selectedJobOrderJourney} compact className="pt-2" />
@@ -436,6 +436,17 @@ export default function ProductionWorkflowModule() {
                                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold h-10 text-xs px-5 shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 transition-all duration-200 flex items-center"
                                     >
                                         <Building2 className="mr-1.5 h-4 w-4" /> Assign Workstation
+                                    </Button>
+                                )}
+                                {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.IN_PRODUCTION)
+                                    && sortedTasks.length > 1
+                                    && sortedTasks.some((task) => !task.status || task.status === "Pending") && (
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setIsRouteAssignmentOpen(true)}
+                                        className="border-primary/40 text-primary hover:bg-primary/10 font-bold h-10 text-xs px-5 shadow-sm transition-all duration-200 flex items-center"
+                                    >
+                                        <GitBranch className="mr-1.5 h-4 w-4" /> Assign Workstations per Route
                                     </Button>
                                 )}
                                 {isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.DRAFT) ? (
@@ -594,6 +605,17 @@ export default function ProductionWorkflowModule() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {selectedJobOrder && (
+                <RouteWorkstationAssignmentDialog
+                    open={isRouteAssignmentOpen}
+                    onOpenChange={setIsRouteAssignmentOpen}
+                    jobOrder={selectedJobOrder}
+                    onSaved={() => {
+                        void fetchJobs(selectedJobOrder.jo_id, true);
+                    }}
+                />
+            )}
 
             {/* --- STATION START SCANNER MODAL --- */}
             <StationStartScanner

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     CANCELLABLE_JOB_ORDER_STATUSES,
     normalizeJobOrderStatus,
@@ -10,6 +10,7 @@ import {
     cancelJobOrderAndReturnMaterials,
     fetchJobOrder
 } from "../production/_material-return";
+import { buildQAYieldAssessments } from "../production/_qa-accepted-output";
 import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
@@ -54,6 +55,17 @@ export interface JobOrderWorkflowResult {
 }
 
 type DirectusRecord = Record<string, unknown>;
+
+export interface JobOrderClosureBlocker {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+}
+
+export interface JobOrderClosureReadiness {
+    ready: boolean;
+    blockers: JobOrderClosureBlocker[];
+}
 
 function numberValue(value: unknown): number {
     let rawValue = value;
@@ -173,7 +185,7 @@ function actionTarget(action: JobOrderWorkflowAction): CanonicalJobOrderStatus {
         case "start-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
         case "place-on-hold": return JOB_ORDER_STATUS.ON_HOLD;
         case "resume-production": return JOB_ORDER_STATUS.IN_PRODUCTION;
-        case "complete-production": return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
+        case "complete-production": return JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
         case "terminate-production": return JOB_ORDER_STATUS.PRODUCTION_COMPLETED;
         case "begin-qa-reconciliation": return JOB_ORDER_STATUS.FOR_QA_RECONCILIATION;
         case "close": return JOB_ORDER_STATUS.CLOSED;
@@ -511,36 +523,102 @@ async function assertProductionCanComplete(jobOrder: DirectusRecord): Promise<vo
             "PRODUCTION_TARGET_REQUIRED"
         );
     }
-    const accountedOutput = ledgers.reduce((sum, ledger) => sum
+    const completionOutput = ledgers.reduce((sum, ledger) => sum
         + Math.max(0, Number(ledger.yield_quantity || 0))
-        + Math.max(0, Number(ledger.rejected_quantity || 0))
-        + Math.max(0, Number(ledger.scrap_quantity || 0)), 0);
-    if (accountedOutput <= QUANTITY_EPSILON) {
+        + Math.max(0, Number(ledger.rejected_quantity || 0)), 0);
+    if (completionOutput <= QUANTITY_EPSILON) {
         throw new JobOrderWorkflowError(
             "Production cannot be completed until output quantities are recorded.",
             422,
             "PRODUCTION_OUTPUT_REQUIRED"
         );
     }
-    if (accountedOutput > target + QUANTITY_EPSILON) {
+    if (completionOutput + QUANTITY_EPSILON < target) {
         throw new JobOrderWorkflowError(
-            "Production output cannot exceed the Job Order target.",
-            422,
-            "PRODUCTION_OUTPUT_OVER_TARGET",
-            { targetQuantity: target, accountedOutput }
-        );
-    }
-    if (Math.abs(accountedOutput - target) > QUANTITY_EPSILON) {
-        throw new JobOrderWorkflowError(
-            "Normal completion requires good, rejected, and scrap output to equal the Job Order target. Use controlled termination for a below-target run.",
+            "Production cannot be completed until good and rejected output reaches the Job Order target.",
             422,
             "PRODUCTION_OUTPUT_INCOMPLETE",
-            { targetQuantity: target, accountedOutput }
+            {
+                targetQuantity: target,
+                completionQuantity: completionOutput,
+                shortfall: Math.max(0, target - completionOutput)
+            }
         );
     }
 }
 
-async function assertClosurePrerequisites(jobOrderId: number): Promise<void> {
+export async function getJobOrderClosureReadiness(jobOrderId: number): Promise<JobOrderClosureReadiness> {
+    const [yields, inspections, routes, dispositions] = await Promise.all([
+        directusRows(
+            `/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_eq]=${jobOrderId}&fields=ledger_id,job_order_id,yield_quantity,rejected_quantity,scrap_quantity&limit=-1`,
+            `Load daily yields for Job Order ${jobOrderId}`
+        ),
+        directusRows(
+            `/items/manufacturing_daily_qa_inspections?filter[job_order_id][_eq]=${jobOrderId}&fields=*&limit=-1`,
+            `Load daily QA outcomes for Job Order ${jobOrderId}`
+        ),
+        directusRows(
+            `/items/manufacturing_job_order_routes?filter[job_order_id][_eq]=${jobOrderId}&fields=jo_route_id,job_order_id&limit=-1`,
+            `Load QA routes for Job Order ${jobOrderId}`
+        ),
+        directusRows(
+            `/items/manufacturing_qa_dispositions?filter[job_order_id][_eq]=${jobOrderId}&fields=id,disposition_status&limit=-1`,
+            `Load QA dispositions for Job Order ${jobOrderId}`
+        )
+    ]);
+
+    const blockers: JobOrderClosureBlocker[] = [];
+    const assessments = buildQAYieldAssessments(yields, inspections, routes);
+    const assessmentsByLedger = new Map(assessments.map((assessment) => [assessment.ledgerId, assessment] as const));
+    const yieldLedgerIds = yields
+        .map((yieldRow) => numberValue(yieldRow.ledger_id ?? yieldRow.id))
+        .filter((id) => id > 0);
+    const incompleteAssessments = yields
+        .map((yieldRow) => {
+            const ledgerId = numberValue(yieldRow.ledger_id ?? yieldRow.id);
+            const assessment = assessmentsByLedger.get(ledgerId);
+            return {
+                ledgerId,
+                status: assessment?.qaStatus || "Pending",
+                isComplete: assessment?.outcome.isComplete === true
+            };
+        })
+        .filter((assessment) => !assessment.ledgerId || !assessment.isComplete || assessment.status !== "Passed");
+
+    if (yieldLedgerIds.length === 0) {
+        blockers.push({
+            code: "QA_YIELD_REQUIRED",
+            message: "Every daily yield must have a completed QA outcome before the Job Order can be closed.",
+            details: { ledgerIds: [] }
+        });
+    } else if (incompleteAssessments.length > 0) {
+        blockers.push({
+            code: "QA_OUTCOME_INCOMPLETE",
+            message: "Every daily yield must have a completed Passed QA outcome before the Job Order can be closed.",
+            details: {
+                ledgerIds: incompleteAssessments.map((assessment) => assessment.ledgerId).filter(Boolean),
+                statuses: incompleteAssessments.map((assessment) => ({
+                    ledgerId: assessment.ledgerId || null,
+                    status: assessment.status
+                }))
+            }
+        });
+    }
+
+    const unresolvedDispositions = dispositions.filter((disposition) =>
+        text(disposition.disposition_status).toLowerCase() !== "resolved"
+    );
+    if (unresolvedDispositions.length > 0) {
+        blockers.push({
+            code: "QA_DISPOSITIONS_UNRESOLVED",
+            message: "Resolve all QA dispositions before closing the Job Order.",
+            details: {
+                dispositionIds: unresolvedDispositions.map((disposition) => disposition.id),
+                statuses: unresolvedDispositions.map((disposition) => text(disposition.disposition_status) || "Unknown")
+            }
+        });
+    }
+
     const materials = await loadMaterials(jobOrderId);
     const reservations = await loadReservations(materials.map(materialId).filter((id) => id > 0));
     const unresolvedWip = reservations.filter((reservation) => {
@@ -549,16 +627,33 @@ async function assertClosurePrerequisites(jobOrderId: number): Promise<void> {
         const consumed = reservationQuantity(reservation, "actual_used_quantity");
         const returned = reservationQuantity(reservation, "returned_quantity");
         const remaining = reservationQuantity(reservation, "remaining_wip_quantity");
-        return issued - (consumed + returned + remaining) > QUANTITY_EPSILON || remaining > QUANTITY_EPSILON;
+        return Math.abs(issued - (consumed + returned + remaining)) > QUANTITY_EPSILON
+            || remaining > QUANTITY_EPSILON;
     });
     if (unresolvedWip.length > 0) {
-        throw new JobOrderWorkflowError(
-            "Job Order cannot be closed while raw-material WIP remains unresolved.",
-            422,
-            "MATERIAL_WIP_UNRESOLVED",
-            { reservationIds: unresolvedWip.map((row) => numberValue(row.jo_materials_reservation_id ?? row.id)) }
-        );
+        blockers.push({
+            code: "MATERIAL_WIP_UNRESOLVED",
+            message: "Job Order cannot be closed while raw-material WIP remains unresolved.",
+            details: {
+                reservationIds: unresolvedWip.map((row) => numberValue(row.jo_materials_reservation_id ?? row.id))
+            }
+        });
     }
+
+    return { ready: blockers.length === 0, blockers };
+}
+
+async function assertClosurePrerequisites(jobOrderId: number): Promise<void> {
+    const readiness = await getJobOrderClosureReadiness(jobOrderId);
+    if (readiness.ready) return;
+
+    const firstBlocker = readiness.blockers[0];
+    throw new JobOrderWorkflowError(
+        firstBlocker.message,
+        422,
+        firstBlocker.code,
+        { blockers: readiness.blockers }
+    );
 }
 
 async function writeTransition(
@@ -569,7 +664,7 @@ async function writeTransition(
 ): Promise<JobOrderWorkflowResult> {
     const jobOrderId = numberValue(jobOrder.job_order_id);
     const jobOrderNo = text(jobOrder.job_order_no) || `JO-${jobOrderId}`;
-    const now = new Date().toISOString();
+    const now = formatPhtDateTime();
     const suppliedRemarks = command.remarks?.trim() || "";
     const transitionRemarks = command.action === "start-production" && suppliedRemarks
         ? suppliedRemarks
@@ -608,6 +703,7 @@ async function writeTransition(
             method: "PATCH",
             body: JSON.stringify({
                 status: nextStatus,
+                modified_at: jobOrder.modified_at ?? null,
                 ...lifecycleFields,
                 ...(command.action === "start-production" && command.workCenterId ? { primary_work_center_id: command.workCenterId } : {}),
                 ...(command.action === "place-on-hold" || command.action === "resume-production" || command.action === "terminate-production" ? { remarks: transitionRemarks } : {})
