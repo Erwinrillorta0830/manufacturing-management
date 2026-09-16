@@ -613,11 +613,11 @@ export function usePlanningEngineering() {
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(totalRemaining);
+        setTargetQuantity(0);
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
-        setShiftOption("8");
+        setShiftOption("");
         setPriority(0);
         setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
