@@ -2,6 +2,7 @@
 import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { getDailyQAAuditStatus, type DailyQAOutcomeStatus } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -58,12 +59,17 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             `${DIRECTUS_URL}/items/manufacturing_job_order_status_history?limit=-1&sort=-changed_at&fields=*`,
             { headers: headersNoCache }
         ).catch(() => null);
+        const dailyQAInspectionsPromise = fetch(
+            `${DIRECTUS_URL}/items/manufacturing_daily_qa_inspections?limit=-1&sort=-inspected_at&fields=*`,
+            { headers: headersNoCache }
+        ).catch(() => null);
         const workCentersPromise = fetch(
             `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name`,
             { headers: headersNoCache }
         ).catch(() => null);
         const responses = await Promise.all(fetchList);
         const statusHistoryResponse = await statusHistoryPromise;
+        const dailyQAInspectionsResponse = await dailyQAInspectionsPromise;
         const workCentersResponse = await workCentersPromise;
 
         const jos = responses[0].ok ? (await responses[0].json()).data || [] : [];
@@ -77,6 +83,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         const invMovements = await movementPromise;
         const statusHistoryRows = statusHistoryResponse?.ok
             ? (await statusHistoryResponse.json()).data || []
+            : [];
+        const dailyQAInspections = dailyQAInspectionsResponse?.ok
+            ? (await dailyQAInspectionsResponse.json()).data || []
             : [];
         const workCenterRows = workCentersResponse?.ok
             ? (await workCentersResponse.json()).data || []
@@ -222,6 +231,44 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             }
         });
 
+        const latestLedgerByJobOrder = new Map<number, any>();
+        mfgYieldLedger.forEach((ledger: any) => {
+            const jobOrderId = getRelationId(ledger.job_order_id, ["job_order_id"]);
+            if (!jobOrderId) return;
+
+            const current = latestLedgerByJobOrder.get(jobOrderId);
+            const currentTimestamp = Date.parse(String(current?.logged_at || current?.production_date || ""));
+            const nextTimestamp = Date.parse(String(ledger.logged_at || ledger.production_date || ""));
+            const currentLedgerId = getRelationId(current?.ledger_id ?? current?.id, ["ledger_id", "id"]);
+            const nextLedgerId = getRelationId(ledger.ledger_id ?? ledger.id, ["ledger_id", "id"]);
+
+            if (!current
+                || nextTimestamp > currentTimestamp
+                || (nextTimestamp === currentTimestamp && nextLedgerId > currentLedgerId)) {
+                latestLedgerByJobOrder.set(jobOrderId, ledger);
+            }
+        });
+
+        const qaStatusByRoute = (jobOrderId: number, routeId: number): DailyQAOutcomeStatus => {
+            const latestLedger = latestLedgerByJobOrder.get(jobOrderId);
+            const latestLedgerId = getRelationId(latestLedger?.ledger_id ?? latestLedger?.id, ["ledger_id", "id"]);
+            if (!latestLedgerId) return "Pending";
+
+            const routeAudits = dailyQAInspections.filter((inspection: any) =>
+                getRelationId(inspection.job_order_id, ["job_order_id"]) === jobOrderId
+                && getRelationId(inspection.ledger_id, ["ledger_id"]) === latestLedgerId
+                && getRelationId(inspection.jo_route_id, ["jo_route_id"]) === routeId
+            );
+
+            if (routeAudits.some((audit: any) => getDailyQAAuditStatus(audit) === "QA Hold")) {
+                return "QA Hold";
+            }
+            if (routeAudits.length > 0 && routeAudits.every((audit: any) => getDailyQAAuditStatus(audit) === "Passed")) {
+                return "Passed";
+            }
+            return "Pending";
+        };
+
         // Map them together
         return jos.map((jo: any) => {
             const joNo = jo.job_order_no;
@@ -306,6 +353,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     const reqQA = isEnabledFlag(task.requires_qa)
                         || isEnabledFlag(masterRoute?.requires_qa)
                         || qaTemplateId !== null;
+                    const qaStatus = reqQA ? qaStatusByRoute(joIdInt, Number(task.jo_route_id)) : null;
                     const routeId = masterRoutingId || taskRoutingId;
                     const stepBoms = routeId ? mfgRoutesBom.filter((b: any) => Number(b.route_id) === Number(routeId)) : [];
                     
@@ -342,6 +390,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         work_center_name: workCenterId ? workCenterNameById.get(workCenterId) || null : null,
                         completed_at: task.completed_at,
                         requires_qa: reqQA ? 1 : 0,
+                        qa_status: qaStatus,
                         assignments: taskAssigns,
                         qa_logs: taskQAs,
                         bom_items: stepBomItems

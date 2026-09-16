@@ -1,5 +1,6 @@
 /* eslint-disable */
 import React from "react";
+import Link from "next/link";
 import {
     Clock,
     Play,
@@ -163,23 +164,37 @@ export function OperationStepTracker({
 
                             {/* QA Gate Indicator */}
                             {task.requires_qa === 1 ? (
-                                <div className="flex items-center justify-between text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/5 p-1.5 rounded-lg border border-amber-500/20 font-semibold">
+                                <div className={`flex items-center justify-between text-[10px] p-1.5 rounded-lg border font-semibold ${
+                                    task.qa_status === "Passed"
+                                        ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20"
+                                        : task.qa_status === "QA Hold"
+                                        ? "text-rose-700 dark:text-rose-400 bg-rose-500/5 border-rose-500/20"
+                                        : "text-amber-600 dark:text-amber-400 bg-amber-500/5 border-amber-500/20"
+                                }`}>
                                     <span className="flex items-center gap-1">
-                                        <ShieldAlert className="h-3.5 w-3.5 text-amber-500" /> QA Checklist Required
+                                        {task.qa_status === "Passed" ? (
+                                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                        ) : task.qa_status === "QA Hold" ? (
+                                            <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
+                                        ) : (
+                                            <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+                                        )}
+                                        {task.qa_status === "Passed" ? "QA Passed" : task.qa_status === "QA Hold" ? "QA Hold" : "QA Checklist Required"}
                                     </span>
-                                    {!isCompleted && !readOnly && (
-                                        <Button
-                                            size="xs"
-                                            variant="ghost"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                onOpenQAModal(task.id);
-                                            }}
-                                            className="h-5 text-[10px] px-1.5 text-amber-600 hover:text-amber-700"
+                                    <Button asChild size="xs" variant="ghost" className={`h-5 text-[10px] px-1.5 ${
+                                        task.qa_status === "Passed"
+                                            ? "text-emerald-700 hover:text-emerald-800"
+                                            : task.qa_status === "QA Hold"
+                                            ? "text-rose-700 hover:text-rose-800"
+                                            : "text-amber-600 hover:text-amber-700"
+                                    }`}>
+                                        <Link
+                                            href={`/mm/manufacturing-job-order-inspection-qa?jo=${encodeURIComponent(selectedJobOrder.jo_id)}`}
+                                            onClick={(e) => e.stopPropagation()}
                                         >
-                                            Audit
-                                        </Button>
-                                    )}
+                                            {task.qa_status === "Passed" ? "View QA" : "Audit"}
+                                        </Link>
+                                    </Button>
                                 </div>
                             ) : (
                                 !isCompleted && !readOnly && (
