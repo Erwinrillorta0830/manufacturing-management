@@ -78,6 +78,7 @@ export async function fetchJobMaterials(joId: number | string, signal?: AbortSig
 export interface ReleaseJOPayload {
     initialize?: boolean;
     isBuffer?: boolean;
+    usePhysicalOnHand?: boolean;
     idempotencyKey?: string;
     force?: boolean;
     overrideReason?: string;
@@ -135,6 +136,7 @@ export interface ReleaseMultipleJob {
 export interface ReleaseMultiplePayload {
     action: "release-multiple";
     initialize?: boolean;
+    usePhysicalOnHand?: boolean;
     idempotencyKey?: string;
     force?: boolean;
     overrideReason?: string;

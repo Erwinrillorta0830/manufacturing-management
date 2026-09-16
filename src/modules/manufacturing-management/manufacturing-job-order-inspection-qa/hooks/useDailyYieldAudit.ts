@@ -176,9 +176,16 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
         }
     }, []);
 
-    const openAudit = useCallback((yieldRecord: JobOrderDailyYieldRecord, details: JobOrderDailyYieldDetails) => {
+    const openAudit = useCallback((
+        yieldRecord: JobOrderDailyYieldRecord,
+        details: JobOrderDailyYieldDetails,
+        preferredRouteId?: number | null
+    ) => {
         const sortedRoutes = [...details.routes].sort((left, right) => left.sequenceOrder - right.sequenceOrder);
-        const pendingRoute = sortedRoutes.find((route) => !yieldRecord.audits.some((audit) => routeId(audit.jo_route_id) === route.id));
+        const pendingRoutes = sortedRoutes.filter((route) => !yieldRecord.audits.some((audit) => routeId(audit.jo_route_id) === route.id));
+        const preferredRoute = preferredRouteId
+            ? pendingRoutes.find((route) => route.id === preferredRouteId)
+            : null;
 
         setSelectedYield(yieldRecord);
         setSelectedDetails(details);
@@ -196,7 +203,7 @@ export function useDailyYieldAudit({ onSaved }: UseDailyYieldAuditOptions = {}) 
         setDailyOutputEligibleLots([]);
         setDailyOutputLotsError(null);
         setQaParamValues({});
-        setSelectedRouteId(pendingRoute?.id || sortedRoutes[0]?.id || null);
+        setSelectedRouteId(preferredRoute?.id || pendingRoutes[0]?.id || sortedRoutes[0]?.id || null);
         setIsOpen(true);
         void loadOutputLots(details, yieldRecord);
     }, [loadOutputLots]);

@@ -465,6 +465,7 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
     const jobs = Array.isArray(body.jobs) ? body.jobs : [];
     const branchId = Number(shared.branchId);
     const shouldInitialize = body.initialize === true;
+    const usePhysicalOnHand = body.usePhysicalOnHand === true;
     const forceInitialize = body.force === true || body.forceRelease === true;
     const overrideReason = String(body.overrideReason || body.overrideRemarks || "").trim();
     if (!baseJoNumber || !Number.isInteger(branchId) || branchId <= 0 || jobs.length < 2) {
@@ -570,7 +571,11 @@ async function handleReleaseMultiple(body: Record<string, any>): Promise<Respons
                 validation.parentOrderIds,
                 validation.detailIds,
                 validation.schedulingPlan,
-                { deferSalesOrderTransition: true, initialize: shouldInitialize }
+                {
+                    deferSalesOrderTransition: true,
+                    initialize: shouldInitialize,
+                    usePhysicalOnHand: shouldInitialize && usePhysicalOnHand
+                }
             );
             createdJobOrderNos.push(String(validation.job.jo_id));
             if (shouldInitialize) {
@@ -639,15 +644,13 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
 
-            // Buffer JOs are intentionally initialized against physical stock,
-            // not stock remaining after other JO reservations. The buffer
-            // dialog already applies this rule during direct initialization;
-            // apply the same rule when a saved buffer draft is initialized from
-            // the planning queue.
+            // Buffer JOs and explicitly requested SO JOs are initialized against
+            // physical stock, not stock remaining after other JO reservations.
             const isBufferJobOrder = String(joData.job_order_no || "")
                 .trim()
                 .toUpperCase()
                 .startsWith("JO-BUF-");
+            const usePhysicalOnHand = isBufferJobOrder || body.usePhysicalOnHand === true;
 
             if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
                 return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
@@ -710,7 +713,7 @@ export async function handlePOST(request: Request) {
                 const availableLots = await getAvailableInventoryLots(
                     compProductId,
                     branchId,
-                    isBufferJobOrder ? { includeReservations: false } : undefined
+                    usePhysicalOnHand ? { includeReservations: false } : undefined
                 );
                 for (const lot of availableLots) {
                     if (newlyReservedQty >= needed) break;
@@ -1585,7 +1588,8 @@ export async function handlePOST(request: Request) {
             schedulingPlan,
             {
                 initialize: body.initialize === true,
-                physicalOnHandInitialization: body.isBuffer === true && body.initialize === true
+                physicalOnHandInitialization: body.isBuffer === true && body.initialize === true,
+                usePhysicalOnHand: body.usePhysicalOnHand === true && body.initialize === true
             }
         );
         createdJobOrderNo = result.jo_id ? String(result.jo_id).trim() : null;
