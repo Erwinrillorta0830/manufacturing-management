@@ -1285,8 +1285,8 @@ export async function PATCH(request: Request) {
                     }
                 }
 
-                const isApprovalDecision = (current === "For Approval" || current === "On Hold")
-                    && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "On Hold" || target === "Cancelled");
+                const isApprovalDecision = (current === "For Approval" || current === "On Hold" || current === "For Revision")
+                    && (target === "For Consolidation" || target === "For Production" || target === "Draft" || target === "For Revision" || target === "On Hold" || target === "Cancelled");
                 if (isApprovalDecision && !(await canApproveSalesOrders(user))) {
                     throw new ApiError(403, "Sales-order approval access is required for this transition.");
                 }
