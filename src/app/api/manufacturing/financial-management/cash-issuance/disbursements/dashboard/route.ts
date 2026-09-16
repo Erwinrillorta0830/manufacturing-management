@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
     const divisionId = url.searchParams.get("divisionId");
 
     try {
-        const encodersPromise = fetch(`${DIRECTUS_URL}/items/disbursement?groupBy[]=encoder_id&filter[encoder_id][_null]=false`, {
+        const encodersPromise = fetch(`${DIRECTUS_URL}/items/disbursement?fields=encoder_id&filter[encoder_id][_null]=false&limit=-1`, {
             headers: { Authorization: `Bearer ${DIRECTUS_TOKEN}` },
             cache: "no-store",
         }).then(res => res.json()).catch(err => {
@@ -469,10 +469,19 @@ export async function GET(req: NextRequest) {
             totalExpense: Math.round(data.amount * 100) / 100
         }));
 
-        const encodersJson = (await encodersPromise) as { data?: { encoder_id?: number | null }[] } | null | undefined;
-        const activeEncoderIds = (encodersJson?.data || [])
-            .map((e): number | null | undefined => e?.encoder_id)
-            .filter((id): id is number => typeof id === "number");
+        const encodersJson = (await encodersPromise) as { data?: { encoder_id?: number | { user_id?: number; id?: number } | null }[] } | null | undefined;
+        const activeEncoderIds = Array.from(new Set(
+            (encodersJson?.data || [])
+                .map((e): number | null => {
+                    if (!e?.encoder_id) return null;
+                    if (typeof e.encoder_id === "number") return e.encoder_id;
+                    if (typeof e.encoder_id === "object") {
+                        return e.encoder_id.user_id ?? e.encoder_id.id ?? null;
+                    }
+                    return null;
+                })
+                .filter((id): id is number => typeof id === "number" && !Number.isNaN(id))
+        ));
 
         return NextResponse.json({
             totalDisbursed: Math.round(totalDisbursed * 100) / 100,

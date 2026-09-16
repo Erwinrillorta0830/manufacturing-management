@@ -134,7 +134,7 @@ export default function CollectionCashieringModule({currentUser}: ModuleProps) {
                                         <CommandGroup>
                                             <CommandItem onSelect={() => { setSalesmanFilter("all"); setPage(1); setOpenSalesmanFilter(false); }} className="text-[10px] font-black uppercase text-muted-foreground cursor-pointer">-- All Collectors --</CommandItem>
                                             {state.salesmen.map(salesman => (
-                                                <CommandItem key={salesman.id} value={salesman.salesmanName} onSelect={() => { setSalesmanFilter(salesman.salesmanCode); setPage(1); setOpenSalesmanFilter(false); }} className="text-xs font-medium cursor-pointer">
+                                                <CommandItem key={salesman.id} value={`${salesman.salesmanName} ${salesman.salesmanCode}`} onSelect={() => { setSalesmanFilter(salesman.salesmanCode); setPage(1); setOpenSalesmanFilter(false); }} className="text-xs font-medium cursor-pointer">
                                                     <CheckIcon className={cn("mr-2 h-4 w-4 text-primary", salesmanFilter === salesman.salesmanCode ? "opacity-100" : "opacity-0")}/>
                                                     {salesman.salesmanName} ({salesman.salesmanCode})
                                                 </CommandItem>
