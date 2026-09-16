@@ -21,6 +21,11 @@ function compareNewestSalesOrders(left: SalesOrder, right: SalesOrder): number {
     return Number(right.order_id) - Number(left.order_id);
 }
 
+function parseValidBranchId(value: unknown): number | null {
+    const branchId = Number(value);
+    return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+}
+
 export function usePlanningEngineering() {
     // UI State
     const [loadingBranches, setLoadingBranches] = useState(true);
@@ -207,9 +212,6 @@ export function usePlanningEngineering() {
             ]);
 
             setBranches(activeBranches);
-            if (activeBranches.length > 0) {
-                setSelectedBranchId((prev) => prev ?? activeBranches[0].id);
-            }
 
             setSalesOrders(soResult.data || []);
             setDetailsMap(soResult.detailsMap || {});
@@ -239,16 +241,23 @@ export function usePlanningEngineering() {
     }, []);
 
     useEffect(() => {
-        if (!pendingDeepLinkJo || loadingJobs) return;
+        if (!pendingDeepLinkJo || loadingJobs || loadingBranches) return;
         const match = rawUnreleasedJobs.find((jo: any) => String(jo.jo_id || jo.job_order_no || "") === pendingDeepLinkJo);
         if (match) {
-            setSelectedBranchId(Number(match.branch_id) || null);
-            setDeepLinkJo(match);
+            const persistedBranchId = parseValidBranchId(match.branch_id);
+            const isActiveBranch = persistedBranchId !== null
+                && branches.some((branch) => Number(branch.id) === persistedBranchId);
+            if (isActiveBranch) {
+                setSelectedBranchId(persistedBranchId);
+                setDeepLinkJo(match);
+            } else {
+                setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} has no active target branch and cannot be opened in a branch-scoped planning view.`);
+            }
         } else {
             setDeepLinkNotice(`Job Order ${pendingDeepLinkJo} is not in the planning queue. It may already be released or in production, belongs to another branch, or does not exist.`);
         }
         setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, rawUnreleasedJobs, loadingJobs]);
+    }, [pendingDeepLinkJo, rawUnreleasedJobs, loadingJobs, loadingBranches, branches]);
 
     // Establish Realtime SSE (Server-Sent Events) Connection for inventory movements
     useEffect(() => {
@@ -431,7 +440,8 @@ export function usePlanningEngineering() {
 
     // Fetch On-Hand & Safety Stock for the Net Requirements Calculation Grid
     useEffect(() => {
-        if (!selectedBranchId || demandProductIds.length === 0) {
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null || demandProductIds.length === 0) {
             setNetRequirements([]);
             return;
         }
@@ -439,7 +449,7 @@ export function usePlanningEngineering() {
         const runFetchNetRequirements = async () => {
             setLoadingRequirements(true);
             try {
-                const data = await fetchNetRequirementsRaw(demandProductIds, selectedBranchId);
+                const data = await fetchNetRequirementsRaw(demandProductIds, branchId);
                 
                 // Group gross demands from all outstanding lines, grouping by SKU product_id directly
                 const grossDemandMap: Record<number, number> = {};
@@ -584,6 +594,10 @@ export function usePlanningEngineering() {
 
     // Open Release Modal & initialize parameters
     const handleInitiateRelease = () => {
+        if (parseValidBranchId(selectedBranchId) === null) {
+            toast.error("Please select a target branch before releasing a Job Order.");
+            return;
+        }
         if (!mergeValidation.isValid) return;
 
         // Sum total demand
@@ -615,7 +629,12 @@ export function usePlanningEngineering() {
         groupConfigurations?: Record<string, { subAssemblyVersions: Record<number, number>; assignments: Record<number, number[]> }>,
         initialize = false
     ) => {
-        if (!selectedBranchId || selectedLines.length === 0) return;
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null) {
+            toast.error("Please select a target branch before creating a Job Order.");
+            return;
+        }
+        if (selectedLines.length === 0) return;
 
         const maxAvailableQuantity = selectedLines.reduce((sum, line) => sum + remainingQuantity(line), 0);
         if (releaseGroups.length === 1 && (!Number.isFinite(targetQuantity) || targetQuantity <= 0)) {
@@ -630,7 +649,7 @@ export function usePlanningEngineering() {
                     action: "release-multiple",
                     initialize,
                     baseJoNumber: joNumber,
-                    shared: { branchId: selectedBranchId, plannedDate, dueDate, priority, shiftOption, remarks },
+                    shared: { branchId, plannedDate, dueDate, priority, shiftOption, remarks },
                     jobs: releaseGroups.map((group) => {
                         const configuration = groupConfigurations?.[group.key];
                         return {
@@ -665,7 +684,7 @@ export function usePlanningEngineering() {
                         priority,
                         status: JOB_ORDER_STATUS.DRAFT,
                         is_batched: selectedLines.length > 1,
-                        branch_id: selectedBranchId,
+                        branch_id: branchId,
                         shiftOption,
                         remarks,
                         bom: { version_id: firstLine.bom_version_id },
@@ -703,7 +722,12 @@ export function usePlanningEngineering() {
 
     // Direct Allocate Submit
     const handleConfirmDirectAllocate = async () => {
-        if (!selectedBranchId || selectedLines.length === 0) return;
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null) {
+            toast.error("Please select a target branch before direct allocation.");
+            return;
+        }
+        if (selectedLines.length === 0) return;
         if (releaseGroups.length !== 1) {
             toast.error("Direct allocation is available only when one product and recipe version group is selected.");
             return;
@@ -722,7 +746,7 @@ export function usePlanningEngineering() {
             }
  
             const payload = {
-                branchId: selectedBranchId,
+                branchId,
                 productId: targetProductId,
                 recipeVersionId: targetVersionId,
                 lines: selectedLines.map(l => ({
@@ -768,7 +792,7 @@ export function usePlanningEngineering() {
 
     // Load available version stock when selected lines change
     useEffect(() => {
-        if (!selectedBranchId || !mergeValidation.isValid || releaseGroups.length !== 1 || selectedLines.length === 0) {
+        if (parseValidBranchId(selectedBranchId) === null || !mergeValidation.isValid || releaseGroups.length !== 1 || selectedLines.length === 0) {
             setVersionStock(null);
             return;
         }

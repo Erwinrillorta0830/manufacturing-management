@@ -64,6 +64,7 @@ export function CreateBufferJODialog({
     // Details loaded from version selection (BOM & Routings)
     const [routings, setRoutings] = useState<any[]>([]);
     const [components, setComponents] = useState<any[]>([]);
+    const [bomData, setBomData] = useState<any | null>(null);
     const [inventories, setInventories] = useState<Record<number, any>>({});
     const [bomBaseQty, setBomBaseQty] = useState(1);
     const [subAssemblyBoms, setSubAssemblyBoms] = useState<Record<number, any[]>>({});
@@ -73,6 +74,11 @@ export function CreateBufferJODialog({
     const [loadingSubVersion, setLoadingSubVersion] = useState<Record<number, boolean>>({});
     const [printSelection, setPrintSelection] = useState<Record<string, boolean>>({});
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
+
+    const parseValidBranchId = (value: unknown): number | null => {
+        const branchId = Number(value);
+        return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
+    };
 
     const normalizeInventoryMap = (value: any): Record<number, any> => {
         if (!Array.isArray(value)) return value || {};
@@ -163,11 +169,11 @@ export function CreateBufferJODialog({
             setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
             setPriority(0);
 
-            // Set branch id
-            if (initialBranchId) {
-                setSelectedBranchId(String(initialBranchId));
-            } else if (branches.length > 0) {
-                setSelectedBranchId(String(branches[0].id));
+            // A new Buffer JO must always choose its target branch explicitly.
+            setSelectedBranchId("");
+            const initialBranch = parseValidBranchId(initialBranchId);
+            if (initialBranch !== null && branches.some((branch) => Number(branch.id) === initialBranch)) {
+                setSelectedBranchId(String(initialBranch));
             }
 
             // Load products
@@ -282,6 +288,7 @@ export function CreateBufferJODialog({
         if (currentStep === 1) {
             setRoutings([]);
             setComponents([]);
+            setBomData(null);
             setSubAssemblyBoms({});
             setSubAssemblyRoutings({});
             setHasLoadedDetails(false);
@@ -290,14 +297,14 @@ export function CreateBufferJODialog({
 
     // Load BOM & Routing details on Step 2
     useEffect(() => {
-        if (isOpen && selectedProductId && selectedVersionId && currentStep === 2 && !hasLoadedDetails) {
+        if (isOpen && selectedProductId && selectedVersionId && currentStep === 2 && !hasLoadedDetails && parseValidBranchId(selectedBranchId) !== null) {
             const loadDetails = async () => {
                 setLoadingDetails(true);
                 setDetailsError(null);
                 const controller = new AbortController();
                 const timeoutId = window.setTimeout(() => controller.abort(), 25000);
                 try {
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${selectedBranchId || 1}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}`;
                     const res = await fetch(url, { signal: controller.signal });
                     const data = await res.json().catch(() => null);
                     if (!res.ok) {
@@ -308,6 +315,7 @@ export function CreateBufferJODialog({
                     }
                     setRoutings(data.routings || []);
                     setComponents(data.components || []);
+                    setBomData(data.bom || null);
                     setSubAssemblyBoms(data.subAssemblyBoms || {});
                     setSubAssemblyRoutings(data.subAssemblyRoutings || {});
                     setSubAssemblyVersions(data.subAssemblyVersions || {});
@@ -330,10 +338,15 @@ export function CreateBufferJODialog({
     }, [isOpen, selectedProductId, selectedVersionId, currentStep, selectedBranchId, hasLoadedDetails]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (branchId === null) {
+            toast.error("Please select a target branch before loading inventory details.");
+            return;
+        }
         setSelectedSubAssemblyVersions(prev => ({ ...prev, [subProdId]: versionId }));
         setLoadingSubVersion(prev => ({ ...prev, [subProdId]: true }));
         try {
-            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${selectedBranchId || 1}`;
+            const url = `/api/manufacturing/planning-engineering?action=sub-assembly-version-details&productId=${subProdId}&versionId=${versionId}&branchId=${branchId}`;
             const res = await fetch(url);
             if (res.ok) {
                 const data = await res.json();
@@ -435,7 +448,7 @@ export function CreateBufferJODialog({
         const bomItemsForCosting = components.map((comp) => ({
             quantity_required: Number(comp.quantity_required || 0),
             wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
-            cost_per_unit: Number(comp.component_product_id?.cost_per_unit || comp.cost_per_unit || 0)
+            cost_per_unit: Number(comp.component_product_id?.cost_per_unit ?? comp.cost_per_unit ?? 0)
         }));
 
         const routeStepsForCosting = routings.map((r) => ({
@@ -444,18 +457,19 @@ export function CreateBufferJODialog({
             setup_time_hours: Number(r.setup_time_hours || 0),
             run_time_hours: Number(r.run_time_hours || 0),
             step_batch_size: Number(r.step_batch_size || 1),
-            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour || r.overhead_cost_per_hour || 0)
+            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour ?? r.overhead_cost_per_hour ?? 0)
         }));
 
         return calculateUnitCOGSBreakdown(
             bomBaseQty,
-            verObj?.expected_yield_percentage,
-            verObj?.custom_overhead,
+            bomData?.expected_yield_percentage ?? verObj?.expected_yield_percentage,
+            bomData?.custom_overhead ?? verObj?.custom_overhead,
             bomItemsForCosting,
             routeStepsForCosting,
-            Number(selectedProdObj.targetSellingPrice || (selectedProdObj as any).target_selling_price || 0)
+            Number(selectedProdObj.targetSellingPrice || (selectedProdObj as any).target_selling_price || 0),
+            Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : []
         );
-    }, [selectedProdObj, versions, selectedVersionId, components, routings, bomBaseQty]);
+    }, [selectedProdObj, versions, selectedVersionId, components, routings, bomBaseQty, bomData]);
 
     const subAssemblyUomList = Array.from(new Set(
         components
@@ -657,7 +671,7 @@ export function CreateBufferJODialog({
                 toast.error("Please enter a valid target quantity.");
                 return;
             }
-            if (!selectedBranchId) {
+            if (parseValidBranchId(selectedBranchId) === null) {
                 toast.error("Please select a target branch.");
                 return;
             }
@@ -810,7 +824,11 @@ export function CreateBufferJODialog({
     };
 
     const handleConfirmRelease = async (initialize = false) => {
-        if (!selectedProductId || !selectedBranchId) return;
+        const branchId = parseValidBranchId(selectedBranchId);
+        if (!selectedProductId || branchId === null) {
+            toast.error("Please select a target branch before creating a Job Order.");
+            return;
+        }
 
         setSubmitting(true);
         try {
@@ -826,7 +844,7 @@ export function CreateBufferJODialog({
                     priority,
                     status: "Draft",
                     is_batched: false,
-                    branch_id: Number(selectedBranchId),
+                    branch_id: branchId,
                     shiftOption: shiftOption,
                     remarks: remarks || `Manual/Buffer production run`,
                     bom: {
@@ -1046,6 +1064,7 @@ export function CreateBufferJODialog({
                         ) : (
                             <>
                             <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => handleConfirmRelease(false)}
                                 disabled={submitting}

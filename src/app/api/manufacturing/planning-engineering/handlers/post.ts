@@ -1480,6 +1480,11 @@ export async function handlePOST(request: Request) {
             return NextResponse.json({ error: "Missing job order configuration" }, { status: 400 });
         }
 
+        const requestedBranchId = Number(jo.branch_id);
+        if (!Number.isSafeInteger(requestedBranchId) || requestedBranchId <= 0) {
+            return NextResponse.json({ error: "A valid target branch is required before creating a Job Order." }, { status: 400 });
+        }
+
         const schedulingValidation = await validateSalesOrderScheduling(jo, salesOrderDetailIds, salesOrderIds);
         const effectiveSalesOrderIds = schedulingValidation.parentOrderIds;
         const forceInitialize = body.force === true || body.forceRelease === true;
@@ -1538,7 +1543,7 @@ export async function handlePOST(request: Request) {
             routings: jo.routings || null,
             allocation_results: jo.allocationResults || null,
             procurement_status: jo.procurementStatus || "Idle",
-            branch_id: jo.branch_id || null,
+            branch_id: requestedBranchId,
             uom_id: jo.uom_id || jo.uomId || null,
             priority: Number(jo.priority ?? 0),
             start_date: jo.start_date || jo.plannedDate || jo.due_date || null,
