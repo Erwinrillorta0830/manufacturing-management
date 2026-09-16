@@ -165,7 +165,7 @@ export function SelectedProductsList({
 
                             const isFinishedGoods = Boolean(
                                 item.product_type_id &&
-                                String(productTypes.find((t: any) => Number(t.id) === Number(item.product_type_id))?.name || "")
+                                String(productTypes.find((t: Record<string, unknown>) => Number(t.id) === Number(item.product_type_id))?.name || "")
                                     .toLowerCase()
                                     .includes("finished")
                             );
