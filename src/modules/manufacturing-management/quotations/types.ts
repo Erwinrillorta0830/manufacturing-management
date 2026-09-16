@@ -55,7 +55,12 @@ export interface CatalogProduct {
     product_code: string;
     price_per_unit: number;
     cost_per_unit: number;
+    unit_id?: number | null;
+    unit_name?: string;
+    unit_shortcut?: string;
     unit_of_measurement?: {
+        unit_id?: number | null;
+        unit_name?: string;
         unit_shortcut: string;
     };
     product_category?: unknown;

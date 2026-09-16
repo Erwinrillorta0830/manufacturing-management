@@ -37,6 +37,10 @@ export interface SalesReturnItem {
   unitMultiplier?: number;
   product_type?: number | string | null;
   product_type_name?: string | null;
+  category_name?: string | null;
+  product_category?: unknown;
+  product_name?: string;
+  unit_of_measurement?: number | string | null;
   priceA?: number;
   priceB?: number;
   priceC?: number;
@@ -212,6 +216,8 @@ export interface CustomerOption {
 export interface BranchOption {
   id: number;
   name: string;
+  branch_code?: string;
+  branch_name?: string;
 }
 
 // --- STATUS CARD DATA ---

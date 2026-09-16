@@ -57,12 +57,14 @@ export default function MaterialStagingModule() {
         activeAllocationItem,
         transferring,
         batchStageResult,
+        fullyStagedJobOrderNo,
         stageProgressLabel,
         handleDismissBatchStageResult,
         handleOpenAllocationModal,
         handleCloseAllocationModal,
         handleCommitAllocation,
         handleStageAllAvailable,
+        handleProceedToProduction,
         refreshData
     } = useMaterialStaging();
 
@@ -425,8 +427,10 @@ export default function MaterialStagingModule() {
                         onOpenTransferModal={handleOpenAllocationModal}
                         onStageAllAvailable={handleStageAllAvailable}
                         batchStageResult={batchStageResult}
+                        fullyStagedJobOrderNo={fullyStagedJobOrderNo}
                         stageProgressLabel={stageProgressLabel}
                         onDismissBatchStageResult={handleDismissBatchStageResult}
+                        onProceedToProduction={handleProceedToProduction}
                         isProcessing={transferring}
                     />
                 </div>

@@ -134,21 +134,18 @@ export function CashIssuanceDashboardTab() {
 
     const activeEncoders = useMemo(() => {
         const activeIds = data?.activeEncoderIds;
-        if (!activeIds) return users;
-        const activeSet = new Set(activeIds);
-        return users.filter(u => activeSet.has(u.id));
+        if (!activeIds || activeIds.length === 0) return users;
+        const activeSet = new Set(activeIds.map(id => Number(id)));
+        const filtered = users.filter(u => activeSet.has(Number(u.id)));
+        return filtered.length > 0 ? filtered : users;
     }, [users, data?.activeEncoderIds]);
 
     useEffect(() => {
         // Fetch users
-        fetch("/api/manufacturing/financial-management/cash-issuance/users")
-            .then(res => res.json())
+        disbursementProvider.getUsers()
             .then(data => {
                 if (Array.isArray(data)) {
-                    setUsers(data.map((u: { id: number; firstName?: string; lastName?: string }) => ({
-                        id: u.id,
-                        name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || `User #${u.id}`
-                    })));
+                    setUsers(data);
                 }
             })
             .catch(err => console.warn("Failed to fetch users for filter:", err));

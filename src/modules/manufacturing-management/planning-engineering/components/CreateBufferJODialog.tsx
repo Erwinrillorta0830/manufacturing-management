@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
 import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
+import { calculateNetRunTime } from "../../finished-goods/costing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
 import { Step3Scheduling } from "./buffer-jo/Step3Scheduling";
@@ -25,7 +26,7 @@ interface CreateBufferJODialogProps {
     onOpenChange: (open: boolean) => void;
     branches: Branch[];
     initialBranchId: number | null;
-    onSuccess: () => void;
+    onSuccess: (jobOrderNo: string) => void | Promise<void>;
 }
 
 export function CreateBufferJODialog({
@@ -279,6 +280,18 @@ export function CreateBufferJODialog({
                 if (baseQty > 0) {
                     setTargetQuantity(baseQty);
                 }
+                const rawShift = verObj.net_run_time ?? verObj.shift_hours ?? verObj.shift_option ?? verObj.target_shift_hours;
+                if (rawShift && Number(rawShift) > 0) {
+                    setShiftOption(String(Number(rawShift).toFixed(1)));
+                } else {
+                    const netRunTime = calculateNetRunTime(
+                        Number(verObj.shift_hours) || 18,
+                        Number(verObj.shift_minutes) || 0,
+                        Number(verObj.downtime_minutes) || 16,
+                        Number(verObj.downtime_seconds) || 7
+                    ).netProductionHours;
+                    setShiftOption(netRunTime.toFixed(1));
+                }
             }
         }
     }, [selectedVersionId, versions]);
@@ -304,7 +317,7 @@ export function CreateBufferJODialog({
                 const controller = new AbortController();
                 const timeoutId = window.setTimeout(() => controller.abort(), 25000);
                 try {
-                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}`;
+                    const url = `/api/manufacturing/planning-engineering?action=wizard-step-2&productId=${selectedProductId}&bomId=${selectedVersionId}&branchId=${parseValidBranchId(selectedBranchId)}&isBuffer=true`;
                     const res = await fetch(url, { signal: controller.signal });
                     const data = await res.json().catch(() => null);
                     if (!res.ok) {
@@ -886,6 +899,10 @@ export function CreateBufferJODialog({
                     throw new Error("Buffer Job Order was created but did not reach For Picking. Please refresh the Job Order queue before retrying.");
                 }
             }
+            const createdJobOrderNo = String(json?.data?.jo_id || json?.data?.job_order_no || joNumber).trim();
+            if (!createdJobOrderNo) {
+                throw new Error("The created Buffer Job Order did not return a valid reference.");
+            }
             if (!initialize) {
                 toast.success(`Buffer Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
             } else {
@@ -897,7 +914,7 @@ export function CreateBufferJODialog({
                 Number(targetQuantity)
             );
             onOpenChange(false);
-            onSuccess();
+            await onSuccess(createdJobOrderNo);
         } catch (err: any) {
             console.error("Error creating manual job order:", err);
             toast.error(err.message || "An error occurred during Job Order creation & release.");

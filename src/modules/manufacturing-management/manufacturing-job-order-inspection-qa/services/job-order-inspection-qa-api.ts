@@ -10,7 +10,6 @@ async function readResponse<T>(response: Response, fallback: string): Promise<T>
     }
     return (payload?.data ?? payload) as T;
 }
-
 export async function fetchJobOrderDailyYieldSummaries(
     signal?: AbortSignal
 ): Promise<JobOrderDailyYieldSummary[]> {
@@ -53,17 +52,4 @@ export async function closeJobOrder(
         status: payload?.data?.status || payload?.data?.newStatus || "Closed",
         idempotent: payload?.data?.idempotent === true
     };
-}
-
-export async function moveSalesOrderToConsolidation(orderId: number): Promise<{ orderStatus: string }> {
-    const response = await fetch("/api/manufacturing/sales-order", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, orderStatus: "For Consolidation" })
-    });
-    const payload = await response.json().catch(() => null) as { order_status?: string; orderStatus?: string; error?: string } | null;
-    if (!response.ok) {
-        throw new Error(payload?.error || "Failed to move the Sales Order to For Consolidation.");
-    }
-    return { orderStatus: payload?.orderStatus || payload?.order_status || "For Consolidation" };
 }

@@ -33,6 +33,9 @@ export interface RoutingTask {
     completed_at: string | null;
     requires_qa: number; // 0 or 1
     qa_template_id?: number | null;
+    qa_record_exists: boolean;
+    shift_progress_exists: boolean;
+    qa_status?: "Pending" | "Passed" | "QA Hold" | null;
     assignments: OperatorAssignment[];
     qa_logs: any[];
     good_quantity?: number;

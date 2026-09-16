@@ -60,7 +60,7 @@ export function SalesOrderDetailPanel({
         );
     }
 
-    const isEditable = selectedOrder.order_status === "Draft" || selectedOrder.order_status === "Pending";
+    const isEditable = selectedOrder.order_status === "Draft" || selectedOrder.order_status === "Pending" || selectedOrder.order_status === "For Revision";
 
     // Compute pricing sums dynamically using editable quantities if present
     const grossSum = orderDetails.reduce((acc, item) => {
@@ -116,7 +116,7 @@ export function SalesOrderDetailPanel({
         }));
     };
 
-    if (selectedOrder?.order_status === "Draft") {
+    if (selectedOrder?.order_status === "Draft" || selectedOrder?.order_status === "For Revision") {
         if (loadingDetails) {
             return (
                 <div className="bg-card p-6 space-y-6 flex flex-col rounded-lg border animate-pulse">
@@ -205,6 +205,8 @@ export function SalesOrderDetailPanel({
                                 ? "bg-muted text-foreground border border-border"
                                 : selectedOrder.order_status === "Pending"
                                 ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20"
+                                : selectedOrder.order_status === "For Revision"
+                                ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20"
                                 : selectedOrder.order_status === "For Approval"
                                 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
                                 : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"

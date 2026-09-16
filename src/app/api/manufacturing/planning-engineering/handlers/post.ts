@@ -317,14 +317,9 @@ async function validateSalesOrderScheduling(
     }
 
     const totalAvailableQuantity = availableLines.reduce((sum, line) => sum + line.availableQuantity, 0);
-    if (options.requireFullQuantity && Math.abs(requestedQuantity - totalAvailableQuantity) > 0.000001) {
+    if (requestedQuantity < totalAvailableQuantity - 0.000001) {
         throw new PlanningConflictError(
-            `The Job Order quantity must equal the full remaining quantity for this product/BOM group (${totalAvailableQuantity}). Refresh the demand list and try again.`
-        );
-    }
-    if (requestedQuantity > totalAvailableQuantity + 0.000001) {
-        throw new PlanningConflictError(
-            `The requested Job Order quantity (${requestedQuantity}) exceeds the currently available Sales Order quantity (${totalAvailableQuantity}). Refresh the demand list and try again.`
+            `The requested Job Order quantity (${requestedQuantity}) is less than the required Sales Order quantity (${totalAvailableQuantity}). Job Order quantity cannot be less than Sales Order quantity.`
         );
     }
 
@@ -342,9 +337,6 @@ async function validateSalesOrderScheduling(
             });
             quantityToAllocate -= allocationQuantity;
         }
-    }
-    if (quantityToAllocate > 0.000001) {
-        throw new PlanningConflictError("The requested Job Order quantity could not be allocated across the selected Sales Order details. Refresh the demand list and try again.");
     }
 
     return {
@@ -647,6 +639,16 @@ export async function handlePOST(request: Request) {
                 return NextResponse.json({ error: `Job Order not found: ${joId}` }, { status: 404 });
             }
 
+            // Buffer JOs are intentionally initialized against physical stock,
+            // not stock remaining after other JO reservations. The buffer
+            // dialog already applies this rule during direct initialization;
+            // apply the same rule when a saved buffer draft is initialized from
+            // the planning queue.
+            const isBufferJobOrder = String(joData.job_order_no || "")
+                .trim()
+                .toUpperCase()
+                .startsWith("JO-BUF-");
+
             if (!isJobOrderStatus(joData.status, JOB_ORDER_STATUS.DRAFT)) {
                 return NextResponse.json({ error: "Only Draft Job Orders can be initialized." }, { status: 409 });
             }
@@ -705,7 +707,11 @@ export async function handlePOST(request: Request) {
                 let newlyReservedQty = 0;
                 const newAllocations = [];
 
-                const availableLots = await getAvailableInventoryLots(compProductId, branchId);
+                const availableLots = await getAvailableInventoryLots(
+                    compProductId,
+                    branchId,
+                    isBufferJobOrder ? { includeReservations: false } : undefined
+                );
                 for (const lot of availableLots) {
                     if (newlyReservedQty >= needed) break;
 
@@ -763,12 +769,13 @@ export async function handlePOST(request: Request) {
                 }
 
                 const finalReservedQty = reservedQty + newlyReservedQty;
-                if (finalReservedQty < allocatedQty) {
+                const shortage = Math.max(0, allocatedQty - finalReservedQty);
+                if (shortage > 0.000001) {
                     allRequirementsMet = false;
                     const prodName = productNamesMap.get(compProductId) || `Product #${compProductId}`;
                     shortfallsList.push({
                         name: prodName,
-                        shortage: allocatedQty - finalReservedQty
+                        shortage
                     });
                 }
             }
@@ -777,31 +784,24 @@ export async function handlePOST(request: Request) {
                 await Promise.all(writePromises);
             }
 
-            if (allRequirementsMet || forceInitialize) {
-                const workflow = await executeJobOrderWorkflow(joData.job_order_id, {
-                    action: "initialize",
-                    actorUserId: encoderId,
-                    idempotencyKey: String(body.idempotencyKey || `planning-initialize-${joData.job_order_id}-${Date.now()}`).trim(),
-                    remarks: String(body.remarks || "Initialize Job Order for material picking").trim(),
-                    overrideReason: forceInitialize ? overrideReason : undefined,
-                    force: forceInitialize
-                });
-                return NextResponse.json({
-                    success: true,
-                    data: workflow,
-                    shortfalls: shortfallsList,
-                    message: allRequirementsMet
-                        ? "Job Order initialized and is ready for material picking."
-                        : "Job Order initialized with an authorized material-shortage override."
-                });
-            } else {
-                const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`).join("; ");
-                return NextResponse.json({
-                    success: false,
-                    error: `Still insufficient raw materials to initialize: ${shortfallMsg}`,
-                    code: "MATERIAL_SHORTAGE"
-                }, { status: 422 });
-            }
+            const shortfallMsg = shortfallsList.map(s => `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`).join("; ");
+            const workflow = await executeJobOrderWorkflow(joData.job_order_id, {
+                action: "initialize",
+                actorUserId: encoderId,
+                idempotencyKey: String(body.idempotencyKey || `planning-initialize-${joData.job_order_id}-${Date.now()}`).trim(),
+                remarks: String(body.remarks || "Initialize Job Order for material picking").trim(),
+                overrideReason: forceInitialize ? overrideReason : (shortfallMsg ? `Initialized with raw material shortfalls: ${shortfallMsg}` : undefined),
+                force: true
+            });
+            return NextResponse.json({
+                success: true,
+                data: workflow,
+                shortfalls: shortfallsList,
+                warning: shortfallsList.length > 0 ? `Initialized with raw material shortfalls: ${shortfallMsg}` : undefined,
+                message: allRequirementsMet
+                    ? "Job Order initialized and is ready for material picking."
+                    : `Job Order initialized (Warning: Raw material shortfalls: ${shortfallMsg}).`
+            });
         }
 
         if (action === "reserve-lot") {

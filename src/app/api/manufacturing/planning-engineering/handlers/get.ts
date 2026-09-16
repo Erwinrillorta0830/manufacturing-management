@@ -1214,6 +1214,7 @@ export async function handleGET(request: Request) {
             const prodId = Number(searchParams.get("productId") || "0");
             const vId = searchParams.get("bomId") ? Number(searchParams.get("bomId")) : undefined;
             const branchId = Number(searchParams.get("branchId") || "0");
+            const isBuffer = searchParams.get("isBuffer") === "true";
 
             if (!prodId || !Number.isSafeInteger(branchId) || branchId <= 0) {
                 return NextResponse.json({ error: "Missing or invalid productId or branchId query parameter" }, { status: 400 });
@@ -1268,7 +1269,8 @@ export async function handleGET(request: Request) {
                 bom_id: version.version_id,
                 bom_name: version.version_name,
                 base_quantity: version.base_quantity,
-                expected_yield_percentage: version.expected_yield_percentage
+                expected_yield_percentage: version.expected_yield_percentage,
+                shift_hours: (version as any).shift_hours ?? (version as any).shift_option ?? (version as any).target_shift_hours ?? null
             };
 
             // Resolve the work centers used by the selected recipe so costing can apply machine rates.
@@ -1509,7 +1511,9 @@ export async function handleGET(request: Request) {
             }
 
             // Run getProductInventoryAndSafetyStock for all collected product IDs
-            const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId);
+            const inventories = await getProductInventoryAndSafetyStock(allProductIds, branchId, {
+                includeReservations: !isBuffer
+            });
 
             // 2e: Return { bom, components, routings, subAssemblyVersions, selectedSubAssemblyVersions, subAssemblyBoms, subAssemblyRoutings, inventories }
             return NextResponse.json({

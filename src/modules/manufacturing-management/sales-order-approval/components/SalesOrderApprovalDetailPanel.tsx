@@ -61,9 +61,11 @@ export function SalesOrderApprovalDetailPanel({
                                         ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
                                         : selectedOrder.order_status === "On Hold"
                                             ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                                            : selectedOrder.order_status === "Cancelled"
-                                                ? "bg-destructive/10 text-destructive border border-destructive/20"
-                                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                            : selectedOrder.order_status === "For Revision"
+                                                ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20"
+                                                : selectedOrder.order_status === "Cancelled"
+                                                    ? "bg-destructive/10 text-destructive border border-destructive/20"
+                                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
                                         }`}>
                                         {selectedOrder.order_status || "Pending Approval"}
                                     </span>
@@ -302,8 +304,8 @@ export function SalesOrderApprovalDetailPanel({
                                 </button>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2">
-                                {handleHold && (
+                            <div className={`grid ${handleHold && selectedOrder.order_status !== "On Hold" ? "grid-cols-2" : "grid-cols-1"} gap-2`}>
+                                {handleHold && selectedOrder.order_status !== "On Hold" && (
                                     <button
                                         disabled={updatingStatusId === selectedOrder.order_id}
                                         onClick={() => handleHold(selectedOrder.order_id)}
@@ -317,7 +319,7 @@ export function SalesOrderApprovalDetailPanel({
                                     onClick={() => handleReject(selectedOrder.order_id)}
                                     className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background hover:bg-muted text-foreground py-2.5 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                                 >
-                                    Reject to Draft
+                                    Return for Revision
                                 </button>
                             </div>
 

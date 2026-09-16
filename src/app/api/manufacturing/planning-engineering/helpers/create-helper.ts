@@ -266,9 +266,13 @@ export async function createJobOrder(
             }
         }
 
-        // Dry-Run BOM Explosion & Raw Material Stock Verification
+        const shouldInitialize = options.initialize === true;
+
+        // Dry-Run BOM Explosion & Raw Material Stock Verification. Draft saves
+        // persist the worksheet only; they must not be rejected or annotated
+        // from a point-in-time availability check.
         const shortfalls: Array<{ name: string; required: number; available: number; shortage: number }> = [];
-        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && options.initialize
+        const inventoryAvailabilityOptions = options.physicalOnHandInitialization && shouldInitialize
             ? { includeReservations: false }
             : undefined;
         
@@ -316,7 +320,7 @@ export async function createJobOrder(
                     const compActiveVer = await getActiveVersionForProduct(compProductId);
                     const isSubAssembly = compActiveVer && compActiveVer.version;
 
-                    if (!isSubAssembly) {
+                    if (shouldInitialize && !isSubAssembly) {
                         if (!joData.branch_id) {
                             throw new Error("Cannot verify stock: Job Order is missing branch_id");
                         }
@@ -324,8 +328,8 @@ export async function createJobOrder(
                         const availableLots = await getAvailableInventoryLots(compProductId, branchId, inventoryAvailabilityOptions);
                         const netAvailable = availableLots.reduce((total, lot) => total + lot.available, 0);
 
-                        if (netAvailable < quantityRequired) {
-                            const shortage = quantityRequired - netAvailable;
+                        const shortage = Math.max(0, quantityRequired - netAvailable);
+                        if (shortage > 0.000001) {
                             let prodName = `Product #${compProductId}`;
                             try {
                                 const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${compProductId}?fields=product_name`, { headers });
@@ -371,13 +375,12 @@ export async function createJobOrder(
         // invoke the workflow initialize action after the full BOM, routing,
         // and material worksheet are persisted.
         const initialStatus = JOB_ORDER_STATUS.DRAFT;
-        const shouldInitialize = options.initialize === true;
 
         let forcedDraftRemarks = "";
-        if (shortfalls.length > 0) {
-            console.log("[createJobOrder] Shortfall detected. Forcing status to Draft. shortfalls:", shortfalls);
+        if (shouldInitialize && shortfalls.length > 0) {
+            console.log("[createJobOrder] Shortfall detected. Keeping Job Order in Draft. shortfalls:", shortfalls);
             const shortfallMsg = shortfalls.map(s => 
-                `${s.name} (Shortfall: ${s.shortage.toFixed(2)} units)`
+                `${s.name} (Shortfall: ${s.shortage.toFixed(4)} units)`
             ).join("; ");
             forcedDraftRemarks = ` | Saved as Draft due to raw material shortfalls: ${shortfallMsg}`;
         }
@@ -677,7 +680,8 @@ export async function createJobOrder(
                                 // linked to Sales Orders, so their authoritative
                                 // lot allocation is the reservation below.
                                 if (!options.physicalOnHandInitialization) {
-                                    const allocationPayload = {
+                                    const firstDetailId = salesOrderDetailIds && salesOrderDetailIds.length > 0 ? Number(salesOrderDetailIds[0]) : null;
+                                    const allocationPayload: Record<string, unknown> = {
                                         job_order_id: joIdInt,
                                         job_order_material_id: jomId,
                                         lot_id: alloc.purchase_order_product_id || null,
@@ -688,13 +692,21 @@ export async function createJobOrder(
                                         created_by: joData.created_by ? Number(joData.created_by) : null,
                                         created_at: formatPhtDateTime()
                                     };
+                                    if (firstDetailId && firstDetailId > 0) {
+                                        allocationPayload.sales_order_detail_id = firstDetailId;
+                                    }
                                     const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
                                         method: "POST",
                                         headers,
                                         body: JSON.stringify(allocationPayload)
                                     });
                                     if (!allocationRes.ok) {
-                                        throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${await allocationRes.text()}`);
+                                        const errText = await allocationRes.text();
+                                        if (/sales_order_detail_id|FAILED_VALIDATION|unknown field|invalid field/i.test(errText)) {
+                                            console.warn("[createJobOrder] Legacy lot allocation payload skipped due to collection schema constraint:", errText);
+                                        } else {
+                                            throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${errText}`);
+                                        }
                                     }
                                 }
 

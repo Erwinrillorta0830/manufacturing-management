@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
     closeJobOrder,
     fetchJobOrderDailyYieldDetails,
     fetchJobOrderDailyYieldSummaries,
-    moveSalesOrderToConsolidation,
 } from "../services/job-order-inspection-qa-api";
 import type {
     JobOrderDailyYieldDetails,
@@ -19,9 +18,20 @@ export function useJobOrderInspectionQA() {
     const [selectedDetails, setSelectedDetails] = useState<JobOrderDailyYieldDetails | null>(null);
     const [detailsLoading, setDetailsLoading] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
-    const [consolidatingOrderId, setConsolidatingOrderId] = useState<number | null>(null);
     const [closingJobOrderId, setClosingJobOrderId] = useState<number | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
     const closeIdempotencyKeys = useRef(new Map<number, string>());
+    const handledDeepLink = useRef<string | null>(null);
+
+    const filteredJobOrders = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        if (!query) return jobOrders;
+
+        return jobOrders.filter((jobOrder) => (
+            jobOrder.jobOrderNo.toLowerCase().includes(query)
+            || jobOrder.productName.toLowerCase().includes(query)
+        ));
+    }, [jobOrders, searchQuery]);
 
     const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
         setLoading(true);
@@ -76,6 +86,24 @@ export function useJobOrderInspectionQA() {
         setSelectedJobOrder(jobOrder);
     }, []);
 
+    useEffect(() => {
+        if (loading || typeof window === "undefined") return;
+
+        const requestedJobOrder = String(new URLSearchParams(window.location.search).get("jo") || "").trim();
+        if (!requestedJobOrder || handledDeepLink.current === requestedJobOrder) return;
+
+        handledDeepLink.current = requestedJobOrder;
+        const match = jobOrders.find((jobOrder) =>
+            jobOrder.jobOrderNo.trim().toLowerCase() === requestedJobOrder.toLowerCase()
+        );
+
+        if (match) {
+            openDetails(match);
+        } else {
+            toast.error(`Job Order ${requestedJobOrder} was not found in JO Daily Yields.`);
+        }
+    }, [jobOrders, loading, openDetails]);
+
     const closeDetails = useCallback(() => {
         setSelectedJobOrder(null);
         setSelectedDetails(null);
@@ -88,22 +116,6 @@ export function useJobOrderInspectionQA() {
             await loadDetails(selectedJobOrder.jobOrderId);
         }
     }, [loadDetails, loadJobOrders, selectedJobOrder]);
-
-    const handleMoveToConsolidation = useCallback(async (orderId: number) => {
-        setConsolidatingOrderId(orderId);
-        try {
-            await moveSalesOrderToConsolidation(orderId);
-            toast.success("Sales Order moved to For Consolidation.");
-            await refresh();
-        } catch (actionError) {
-            const message = actionError instanceof Error
-                ? actionError.message
-                : "Failed to move the Sales Order to For Consolidation.";
-            toast.error(message);
-        } finally {
-            setConsolidatingOrderId(null);
-        }
-    }, [refresh]);
 
     const handleCloseJobOrder = useCallback(async (jobOrderId: number) => {
         setClosingJobOrderId(jobOrderId);
@@ -136,18 +148,19 @@ export function useJobOrderInspectionQA() {
 
     return {
         jobOrders,
+        filteredJobOrders,
+        searchQuery,
+        setSearchQuery,
         loading,
         error,
         selectedJobOrder,
         selectedDetails,
         detailsLoading,
         detailsError,
-        consolidatingOrderId,
         closingJobOrderId,
         openDetails,
         closeDetails,
         refresh,
-        handleMoveToConsolidation,
         handleCloseJobOrder,
     };
 }

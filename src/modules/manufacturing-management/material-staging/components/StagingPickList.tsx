@@ -36,8 +36,10 @@ interface StagingPickListProps {
     onOpenTransferModal: (jobOrder: StagingJobOrder, material: MaterialStagingItem, lot?: AllocatedLot) => void;
     onStageAllAvailable: (jobOrder: StagingJobOrder) => Promise<void>;
     batchStageResult?: BatchStageResult | null;
+    fullyStagedJobOrderNo?: string | null;
     stageProgressLabel?: string | null;
     onDismissBatchStageResult?: () => void;
+    onProceedToProduction?: (jobOrderNo: string) => void;
     isProcessing?: boolean;
 }
 
@@ -46,8 +48,10 @@ export function StagingPickList({
     onOpenTransferModal,
     onStageAllAvailable,
     batchStageResult,
+    fullyStagedJobOrderNo = null,
     stageProgressLabel = null,
     onDismissBatchStageResult,
+    onProceedToProduction,
     isProcessing = false
 }: StagingPickListProps) {
     const [expandedMaterials, setExpandedMaterials] = useState<Record<number, boolean>>({});
@@ -168,7 +172,7 @@ export function StagingPickList({
                             ? {
                                 label: "Open Production Workflow",
                                 description: "All materials are on the floor. Start the shop-floor shift run when production begins.",
-                                href: "/mm/production-workflow"
+                                href: `/mm/production-workflow?jo=${encodeURIComponent(jobOrder.job_order_no)}`
                             }
                             : {
                                 label: "Stage available materials",
@@ -236,6 +240,17 @@ export function StagingPickList({
                             )}
                         </div>
                     </div>
+
+                    {batchStageResult.full_success && fullyStagedJobOrderNo === batchStageResult.job_order_no && onProceedToProduction && (
+                        <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => onProceedToProduction(batchStageResult.job_order_no)}
+                            className="h-8 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm shadow-emerald-500/20"
+                        >
+                            <ArrowRight className="mr-1.5 h-3.5 w-3.5" /> Proceed to Production
+                        </Button>
+                    )}
 
                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                         {batchStageResult.material_results.map((material) => (

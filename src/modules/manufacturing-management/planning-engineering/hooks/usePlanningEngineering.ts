@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { useState, useEffect, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { Branch, SalesOrder, SalesOrderDetail, NetRequirementItem } from "../types";
@@ -27,6 +28,10 @@ function parseValidBranchId(value: unknown): number | null {
 }
 
 export function usePlanningEngineering() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const requestedDeepLinkJo = searchParams.get("jo");
+
     // UI State
     const [loadingBranches, setLoadingBranches] = useState(true);
     const [loadingOrders, setLoadingOrders] = useState(true);
@@ -232,17 +237,35 @@ export function usePlanningEngineering() {
         loadInitialData();
     }, []);
 
+    const openCreatedJobOrder = async (jobOrderNo: string) => {
+        const normalizedJobOrderNo = String(jobOrderNo || "").trim();
+        if (!normalizedJobOrderNo) {
+            throw new Error("The created Job Order did not return a valid reference.");
+        }
+
+        await loadInitialData(true);
+        setDeepLinkNotice(null);
+        setPendingDeepLinkJo(normalizedJobOrderNo);
+        router.replace(`/mm/planning-engineering?jo=${encodeURIComponent(normalizedJobOrderNo)}`, { scroll: false });
+    };
+
     // Deep link support: /mm/planning-engineering?jo=JO-XXXX selects the
-    // Job Order's branch and opens its planning details.
+    // Job Order's branch and opens its planning details. This also reacts to
+    // redirects that update the query string while the page is mounted.
     useEffect(() => {
-        if (typeof window === "undefined") return;
-        const params = new URLSearchParams(window.location.search);
-        setPendingDeepLinkJo(params.get("jo"));
-    }, []);
+        setPendingDeepLinkJo(requestedDeepLinkJo);
+        if (requestedDeepLinkJo) {
+            setDeepLinkNotice(null);
+        } else {
+            setDeepLinkJo(null);
+        }
+    }, [requestedDeepLinkJo]);
 
     useEffect(() => {
         if (!pendingDeepLinkJo || loadingJobs || loadingBranches) return;
-        const match = rawUnreleasedJobs.find((jo: any) => String(jo.jo_id || jo.job_order_no || "") === pendingDeepLinkJo);
+        const requestedReference = pendingDeepLinkJo.trim().toLowerCase();
+        const match = rawUnreleasedJobs.find((jo: any) => [jo.jo_id, jo.job_order_no]
+            .some((reference) => String(reference ?? "").trim().toLowerCase() === requestedReference));
         if (match) {
             const persistedBranchId = parseValidBranchId(match.branch_id);
             const isActiveBranch = persistedBranchId !== null
@@ -613,11 +636,11 @@ export function usePlanningEngineering() {
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(totalRemaining);
+        setTargetQuantity(0);
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
-        setShiftOption("8");
+        setShiftOption("");
         setPriority(0);
         setRemarks(`Production run for: ${selectedLines.map(l => l.order_no).join(", ")}`);
         setIsConfirmOpen(true);
@@ -641,9 +664,14 @@ export function usePlanningEngineering() {
             toast.error("Enter a valid Job Order target quantity.");
             return;
         }
+        if (releaseGroups.length === 1 && targetQuantity < maxAvailableQuantity - 0.000001) {
+            toast.error(`The requested Job Order quantity (${targetQuantity}) is less than the required Sales Order quantity (${maxAvailableQuantity}). Job Order quantity cannot be less than Sales Order quantity.`);
+            return;
+        }
 
         setReleasingJO(true);
         try {
+            let createdJobOrderNo = "";
             if (releaseGroups.length > 1) {
                 const result = await releaseMultipleJobOrders({
                     action: "release-multiple",
@@ -664,6 +692,11 @@ export function usePlanningEngineering() {
                         };
                     })
                 });
+                const firstCreatedJob = result.jobs?.[0];
+                createdJobOrderNo = String(firstCreatedJob?.jo_id || firstCreatedJob?.job_order_no || "").trim();
+                if (!createdJobOrderNo) {
+                    throw new Error("The created Job Orders did not return a valid Job Order reference.");
+                }
                 toast.success(initialize
                     ? `${result.jobs?.length || releaseGroups.length} Job Orders initialized and ready for material picking.`
                     : `${result.jobs?.length || releaseGroups.length} Job Orders saved as Draft.`);
@@ -701,6 +734,7 @@ export function usePlanningEngineering() {
                     salesOrderDetailIds: selectedLines.map((line) => line.detail_id),
                     initialize
                 });
+                createdJobOrderNo = String(result.jo_id || result.job_order_no || joNumber).trim();
 
                 if (!initialize) {
                     toast.success(`Job Order ${joNumber} saved as Draft. Initialize it from the Job Order Queue when ready.`);
@@ -710,8 +744,9 @@ export function usePlanningEngineering() {
             }
             setIsConfirmOpen(false);
             setSelectedDetailIds([]);
-            // Reload data to show updated unfulfilled lines & requirements
-            loadInitialData(true);
+            // Refresh the queue before redirecting so the deep-link resolver
+            // can open the newly created JO and select its persisted branch.
+            await openCreatedJobOrder(createdJobOrderNo);
         } catch (err: any) {
             console.error("Error releasing job order:", err);
             toast.error(err.message || "An error occurred during Job Order explosion & release.");
@@ -858,6 +893,7 @@ export function usePlanningEngineering() {
         joNumber,
         setJoNumber,
         loadInitialData,
+        openCreatedJobOrder,
         deepLinkJo,
         clearDeepLinkJo: () => setDeepLinkJo(null),
         deepLinkNotice,
