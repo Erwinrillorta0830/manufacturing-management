@@ -124,7 +124,7 @@ export function QuotationDetailModal({
                 }))
             };
             sessionStorage.setItem("pending_so_conversion", JSON.stringify(payload));
-            router.push("/mm/sales-order");
+            router.push("/mm/sales-and-fulfillment/sales-order");
         } catch (e) {
             console.error(e);
             toast.error("Failed to route to Sales Order module");
@@ -137,11 +137,11 @@ export function QuotationDetailModal({
     const displayQuote = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
         ? projectQuoteHistory.find(q => q.id === activeHistoryQuoteId) || selectedQuote
         : selectedQuote;
-    
+
     const displaySnapshots = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
         ? historySnapshots
         : snapshots;
-    
+
     const isHistoryView = displayQuote.id !== selectedQuote.id;
     const hasNoQuote = !selectedQuote.id || selectedQuote.id === 0;
 
@@ -171,7 +171,7 @@ export function QuotationDetailModal({
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">Quote Number:</span>
-                            <select 
+                            <select
                                 value={activeHistoryQuoteId || selectedQuote.id}
                                 onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
                                 disabled={projectQuoteHistory.length <= 1}
