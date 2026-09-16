@@ -64,6 +64,9 @@ import {
   SalesReturnItem,
   SalesReturnStatusCard,
   InvoiceOption,
+  InvoiceLineItem,
+  Product,
+  ProductPerPriceType,
   API_LineDiscount,
   API_SalesReturnType,
   PriceTypeOption,
@@ -316,6 +319,77 @@ export function UpdateSalesReturnModal({
   const [invoiceSearch, setInvoiceSearch] = useState("");
 
   const [priceTypeOptions, setPriceTypeOptions] = useState<PriceTypeOption[]>([]);
+  const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([]);
+
+  // Effect to fetch invoice line items when appliedInvoiceId changes
+  useEffect(() => {
+    if (appliedInvoiceId) {
+      SalesReturnApiClient.getInvoiceDetails(appliedInvoiceId)
+        .then((data: InvoiceLineItem[]) => setInvoiceLineItems(data))
+        .catch((err: unknown) => console.error("Failed to load invoice items", err));
+    } else {
+      setInvoiceLineItems([]);
+    }
+  }, [appliedInvoiceId]);
+
+  /**
+   * Resolves the unit price according to 3-tier priority hierarchy:
+   * 1. Priority 1: Linked Invoice Line Item (exact historical price)
+   * 2. Priority 2: Price Type Fallback (customer/salesman price type)
+   * 3. Priority 3: Base Product Price Fallback (cost_per_unit / priceA / price_per_unit)
+   */
+  const resolvePrice = useCallback((
+    item: Partial<SalesReturnItem> | Product,
+    currentPriceType?: string,
+    catalogPrices?: ProductPerPriceType[],
+    invoiceItems?: InvoiceLineItem[]
+  ): number => {
+    const pId = ("productId" in item && item.productId !== undefined) ? item.productId : ("product_id" in item ? (item as Product).product_id : undefined);
+
+    // Priority 1: Linked Invoice Line Item
+    const targetInvoiceItems = invoiceItems || invoiceLineItems;
+    if (targetInvoiceItems && targetInvoiceItems.length > 0 && pId !== undefined) {
+      const invItem = targetInvoiceItems.find(i => Number(i.product_id) === Number(pId));
+      if (invItem && invItem.unit_price !== undefined && invItem.unit_price !== null) {
+        return Math.round(Number(invItem.unit_price) * 100) / 100;
+      }
+    }
+
+    // Priority 2: Price Type Fallback
+    if (currentPriceType) {
+      const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
+
+      if (pt && "availablePrices" in item && Array.isArray(item.availablePrices)) {
+        const priceRecord = item.availablePrices.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
+        if (priceRecord && priceRecord.price !== undefined && priceRecord.price !== null && Number(priceRecord.price) > 0) {
+          return Math.round(Number(priceRecord.price) * 100) / 100;
+        }
+      }
+
+      if (pt && Array.isArray(catalogPrices) && "product_id" in item && item.product_id !== undefined) {
+        const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number(item.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+        if (priceRecord && priceRecord.price !== undefined && priceRecord.price !== null && Number(priceRecord.price) > 0) {
+          return Math.round(Number(priceRecord.price) * 100) / 100;
+        }
+      }
+
+      if (pt) {
+        const key = `price${pt.price_type_name}` as keyof typeof item;
+        if (key in item && item[key] !== undefined && item[key] !== null && Number(item[key]) > 0) {
+          return Math.round(Number(item[key]) * 100) / 100;
+        }
+      }
+    }
+
+    // Priority 3: Base Product Price Fallback (cost_per_unit)
+    const basePrice = ("cost_per_unit" in item && item.cost_per_unit !== undefined && Number(item.cost_per_unit) > 0)
+      ? Number(item.cost_per_unit)
+      : ("unitPrice" in item && typeof item.unitPrice === "number")
+      ? item.unitPrice
+      : 0;
+
+    return Math.round(basePrice * 100) / 100;
+  }, [priceTypeOptions, invoiceLineItems]);
 
   // Order/Invoice Dropdown State
   const [isOrderDropdownOpen, setIsOrderDropdownOpen] = useState(false);
@@ -476,14 +550,10 @@ export function UpdateSalesReturnModal({
     if (details.length > 0) {
       setDetails((prevDetails) =>
         prevDetails.map((item) => {
-          const resolvedPt = priceTypeOptions.find(p => String(p.price_type_id) === String(headerData.priceType) || String(p.price_type_name) === String(headerData.priceType))?.price_type_name || headerData.priceType;
-          const key = `price${resolvedPt}` as keyof SalesReturnItem;
-          const basePrice = Number(item[key]) || Number(item.priceA) || Number(item.unitPrice) || 0;
-
-          const newUnitPrice = basePrice;
+          const newUnitPrice = resolvePrice(item, headerData.priceType, undefined, invoiceLineItems);
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
 
-          const newGross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
+          const newGross = Math.round(Number(item.quantity) * newUnitPrice * 100) / 100;
           let newDiscountAmt = 0;
 
           if (item.discountType && item.discountType !== "No Discount") {
@@ -510,7 +580,7 @@ export function UpdateSalesReturnModal({
         })
       );
     }
-  }, [headerData.priceType, discountOptions, details.length, priceTypeOptions]);
+  }, [headerData.priceType, discountOptions, details.length, resolvePrice, invoiceLineItems]);
 
   // Click outside handler for order/invoice dropdowns
   useEffect(() => {
@@ -570,7 +640,7 @@ export function UpdateSalesReturnModal({
       const price = Number(item.unitPrice || 0);
       const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : price;
 
-      const gross = Math.round(qty * agPrice * 100) / 100;
+      const gross = Math.round(qty * price * 100) / 100;
       const variance = Math.round((price - agPrice) * qty * 100) / 100;
 
       let disc = 0;
@@ -600,7 +670,7 @@ export function UpdateSalesReturnModal({
           item.quantity = availableCap;
           
           const newQty = item.quantity;
-          const newGross = Math.round(newQty * agPrice * 100) / 100;
+          const newGross = Math.round(newQty * price * 100) / 100;
           const newVariance = Math.round((price - agPrice) * newQty * 100) / 100;
           let newDisc = 0;
           if (item.discountType && item.discountType !== "No Discount") {
@@ -1052,10 +1122,7 @@ export function UpdateSalesReturnModal({
     (acc, i) => acc + (Number(i.discountAmount) || 0),
     0,
   ) * 100) / 100;
-  const totalNet = Math.round(details.reduce(
-    (acc, i) => acc + (Number(i.totalAmount) || 0),
-    0,
-  ) * 100) / 100;
+  const totalNet = Math.round((totalGross - totalDiscount) * 100) / 100;
   const filteredInvoices = invoiceOptions.filter((inv) =>
     inv.invoice_no.toLowerCase().includes(invoiceSearch.toLowerCase()),
   );
@@ -1203,6 +1270,12 @@ export function UpdateSalesReturnModal({
                       <TableHead className="text-white font-semibold h-11 w-[150px] uppercase text-xs">
                         Disc. Type
                       </TableHead>
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                        Disc. Amount
+                      </TableHead>
+                      <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                        Net Amount
+                      </TableHead>
                       <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                         Return Type
                       </TableHead>
@@ -1228,6 +1301,8 @@ export function UpdateSalesReturnModal({
                           <TableCell><Skeleton className="h-4 w-[60px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-4 w-[80px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
+                          <TableCell><Skeleton className="h-4 w-[80px] ml-auto" /></TableCell>
+                          <TableCell><Skeleton className="h-4 w-[80px] ml-auto" /></TableCell>
                           <TableCell><Skeleton className="h-8 w-[100px]" /></TableCell>
                           {canEditAll && <TableCell><Skeleton className="h-8 w-8 rounded-md mx-auto" /></TableCell>}
                         </TableRow>
@@ -1235,7 +1310,7 @@ export function UpdateSalesReturnModal({
                     ) : details.length === 0 ? (
                       <TableRow>
                         <TableCell
-                          colSpan={canEditAll ? 13 : 12}
+                          colSpan={canEditAll ? 15 : 14}
                           className="h-24 text-center text-muted-foreground text-sm"
                         >
                           No products found.
@@ -1431,6 +1506,16 @@ export function UpdateSalesReturnModal({
                                 )}
                               </TableCell>
 
+                              {/* Disc. Amount */}
+                              <TableCell className="text-right text-sm text-foreground align-middle font-mono whitespace-nowrap bg-muted/10">
+                                {(Number(item.discountAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+
+                              {/* Net Amount */}
+                              <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono whitespace-nowrap bg-primary/5">
+                                {(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+
                               {/* Return Type */}
                               <TableCell className="align-middle p-2">
                                 {canEditAll ? (
@@ -1578,6 +1663,12 @@ export function UpdateSalesReturnModal({
                               <TableCell className="align-middle p-2 text-center text-muted-foreground">
                                 -
                               </TableCell>
+                              <TableCell className="text-right text-sm text-amber-600 dark:text-amber-500 font-semibold align-middle font-mono">
+                                - ₱{(Number(group.totalDiscount)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono">
+                                ₱{(Number(group.totalNet)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
                               <TableCell className="align-middle p-2 text-center text-muted-foreground">
                                 <Badge variant="outline" className="font-normal text-[11px]">
                                   {group.returnType || "-"}
@@ -1683,6 +1774,12 @@ export function UpdateSalesReturnModal({
                                     <span className="text-xs text-muted-foreground">
                                       {discountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
                                     </span>
+                                  </TableCell>
+                                  <TableCell className="text-right text-sm text-foreground align-middle font-mono bg-muted/10">
+                                    {(Number(item.discountAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono bg-primary/5">
+                                    {(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                   </TableCell>
                                   <TableCell className="align-middle p-2">
                                     {canEditAll ? (
@@ -1885,7 +1982,22 @@ export function UpdateSalesReturnModal({
                 <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground font-medium">
-                    Gross Amount
+                    Total Price Variance
+                  </span>
+                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500" : "text-slate-500"}`}>
+                    {loading ? (
+                      <Skeleton className="h-5 w-24" />
+                    ) : (
+                      `${totalVariance > 0 ? "+" : ""}₱${totalVariance.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}`
+                    )}
+                  </div>
+                </div>
+                <div className="h-px bg-muted my-2"></div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground font-medium">
+                    Total Gross Amount
                   </span>
                   <div className="font-semibold text-foreground">
                     {loading ? (
@@ -1899,27 +2011,13 @@ export function UpdateSalesReturnModal({
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground font-medium">
-                    Discount Amount
+                    Total Discount
                   </span>
                   <div className={`font-semibold font-mono ${totalDiscount > 0 ? "text-amber-600 dark:text-amber-500" : "text-foreground"}`}>
                     {loading ? (
                       <Skeleton className="h-5 w-24" />
                     ) : (
-                      `₱${totalDiscount.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                      })}`
-                    )}
-                  </div>
-                </div>
-                <div className="flex justify-between items-center text-sm pt-1 border-t border-muted/50 mt-1">
-                  <span className="text-muted-foreground font-medium">
-                    Price Variance Logged
-                  </span>
-                  <div className={`font-mono font-bold ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500" : "text-slate-500"}`}>
-                    {loading ? (
-                      <Skeleton className="h-5 w-24" />
-                    ) : (
-                      `${totalVariance > 0 ? "+" : ""}₱${totalVariance.toLocaleString(undefined, {
+                      `- ₱${totalDiscount.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                       })}`
                     )}
