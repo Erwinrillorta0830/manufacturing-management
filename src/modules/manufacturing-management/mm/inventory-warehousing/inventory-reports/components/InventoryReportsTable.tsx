@@ -279,15 +279,25 @@ export function InventoryReportsTable({
 
                                         {/* Live On-Hand */}
                                         <td className="py-2.5 px-3 text-right font-mono">
-                                            <span className={`font-semibold ${
-                                                product.onHandQuantity === 0
-                                                    ? "text-rose-600 dark:text-rose-400 font-bold"
-                                                    : product.isBelowMaintaining
-                                                    ? "text-amber-600 dark:text-amber-400 font-semibold"
-                                                    : "text-foreground"
-                                            }`}>
-                                                {product.onHandQuantity.toLocaleString()}
-                                            </span>
+                                            <div className="flex flex-col items-end">
+                                                <span className={`font-semibold ${
+                                                    product.onHandQuantity === 0
+                                                        ? "text-rose-600 dark:text-rose-400 font-bold"
+                                                        : product.isBelowMaintaining
+                                                        ? "text-amber-600 dark:text-amber-400 font-semibold"
+                                                        : "text-foreground"
+                                                }`}>
+                                                    {product.onHandQuantity.toLocaleString()}
+                                                </span>
+                                                {Boolean(product.expiredQuantity && product.expiredQuantity > 0) && (
+                                                    <span 
+                                                        className="text-[10px] text-rose-600 dark:text-rose-400 font-sans cursor-help"
+                                                        title={`${product.expiredQuantity?.toLocaleString()} expired units in warehouse excluded from usable on-hand`}
+                                                    >
+                                                        +{product.expiredQuantity?.toLocaleString()} expired
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
 
                                         {/* Maintaining Quantity */}
@@ -325,6 +335,13 @@ export function InventoryReportsTable({
                                             {product.deficitQuantity > 0 && product.unitCost > 0 ? (
                                                 <span className="text-foreground font-medium">
                                                     {formattedCost}
+                                                </span>
+                                            ) : product.deficitQuantity > 0 ? (
+                                                <span 
+                                                    className="inline-flex items-center text-[10px] text-amber-600 dark:text-amber-400 font-medium px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20"
+                                                    title="No unit cost or purchase price configured in Product Master data"
+                                                >
+                                                    No Cost Set
                                                 </span>
                                             ) : (
                                                 <span className="text-muted-foreground/60">—</span>

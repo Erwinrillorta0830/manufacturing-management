@@ -254,7 +254,24 @@ export async function GET(req: NextRequest) {
                 unitsMap.set(Number(u.unit_id), String(u.unit_shortcut || u.unit_name || "unit"));
             });
 
-            const versions: VersionOption[] = (versionsData.data || []).map((v: Record<string, unknown>): VersionOption => {
+            const isPrimary = (v: Record<string, unknown>) =>
+                v.is_primary === 1 || v.is_primary === true || v.is_primary === "1" || v.is_primary === "true";
+            const isActive = (v: Record<string, unknown>) =>
+                String(v.status || "").toLowerCase() === "active";
+
+            const rawVersions = (versionsData.data || []) as Record<string, unknown>[];
+            // Sort: Primary first, then Active, then newest version_id
+            rawVersions.sort((a, b) => {
+                const aPrim = isPrimary(a) ? 1 : 0;
+                const bPrim = isPrimary(b) ? 1 : 0;
+                if (aPrim !== bPrim) return bPrim - aPrim;
+                const aAct = isActive(a) ? 1 : 0;
+                const bAct = isActive(b) ? 1 : 0;
+                if (aAct !== bAct) return bAct - aAct;
+                return Number(b.version_id || 0) - Number(a.version_id || 0);
+            });
+
+            const versions: VersionOption[] = rawVersions.map((v: Record<string, unknown>): VersionOption => {
                 const uomId = Number(v.uom_id || 0);
                 return {
                     version_id: Number(v.version_id),
@@ -264,7 +281,7 @@ export async function GET(req: NextRequest) {
                     uom_id: uomId,
                     uom_name: unitsMap.get(uomId) || "unit",
                     status: String(v.status || "Draft"),
-                    is_primary: Boolean(v.is_primary),
+                    is_primary: isPrimary(v),
                     expected_yield_percentage: Number(v.expected_yield_percentage || 100),
                     custom_overhead: Number(v.custom_overhead || 0)
                 };
@@ -328,13 +345,26 @@ export async function GET(req: NextRequest) {
             // Map all active/primary versions by product_id
             const allVersions: Record<string, unknown>[] = allVersionsRes.ok ? (await allVersionsRes.json()).data || [] : [];
             const primaryVersionByProduct = new Map<number, Record<string, unknown>>();
-            allVersions.forEach(v => {
+
+            const isVersionPrimary = (v: Record<string, unknown>) =>
+                v.is_primary === 1 || v.is_primary === true || v.is_primary === "1" || v.is_primary === "true";
+            const isVersionActive = (v: Record<string, unknown>) =>
+                String(v.status || "").toLowerCase() === "active";
+
+            // Sort all versions so true primary comes first, then active, then latest ID
+            const sortedAllVersions = [...allVersions].sort((a, b) => {
+                const aPrim = isVersionPrimary(a) ? 1 : 0;
+                const bPrim = isVersionPrimary(b) ? 1 : 0;
+                if (aPrim !== bPrim) return bPrim - aPrim;
+                const aAct = isVersionActive(a) ? 1 : 0;
+                const bAct = isVersionActive(b) ? 1 : 0;
+                if (aAct !== bAct) return bAct - aAct;
+                return Number(b.version_id || 0) - Number(a.version_id || 0);
+            });
+
+            sortedAllVersions.forEach(v => {
                 const pid = Number(v.product_id);
-                const isPrim = Boolean(v.is_primary);
-                const isAct = String(v.status || "").toLowerCase() === "active";
                 if (!primaryVersionByProduct.has(pid)) {
-                    primaryVersionByProduct.set(pid, v);
-                } else if (isPrim || isAct) {
                     primaryVersionByProduct.set(pid, v);
                 }
             });

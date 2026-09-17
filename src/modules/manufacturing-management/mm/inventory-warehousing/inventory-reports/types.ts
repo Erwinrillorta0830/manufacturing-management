@@ -11,6 +11,7 @@ export interface BatchDetail {
     expirationDate: string | null;
     inventoryCondition: string;
     isNegativeDiscrepancy: boolean;
+    isExpired?: boolean;
 }
 
 export interface ProductBranchStock {
@@ -18,6 +19,7 @@ export interface ProductBranchStock {
     branchName: string;
     branchCode?: string;
     onhandQuantity: number;
+    expiredQuantity?: number;
     maintainingQuantity: number;
     deficitQuantity: number;
     isBelowMaintaining: boolean;
@@ -38,6 +40,8 @@ export interface InventoryReportProduct {
     unitCost: number;
     maintainingQuantity: number;
     onHandQuantity: number;
+    expiredQuantity?: number;
+    totalPhysicalOnHand?: number;
     deficitQuantity: number;
     isBelowMaintaining: boolean;
     stockStatus: StockStatus;

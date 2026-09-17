@@ -17,6 +17,7 @@ interface RawDirectusProduct {
     cost_per_unit?: number | string | null;
     price_per_unit?: number | string | null;
     estimated_unit_cost?: number | string | null;
+    priceA?: number | string | null;
     product_type?: number | { id?: number; name?: string } | null;
     unit_of_measurement?: {
         unit_id?: number | string;
@@ -131,7 +132,7 @@ export async function GET(request: Request) {
         const timestamp = Date.now();
         const [productsRes, categoriesRes, branchesRes, mmLotsRes, invLotsRes, productTypesRes] = await Promise.all([
             fetch(
-                `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,barcode,description,maintaining_quantity,cost_per_unit,price_per_unit,estimated_unit_cost,product_type,product_type.id,product_type.name,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,product_category.category_id,product_category.category_name,isActive,status&_t=${timestamp}`,
+                `${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,barcode,description,maintaining_quantity,cost_per_unit,price_per_unit,estimated_unit_cost,priceA,product_type,product_type.id,product_type.name,unit_of_measurement.unit_id,unit_of_measurement.unit_name,unit_of_measurement.unit_shortcut,product_category.category_id,product_category.category_name,isActive,status&_t=${timestamp}`,
                 { headers: directusHeaders, cache: "no-store" }
             ),
             fetch(
@@ -338,6 +339,7 @@ export async function GET(request: Request) {
             expirationDate: string | null;
             inventoryCondition: string;
             isNegativeDiscrepancy: boolean;
+            isExpired?: boolean;
         }
 
         const batchesByProductMap = new Map<number, EnrichedBatchDetail[]>();
@@ -447,6 +449,8 @@ export async function GET(request: Request) {
         });
 
         // 6. Enrich Products with Status, Deficit, and Sequencing
+        const todayStr = new Date().toISOString().slice(0, 10);
+
         const enrichedProducts = rawProducts
             .filter((p) => {
                 const pId = Number(p.product_id);
@@ -467,7 +471,7 @@ export async function GET(request: Request) {
                 const productName = String(p.product_name || p.description || `Product #${productId}`).trim();
                 const productCode = String(p.product_code || p.barcode || `SKU-${productId}`).trim();
                 const maintainingQty = Math.max(0, Number(p.maintaining_quantity || 0));
-                const unitCost = Number(p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost ?? 0);
+                const unitCost = Number(p.cost_per_unit ?? p.price_per_unit ?? p.estimated_unit_cost ?? p.priceA ?? 0);
 
                 // UOM mapping
                 let uomName = "Units";
@@ -506,29 +510,53 @@ export async function GET(request: Request) {
                     productTypeName = productTypeMap.get(productTypeId) || productTypeName;
                 }
 
-                const branchOnHandMap = productBranchOnhandMap.get(productId) || new Map<number, number>();
+                // Packaging Materials (productTypeId === 390) do not expire
+                const isPackaging = productTypeId === 390;
 
+                // Identify expired batches and calculate expired totals
+                const rawProductBatches = batchesByProductMap.get(productId) || [];
+                let productExpiredOnHand = 0;
+                const expiredByBranch = new Map<number, number>();
+
+                const enrichedBatches = rawProductBatches.map((b) => {
+                    const isExpired = !isPackaging && Boolean(b.expirationDate && b.expirationDate <= todayStr);
+                    if (isExpired && b.onhandQuantity > 0) {
+                        productExpiredOnHand += b.onhandQuantity;
+                        expiredByBranch.set(b.branchId, (expiredByBranch.get(b.branchId) || 0) + b.onhandQuantity);
+                    }
+                    return {
+                        ...b,
+                        isExpired,
+                    };
+                });
+
+                const branchOnHandMap = productBranchOnhandMap.get(productId) || new Map<number, number>();
                 let productTotalOnHand = 0;
 
                 const branchStock = targetBranches.map((br) => {
                     const brId = Number(br.id);
                     const brOnHand = branchOnHandMap.get(brId) || 0;
+                    const brExpired = expiredByBranch.get(brId) || 0;
+                    const brUsable = Math.max(0, brOnHand - brExpired);
                     productTotalOnHand += brOnHand;
 
                     return {
                         branchId: brId,
                         branchName: br.branch_name,
                         branchCode: br.branch_code || "",
-                        onhandQuantity: brOnHand,
+                        onhandQuantity: brUsable,
+                        expiredQuantity: brExpired,
                         maintainingQuantity: maintainingQty,
                         deficitQuantity: 0,
                         isBelowMaintaining: false,
-                        isOutOfStock: brOnHand === 0,
+                        isOutOfStock: brUsable === 0,
                     };
                 });
 
-                // Product-level safety stock and deficit evaluation
-                const onHand = productTotalOnHand;
+                // Product-level safety stock and deficit evaluation strictly based on USABLE unexpired stock
+                const totalPhysicalOnHand = productTotalOnHand;
+                const usableOnHand = Math.max(0, totalPhysicalOnHand - productExpiredOnHand);
+                const onHand = usableOnHand;
                 const deficit = maintainingQty > 0 ? Math.max(0, maintainingQty - onHand) : 0;
                 const isBelowMaintaining = maintainingQty > 0 && onHand <= maintainingQty;
 
@@ -545,18 +573,20 @@ export async function GET(request: Request) {
 
                 const estimatedReplenishmentCost = deficit * (unitCost > 0 ? unitCost : 0);
 
-                // Batches with FEFO/FIFO Sorting
-                const rawProductBatches = batchesByProductMap.get(productId) || [];
-
                 // Packaging Materials (productTypeId === 390): FIFO by first movement or mfgDate
                 // Finished Goods (388) & Raw Materials / Ingredients: FEFO by expirationDate
-                const sortedBatches = [...rawProductBatches].sort((a, b) => {
-                    // Put negative discrepancies at the end
+                const sortedBatches = [...enrichedBatches].sort((a, b) => {
+                    // 1. Put negative discrepancies at the very end
                     if (a.isNegativeDiscrepancy !== b.isNegativeDiscrepancy) {
                         return a.isNegativeDiscrepancy ? 1 : -1;
                     }
 
-                    if (productTypeId === 390) {
+                    // 2. Put expired batches AFTER valid unexpired batches so Next FEFO never picks expired stock
+                    if (a.isExpired !== b.isExpired) {
+                        return a.isExpired ? 1 : -1;
+                    }
+
+                    if (isPackaging) {
                         // FIFO (Packaging)
                         const dateA = a.manufacturingDate || "9999-12-31";
                         const dateB = b.manufacturingDate || "9999-12-31";
@@ -583,6 +613,8 @@ export async function GET(request: Request) {
                     unitCost,
                     maintainingQuantity: maintainingQty,
                     onHandQuantity: onHand,
+                    expiredQuantity: productExpiredOnHand,
+                    totalPhysicalOnHand,
                     deficitQuantity: deficit,
                     isBelowMaintaining,
                     stockStatus,
