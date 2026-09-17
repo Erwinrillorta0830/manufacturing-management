@@ -260,6 +260,7 @@ export function WipFilterToolbar({
                             variant="outline"
                             role="combobox"
                             aria-expanded={isProductOpen}
+                            title={selectedProduct ? selectedProduct.product_name : "All Finished Goods"}
                             className="h-9 w-full justify-between text-xs font-normal border-input bg-background/80"
                         >
                             <div className="flex items-center gap-2 truncate">
@@ -273,10 +274,10 @@ export function WipFilterToolbar({
                             <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
                         </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[280px] p-0" align="start">
+                    <PopoverContent className="w-[360px] sm:w-[450px] max-w-[90vw] p-0" align="start">
                         <Command>
-                            <CommandInput placeholder="Search finished good..." className="h-9 text-xs" />
-                            <CommandList>
+                            <CommandInput placeholder="Search finished good description or code..." className="h-9 text-xs" />
+                            <CommandList className="max-h-[320px]">
                                 <CommandEmpty>No product found.</CommandEmpty>
                                 <CommandGroup>
                                     <CommandItem
@@ -285,15 +286,15 @@ export function WipFilterToolbar({
                                             onFilterChange("productId", null);
                                             setIsProductOpen(false);
                                         }}
-                                        className="text-xs cursor-pointer"
+                                        className="text-xs cursor-pointer py-2"
                                     >
                                         <Check
                                             className={cn(
-                                                "mr-2 h-3.5 w-3.5",
+                                                "mr-2 h-3.5 w-3.5 shrink-0",
                                                 filters.productId === null ? "opacity-100" : "opacity-0"
                                             )}
                                         />
-                                        All Finished Goods
+                                        <span className="font-medium">All Finished Goods</span>
                                     </CommandItem>
                                     {masterData.products.map((p) => (
                                         <CommandItem
@@ -303,18 +304,20 @@ export function WipFilterToolbar({
                                                 onFilterChange("productId", p.product_id);
                                                 setIsProductOpen(false);
                                             }}
-                                            className="text-xs cursor-pointer"
+                                            className="text-xs cursor-pointer py-2 items-start"
                                         >
                                             <Check
                                                 className={cn(
-                                                    "mr-2 h-3.5 w-3.5",
+                                                    "mr-2 h-3.5 w-3.5 shrink-0 mt-0.5",
                                                     filters.productId === p.product_id ? "opacity-100" : "opacity-0"
                                                 )}
                                             />
-                                            <div className="flex flex-col">
-                                                <span>{p.product_name}</span>
+                                            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                                <span className="leading-snug text-foreground break-words font-medium">
+                                                    {p.product_name}
+                                                </span>
                                                 {p.product_code && (
-                                                    <span className="text-[10px] text-muted-foreground">
+                                                    <span className="font-mono text-[10px] text-muted-foreground tracking-wide">
                                                         {p.product_code}
                                                     </span>
                                                 )}

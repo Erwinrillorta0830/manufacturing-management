@@ -53,7 +53,7 @@ export function WipDetailModal({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[1250px] w-[96vw] h-[88vh] max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-border shadow-2xl">
+            <DialogContent className="sm:max-w-[1350px] w-[96vw] h-[88vh] max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden border border-border shadow-2xl">
                 {/* Persistent Modal Header */}
                 <DialogHeader className="p-5 pb-3 border-b border-border/80 bg-muted/20 shrink-0">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -376,7 +376,7 @@ export function WipDetailModal({
                                     <thead>
                                         <tr className="border-b border-border/70 bg-muted/60 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                                             <th className="py-3 px-3.5 min-w-[220px]">Material Component</th>
-                                            <th className="py-3 px-3 min-w-[120px]">Batch / Lot #</th>
+                                            <th className="py-3 px-3 min-w-[150px]">Batch / Lot #</th>
                                             <th className="py-3 px-3 min-w-[140px]">Staging Bin</th>
                                             <th className="py-3 px-3 min-w-[100px] text-right">Reserved</th>
                                             <th className="py-3 px-3 min-w-[100px] text-right">Staged</th>
@@ -407,12 +407,35 @@ export function WipDetailModal({
                                                         )}
                                                     </td>
                                                     <td className="py-2.5 px-3">
-                                                        {mat.batch_no ? (
-                                                            <span className="rounded bg-muted px-1.5 py-0.5 text-foreground">
-                                                                {mat.batch_no}
-                                                            </span>
-                                                        ) : (
+                                                        {(!mat.batch_no && !mat.lot_name) ? (
                                                             <span className="text-muted-foreground italic">—</span>
+                                                        ) : (
+                                                            <div className="flex flex-col gap-1 items-start text-[11px]">
+                                                                <div className="inline-flex items-center gap-1.5 font-sans">
+                                                                    <span className="rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 px-1 py-0.5 text-[9px] font-bold tracking-wider uppercase leading-none">
+                                                                        Lot
+                                                                    </span>
+                                                                    {mat.lot_name ? (
+                                                                        <span className="font-semibold text-foreground truncate max-w-[160px]" title={mat.lot_name}>
+                                                                            {mat.lot_name}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-muted-foreground italic text-[10.5px]">—</span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="inline-flex items-center gap-1.5">
+                                                                    <span className="rounded bg-muted px-1 py-0.5 text-[9px] font-bold tracking-wider uppercase text-muted-foreground font-sans leading-none">
+                                                                        Batch
+                                                                    </span>
+                                                                    {mat.batch_no ? (
+                                                                        <span className="font-mono text-[10.5px] text-muted-foreground truncate max-w-[160px]" title={mat.batch_no}>
+                                                                            {mat.batch_no}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-muted-foreground italic text-[10.5px] font-sans">—</span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         )}
                                                     </td>
                                                     <td className="py-2.5 px-3 font-sans">
@@ -465,7 +488,7 @@ export function WipDetailModal({
                         asChild
                         className="text-xs gap-1.5"
                     >
-                        <Link href="/mm/production">
+                        <Link href={`/mm/production-workflow?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
                             <ExternalLink className="h-3.5 w-3.5" />
                             <span>Open Shop Floor Execution</span>
                         </Link>
