@@ -71,6 +71,7 @@ export const legacyPurchaseOrderCreateSchema = z.object({
         total_php_value: nonNegativeMoney,
         status: initialPurchaseOrderStatusSchema.default("Ordered"),
         date_received: dateOnly.nullable().optional(),
+        lead_time_receiving: dateOnly.nullable().optional(),
         branch_id: positiveId,
         payment_type: positiveId,
         payment_mode: positiveId,

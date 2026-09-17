@@ -48,7 +48,6 @@ export default function PurchaseOrderModule({
                 onCreateShipment={purchaseOrder.handleCreateShipment}
                 onEditShipment={purchaseOrder.handleEditShipment}
                 onCancelRejectedPurchaseOrder={purchaseOrder.handleCancelRejectedShipment}
-                onUpdateShipmentStatus={purchaseOrder.handleUpdateShipmentStatus}
                 onTriggerAllocation={() => undefined}
                 loading={purchaseOrder.loading}
                 listLoading={purchaseOrder.listLoading}

@@ -167,6 +167,8 @@ export interface PurchaseOrderRevisionResponse {
     purchaseOrderId: number;
     status: string;
     workflowRevision: number;
+    revisedAt: string;
+    revisedBy: number;
 }
 
 export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected";
@@ -226,6 +228,8 @@ export interface PurchaseOrderApprovalDetail {
         finance_id?: number | null;
         date_approved?: string | null;
         date_financed?: string | null;
+        revised_at?: string | null;
+        revised_by?: number | null;
     };
     revisionCount: number;
     referenceLabels: PurchaseOrderApprovalReferenceLabels;

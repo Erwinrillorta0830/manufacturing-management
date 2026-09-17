@@ -2,6 +2,7 @@ import { DIRECTUS_URL, headers } from "../_directus";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getPurchaseOrderCreationTimestamps } from "../_purchase-order-timestamps";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 import {
     ProductWeightValidationError,
@@ -120,6 +121,8 @@ interface DirectusPO {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
     is_posted?: number | boolean | null;
     is_posted_amounts?: number | boolean | null;
     force_received_at?: string | null;
@@ -521,6 +524,8 @@ function mapPurchaseOrder(
         approval_rule_id: po.approval_rule_id || null,
         approval_requires_finance: po.approval_requires_finance == null ? null : Number(po.approval_requires_finance) === 1,
         approval_allow_self_approval: po.approval_allow_self_approval == null ? null : Number(po.approval_allow_self_approval) === 1,
+        revised_at: po.revised_at || null,
+        revised_by: po.revised_by || null,
         is_posted: po.is_posted === true || Number(po.is_posted) === 1 ? 1 : 0,
         is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0,
         isForceReceived: isForceReceived(po.force_received_at),
@@ -677,7 +682,7 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     clauses.push({ purchase_order_id: { _in: [-1] } });
 }
 
-const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
+const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,revised_at,revised_by,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
 
 async function mapPurchaseOrderRows(rows: DirectusPO[]) {
     const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
@@ -1325,6 +1330,7 @@ export async function createIncomingShipment(
         const totalForeignCurrency = DecimalValue.from(totalPhp)
             .divideRounded(exchangeRate, PROCUREMENT_MONEY_DECIMAL_SCALE)
             .toFixed(PROCUREMENT_MONEY_DECIMAL_SCALE);
+        const creationTimestamps = getPurchaseOrderCreationTimestamps();
 
         const poPayload = {
             purchase_order_no: `PO-${extendedData.reference_number || Date.now()}`,
@@ -1336,10 +1342,10 @@ export async function createIncomingShipment(
             payment_mode: extendedData.payment_mode,
             delivery_terms: extendedData.delivery_terms || null,
             price_type: "Internal",
-            date_encoded: new Date().toISOString(),
-            date: await getTodayDateString(),
-            time: new Date().toTimeString().split(" ")[0],
-            datetime: new Date().toISOString().replace("Z", "").replace("T", " "),
+            date_encoded: creationTimestamps.dateEncoded,
+            date: creationTimestamps.date,
+            time: creationTimestamps.time,
+            datetime: creationTimestamps.datetime,
             gross_amount: calculatedTotals.grossPhp,
             total_amount: totalPhp,
             inventory_status: shipmentStatusToInventoryStatus(extendedData.status || "Ordered"),

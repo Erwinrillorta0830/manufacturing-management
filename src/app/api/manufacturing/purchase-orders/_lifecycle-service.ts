@@ -37,6 +37,7 @@ import {
     ProductWeightValidationError,
     resolveProductWeightBreakdown
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
 type CancellationCommand = z.infer<typeof purchaseOrderCancellationSchema>;
@@ -77,6 +78,8 @@ interface PurchaseOrderRecord {
     approval_requires_finance?: boolean | number | null;
     approval_allow_self_approval?: boolean | number | null;
     is_import?: boolean | number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
 }
 
 interface PurchaseOrderLineRecord {
@@ -371,7 +374,9 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         approval_rule_id: order.approval_rule_id || null,
         approval_requires_finance: order.approval_requires_finance ?? null,
         approval_allow_self_approval: order.approval_allow_self_approval ?? null,
-        is_import: order.is_import ?? null
+        is_import: order.is_import ?? null,
+        revised_at: order.revised_at || null,
+        revised_by: order.revised_by ?? null
     };
 }
 
@@ -566,6 +571,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
     }
     await assertRevisionSnapshotStorage();
     const nextRevision = revision + 1;
+    const revisedAt = formatPhtDateTime();
     const headerPayload = {
         reference: command.shipmentData.reference_number,
         remark: command.shipmentData.remark === "" ? null : command.shipmentData.remark || null,
@@ -582,8 +588,8 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         gross_amount: totals.grossPhp,
         total_amount: totals.netPhp,
         inventory_status: INVENTORY_STATUS.REQUESTED,
-        date_received: command.shipmentData.date_received || null,
-        lead_time_receiving: null,
+        date_received: null,
+        lead_time_receiving: command.shipmentData.lead_time_receiving || null,
         approver_id: null,
         date_approved: null,
         finance_id: null,
@@ -592,7 +598,9 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         approval_rule_id: rule.ruleId,
         approval_requires_finance: 1,
         approval_allow_self_approval: 1,
-        is_import: currencyCode === "PHP" ? 0 : 1
+        is_import: currencyCode === "PHP" ? 0 : 1,
+        revised_at: revisedAt,
+        revised_by: actor.userId
     };
     const updated = await conditionalPatch(id, revision, headerPayload, INVENTORY_STATUS.REJECTED);
     if (!updated) throw new PurchaseOrderLifecycleError("Another action changed this purchase order. Reload and try again.", 409);
@@ -634,7 +642,9 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         success: true,
         purchaseOrderId: id,
         status: "For Approval",
-        workflowRevision: nextRevision
+        workflowRevision: nextRevision,
+        revisedAt,
+        revisedBy: actor.userId
     };
 }
 
