@@ -21,16 +21,17 @@ import {
   AlertCircle,
   Printer,
   Layers,
+  Check,
+  ChevronsUpDown,
+  X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Badge } from "@/components/ui/badge";
-import {
-  LotBatchSelectionModal,
-  type LotBatchSelectionResult,
-} from "@/modules/manufacturing-management/shared/components/LotBatchSelectionModal";
+import dynamic from "next/dynamic";
+import type { LotBatchSelectionResult } from "@/modules/manufacturing-management/shared/components/LotBatchSelectionModal";
 import { resolveProductClassification } from "@/modules/manufacturing-management/shared/services/lot-tracking.service";
-import { StockAllocationModal } from "@/modules/manufacturing-management/shared/components/StockAllocationModal";
 import type { StockAllocationPlan, BatchAllocationResult, LotAllocationGroup } from "@/modules/manufacturing-management/shared/types/lot-tracking.types";
 import {
   StockAdjustmentManualFormSchema,
@@ -56,20 +57,33 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Combobox,
-  ComboboxInput,
-  ComboboxContent,
-  ComboboxList,
-  ComboboxItem,
-  ComboboxEmpty,
-} from "@/components/ui/combobox";
-import { ProductSelectionModal } from "../modals/ProductSelectionModal";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { AttachmentUpload } from "../AttachmentUpload";
 import { PdfEngine } from "@/components/pdf-layout-design/PdfEngine";
 import { pdfTemplateService } from "@/components/pdf-layout-design/services/pdf-template";
 import { PAPER_SIZES } from "@/components/pdf-layout-design/constants";
 import { CompanyData } from "@/components/pdf-layout-design/types";
+
+const LotBatchSelectionModal = dynamic(
+  () => import("@/modules/manufacturing-management/shared/components/LotBatchSelectionModal").then((m) => m.LotBatchSelectionModal),
+  { ssr: false }
+);
+const StockAllocationModal = dynamic(
+  () => import("@/modules/manufacturing-management/shared/components/StockAllocationModal").then((m) => m.StockAllocationModal),
+  { ssr: false }
+);
+const ProductSelectionModal = dynamic(
+  () => import("../modals/ProductSelectionModal").then((m) => m.ProductSelectionModal),
+  { ssr: false }
+);
 
 export const INVENTORY_TYPES = [
   { id: "FINISHED_GOODS", label: "Finished Goods" },
@@ -88,6 +102,106 @@ interface StockAdjustmentManualFormProps {
 }
 
 // ——————————————————————————————————————————————————————————————————————————————
+// Buffered quantity input for 60fps typing without re-rendering parent form
+interface RowQuantityInputProps {
+  value: number;
+  onChange: (val: number) => void;
+  disabled?: boolean;
+  hasError?: boolean;
+}
+
+const RowQuantityInput = React.memo(function RowQuantityInput({
+  value,
+  onChange,
+  disabled = false,
+  hasError = false,
+}: RowQuantityInputProps) {
+  const [localVal, setLocalVal] = useState<string>(
+    value === 0 || value === undefined || value === null ? "" : String(value)
+  );
+  const [isFocused, setIsFocused] = useState(false);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Sync from props when value changes externally and input is not focused
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalVal(value === 0 || value === undefined || value === null ? "" : String(value));
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    setLocalVal(raw);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const parsed = parseInt(raw, 10);
+      const safe = isNaN(parsed) ? 0 : Math.max(0, parsed);
+      onChange(safe);
+    }, 150);
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const parsed = parseInt(localVal, 10);
+    const safe = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+    setLocalVal(safe === 0 ? "" : String(safe));
+    onChange(safe);
+  };
+
+  const handleStep = (delta: number) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const current = parseInt(localVal, 10);
+    const base = isNaN(current) ? (value || 0) : current;
+    const next = Math.max(0, base + delta);
+    setLocalVal(next === 0 ? "" : String(next));
+    onChange(next);
+  };
+
+  return (
+    <div
+      className={`flex items-center gap-0 w-min bg-background border rounded-md overflow-hidden transition-colors ${
+        hasError
+          ? "border-red-500 ring-1 ring-red-500/40 bg-red-50/20 dark:bg-red-950/20"
+          : "border-border"
+      }`}
+    >
+      <button
+        type="button"
+        disabled={disabled || (Number(localVal || value || 0) <= 0)}
+        className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors cursor-pointer"
+        onClick={() => handleStep(-1)}
+      >
+        <Minus className="h-3 w-3" />
+      </button>
+      <input
+        type="number"
+        value={localVal}
+        placeholder="0"
+        disabled={disabled}
+        onFocus={(e) => {
+          setIsFocused(true);
+          e.target.select();
+        }}
+        onClick={(e) => (e.target as HTMLInputElement).select()}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        min={0}
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors cursor-pointer"
+        onClick={() => handleStep(1)}
+      >
+        <Plus className="h-3 w-3" />
+      </button>
+    </div>
+  );
+});
+
 // ——————————————————————————————————————————————————————————————————————————————
 // Table row for the main form
 interface ProductTableRowProps {
@@ -128,15 +242,10 @@ const ProductTableRow = React.memo(function ProductTableRow({
 
   const totalCost = Number(quantity || 0) * Number(costPerUnit || 0);
 
-  const handleQuantityChange = (newQty: number) => {
+  const handleQuantityChange = useCallback((newQty: number) => {
     const safeQty = Math.max(0, newQty);
     setValue(`items.${index}.quantity`, safeQty, { shouldValidate: true });
-  };
-
-  const handleUpdateQuantity = (delta: number) => {
-    const currentQty = Number(quantity || 0);
-    handleQuantityChange(currentQty + delta);
-  };
+  }, [setValue, index]);
 
   const batches = useMemo(() => {
     if (lotAllocations && lotAllocations.length > 0) {
@@ -258,9 +367,13 @@ const ProductTableRow = React.memo(function ProductTableRow({
                     variant="outline"
                     onClick={() => onOpenLotBatch?.(index)}
                     title={lotBatchDisplayInfo}
-                    className="text-[10px] py-0 h-4 px-1.5 font-semibold bg-primary/10 text-primary border-primary/30 gap-1 cursor-pointer hover:bg-primary/20 transition-colors"
+                    className={`text-[10px] py-0 h-4 px-1.5 font-semibold gap-1 cursor-pointer transition-colors ${
+                      rowError?.batch_no
+                        ? "bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500 ring-1 ring-red-500/30"
+                        : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                    }`}
                   >
-                    <Layers className="w-2.5 h-2.5 text-primary" />
+                    <Layers className={`w-2.5 h-2.5 ${rowError?.batch_no ? "text-red-600" : "text-primary"}`} />
                     {lotBatchDisplayInfo}
                   </Badge>
                 ) : (
@@ -268,9 +381,13 @@ const ProductTableRow = React.memo(function ProductTableRow({
                     <button
                       type="button"
                       onClick={() => onOpenLotBatch?.(index)}
-                      className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 rounded px-1.5 py-0.5 flex items-center gap-1 transition-colors cursor-pointer"
+                      className={`text-[10px] font-bold rounded px-1.5 py-0.5 flex items-center gap-1 transition-colors cursor-pointer ${
+                        rowError?.batch_no
+                          ? "text-red-700 dark:text-red-300 bg-red-500/15 border border-red-500 ring-1 ring-red-500/30 animate-pulse"
+                          : "text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20"
+                      }`}
                     >
-                      <Layers className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                      <Layers className={`w-2.5 h-2.5 ${rowError?.batch_no ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`} />
                       * Assign Lot & Batch
                     </button>
                   )
@@ -324,51 +441,11 @@ const ProductTableRow = React.memo(function ProductTableRow({
           <span className="text-xs font-bold px-3 py-1 bg-muted rounded-md border border-border/50">{quantity}</span>
         ) : (
           <div className="flex flex-col items-start gap-1">
-            <div
-              className={`flex items-center gap-0 w-min bg-background border rounded-md overflow-hidden transition-colors ${
-                hasQuantityMismatch ? "border-red-400 dark:border-red-600 ring-1 ring-red-400/40" : "border-border"
-              }`}
-            >
-              <button
-                type="button"
-                className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors"
-                onClick={() => handleUpdateQuantity(-1)}
-                disabled={Number(quantity || 0) <= 0}
-              >
-                <Minus className="h-3 w-3" />
-              </button>
-              <input
-                type="number"
-                value={quantity === 0 || quantity === undefined || quantity === null ? "" : quantity}
-                placeholder="0"
-                onFocus={(e) => e.target.select()}
-                onClick={(e) => (e.target as HTMLInputElement).select()}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    handleQuantityChange(0);
-                    return;
-                  }
-                  const val = parseInt(raw, 10);
-                  handleQuantityChange(isNaN(val) ? 0 : Math.max(0, val));
-                }}
-                onBlur={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  if (isNaN(val) || val < 0) {
-                    handleQuantityChange(0);
-                  }
-                }}
-                className="w-12 h-7 text-center text-xs font-bold border-x border-border focus:outline-none focus:ring-0 bg-transparent p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                min={0}
-              />
-              <button
-                type="button"
-                className="w-7 h-7 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
-                onClick={() => handleUpdateQuantity(1)}
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </div>
+            <RowQuantityInput
+              value={Number(quantity || 0)}
+              onChange={handleQuantityChange}
+              hasError={hasQuantityMismatch || !!rowError?.quantity || Number(quantity || 0) <= 0}
+            />
             {hasQuantityMismatch && allocatedBatchSum !== null && (
               <div className="flex items-center gap-1 text-[10px] font-bold text-red-600 dark:text-red-400 whitespace-nowrap">
                 <AlertCircle className="w-3 h-3 shrink-0" />
@@ -494,12 +571,21 @@ export function StockAdjustmentManualForm({
   const initialValuesRef = useRef<string>("");
   const [showPostConfirmation, setShowPostConfirmation] = useState(false);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
-  const [branchInputValue, setBranchInputValue] = useState("");
-  const [supplierInputValue, setSupplierInputValue] = useState("");
-  const [inventoryTypeInputValue, setInventoryTypeInputValue] = useState("");
-  const [branchSearch, setBranchSearch] = useState("");
-  const [supplierSearch, setSupplierSearch] = useState("");
-  const [inventoryTypeSearch, setInventoryTypeSearch] = useState("");
+  const [docOpen, setDocOpen] = useState(false);
+  const [branchOpen, setBranchOpen] = useState(false);
+  const [inventoryTypeOpen, setInventoryTypeOpen] = useState(false);
+  const [supplierOpen, setSupplierOpen] = useState(false);
+
+  const activeBranches = useMemo(() => {
+    return branches.filter(
+      (b) =>
+        b.isActive === undefined ||
+        b.isActive === 1 ||
+        b.isActive === true ||
+        b.isActive === "1"
+    );
+  }, [branches]);
+
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [lotBatchModalOpen, setLotBatchModalOpen] = useState(false);
@@ -550,22 +636,6 @@ export function StockAdjustmentManualForm({
     }
   };
 
-  useEffect(() => {
-    const fetchCompanyData = async () => {
-      try {
-        const res = await fetch("/api/pdf/company");
-        if (res.ok) {
-          const result = await res.json();
-          const company = result.data?.[0] || (Array.isArray(result.data) ? null : result.data);
-          setCompanyData(company);
-        }
-      } catch (err) {
-        console.error("Error fetching company data:", err);
-      }
-    };
-    fetchCompanyData();
-  }, []);
-
   const [tableSearch, setTableSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -603,9 +673,6 @@ export function StockAdjustmentManualForm({
       isPosted: false,
       stock_adjustment_attachment: [],
     });
-    setBranchInputValue("");
-    setSupplierInputValue("");
-    setInventoryTypeInputValue("");
 
     // Fetch and set the new doc_no for type "IN"
     const nextDocNo = await fetchNextDocNo("IN");
@@ -655,6 +722,21 @@ export function StockAdjustmentManualForm({
       }
     }
 
+    // Lazy load company data for PDF generation on demand
+    let activeCompany = companyData;
+    if (!activeCompany) {
+      try {
+        const res = await fetch("/api/pdf/company");
+        if (res.ok) {
+          const result = await res.json();
+          activeCompany = result.data?.[0] || (Array.isArray(result.data) ? null : result.data);
+          if (activeCompany) setCompanyData(activeCompany);
+        }
+      } catch (err) {
+        console.error("Error fetching company data:", err);
+      }
+    }
+
     // --- Find Best Match Template ---
     const templates = await pdfTemplateService.fetchTemplates();
     const template = templates.find(t => t.name === "MEN2")
@@ -662,7 +744,7 @@ export function StockAdjustmentManualForm({
       || templates[0];
     const templateName = template?.name || "MEN2";
 
-    const doc = await PdfEngine.generateWithFrame(templateName, companyData, (doc, startY, config) => {
+    const doc = await PdfEngine.generateWithFrame(templateName, activeCompany, (doc, startY, config) => {
       const pageWidth = doc.internal.pageSize.getWidth();
       const margins = {
         top: config.margins?.top ?? 10,
@@ -1003,37 +1085,89 @@ export function StockAdjustmentManualForm({
 
 
   // ——————————————————————————————————————————————————————————————————————————————
-  // Unlock body scroll/pointer-events when save/post loading clears.
-  useEffect(() => {
-    const unlock = () => {
-      document.body.style.setProperty('overflow', 'auto', 'important');
-      document.body.style.removeProperty('pointer-events');
-    };
-    unlock();
-    const timer = setTimeout(unlock, 300);
-    const timer2 = setTimeout(unlock, 1000);
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(timer2);
-    };
-  }, [loading]);
+  // Targeted modal cleanup: when a modal closes, cleanly restore document.body styles without continuous DOM observer thrashing
+  const anyModalOpen =
+    isModalOpen ||
+    lotBatchModalOpen ||
+    showPostConfirmation ||
+    showDeleteConfirmation ||
+    showUnsavedChangesModal;
 
-  // Unlock body scroll/pointer-events when product loading clears.
-  // @base-ui Combobox Portal can leave pointer-events:none on <body> after
-  // its popup closes, which makes branch/supplier comboboxes unresponsive.
+  const prevAnyModalOpenRef = useRef(false);
+
   useEffect(() => {
-    const unlock = () => {
-      document.body.style.setProperty('overflow', 'auto', 'important');
-      document.body.style.removeProperty('pointer-events');
+    // Only run cleanup when a modal was previously open and is now closed
+    if (prevAnyModalOpenRef.current && !anyModalOpen) {
+      const cleanBodyStyles = () => {
+        if (typeof document !== 'undefined') {
+          if (document.body.style.pointerEvents === 'none') {
+            document.body.style.removeProperty('pointer-events');
+          }
+          if (document.body.style.overflow === 'hidden') {
+            document.body.style.removeProperty('overflow');
+          }
+        }
+      };
+
+      const raf = requestAnimationFrame(cleanBodyStyles);
+      const timer = setTimeout(cleanBodyStyles, 120);
+
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(timer);
+      };
+    }
+    prevAnyModalOpenRef.current = anyModalOpen;
+  }, [anyModalOpen]);
+
+  // Memoized modal props to prevent re-instantiating arrays/objects and triggering endless fetch loops in LotBatchSelectionModal
+  const activeItem = useMemo(() => {
+    if (activeLotBatchIndex === null) return null;
+    const allItems = form.getValues("items") || [];
+    return allItems[activeLotBatchIndex] || null;
+  }, [activeLotBatchIndex, lotBatchModalOpen, form]);
+
+  const modalExistingFormAllocations = useMemo(() => {
+    if (activeLotBatchIndex === null || !lotBatchModalOpen) return undefined;
+    const allItems = form.getValues("items") || [];
+    return allItems.filter((_, idx) => idx !== activeLotBatchIndex);
+  }, [activeLotBatchIndex, lotBatchModalOpen, form]);
+
+  const modalInitialValues = useMemo(() => {
+    if (!activeItem || !lotBatchModalOpen) return undefined;
+    return {
+      lot_id: activeItem.lot_id || undefined,
+      lot_name: activeItem.lot_name || undefined,
+      inventory_lot_id: activeItem.inventory_lot_id || undefined,
+      batch_no: activeItem.batch_no || '',
+      manufacturing_date: activeItem.manufacturing_date,
+      expiry_date: activeItem.expiry_date,
+      unit_cost: activeItem.cost_per_unit || undefined,
+      qa_status: activeItem.qa_status || 'GOOD',
+      quantity: Number(activeItem.quantity) || 0,
     };
-    unlock();
-    const timer = setTimeout(unlock, 300);
-    const timer2 = setTimeout(unlock, 1000);
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(timer2);
-    };
-  }, [isProductsLoading]);
+  }, [activeItem, lotBatchModalOpen]);
+
+  const modalInitialAllocations = useMemo(() => {
+    if (!activeItem || !lotBatchModalOpen) return undefined;
+    if (activeItem.allocations && (activeItem.allocations as unknown[]).length > 0) {
+      return activeItem.allocations as BatchAllocationResult[];
+    }
+    if (activeItem.batch_no && (activeItem.inventory_lot_id || activeItem.lot_id)) {
+      return [
+        {
+          inventory_lot_id: Number(activeItem.inventory_lot_id) || 1,
+          lot_id: Number(activeItem.lot_id) || 1,
+          batch_no: activeItem.batch_no,
+          allocated_quantity: Number(activeItem.quantity) || 1,
+          available_quantity: Number(activeItem.current_stock || activeItem.quantity) || 1,
+          status: "ACTIVE",
+          qa_status: activeItem.qa_status || "GOOD",
+        } as BatchAllocationResult,
+      ];
+    }
+    return undefined;
+  }, [activeItem, lotBatchModalOpen]);
 
   useEffect(() => {
     if (id) {
@@ -1136,38 +1270,6 @@ export function StockAdjustmentManualForm({
   const watchedBranchId = useWatch({ control: form.control, name: "branch_id" });
   const watchedSupplierId = useWatch({ control: form.control, name: "supplier_id" });
   const watchedInventoryType = useWatch({ control: form.control, name: "inventory_type" });
-
-  useEffect(() => {
-    if (watchedInventoryType === "FINISHED_GOODS") {
-      setInventoryTypeInputValue("Finished Goods");
-    } else if (watchedInventoryType === "RAW_MATERIALS") {
-      setInventoryTypeInputValue("Raw Materials / Packaging");
-    } else {
-      setInventoryTypeInputValue("");
-    }
-  }, [watchedInventoryType]);
-
-  useEffect(() => {
-    if (watchedBranchId && branches.length > 0) {
-      const found = branches.find(b => b.id === Number(watchedBranchId));
-      if (found) {
-        queueMicrotask(() => {
-          setBranchInputValue(`${found.branch_name} (${found.branch_code ?? ""})`);
-        });
-      }
-    }
-  }, [watchedBranchId, branches]);
-
-  useEffect(() => {
-    if (watchedSupplierId && suppliers.length > 0) {
-      const found = suppliers.find(s => s.id === Number(watchedSupplierId));
-      if (found) {
-        queueMicrotask(() => {
-          setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
-        });
-      }
-    }
-  }, [watchedSupplierId, suppliers]);
 
   useEffect(() => {
     if (watchedBranchId) {
@@ -1709,29 +1811,51 @@ export function StockAdjustmentManualForm({
                   {unpostedList ? "Review Document" : "Document Number"}
                 </Label>
                 {unpostedList && onSelectId ? (
-                  <Combobox
-                    value={id ? String(id) : ""}
-                    onValueChange={(v: string | null) => {
-                      if (v) onSelectId(Number(v));
-                    }}
-                    inputValue={watchedDocNo || ""}
-                    onInputValueChange={() => { }}
-                  >
-                    <ComboboxInput
-                      placeholder="Select Document"
-                      className="text-xs h-11 border-input font-bold"
-                      showTrigger={true}
-                    />
-                    <ComboboxContent>
-                      <ComboboxList>
-                        {unpostedList.map((item) => (
-                          <ComboboxItem key={item.id} value={String(item.id)}>
-                            <span className="font-bold text-xs">{item.doc_no}</span>
-                          </ComboboxItem>
-                        ))}
-                      </ComboboxList>
-                    </ComboboxContent>
-                  </Combobox>
+                  <Popover open={docOpen} onOpenChange={setDocOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={docOpen}
+                        className="w-full h-11 justify-between text-xs font-bold bg-background border-input hover:bg-accent hover:text-accent-foreground px-3"
+                      >
+                        <span className="truncate">
+                          {unpostedList.find((item) => String(item.id) === String(id))?.doc_no || watchedDocNo || "Select Document"}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search document..." className="h-9 text-xs" />
+                        <CommandList>
+                          <CommandEmpty>No document found.</CommandEmpty>
+                          <CommandGroup>
+                            {unpostedList.map((item) => (
+                              <CommandItem
+                                key={item.id}
+                                value={`${item.doc_no} ${item.id}`}
+                                onSelect={() => {
+                                  if (item.id) onSelectId(Number(item.id));
+                                  setDocOpen(false);
+                                }}
+                                className="text-xs font-bold cursor-pointer"
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    String(id) === String(item.id) ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {item.doc_no}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 ) : (
                   <Input
                     id="doc_no"
@@ -1745,64 +1869,84 @@ export function StockAdjustmentManualForm({
                 <Label htmlFor="branch" className="text-sm font-bold text-muted-foreground">
                   Branch <span className="text-red-500">*</span>
                 </Label>
-                <Combobox
-                  value={watchedBranchIdForSelect ? String(watchedBranchIdForSelect) : ""}
-                  onValueChange={(v: string | null) => {
-                    if (!v) {
-                      setBranchInputValue("");
-                      form.setValue("branch_id", 0, { shouldValidate: true });
-                      return;
-                    }
-                    const found = branches.find(b => String(b.id) === v);
-                    if (found) setBranchInputValue(`${found.branch_name} (${found.branch_code})`);
-                    form.setValue("branch_id", Number(v), { shouldValidate: true });
-                  }}
-                  inputValue={branchInputValue}
-                  onInputValueChange={(v: string) => {
-                    const matched = branches.find(b => String(b.id) === v);
-                    if (matched) {
-                      setBranchInputValue(`${matched.branch_name} (${matched.branch_code})`);
-                      setBranchSearch("");
-                    } else {
-                      setBranchInputValue(v);
-                      setBranchSearch(v);
-                    }
-                  }}
-                >
-                  <ComboboxInput
-                    placeholder="Select Branch"
-                    disabled={isReadOnly || !!id || fields.length > 0}
-                    className={form.formState.errors.branch_id ? "border-red-500 bg-red-50 dark:bg-red-900/10" : ""}
-                    showTrigger={!id && fields.length === 0}
-                    showClear={!id && !isReadOnly && fields.length === 0}
-                  />
-                  <ComboboxContent>
-                    <ComboboxList>
-                      {(() => {
-                        const filtered = branches
-                          .filter(b => b.isActive === undefined || b.isActive === 1 || b.isActive === true || b.isActive === "1")
-                          .filter(b =>
-                            b.branch_name.toLowerCase().includes(branchSearch.toLowerCase()) ||
-                            (b.branch_code ?? "").toLowerCase().includes(branchSearch.toLowerCase())
-                          );
-                        if (filtered.length === 0) return <ComboboxEmpty>No branches found.</ComboboxEmpty>;
-                        return filtered.map(b => {
-                          const bCode = b.branch_code ?? "";
-                          return (
-                            <ComboboxItem key={b.id} value={String(b.id)}>
-                              <div className="flex items-center justify-between w-full">
-                                <span className="font-medium">{b.branch_name}</span>
-                                <span className="text-[10px] font-bold text-muted-foreground/40 font-mono">
-                                  {bCode}
-                                </span>
-                              </div>
-                            </ComboboxItem>
-                          );
-                        });
-                      })()}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
+                <Popover open={branchOpen} onOpenChange={setBranchOpen}>
+                  <div className="relative">
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={branchOpen}
+                        disabled={isReadOnly || !!id || fields.length > 0}
+                        className={cn(
+                          "w-full h-11 justify-between text-xs font-bold bg-background border-input hover:bg-accent hover:text-accent-foreground px-3",
+                          form.formState.errors.branch_id && "border-red-500 bg-red-50 dark:bg-red-900/10"
+                        )}
+                      >
+                        <span className="truncate">
+                          {(() => {
+                            const b = branches.find((item) => Number(item.id) === Number(watchedBranchIdForSelect));
+                            return b ? `${b.branch_name} (${b.branch_code || ""})` : "Select Branch";
+                          })()}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {!id && !isReadOnly && fields.length === 0 && watchedBranchIdForSelect ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                form.setValue("branch_id", 0, { shouldValidate: true });
+                              }}
+                              className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </span>
+                          ) : null}
+                          <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                        </div>
+                      </Button>
+                    </PopoverTrigger>
+                  </div>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search branch..." className="h-9 text-xs" />
+                      <CommandList>
+                        <CommandEmpty>No branches found.</CommandEmpty>
+                        <CommandGroup>
+                          {activeBranches.map((b) => {
+                            const bCode = b.branch_code ?? "";
+                            const isSelected = Number(watchedBranchIdForSelect) === Number(b.id);
+                            return (
+                              <CommandItem
+                                key={b.id}
+                                value={`${b.branch_name} ${bCode} ${b.id}`}
+                                onSelect={() => {
+                                  form.setValue("branch_id", Number(b.id), { shouldValidate: true });
+                                  setBranchOpen(false);
+                                }}
+                                className="cursor-pointer text-xs"
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    isSelected ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex items-center justify-between w-full">
+                                  <span className="font-medium">{b.branch_name}</span>
+                                  <span className="text-[10px] font-bold text-muted-foreground/40 font-mono">
+                                    {bCode}
+                                  </span>
+                                </div>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 {form.formState.errors.branch_id && (
                   <p className="text-xs text-red-500 font-medium">
                     {String(form.formState.errors.branch_id.message)}
@@ -1814,56 +1958,86 @@ export function StockAdjustmentManualForm({
                 <Label htmlFor="inventory_type" className="text-sm font-bold text-muted-foreground">
                   Inventory Type <span className="text-red-500">*</span>
                 </Label>
-                <Combobox
-                  value={watchedInventoryType || ""}
-                  onValueChange={(v: string | null) => {
-                    const nextType = (v || "") as "FINISHED_GOODS" | "RAW_MATERIALS";
-                    if (nextType !== watchedInventoryType) {
-                      form.setValue("inventory_type", nextType, { shouldValidate: true });
-                      form.setValue("items", []);
-                      if (nextType === "FINISHED_GOODS" || !nextType) {
-                        form.setValue("supplier_id", 0, { shouldValidate: true });
-                        setSupplierInputValue("");
-                      }
-                      const found = INVENTORY_TYPES.find((t) => t.id === nextType);
-                      setInventoryTypeInputValue(found ? found.label : "");
-                    }
-                  }}
-                  inputValue={inventoryTypeInputValue}
-                  onInputValueChange={(v: string) => {
-                    const matched = INVENTORY_TYPES.find(
-                      (t) => t.id === v || t.label.toLowerCase() === v.toLowerCase()
-                    );
-                    if (matched) {
-                      setInventoryTypeInputValue(matched.label);
-                      setInventoryTypeSearch("");
-                    } else {
-                      setInventoryTypeInputValue(v);
-                      setInventoryTypeSearch(v);
-                    }
-                  }}
-                >
-                  <ComboboxInput
-                    placeholder="Select Inventory Type"
-                    disabled={isReadOnly || !!id || fields.length > 0}
-                    className={form.formState.errors.inventory_type ? "border-red-500 bg-red-50 dark:bg-red-900/10" : ""}
-                    showTrigger={!id && fields.length === 0}
-                    showClear={!id && !isReadOnly && fields.length === 0}
-                  />
-                  <ComboboxContent>
-                    <ComboboxList>
-                      {INVENTORY_TYPES
-                        .filter((t) =>
-                          t.label.toLowerCase().includes(inventoryTypeSearch.toLowerCase())
-                        )
-                        .map((t) => (
-                          <ComboboxItem key={t.id} value={t.id}>
-                            <span className="font-medium">{t.label}</span>
-                          </ComboboxItem>
-                        ))}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
+                <Popover open={inventoryTypeOpen} onOpenChange={setInventoryTypeOpen}>
+                  <div className="relative">
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={inventoryTypeOpen}
+                        disabled={isReadOnly || !!id || fields.length > 0}
+                        className={cn(
+                          "w-full h-11 justify-between text-xs font-bold bg-background border-input hover:bg-accent hover:text-accent-foreground px-3",
+                          form.formState.errors.inventory_type && "border-red-500 bg-red-50 dark:bg-red-900/10"
+                        )}
+                      >
+                        <span className="truncate">
+                          {(() => {
+                            const found = INVENTORY_TYPES.find((t) => t.id === watchedInventoryType);
+                            return found ? found.label : "Select Inventory Type";
+                          })()}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {!id && !isReadOnly && fields.length === 0 && watchedInventoryType ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                form.setValue("inventory_type", "" as unknown as "FINISHED_GOODS", { shouldValidate: true });
+                                form.setValue("items", []);
+                                form.setValue("supplier_id", 0, { shouldValidate: true });
+                              }}
+                              className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </span>
+                          ) : null}
+                          <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                        </div>
+                      </Button>
+                    </PopoverTrigger>
+                  </div>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search inventory type..." className="h-9 text-xs" />
+                      <CommandList>
+                        <CommandEmpty>No type found.</CommandEmpty>
+                        <CommandGroup>
+                          {INVENTORY_TYPES.map((t) => {
+                            const isSelected = watchedInventoryType === t.id;
+                            return (
+                              <CommandItem
+                                key={t.id}
+                                value={`${t.label} ${t.id}`}
+                                onSelect={() => {
+                                  if (t.id !== watchedInventoryType) {
+                                    form.setValue("inventory_type", t.id, { shouldValidate: true });
+                                    form.setValue("items", []);
+                                    if (t.id === "FINISHED_GOODS") {
+                                      form.setValue("supplier_id", 0, { shouldValidate: true });
+                                    }
+                                  }
+                                  setInventoryTypeOpen(false);
+                                }}
+                                className="cursor-pointer text-xs"
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    isSelected ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <span className="font-medium">{t.label}</span>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 {form.formState.errors.inventory_type && (
                   <p className="text-xs text-red-500 font-medium">
                     {String(form.formState.errors.inventory_type.message)}
@@ -1875,89 +2049,91 @@ export function StockAdjustmentManualForm({
                 <Label htmlFor="supplier" className="text-sm font-bold text-muted-foreground">
                   Supplier {watchedInventoryType === "RAW_MATERIALS" ? <span className="text-red-500">*</span> : null}
                 </Label>
-                <Combobox
-                  value={
-                    !watchedInventoryType || watchedInventoryType === "FINISHED_GOODS"
-                      ? ""
-                      : watchedSupplierIdForSelect
-                      ? String(watchedSupplierIdForSelect)
-                      : ""
-                  }
-                  onValueChange={(v: string | null) => {
-                    if (watchedInventoryType !== "RAW_MATERIALS") return;
-                    if (!v) {
-                      setSupplierInputValue("");
-                      form.setValue("supplier_id", 0, { shouldValidate: true });
-                      return;
-                    }
-                    const found = suppliers.find((s) => String(s.id) === v);
-                    if (found) setSupplierInputValue(`${found.supplier_name}${found.supplier_shortcut ? ` (${found.supplier_shortcut})` : ""}`);
-                    form.setValue("supplier_id", Number(v), { shouldValidate: true });
-                  }}
-                  inputValue={
-                    !watchedInventoryType || watchedInventoryType === "FINISHED_GOODS"
-                      ? ""
-                      : supplierInputValue
-                  }
-                  onInputValueChange={(v: string) => {
-                    if (watchedInventoryType !== "RAW_MATERIALS") return;
-                    const matched = suppliers.find((s) => String(s.id) === v);
-                    if (matched) {
-                      setSupplierInputValue(`${matched.supplier_name}${matched.supplier_shortcut ? ` (${matched.supplier_shortcut})` : ""}`);
-                      setSupplierSearch("");
-                    } else {
-                      setSupplierInputValue(v);
-                      setSupplierSearch(v);
-                    }
-                  }}
-                >
-                  <ComboboxInput
-                    placeholder={
-                      !watchedInventoryType
-                        ? "Select Inventory Type first"
-                        : watchedInventoryType === "FINISHED_GOODS"
-                        ? "Not Applicable (Internal Production)"
-                        : isSuppliersLoading
-                        ? "Loading suppliers..."
-                        : "Select Supplier"
-                    }
-                    disabled={!watchedInventoryType || watchedInventoryType === "FINISHED_GOODS" || isReadOnly || !!id || fields.length > 0}
-                    className={
-                      watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id
-                        ? "border-red-500 bg-red-50 dark:bg-red-900/10"
-                        : watchedInventoryType === "FINISHED_GOODS" || !watchedInventoryType
-                        ? "bg-muted/40 cursor-not-allowed opacity-75"
-                        : ""
-                    }
-                    showTrigger={watchedInventoryType === "RAW_MATERIALS" && !id && fields.length === 0}
-                    showClear={watchedInventoryType === "RAW_MATERIALS" && !id && !isReadOnly && fields.length === 0}
-                  />
-                  <ComboboxContent>
-                    <ComboboxList>
-                      {(() => {
-                        const filtered = suppliers.filter((s) =>
-                          s.supplier_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-                          (s.supplier_shortcut ?? "").toLowerCase().includes(supplierSearch.toLowerCase())
-                        );
-                        if (filtered.length === 0) {
-                          return (
-                            <ComboboxEmpty>
-                              {isSuppliersLoading ? "Fetching supplier list..." : "No suppliers found."}
-                            </ComboboxEmpty>
-                          );
-                        }
-                        return filtered.map((s) => (
-                          <ComboboxItem key={s.id} value={String(s.id)}>
-                            <span className="font-medium">{s.supplier_name}</span>
-                            <span className="text-[10px] font-bold text-muted-foreground/40 font-mono italic ml-2">
-                              {s.supplier_shortcut || ""}
+                <Popover open={supplierOpen} onOpenChange={setSupplierOpen}>
+                  <div className="relative">
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={supplierOpen}
+                        disabled={!watchedInventoryType || watchedInventoryType === "FINISHED_GOODS" || isReadOnly || !!id || fields.length > 0}
+                        className={cn(
+                          "w-full h-11 justify-between text-xs font-bold bg-background border-input hover:bg-accent hover:text-accent-foreground px-3",
+                          watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id && "border-red-500 bg-red-50 dark:bg-red-900/10",
+                          (watchedInventoryType === "FINISHED_GOODS" || !watchedInventoryType) && "bg-muted/40 cursor-not-allowed opacity-75"
+                        )}
+                      >
+                        <span className="truncate">
+                          {(() => {
+                            if (!watchedInventoryType) return "Select Inventory Type first";
+                            if (watchedInventoryType === "FINISHED_GOODS") return "Not Applicable (Internal Production)";
+                            if (isSuppliersLoading) return "Loading suppliers...";
+                            const s = suppliers.find((item) => Number(item.id) === Number(watchedSupplierIdForSelect));
+                            return s ? `${s.supplier_name}${s.supplier_shortcut ? ` (${s.supplier_shortcut})` : ""}` : "Select Supplier";
+                          })()}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {watchedInventoryType === "RAW_MATERIALS" && !id && !isReadOnly && fields.length === 0 && watchedSupplierIdForSelect ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                form.setValue("supplier_id", 0, { shouldValidate: true });
+                              }}
+                              className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground"
+                            >
+                              <X className="h-3.5 w-3.5" />
                             </span>
-                          </ComboboxItem>
-                        ));
-                      })()}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
+                          ) : null}
+                          <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                        </div>
+                      </Button>
+                    </PopoverTrigger>
+                  </div>
+                  {watchedInventoryType === "RAW_MATERIALS" && (
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search supplier..." className="h-9 text-xs" />
+                        <CommandList>
+                          <CommandEmpty>
+                            {isSuppliersLoading ? "Fetching supplier list..." : "No suppliers found."}
+                          </CommandEmpty>
+                          <CommandGroup>
+                            {suppliers.map((s) => {
+                              const isSelected = Number(watchedSupplierIdForSelect) === Number(s.id);
+                              return (
+                                <CommandItem
+                                  key={s.id}
+                                  value={`${s.supplier_name} ${s.supplier_shortcut || ""} ${s.id}`}
+                                  onSelect={() => {
+                                    form.setValue("supplier_id", Number(s.id), { shouldValidate: true });
+                                    setSupplierOpen(false);
+                                  }}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4 shrink-0",
+                                      isSelected ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                  <span className="font-medium">{s.supplier_name}</span>
+                                  {s.supplier_shortcut && (
+                                    <span className="text-[10px] font-bold text-muted-foreground/40 font-mono italic ml-2">
+                                      {s.supplier_shortcut}
+                                    </span>
+                                  )}
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  )}
+                </Popover>
                 {watchedInventoryType === "RAW_MATERIALS" && form.formState.errors.supplier_id && (
                   <p className="text-xs text-red-500 font-medium">
                     {String(form.formState.errors.supplier_id.message)}
@@ -2081,7 +2257,13 @@ export function StockAdjustmentManualForm({
                 ))}
               </div>
             ) : fields.length === 0 ? (
-              <div className="bg-muted/10 border-2 border-dashed border-border rounded-xl m-6 p-16 text-center">
+              <div
+                className={`rounded-xl m-6 p-16 text-center transition-colors ${
+                  form.formState.errors.items
+                    ? "bg-red-500/5 border-2 border-dashed border-red-500/60 ring-1 ring-red-500/20"
+                    : "bg-muted/10 border-2 border-dashed border-border"
+                }`}
+              >
                 <div className="flex justify-center mb-4">
                   <div className="p-5 rounded-full border border-dashed bg-muted border-border">
                     <Package className="h-10 w-10 text-muted-foreground/30" />
@@ -2226,7 +2408,13 @@ export function StockAdjustmentManualForm({
         </Card>
 
         {/* Attachments Card */}
-        <Card className="border border-border/50 shadow-sm bg-card">
+        <Card
+          className={`border shadow-sm bg-card transition-colors ${
+            form.formState.errors.stock_adjustment_attachment
+              ? "border-red-500/70 ring-1 ring-red-500/20"
+              : "border-border/50"
+          }`}
+        >
           <CardHeader className="bg-card border-b border-border/50 py-4 px-6">
             <CardTitle className="text-base font-bold text-foreground flex items-center gap-2">
               <Paperclip className="h-4 w-4 text-primary" />
@@ -2266,74 +2454,40 @@ export function StockAdjustmentManualForm({
         />
 
         {/* Modal Selection: Stock OUT uses StockAllocationModal (takes from existing inventory batches), Stock IN uses LotBatchSelectionModal (creates/assigns batches) */}
-        {watchedType === "OUT" ? (
-          <StockAllocationModal
-            open={lotBatchModalOpen}
-            onOpenChange={setLotBatchModalOpen}
-            productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : 0}
-            productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : ''}
-            branchId={Number(watchedBranchId) || 0}
-            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 0 : 0}
-            uomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
-            initialAllocations={
-              activeLotBatchIndex !== null
-                ? (() => {
-                    const it = form.watch(`items.${activeLotBatchIndex}`);
-                    if (it?.allocations && (it.allocations as unknown[]).length > 0) {
-                      return it.allocations as BatchAllocationResult[];
-                    }
-                    if (it?.batch_no && (it.inventory_lot_id || it.lot_id)) {
-                      return [
-                        {
-                          inventory_lot_id: Number(it.inventory_lot_id) || 1,
-                          lot_id: Number(it.lot_id) || 1,
-                          batch_no: it.batch_no,
-                          allocated_quantity: Number(it.quantity) || 1,
-                          available_quantity: Number(it.current_stock || it.quantity) || 1,
-                          status: "ACTIVE",
-                          qa_status: it.qa_status || "GOOD",
-                        } as BatchAllocationResult,
-                      ];
-                    }
-                    return undefined;
-                  })()
-                : undefined
-            }
-            onConfirm={handleApplyAllocation}
-          />
-        ) : (
-          <LotBatchSelectionModal
-            open={lotBatchModalOpen}
-            onOpenChange={setLotBatchModalOpen}
-            branchId={Number(watchedBranchId) || undefined}
-            productId={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.product_id`)) : undefined}
-            productName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_name`) || '') : undefined}
-            productCode={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.product_code`) || '') : undefined}
-            productUomId={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.unit_id`) ? Number(form.watch(`items.${activeLotBatchIndex}.unit_id`)) : undefined) : undefined}
-            productUomName={activeLotBatchIndex !== null ? String(form.watch(`items.${activeLotBatchIndex}.unit_name`) || 'units') : 'units'}
-            productType={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_type`) : undefined}
-            productCategory={activeLotBatchIndex !== null ? form.watch(`items.${activeLotBatchIndex}.product_category`) : undefined}
-            categoryName={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.category_name`) as string | undefined) : undefined}
-            requestedQuantity={activeLotBatchIndex !== null ? Number(form.watch(`items.${activeLotBatchIndex}.quantity`)) || 0 : 0}
-            adjustmentType={watchedType || "IN"}
-            initialLotAllocations={activeLotBatchIndex !== null ? (form.watch(`items.${activeLotBatchIndex}.lot_allocations`) as LotAllocationGroup[] | undefined) : undefined}
-            existingFormAllocations={
-              activeLotBatchIndex !== null
-                ? (form.watch("items") || []).filter((_, idx) => idx !== activeLotBatchIndex)
-                : undefined
-            }
-            initialValues={activeLotBatchIndex !== null ? {
-              lot_id: form.watch(`items.${activeLotBatchIndex}.lot_id`) || undefined,
-              lot_name: form.watch(`items.${activeLotBatchIndex}.lot_name`) || undefined,
-              inventory_lot_id: form.watch(`items.${activeLotBatchIndex}.inventory_lot_id`) || undefined,
-              batch_no: form.watch(`items.${activeLotBatchIndex}.batch_no`) || '',
-              manufacturing_date: form.watch(`items.${activeLotBatchIndex}.manufacturing_date`),
-              expiry_date: form.watch(`items.${activeLotBatchIndex}.expiry_date`),
-              unit_cost: form.watch(`items.${activeLotBatchIndex}.cost_per_unit`) || undefined,
-              qa_status: form.watch(`items.${activeLotBatchIndex}.qa_status`) || 'GOOD',
-            } : undefined}
-            onConfirm={handleApplyLotBatch}
-          />
+        {lotBatchModalOpen && activeLotBatchIndex !== null && activeItem && (
+          watchedType === "OUT" ? (
+            <StockAllocationModal
+              open={lotBatchModalOpen}
+              onOpenChange={setLotBatchModalOpen}
+              productId={Number(activeItem.product_id) || 0}
+              productName={String(activeItem.product_name || '')}
+              branchId={Number(watchedBranchId) || 0}
+              requestedQuantity={Number(activeItem.quantity) || 0}
+              uomName={String(activeItem.unit_name || 'units')}
+              initialAllocations={modalInitialAllocations}
+              onConfirm={handleApplyAllocation}
+            />
+          ) : (
+            <LotBatchSelectionModal
+              open={lotBatchModalOpen}
+              onOpenChange={setLotBatchModalOpen}
+              branchId={Number(watchedBranchId) || undefined}
+              productId={Number(activeItem.product_id) || undefined}
+              productName={String(activeItem.product_name || '') || undefined}
+              productCode={String(activeItem.product_code || '') || undefined}
+              productUomId={activeItem.unit_id ? Number(activeItem.unit_id) : undefined}
+              productUomName={String(activeItem.unit_name || 'units')}
+              productType={activeItem.product_type}
+              productCategory={activeItem.product_category}
+              categoryName={activeItem.category_name as string | undefined}
+              requestedQuantity={Number(activeItem.quantity) || 0}
+              adjustmentType={watchedType || "IN"}
+              initialLotAllocations={activeItem.lot_allocations as LotAllocationGroup[] | undefined}
+              existingFormAllocations={modalExistingFormAllocations}
+              initialValues={modalInitialValues}
+              onConfirm={handleApplyLotBatch}
+            />
+          )
         )}
 
         <div className="flex items-center justify-end gap-3 pb-8">

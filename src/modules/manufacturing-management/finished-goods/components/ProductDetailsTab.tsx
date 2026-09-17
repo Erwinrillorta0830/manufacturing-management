@@ -42,6 +42,7 @@ interface ProductDetailsTabProps {
     handleCreateSegment: (name: string) => Promise<number | undefined>;
     handleCreateSection: (name: string) => Promise<number | undefined>;
     products: Product[];
+    derivedCostPerUnit?: number;
 }
 
 export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
@@ -62,7 +63,8 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
     handleCreateClass,
     handleCreateSegment,
     handleCreateSection,
-    products
+    products,
+    derivedCostPerUnit
 }) => {
     const [uploadingImage, setUploadingImage] = React.useState(false);
     const [imagePreview, setImagePreview] = React.useState<string | null>(null);
@@ -661,14 +663,32 @@ export const ProductDetailsTab: React.FC<ProductDetailsTabProps> = ({
                             </div>
 
                             <div className="space-y-1 col-span-3">
-                                <label className="text-[11px] font-bold text-muted-foreground uppercase">Cost Per Unit (₱)</label>
-                                <input 
-                                    type="number" 
-                                    step="0.01"
-                                    value={editedDetails.cost_per_unit || ""} 
-                                    onChange={e => handleDetailChange("cost_per_unit", e.target.value ? parseFloat(e.target.value) : undefined)}
-                                    className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                />
+                                <div className="flex items-center justify-between">
+                                    <label className="text-[11px] font-bold text-muted-foreground uppercase">Cost Per Unit (₱)</label>
+                                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                        Derived from Yield-Adjusted Unit Cost
+                                    </span>
+                                </div>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-semibold">₱</span>
+                                    <input 
+                                        type="text" 
+                                        value={
+                                            derivedCostPerUnit !== undefined && !isNaN(derivedCostPerUnit) && derivedCostPerUnit > 0
+                                                ? Number(derivedCostPerUnit).toFixed(4)
+                                                : (editedDetails.cost_per_unit !== undefined && !isNaN(Number(editedDetails.cost_per_unit))
+                                                    ? Number(editedDetails.cost_per_unit).toFixed(4)
+                                                    : "0.0000")
+                                        }
+                                        disabled
+                                        readOnly
+                                        className="w-full rounded-lg border border-border bg-muted/50 pl-7 pr-3 py-1.5 text-sm text-foreground outline-none cursor-not-allowed opacity-85 font-mono font-bold select-all"
+                                        title="This field is automatically derived from the calculated Yield-Adjusted Unit Cost."
+                                    />
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                    Calculated directly from BOM ingredients, workstation routings, labor standards, overheads, and expected yield.
+                                </p>
                             </div>
 
                             <div className="space-y-1 col-span-3">

@@ -37,7 +37,7 @@ export function useProductionWorkflow() {
     const [searchQuery, setSearchQuery] = useState("");
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
-    const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
+    const [pendingDeepLinkTarget, setPendingDeepLinkTarget] = useState<{ id?: string | null; jo?: string | null } | null>(null);
     const selectedJobOrderIdRef = useRef(selectedJobOrderId);
 
     useEffect(() => {
@@ -102,23 +102,47 @@ export function useProductionWorkflow() {
         return sortedTasks.find((t) => t.id === selectedTaskId) || null;
     }, [sortedTasks, selectedTaskId]);
 
-    // Deep link support: /mm/production-workflow?jo=JO-XXXX selects the Job Order.
+    // Deep link support: /mm/production-workflow?id=... or ?jo=... selects the Job Order.
     useEffect(() => {
+        const idParam = searchParams.get("id");
         const joParam = searchParams.get("jo");
-        if (joParam) setPendingDeepLinkJo(joParam);
+        if (idParam || joParam) {
+            setPendingDeepLinkTarget({ id: idParam, jo: joParam });
+        }
     }, [searchParams]);
 
     useEffect(() => {
-        if (!pendingDeepLinkJo || loadingJobs) return;
-        const match = terminalJobOrders.find((jo) => jo.jo_id === pendingDeepLinkJo);
+        if (!pendingDeepLinkTarget || loadingJobs) return;
+        const { id, jo: joCode } = pendingDeepLinkTarget;
+        const match = terminalJobOrders.find((job) => {
+            if (id) {
+                if (
+                    String(job.jo_id) === id ||
+                    (job.job_order_id !== undefined && String(job.job_order_id) === id) ||
+                    (job.order_id !== undefined && String(job.order_id) === id)
+                ) {
+                    return true;
+                }
+            }
+            if (joCode) {
+                if (
+                    job.jo_id === joCode ||
+                    job.job_order_no === joCode ||
+                    job.order_no === joCode
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        });
         if (match) {
             setSelectedJobOrderId(match.jo_id);
             setSelectedTaskId(null);
         } else {
             toast.info("Only staged or In Production Job Orders can be opened in this terminal.");
         }
-        setPendingDeepLinkJo(null);
-    }, [pendingDeepLinkJo, loadingJobs, terminalJobOrders]);
+        setPendingDeepLinkTarget(null);
+    }, [pendingDeepLinkTarget, loadingJobs, terminalJobOrders]);
 
     // Fetch Job Orders
     const fetchJobs = useCallback(async (selectIdAfterFetch?: string, silent = false) => {

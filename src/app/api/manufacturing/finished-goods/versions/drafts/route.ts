@@ -7,7 +7,8 @@ import {
     createDraft,
     saveDraftDetails,
     cancelDraft,
-    submitDraftForApproval
+    submitDraftForApproval,
+    reopenDraftForEditing
 } from "./drafts-helper";
 
 export async function GET(request: Request) {
@@ -68,9 +69,6 @@ export async function POST(request: Request) {
         if (!productId) {
             return NextResponse.json({ error: "Missing required field: productId" }, { status: 400 });
         }
-        if (!versionName || !versionName.trim()) {
-            return NextResponse.json({ error: "Missing required field: versionName" }, { status: 400 });
-        }
 
         const numProductId = Number(productId);
         const numSourceVerId = sourceVersionId ? Number(sourceVersionId) : null;
@@ -79,7 +77,7 @@ export async function POST(request: Request) {
         const draft = await createDraft({
             productId: numProductId,
             sourceVersionId: numSourceVerId,
-            versionName: versionName.trim(),
+            versionName: versionName && typeof versionName === "string" ? versionName.trim() : undefined,
             baseQuantity: baseQuantity !== undefined ? Number(baseQuantity) : undefined,
             uomId: uomId !== undefined ? Number(uomId) : undefined,
             expectedYieldPercentage: expectedYieldPercentage !== undefined ? Number(expectedYieldPercentage) : undefined,
@@ -144,10 +142,18 @@ export async function PATCH(request: Request) {
             if (!res.success) {
                 return NextResponse.json({ error: res.error || "Failed to save draft details" }, { status: 400 });
             }
-            return NextResponse.json({ success: true, draftId: numDraftId });
+            return NextResponse.json({ success: true, draftId: numDraftId, draft: res.draft });
         }
 
-        return NextResponse.json({ error: "Invalid action. Supported actions: 'save', 'cancel', 'submit'." }, { status: 400 });
+        if (action === "reopen" || action === "withdraw") {
+            const res = await reopenDraftForEditing(numDraftId, userId);
+            if (!res.success) {
+                return NextResponse.json({ error: res.error || "Failed to reopen draft for editing" }, { status: 400 });
+            }
+            return NextResponse.json({ success: true, draftId: numDraftId, status: "Draft", draft: res.draft });
+        }
+
+        return NextResponse.json({ error: "Invalid action. Supported actions: 'save', 'cancel', 'submit', 'reopen'." }, { status: 400 });
     } catch (err: unknown) {
         console.error("API Error in PATCH /versions/drafts:", err);
         const errMsg = err instanceof Error ? err.message : "Failed to process draft update";

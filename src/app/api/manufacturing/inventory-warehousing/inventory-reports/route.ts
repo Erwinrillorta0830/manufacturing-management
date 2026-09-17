@@ -506,32 +506,14 @@ export async function GET(request: Request) {
                     productTypeName = productTypeMap.get(productTypeId) || productTypeName;
                 }
 
-                // OPTION A: Branch-Aware Deficit Aggregation across Active Branches
-                // For each Product + Active Branch:
-                //   branch_deficit = MAX(0, maintaining_quantity - branch_on_hand)
-                // All Branches:
-                //   total_deficit = SUM(all branch-level deficits)
-                //   replenishment_cost = SUM(branch_deficit * product_unit_cost)
                 const branchOnHandMap = productBranchOnhandMap.get(productId) || new Map<number, number>();
 
-                let productTotalDeficit = 0;
                 let productTotalOnHand = 0;
-                let isBelowInAnyBranch = false;
-                let isZeroInAnyBranch = false;
 
                 const branchStock = targetBranches.map((br) => {
                     const brId = Number(br.id);
                     const brOnHand = branchOnHandMap.get(brId) || 0;
                     productTotalOnHand += brOnHand;
-
-                    const brDeficit = maintainingQty > 0 ? Math.max(0, maintainingQty - brOnHand) : 0;
-                    productTotalDeficit += brDeficit;
-
-                    const brBelow = maintainingQty > 0 && brOnHand <= maintainingQty;
-                    const brZero = maintainingQty > 0 && brOnHand === 0;
-
-                    if (brBelow) isBelowInAnyBranch = true;
-                    if (brZero) isZeroInAnyBranch = true;
 
                     return {
                         branchId: brId,
@@ -539,31 +521,28 @@ export async function GET(request: Request) {
                         branchCode: br.branch_code || "",
                         onhandQuantity: brOnHand,
                         maintainingQuantity: maintainingQty,
-                        deficitQuantity: brDeficit,
-                        isBelowMaintaining: brBelow,
-                        isOutOfStock: brZero,
+                        deficitQuantity: 0,
+                        isBelowMaintaining: false,
+                        isOutOfStock: brOnHand === 0,
                     };
                 });
 
-                // Classification per User KPI requirements:
-                // - Below Maintaining: unique products below their threshold in at least one active branch.
-                // - Out of Stock: unique products with zero on-hand in at least one active branch where maintaining quantity > 0.
-                // - Deficit Units: sum of the actual branch-level deficits.
-                // - Estimated Replenishment Cost: branch-level deficit * applicable product unit cost.
+                // Product-level safety stock and deficit evaluation
+                const onHand = productTotalOnHand;
+                const deficit = maintainingQty > 0 ? Math.max(0, maintainingQty - onHand) : 0;
+                const isBelowMaintaining = maintainingQty > 0 && onHand <= maintainingQty;
+
                 let stockStatus: "out_of_stock" | "low_stock" | "healthy" | "zero_threshold";
                 if (maintainingQty === 0) {
                     stockStatus = "zero_threshold";
-                } else if (isZeroInAnyBranch) {
+                } else if (onHand === 0) {
                     stockStatus = "out_of_stock";
-                } else if (isBelowInAnyBranch) {
+                } else if (onHand <= maintainingQty) {
                     stockStatus = "low_stock";
                 } else {
                     stockStatus = "healthy";
                 }
 
-                const deficit = productTotalDeficit;
-                const isBelowMaintaining = isBelowInAnyBranch && maintainingQty > 0;
-                const onHand = productTotalOnHand;
                 const estimatedReplenishmentCost = deficit * (unitCost > 0 ? unitCost : 0);
 
                 // Batches with FEFO/FIFO Sorting

@@ -23,56 +23,42 @@ export function BatchBreakdownRow({ product }: BatchBreakdownRowProps) {
 
     return (
         <div className="p-3.5 bg-muted/20 border-t border-b border-border/60 animate-in fade-in duration-150">
-            {/* Branch-Level Deficit Breakdown (Option A: Per-Branch Allocation) */}
+            {/* Branch-Level Stock Distribution */}
             {product.branchStock && product.branchStock.length > 1 && (
                 <div className="mb-3 p-2.5 rounded-lg border bg-background/70 space-y-1.5">
                     <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
                         <span className="flex items-center gap-1.5">
                             <Building2 className="w-3.5 h-3.5 text-primary" />
-                            Active Branch Stock & Deficit Allocation
+                            Active Branch Stock Distribution
                         </span>
                         <span className="font-mono text-[10px] normal-case text-muted-foreground">
-                            Target: {product.maintainingQuantity.toLocaleString()} {product.uomShortcut} / active branch
+                            Product Target: {product.maintainingQuantity.toLocaleString()} {product.uomShortcut}
                         </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                         {product.branchStock.map((b) => {
-                            const isOOS = b.isOutOfStock;
-                            const isLow = b.isBelowMaintaining;
+                            const hasStock = b.onhandQuantity > 0;
                             return (
                                 <div
                                     key={b.branchId}
                                     className={`p-2 rounded-md border text-xs flex flex-col gap-1 transition-colors ${
-                                        isOOS
-                                            ? "bg-rose-500/5 border-rose-500/30"
-                                            : isLow
-                                            ? "bg-amber-500/5 border-amber-500/30"
-                                            : "bg-muted/20 border-border/60"
+                                        hasStock
+                                            ? "bg-emerald-500/5 border-emerald-500/20"
+                                            : "bg-muted/20 border-border/60 opacity-70"
                                     }`}
                                 >
                                     <div className="flex items-center justify-between font-semibold">
                                         <span className="truncate" title={b.branchName}>{b.branchName}</span>
-                                        {isOOS ? (
-                                            <Badge className="text-[9px] px-1 py-0 bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30">
-                                                Out of Stock
-                                            </Badge>
-                                        ) : isLow ? (
-                                            <Badge className="text-[9px] px-1 py-0 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">
-                                                Deficit: -{b.deficitQuantity.toLocaleString()}
+                                        {hasStock ? (
+                                            <Badge className="text-[9px] px-1.5 py-0 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
+                                                {b.onhandQuantity.toLocaleString()} {product.uomShortcut}
                                             </Badge>
                                         ) : (
-                                            <Badge className="text-[9px] px-1 py-0 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">
-                                                Healthy
-                                            </Badge>
+                                            <span className="text-[10px] text-muted-foreground font-mono">0 on-hand</span>
                                         )}
                                     </div>
                                     <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
-                                        <span>On-Hand: <strong className="text-foreground">{b.onhandQuantity.toLocaleString()}</strong></span>
-                                        {b.deficitQuantity > 0 && (
-                                            <span className="text-rose-600 dark:text-rose-400 font-semibold">
-                                                Need: {b.deficitQuantity.toLocaleString()} {product.uomShortcut}
-                                            </span>
-                                        )}
+                                        <span>Code: {b.branchCode || "—"}</span>
                                     </div>
                                 </div>
                             );

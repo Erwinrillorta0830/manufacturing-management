@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Dialog,
@@ -126,6 +126,77 @@ interface LotBatchSelectionModalProps {
   initialLotAllocations?: LotAllocationGroup[];
   existingFormAllocations?: FormSiblingAllocation[];
   onConfirm: (result: LotBatchSelectionResult) => void;
+}
+
+// ── Ultra-responsive, 60fps Quantity Input Component ──
+function BatchQuantityInput({
+  value,
+  onChange,
+  hasError,
+}: {
+  value: number | undefined | null;
+  onChange: (val: number) => void;
+  hasError?: boolean;
+}) {
+  const [localValue, setLocalValue] = useState<string>(() =>
+    value === 0 || value === undefined || value === null ? '' : String(value)
+  );
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const strVal = value === 0 || value === undefined || value === null ? '' : String(value);
+    setLocalValue((prev) => {
+      const prevNum = prev === '' ? 0 : parseInt(prev, 10);
+      const newNum = strVal === '' ? 0 : parseInt(strVal, 10);
+      return prevNum === newNum ? prev : strVal;
+    });
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    setLocalValue(raw);
+
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      if (raw === '') {
+        onChange(0);
+      } else {
+        const parsed = parseInt(raw, 10);
+        onChange(isNaN(parsed) ? 0 : Math.max(0, parsed));
+      }
+    }, 150);
+  };
+
+  const handleBlur = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (localValue === '') {
+      setLocalValue('');
+      onChange(0);
+    } else {
+      const parsed = parseInt(localValue, 10);
+      const clean = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+      setLocalValue(clean === 0 ? '' : String(clean));
+      onChange(clean);
+    }
+  };
+
+  return (
+    <Input
+      type="number"
+      min={0}
+      value={localValue}
+      placeholder="0"
+      onFocus={(e) => e.target.select()}
+      onClick={(e) => (e.target as HTMLInputElement).select()}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      className={`h-9 text-xs font-mono font-bold text-center transition-colors ${
+        hasError
+          ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5 text-destructive focus-visible:ring-destructive'
+          : ''
+      }`}
+    />
+  );
 }
 
 export function LotBatchSelectionModal({
@@ -1894,6 +1965,17 @@ export function LotBatchSelectionModal({
                 const deficitZonePct = Math.min(40, Math.max(1.5, Number(rawDeficitZonePct.toFixed(2))));
                 const positiveZonePct = Number((100 - deficitZonePct).toFixed(2));
 
+                const lotHasBatchErrors = (group.batches || []).some(
+                  (b) =>
+                    !b.batch_no ||
+                    !String(b.batch_no).trim() ||
+                    !b.quantity ||
+                    Number(b.quantity) <= 0 ||
+                    !b.manufacturing_date ||
+                    !b.expiry_date ||
+                    (new Date(b.expiry_date).getTime() < new Date(b.manufacturing_date).getTime())
+                );
+
                 return (
                   <div
                     key={`lot-group-${gIdx}`}
@@ -1902,12 +1984,14 @@ export function LotBatchSelectionModal({
                       : !isTypeMatch
                         ? 'border-red-500 dark:border-red-800 ring-1 ring-red-500/20'
                         : !isUomMatch
-                          ? 'border-rose-400 dark:border-rose-800'
+                          ? 'border-rose-400 dark:border-rose-800 ring-1 ring-rose-500/20'
                           : isCapacityExceeded
                             ? 'border-red-500 dark:border-red-700 ring-1 ring-red-500/20'
-                            : isNearCapacity
-                              ? 'border-amber-400 dark:border-amber-700'
-                              : 'border-border'
+                            : lotHasBatchErrors
+                              ? 'border-red-500/70 dark:border-red-700/70 ring-1 ring-red-500/20'
+                              : isNearCapacity
+                                ? 'border-amber-400 dark:border-amber-700'
+                                : 'border-border'
                       }`}
                   >
                     {/* LOT HEADER & CONTROLS */}
@@ -2567,7 +2651,7 @@ export function LotBatchSelectionModal({
                                     handleSelectBatchWithMeta(gIdx, bIdx, selectedBatchNo, meta);
                                   }}
                                   title={batch.batch_no || "Search or select batch..."}
-                                  className="h-9 text-xs"
+                                  className={`h-9 text-xs ${!batch.batch_no || !String(batch.batch_no).trim() ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5' : ''}`}
                                 />
                               </div>
 
@@ -2576,29 +2660,10 @@ export function LotBatchSelectionModal({
                                 <Label className="text-[10px] font-bold text-muted-foreground uppercase mb-1 block">
                                   Quantity *
                                 </Label>
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={batch.quantity === 0 || batch.quantity === undefined || batch.quantity === null ? '' : batch.quantity}
-                                  placeholder="0"
-                                  onFocus={(e) => e.target.select()}
-                                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                                  onChange={(e) => {
-                                    const raw = e.target.value;
-                                    if (raw === '') {
-                                      handleUpdateBatchField(gIdx, bIdx, 'quantity', 0);
-                                      return;
-                                    }
-                                    const val = parseInt(raw, 10);
-                                    handleUpdateBatchField(gIdx, bIdx, 'quantity', isNaN(val) ? 0 : Math.max(0, val));
-                                  }}
-                                  onBlur={(e) => {
-                                    const val = parseInt(e.target.value, 10);
-                                    if (isNaN(val) || val < 0) {
-                                      handleUpdateBatchField(gIdx, bIdx, 'quantity', 0);
-                                    }
-                                  }}
-                                  className="h-9 text-xs font-mono font-bold text-center"
+                                <BatchQuantityInput
+                                  value={batch.quantity}
+                                  onChange={(newQty) => handleUpdateBatchField(gIdx, bIdx, 'quantity', newQty)}
+                                  hasError={!batch.quantity || Number(batch.quantity) <= 0}
                                 />
                               </div>
 
@@ -2611,7 +2676,7 @@ export function LotBatchSelectionModal({
                                   type="date"
                                   value={batch.manufacturing_date ? batch.manufacturing_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'manufacturing_date', e.target.value)}
-                                  className="h-9 text-xs"
+                                  className={`h-9 text-xs transition-colors ${!batch.manufacturing_date ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5' : ''}`}
                                 />
                               </div>
 
@@ -2624,7 +2689,11 @@ export function LotBatchSelectionModal({
                                   type="date"
                                   value={batch.expiry_date ? batch.expiry_date.substring(0, 10) : ''}
                                   onChange={(e) => handleUpdateBatchField(gIdx, bIdx, 'expiry_date', e.target.value)}
-                                  className="h-9 text-xs"
+                                  className={`h-9 text-xs transition-colors ${
+                                    !batch.expiry_date || (batch.manufacturing_date && new Date(batch.expiry_date).getTime() < new Date(batch.manufacturing_date).getTime())
+                                      ? 'border-destructive ring-1 ring-destructive/40 bg-destructive/5'
+                                      : ''
+                                  }`}
                                 />
                               </div>
 

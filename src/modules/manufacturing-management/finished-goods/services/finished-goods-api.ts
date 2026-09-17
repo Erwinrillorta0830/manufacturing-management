@@ -617,7 +617,7 @@ export async function saveVersionDraft(
         laborPositions?: any[];
         overheads?: any[];
     }
-): Promise<{ success: boolean }> {
+): Promise<{ success: boolean; draftId?: number; draft?: any }> {
     const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -674,6 +674,27 @@ export async function submitVersionDraftForApproval(
     if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.error || "Failed to submit draft for approval");
+    }
+    return res.json();
+}
+
+/**
+ * Reopen / withdraw a submitted draft back to 'Draft' status for editing.
+ */
+export async function reopenVersionDraft(
+    draftId: number
+): Promise<{ success: boolean; draftId?: number; status?: string; draft?: any }> {
+    const res = await fetch("/api/manufacturing/finished-goods/versions/drafts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            draftId,
+            action: "reopen"
+        })
+    });
+    if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to reopen draft for editing");
     }
     return res.json();
 }

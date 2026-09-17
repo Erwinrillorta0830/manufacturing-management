@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle, Undo2 } from "lucide-react";
+import { GitFork, Briefcase, Calculator, Sparkles, XCircle, Clock, CheckCircle2, Star, Send, AlertCircle, Undo2, Archive, Edit3, Loader2 } from "lucide-react";
 import { RoutesBOMTab } from "./RoutesBOMTab";
 import { DirectLaborStandardsTab } from "./DirectLaborStandardsTab";
 import { OverheadManagementTab } from "./OverheadManagementTab";
@@ -41,6 +41,8 @@ export interface VersionManagementTabProps {
     onSubmitForApproval?: (versionId?: number) => void;
     onCreateRevision?: (version: ProductVersion) => void;
     onCancelRevision?: () => void;
+    onReopenDraft?: () => void;
+    isReopeningDraft?: boolean;
     activeDraft?: ActiveDraftInfo | null;
 }
 
@@ -61,11 +63,15 @@ export function VersionManagementTab({
     units,
     allCatalogProducts,
     setHasUnsavedChanges,
+    isSyncingYield,
+    handleSyncHistoricalYield,
     isVersionLocked = false,
     onSetPrimary,
     onSubmitForApproval,
     onCreateRevision,
     onCancelRevision,
+    onReopenDraft,
+    isReopeningDraft = false,
     activeDraft
 }: VersionManagementTabProps) {
     const [userSubTab, setVersionSubTab] = useState<"routes_bom" | "direct_labor" | "overheads">("routes_bom");
@@ -78,7 +84,24 @@ export function VersionManagementTab({
 
     return (
         <div className="space-y-6">
-            {/* 1. Rejected Version Banner (Immutable Record) */}
+            {/* 1. Superseded Version Banner (Immutable History) */}
+            {selectedVersion?.status === "Superseded" && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-500/30 bg-slate-500/10 px-4 py-3 flex-wrap">
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <Archive className="h-4 w-4 text-slate-600 dark:text-slate-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                                Superseded Specification (Immutable History) — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                            </p>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                                This specification has been superseded by a newer approved revision. It is preserved permanently for historical tracking and Job Order audit trails. Inputs are strictly locked.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 2. Rejected Version Banner (Immutable Record) */}
             {selectedVersion?.status === "Rejected" && (
                 <div className="flex items-start justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 flex-wrap">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -91,7 +114,7 @@ export function VersionManagementTab({
                                 <strong>Reason:</strong> {selectedVersion.rejection_reason || selectedVersion.approval_remarks || "No rejection reason provided."}
                             </p>
                             <p className="text-[10px] text-rose-600/80 dark:text-rose-400/80 mt-1">
-                                This version is an immutable historical record and cannot be edited. Branch a new editable revision to address reviewer feedback.
+                                This version is an immutable historical record and cannot be edited directly. Revise this specification to address reviewer feedback.
                             </p>
                         </div>
                     </div>
@@ -100,31 +123,61 @@ export function VersionManagementTab({
                             type="button"
                             onClick={() => onCreateRevision(selectedVersion)}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0 self-center"
-                            title="Branch a new editable revision from this rejected version"
+                            title="Revise this rejected specification to address feedback"
                         >
-                            <GitFork className="h-3.5 w-3.5" /> Branch Revision
+                            <GitFork className="h-3.5 w-3.5" /> Revise Specification
                         </button>
                     )}
                 </div>
             )}
 
-            {/* 2. Pending Approval Review Banner */}
+            {/* 3. Pending Approval Review Banner */}
             {(selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval") && (
-                <div className="flex items-center gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3">
-                    <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                    <div className="flex-1">
-                        <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
-                            Pending Approval Review — <span className="font-extrabold">{selectedVersion.version_name}</span>
-                        </p>
-                        <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
-                            This version has been submitted for QA and engineering review. All recipe parameters and routings are locked in read-only mode pending authorization.
-                        </p>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                        <div className="flex-1">
+                            <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                                Pending Approval Review — <span className="font-extrabold">{selectedVersion.version_name}</span>
+                            </p>
+                            <p className="text-[11px] text-blue-600/80 dark:text-blue-400/80 mt-0.5">
+                                This version has been submitted for QA and engineering review. All recipe parameters and routings are locked in read-only mode pending authorization.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        {onReopenDraft && (
+                            <button
+                                type="button"
+                                onClick={onReopenDraft}
+                                disabled={isReopeningDraft}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0 disabled:opacity-50"
+                                title="Cancel submission and edit again to submit for approval again"
+                            >
+                                {isReopeningDraft ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Edit3 className="h-3.5 w-3.5" />
+                                )}
+                                Cancel & Edit Again
+                            </button>
+                        )}
+                        {onCancelRevision && (hasActiveDraft || selectedVersion.is_draft || selectedVersion.version_name?.toLowerCase().includes("rev")) && (
+                            <button
+                                type="button"
+                                onClick={onCancelRevision}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 hover:bg-destructive/20 text-destructive px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0"
+                                title="Cancel revision and restore the approved baseline"
+                            >
+                                <Undo2 className="h-3.5 w-3.5" /> Cancel Revision
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
 
-            {/* 3. Active Version Banner */}
-            {isActive && selectedVersion && !hasActiveDraft && !isRevision && (
+            {/* 4. Active Version Banner */}
+            {isActive && selectedVersion && !selectedVersion.is_draft && !isRevision && (
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex-wrap">
                     <div className="flex items-center gap-3 min-w-0">
                         <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -140,21 +193,30 @@ export function VersionManagementTab({
                                 ) : null}
                             </div>
                             <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 mt-0.5">
-                                This version is active and approved for manufacturing. Inputs are locked to protect production integrity. Primary is active for current job orders.
+                                This version is active and approved for manufacturing. Inputs are locked to protect production integrity.
                             </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                        {onCreateRevision && (
+                        {hasActiveDraft && onCreateRevision ? (
+                            <button
+                                type="button"
+                                onClick={() => onCreateRevision(selectedVersion)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Open the revision draft currently in progress"
+                            >
+                                <Edit3 className="h-3.5 w-3.5" /> Continue Revision Draft
+                            </button>
+                        ) : onCreateRevision ? (
                             <button
                                 type="button"
                                 onClick={() => onCreateRevision(selectedVersion)}
                                 className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs"
-                                title="Create an editable revision cloned from this approved specification"
+                                title="Revise this approved specification (creates an isolated draft revision)"
                             >
-                                <GitFork className="h-3.5 w-3.5" /> Create Revision
+                                <GitFork className="h-3.5 w-3.5" /> Revise Specification
                             </button>
-                        )}
+                        ) : null}
                         {!isPrimary && selectedVersion.version_id > 0 && onSetPrimary && (
                             <button
                                 type="button"
@@ -170,7 +232,7 @@ export function VersionManagementTab({
             )}
 
             {/* 4. Revision Required / Active Draft Banner (Editable) */}
-            {(isRevision || hasActiveDraft) && selectedVersion && !isVersionLocked && (
+            {(selectedVersion?.status === "Draft" || selectedVersion?.status === "Revision Required" || (selectedVersion?.is_draft && selectedVersion?.status !== "Pending Approval" && selectedVersion?.status !== "For Approval")) && selectedVersion && !isVersionLocked && (
                 <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 flex-wrap">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                         <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />

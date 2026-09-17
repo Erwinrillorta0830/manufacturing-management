@@ -209,13 +209,23 @@ export async function GET(
             }
         >();
 
+        const passedYieldByJo = new Map<number, number>();
+
         if (jobOrderIds.length > 0) {
-            const joRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(
-                    ","
-                )}&limit=-1&fields=job_order_id,job_order_no,status,target_quantity,actual_quantity_produced,completed_quantity,start_date,end_date`,
-                { headers: directusHeaders, cache: "no-store" }
-            ).catch(() => null);
+            const [joRes, yieldRes] = await Promise.all([
+                fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_in]=${jobOrderIds.join(
+                        ","
+                    )}&limit=-1&fields=job_order_id,job_order_no,status,target_quantity,actual_quantity_produced,completed_quantity,start_date,end_date`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ).catch(() => null),
+                fetch(
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_in]=${jobOrderIds.join(
+                        ","
+                    )}&filter[qa_status][_eq]=Passed&limit=-1&fields=ledger_id,job_order_id,yield_quantity,qa_status,commit_status`,
+                    { headers: directusHeaders, cache: "no-store" }
+                ).catch(() => null),
+            ]);
 
             if (joRes && joRes.ok) {
                 const joJson = await joRes.json();
@@ -232,7 +242,23 @@ export async function GET(
                     });
                 }
             }
+
+            if (yieldRes && yieldRes.ok) {
+                const yieldJson = await yieldRes.json();
+                for (const y of yieldJson.data || []) {
+                    const commitStatus = String(y.commit_status || "COMMITTED").toUpperCase();
+                    if (commitStatus === "CANCELLED" || commitStatus === "CANCELED" || commitStatus === "VOID") {
+                        continue;
+                    }
+                    const joId = Number(y.job_order_id);
+                    const yQty = Number(y.yield_quantity || 0);
+                    passedYieldByJo.set(joId, (passedYieldByJo.get(joId) || 0) + yQty);
+                }
+            }
         }
+
+        // Clone map for tracking remaining passed yield when distributing to allocations
+        const remainingPassedYieldMap = new Map<number, number>(passedYieldByJo);
 
         // 5. Query Spring Boot live on-hand for each distinct product at this branch
         const onhandByProduct = new Map<number, { onhandQuantity: number; error?: string | null }>();
@@ -266,10 +292,13 @@ export async function GET(
                 const allocQty = Number(alloc.allocated_quantity || 0);
                 const actualProd = Number(jo?.actual_quantity_produced || 0);
                 const completedQty = Number(jo?.completed_quantity || 0);
-                const joProducedMetric = Math.max(actualProd, completedQty);
 
-                // Effective produced quantity allocated to this line
-                const effectiveProduced = Math.min(allocQty, joProducedMetric);
+                // Business Rule: Produced quantity only counts if qa_status is 'Passed' in yield ledger
+                const joId = Number(alloc.job_order_id);
+                const availablePassed = remainingPassedYieldMap.get(joId) || 0;
+                const effectiveProduced = Math.min(allocQty, availablePassed);
+                remainingPassedYieldMap.set(joId, Math.max(0, availablePassed - effectiveProduced));
+
                 totalProduced += effectiveProduced;
 
                 return {

@@ -37,7 +37,7 @@ import {
     Link2,
     SlidersHorizontal,
     Lock,
- 
+
 } from "lucide-react";
 import ReconciliationLotAllocationModal from "./ReconciliationLotAllocationModal";
 
@@ -216,18 +216,18 @@ export default function ProductReconciliationModal({
                 rOrderId &&
                 rOrderId !== "---" &&
                 (rOrderId === currentOrderNo ||
-                 rOrderId === currentOrderId ||
-                 (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
-                 (currentOrderNo && currentOrderNo.includes(rOrderId)))
+                    rOrderId === currentOrderId ||
+                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
+                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
             );
 
             const isInvoiceMatch = Boolean(
                 rInvNo &&
                 rInvNo !== "---" &&
                 (rInvNo === currentInvNo ||
-                 rInvNo === currentInvId ||
-                 (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
-                 (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
+                    rInvNo === currentInvId ||
+                    (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
+                    (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
             );
 
             const isCustMatch = Boolean(rCustCode && currentCustCode && rCustCode === currentCustCode);
@@ -259,18 +259,18 @@ export default function ProductReconciliationModal({
                 rOrderId &&
                 rOrderId !== "---" &&
                 (rOrderId === currentOrderNo ||
-                 rOrderId === currentOrderId ||
-                 (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
-                 (currentOrderNo && currentOrderNo.includes(rOrderId)))
+                    rOrderId === currentOrderId ||
+                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
+                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
             );
 
             const isInvoiceMatch = Boolean(
                 rInvNo &&
                 rInvNo !== "---" &&
                 (rInvNo === currentInvNo ||
-                 rInvNo === currentInvId ||
-                 (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
-                 (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
+                    rInvNo === currentInvId ||
+                    (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
+                    (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
             );
 
             return isOrderMatch || isInvoiceMatch;
@@ -285,18 +285,18 @@ export default function ProductReconciliationModal({
                 rOrderId &&
                 rOrderId !== "---" &&
                 (rOrderId === currentOrderNo ||
-                 rOrderId === currentOrderId ||
-                 (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
-                 (currentOrderNo && currentOrderNo.includes(rOrderId)))
+                    rOrderId === currentOrderId ||
+                    (currentOrderNo && rOrderId.includes(currentOrderNo)) ||
+                    (currentOrderNo && currentOrderNo.includes(rOrderId)))
             );
 
             const isInvoiceMatch = Boolean(
                 rInvNo &&
                 rInvNo !== "---" &&
                 (rInvNo === currentInvNo ||
-                 rInvNo === currentInvId ||
-                 (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
-                 (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
+                    rInvNo === currentInvId ||
+                    (currentInvNo && currentInvNo !== "---" && rInvNo.includes(currentInvNo)) ||
+                    (currentInvNo && currentInvNo !== "---" && currentInvNo.includes(rInvNo)))
             );
 
             const isCustMatch = Boolean(rCustCode && currentCustCode && rCustCode === currentCustCode);
@@ -304,17 +304,17 @@ export default function ProductReconciliationModal({
             const dateStr =
                 r.return_date && !isNaN(new Date(r.return_date).getTime())
                     ? new Date(r.return_date).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                      })
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                    })
                     : "";
             const amountStr =
                 r.total_amount !== null && r.total_amount !== undefined
                     ? `₱${Number(r.total_amount).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                      })}`
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    })}`
                     : "";
 
             // Build informative sublabel enabling fast search on SO, Invoice, Customer, Date
@@ -710,17 +710,16 @@ export default function ProductReconciliationModal({
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap pt-0.5">
                                     <span
-                                        className={`font-black text-[10px] uppercase tracking-wider border rounded-md px-2.5 py-0.5 transition-all ${
-                                            dynamicStatus === "Fulfilled"
+                                        className={`font-black text-[10px] uppercase tracking-wider border rounded-md px-2.5 py-0.5 transition-all ${dynamicStatus === "Fulfilled"
                                                 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
                                                 : dynamicStatus === "Fulfilled with Concerns"
-                                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                : dynamicStatus === "Fulfilled with Returns"
-                                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                : dynamicStatus === "Unfulfilled / Returns"
-                                                ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30"
-                                                : "bg-muted text-muted-foreground border-border"
-                                        }`}
+                                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                                    : dynamicStatus === "Fulfilled with Returns"
+                                                        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                                        : dynamicStatus === "Unfulfilled / Returns"
+                                                            ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                                                            : "bg-muted text-muted-foreground border-border"
+                                            }`}
                                     >
                                         {dynamicStatus}
                                     </span>
@@ -779,11 +778,10 @@ export default function ProductReconciliationModal({
                                     Invoice & Order
                                 </span>
                                 <div
-                                    className={`font-black text-sm font-mono truncate ${
-                                        order.invoice_no && order.invoice_no !== "---"
+                                    className={`font-black text-sm font-mono truncate ${order.invoice_no && order.invoice_no !== "---"
                                             ? "text-primary"
-                                             : "text-muted-foreground"
-                                    }`}
+                                            : "text-muted-foreground"
+                                        }`}
                                     title={order.invoice_no && order.invoice_no !== "---" ? order.invoice_no : "No Sales Invoice"}
                                 >
                                     {order.invoice_no && order.invoice_no !== "---" ? order.invoice_no : "---"}
@@ -801,13 +799,13 @@ export default function ProductReconciliationModal({
                                 </span>
                                 <div className="font-black text-sm text-foreground">
                                     {order.invoice_date &&
-                                    order.invoice_date !== "---" &&
-                                    !isNaN(new Date(order.invoice_date).getTime())
+                                        order.invoice_date !== "---" &&
+                                        !isNaN(new Date(order.invoice_date).getTime())
                                         ? new Date(order.invoice_date).toLocaleDateString(undefined, {
-                                              month: "short",
-                                              day: "numeric",
-                                              year: "numeric",
-                                          })
+                                            month: "short",
+                                            day: "numeric",
+                                            year: "numeric",
+                                        })
                                         : "---"}
                                 </div>
                                 <div className="text-[10px] text-muted-foreground">
@@ -866,19 +864,17 @@ export default function ProductReconciliationModal({
                         {/* Terminal Status / Read-Only Alert Banner */}
                         {effectiveReadOnly && (
                             <div
-                                className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
-                                    order.fulfillment_status === "Fulfilled with Returns"
+                                className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${order.fulfillment_status === "Fulfilled with Returns"
                                         ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200"
                                         : "bg-muted/60 border-border text-foreground"
-                                }`}
+                                    }`}
                             >
                                 <div className="flex items-start gap-3">
                                     <div
-                                        className={`p-2 rounded-lg shrink-0 mt-0.5 ${
-                                            order.fulfillment_status === "Fulfilled with Returns"
+                                        className={`p-2 rounded-lg shrink-0 mt-0.5 ${order.fulfillment_status === "Fulfilled with Returns"
                                                 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
                                                 : "bg-muted text-muted-foreground"
-                                        }`}
+                                            }`}
                                     >
                                         <Lock className="h-4 w-4" />
                                     </div>
@@ -940,9 +936,8 @@ export default function ProductReconciliationModal({
                                             title="Refresh available Sales Returns"
                                         >
                                             <RefreshCw
-                                                className={`h-3.5 w-3.5 ${
-                                                    isRefreshing ? "animate-spin text-primary" : ""
-                                                }`}
+                                                className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-primary" : ""
+                                                    }`}
                                             />
                                             <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
                                         </button>
@@ -974,13 +969,12 @@ export default function ProductReconciliationModal({
                                         {selectedLinkedReturn ? (
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span
-                                                    className={`font-black text-[10px] uppercase tracking-wider border rounded-md px-2.5 py-1 ${
-                                                        selectedLinkedReturn.status === "Received" ||
-                                                        selectedLinkedReturn.status === "Approved" ||
-                                                        selectedLinkedReturn.is_received
+                                                    className={`font-black text-[10px] uppercase tracking-wider border rounded-md px-2.5 py-1 ${selectedLinkedReturn.status === "Received" ||
+                                                            selectedLinkedReturn.status === "Approved" ||
+                                                            selectedLinkedReturn.is_received
                                                             ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
                                                             : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                                                    }`}
+                                                        }`}
                                                 >
                                                     {selectedLinkedReturn.status ||
                                                         (selectedLinkedReturn.is_received ? "Received" : "Pending")}
@@ -1041,25 +1035,25 @@ export default function ProductReconciliationModal({
                                     {/* Product Search Bar */}
                                     <div className="relative w-full sm:w-72 shrink-0">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                                    <input
-                                        type="text"
-                                        placeholder="Search product name or SKU..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="w-full h-8.5 pl-9 pr-8 text-xs bg-background border border-input rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-all shadow-xs"
-                                    />
-                                    {searchQuery && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setSearchQuery("")}
-                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
-                                        >
-                                            <X className="h-3.5 w-3.5" />
-                                        </button>
-                                    )}
-                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Search product name or SKU..."
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            className="w-full h-8.5 pl-9 pr-8 text-xs bg-background border border-input rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition-all shadow-xs"
+                                        />
+                                        {searchQuery && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSearchQuery("")}
+                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
+                            </div>
 
                             <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
                                 <div className="overflow-x-auto">
@@ -1132,33 +1126,9 @@ export default function ProductReconciliationModal({
 
                                                             {/* Fulfilled Input */}
                                                             <td className="p-3.5 text-center align-middle">
-                                                                {effectiveReadOnly ? (
-                                                                    <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
-                                                                        {item.received_quantity}
-                                                                    </span>
-                                                                ) : (
-                                                                    <input
-                                                                        type="number"
-                                                                        min={0}
-                                                                        max={targetQty}
-                                                                        value={item.received_quantity === 0 ? "" : item.received_quantity}
-                                                                        placeholder="0"
-                                                                        onFocus={(e) => e.target.select()}
-                                                                        onClick={(e) => (e.target as HTMLInputElement).select()}
-                                                                        onChange={(e) => {
-                                                                            const val = e.target.value;
-                                                                            const parsed = val === "" ? 0 : parseInt(val, 10);
-                                                                            handleReceivedQtyChange(originalIndex, isNaN(parsed) ? 0 : Math.max(0, Math.min(parsed, targetQty)));
-                                                                        }}
-                                                                        onBlur={(e) => {
-                                                                            const val = e.target.value;
-                                                                            if (val === "" || isNaN(parseInt(val, 10))) {
-                                                                                handleReceivedQtyChange(originalIndex, 0);
-                                                                            }
-                                                                        }}
-                                                                        className="w-20 h-8 text-center bg-background border border-emerald-500/40 focus:border-emerald-500 rounded-lg px-2 text-xs font-black text-foreground outline-none shadow-xs"
-                                                                    />
-                                                                )}
+                                                                <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
+                                                                    {item.received_quantity}
+                                                                </span>
                                                             </td>
 
                                                             {/* Returned Input */}
@@ -1286,8 +1256,8 @@ export default function ProductReconciliationModal({
                                         {hasOrderVariance
                                             ? "Mandatory: Enter the reason for quantity variance / missing items for this sales order."
                                             : isRemarksRequired
-                                            ? "Mandatory: Enter the reason for product return, customer concern, or delivery notes for this sales order."
-                                            : "Enter clearance notes, customer concerns, or return details for this sales order."}
+                                                ? "Mandatory: Enter the reason for product return, customer concern, or delivery notes for this sales order."
+                                                : "Enter clearance notes, customer concerns, or return details for this sales order."}
                                     </p>
                                     <textarea
                                         rows={2}
@@ -1297,14 +1267,13 @@ export default function ProductReconciliationModal({
                                             hasOrderVariance
                                                 ? "Required: Enter explanation for quantity variance / missing items..."
                                                 : isRemarksRequired
-                                                ? "Required: Enter order remarks, reason for return, or concern details..."
-                                                : "Enter order remarks, notes, or reasons for concern / returns..."
+                                                    ? "Required: Enter order remarks, reason for return, or concern details..."
+                                                    : "Enter order remarks, notes, or reasons for concern / returns..."
                                         }
-                                        className={`w-full bg-background border rounded-xl px-3.5 py-2.5 text-xs focus:border-primary outline-none text-foreground placeholder:text-muted-foreground shadow-xs resize-none transition-colors ${
-                                            isRemarksRequired && !orderRemarks.trim()
+                                        className={`w-full bg-background border rounded-xl px-3.5 py-2.5 text-xs focus:border-primary outline-none text-foreground placeholder:text-muted-foreground shadow-xs resize-none transition-colors ${isRemarksRequired && !orderRemarks.trim()
                                                 ? "border-rose-500/50 focus:border-rose-500"
                                                 : "border-input"
-                                        }`}
+                                            }`}
                                     />
                                 </div>
                             );

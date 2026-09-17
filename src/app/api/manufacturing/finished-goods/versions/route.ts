@@ -120,6 +120,21 @@ export async function GET(request: Request) {
             return b.version_id - a.version_id;
         });
 
+        // Reconcile: Ensure only one active version is primary; set older versions' is_primary to 0
+        const primaryCandidate = versionsList.find((v: any) => v.is_primary && v.status === "Active") || versionsList.find((v: any) => v.is_primary) || versionsList[0];
+        if (primaryCandidate) {
+            for (const v of versionsList) {
+                if (v.version_id !== primaryCandidate.version_id && v.is_primary) {
+                    v.is_primary = false;
+                    fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${v.version_id}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({ is_primary: 0 })
+                    }).catch(() => {});
+                }
+            }
+        }
+
         return NextResponse.json(versionsList);
     } catch (e) {
         console.error("API Error fetching versions:", e);
@@ -614,15 +629,15 @@ export async function PATCH(request: Request) {
                 );
             }
 
-            // 1. Clear is_primary on all other versions of this product (do NOT deactivate them; they remain Active with is_primary = false)
+            // 1. Clear is_primary on all other versions of this product (set old versions to 0)
             for (const v of versions) {
-                if (v.version_id !== numericVersionId && v.is_primary) {
-                    await patchVersionItem(v.version_id, { is_primary: false });
+                if (v.version_id !== numericVersionId) {
+                    await patchVersionItem(v.version_id, { is_primary: 0 });
                 }
             }
 
-            // 2. Set target version as Primary = true (status remains Active)
-            const actRes = await patchVersionItem(numericVersionId, { is_primary: true });
+            // 2. Set target version as Primary = 1 (status remains Active)
+            const actRes = await patchVersionItem(numericVersionId, { is_primary: 1 });
             if (!actRes.ok) throw new Error("Failed to set version as primary");
 
             // 3. Automatically ensure the product master record is set to Active

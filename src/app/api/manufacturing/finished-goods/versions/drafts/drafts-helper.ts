@@ -155,7 +155,9 @@ export async function getDraftById(
                 run_time_hours: r.standard_time_minutes != null ? Number(r.standard_time_minutes) / 60 : 0,
                 setup_time_hours: r.setup_time_minutes != null ? Number(r.setup_time_minutes) / 60 : 0,
                 step_batch_size: r.batch_capacity != null ? Number(r.batch_capacity) : 1,
+                batch_capacity: r.batch_capacity != null ? Number(r.batch_capacity) : 1,
                 expected_labor_cost: Number(r.labor_cost_per_hour || 0),
+                labor_cost_per_hour: Number(r.labor_cost_per_hour || 0),
                 qa_template_id: r.qa_template_id || null,
                 bom_items: items.map(b => {
                     const pId = Number(b.product_id);
@@ -233,11 +235,12 @@ export async function getDraftById(
             id: String(o.draft_overhead_id),
             draft_overhead_id: o.draft_overhead_id,
             overhead_name: o.overhead_name || "Overhead",
+            overhead_type_id: o.overhead_type_id ? Number(o.overhead_type_id) : undefined,
             cost_per_unit: Number(o.cost_allocation || 0),
             cost: Number(o.cost_allocation || 0),
             allocation_basis: o.allocation_basis || "per_unit",
             is_active: true,
-            remarks: o.overhead_name || ""
+            remarks: (o.overhead_name as string) || ""
         }));
 
         return {
@@ -260,17 +263,34 @@ export async function getActiveDraftsForProduct(
     options?: { includeDeleted?: boolean }
 ): Promise<VersionDraftFull[]> {
     try {
-        const url = `${DIRECTUS_URL}/items/product_manufacturing_version_draft?filter[product_id][_eq]=${productId}&filter[status][_in]=Draft,Pending Approval&sort=-draft_id&limit=-1`;
+        const url = `${DIRECTUS_URL}/items/product_manufacturing_version_draft?filter[product_id][_eq]=${productId}&filter[status][_in]=Draft,Pending Approval,Revision Required&sort=-draft_id&limit=-1`;
         const res = await fetch(url, { headers, cache: "no-store" });
         if (!res.ok) return [];
 
         const drafts = ((await res.json()).data || []) as VersionDraftHeader[];
-        const fullDrafts: VersionDraftFull[] = [];
-        for (const d of drafts) {
-            const full = await getDraftById(d.draft_id, options);
-            if (full) fullDrafts.push(full);
+        if (drafts.length === 0) return [];
+
+        // At most ONE active draft can exist for a product. Pick the latest one.
+        const latestDraft = drafts[0];
+        const full = await getDraftById(latestDraft.draft_id, options);
+
+        // If redundant duplicate drafts exist from legacy edit cycles, auto-cancel older drafts in background
+        if (drafts.length > 1) {
+            for (let i = 1; i < drafts.length; i++) {
+                if (drafts[i].status === "Draft") {
+                    fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${drafts[i].draft_id}`, {
+                        method: "PATCH",
+                        headers,
+                        body: JSON.stringify({
+                            status: "Cancelled",
+                            cancellation_reason: "Superseded by newer draft revision"
+                        })
+                    }).catch(() => {});
+                }
+            }
         }
-        return fullDrafts;
+
+        return full ? [full] : [];
     } catch (err) {
         console.error("Error in getActiveDraftsForProduct:", err);
         return [];
@@ -300,13 +320,61 @@ export async function getActiveDraftForVersion(
 }
 
 /**
+ * Derives the next sequential revision name (e.g. 'SKU-001 Rev 2')
+ * for a finished good specification lineage.
+ */
+export async function getNextRevisionName(productId: number, productCode?: string): Promise<string> {
+    let sku = (productCode || "").trim();
+    if (!sku) {
+        try {
+            const prodRes = await fetch(`${DIRECTUS_URL}/items/products/${productId}?fields=product_code`, { headers, cache: "no-store" });
+            if (prodRes.ok) {
+                const p = (await prodRes.json()).data;
+                sku = (p?.product_code || "").trim();
+            }
+        } catch {
+            // ignore
+        }
+    }
+    if (!sku) sku = `FG-${productId}`;
+
+    try {
+        const [verRes, draftRes] = await Promise.all([
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${productId}&fields=version_name&limit=-1`, { headers, cache: "no-store" }),
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft?filter[product_id][_eq]=${productId}&fields=version_name&limit=-1`, { headers, cache: "no-store" })
+        ]);
+
+        const versions = verRes.ok ? ((await verRes.json()).data || []) : [];
+        const drafts = draftRes.ok ? ((await draftRes.json()).data || []) : [];
+        const allNames: string[] = [
+            ...versions.map((v: { version_name?: string }) => v.version_name || ""),
+            ...drafts.map((d: { version_name?: string }) => d.version_name || "")
+        ];
+
+        let maxRev = 0;
+        for (const name of allNames) {
+            const match = name.match(/Rev\s*(\d+)/i);
+            if (match && match[1]) {
+                const num = parseInt(match[1], 10);
+                if (!isNaN(num) && num > maxRev) maxRev = num;
+            }
+        }
+
+        const nextRevNum = maxRev > 0 ? maxRev + 1 : (allNames.length > 0 ? allNames.length + 1 : 1);
+        return `${sku} Rev ${nextRevNum}`;
+    } catch {
+        return `${sku} Rev 1`;
+    }
+}
+
+/**
  * Create a new revision draft branching from a source production version (or scratch).
  * Validates cross-table version_name uniqueness and source ownership.
  */
 export async function createDraft(options: {
     productId: number;
     sourceVersionId?: number | null;
-    versionName: string;
+    versionName?: string;
     baseQuantity?: number;
     uomId?: number;
     expectedYieldPercentage?: number;
@@ -314,9 +382,33 @@ export async function createDraft(options: {
     userId?: number | null;
 }): Promise<VersionDraftFull> {
     const { productId, sourceVersionId, versionName, userId } = options;
-    const cleanVersionName = (versionName || "").trim();
+
+    // 0. Idempotency Check: If an open editable draft already exists for this product, return it immediately
+    const existingDraftUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft?filter[product_id][_eq]=${productId}&filter[status][_in]=Draft,Revision Required&sort=-draft_id&limit=1`;
+    const existingDraftRes = await fetch(existingDraftUrl, { headers, cache: "no-store" });
+    if (existingDraftRes.ok) {
+        const existingData = (await existingDraftRes.json()).data || [];
+        if (existingData.length > 0 && existingData[0].draft_id) {
+            const existingFullDraft = await getDraftById(Number(existingData[0].draft_id), { includeDeleted: false });
+            if (existingFullDraft) {
+                return existingFullDraft;
+            }
+        }
+    }
+
+    // Check if a draft is already pending approval
+    const pendingDraftUrl = `${DIRECTUS_URL}/items/product_manufacturing_version_draft?filter[product_id][_eq]=${productId}&filter[status][_eq]=Pending Approval&sort=-draft_id&limit=1`;
+    const pendingDraftRes = await fetch(pendingDraftUrl, { headers, cache: "no-store" });
+    if (pendingDraftRes.ok) {
+        const pendingData = (await pendingDraftRes.json()).data || [];
+        if (pendingData.length > 0 && pendingData[0].draft_id) {
+            throw new Error(`A revision draft (${pendingData[0].version_name}) is already pending QA approval for this product.`);
+        }
+    }
+
+    let cleanVersionName = (versionName || "").trim();
     if (!cleanVersionName) {
-        throw new Error("Version name is required.");
+        cleanVersionName = await getNextRevisionName(productId);
     }
 
     // 1. Source Version Validation (Ownership Verification)
@@ -554,7 +646,8 @@ export async function createDraft(options: {
         }
     }
 
-    return {
+    const fullDraft = await getDraftById(draftId, { includeDeleted: false });
+    return fullDraft || {
         ...createdDraft,
         routes: createdRoutes,
         labor_positions: createdPositions,
@@ -577,7 +670,7 @@ export async function saveDraftDetails(
         overheads?: Record<string, unknown>[];
     },
     userId?: number | null
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; draft?: VersionDraftFull | null }> {
     const draftRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${draftId}`, { headers, cache: "no-store" });
     if (!draftRes.ok) return { success: false, error: "Draft not found" };
 
@@ -590,6 +683,23 @@ export async function saveDraftDetails(
     }
 
     const nowIso = getNowInPhtISO();
+
+    // Prefetch units and operations to properly resolve IDs from names / shortcuts
+    const [unitsRes, opsRes] = await Promise.all([
+        fetch(`${DIRECTUS_URL}/items/units?limit=-1`, { headers, cache: "no-store" }),
+        fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1`, { headers, cache: "no-store" })
+    ]);
+    const unitsList: Record<string, unknown>[] = unitsRes.ok ? (await unitsRes.json()).data || [] : [];
+    const opsList: Record<string, unknown>[] = opsRes.ok ? (await opsRes.json()).data || [] : [];
+
+    const unitsMap = new Map<string, number>();
+    unitsList.forEach((u) => {
+        if (u.unit_shortcut) unitsMap.set(String(u.unit_shortcut).toLowerCase().trim(), Number(u.unit_id));
+        if (u.unit_name) unitsMap.set(String(u.unit_name).toLowerCase().trim(), Number(u.unit_id));
+    });
+
+    const opsByName = new Map<string, number>(opsList.map((o) => [String(o.operation_name).toLowerCase().trim(), Number(o.id)]));
+    const opsById = new Map<number, string>(opsList.map((o) => [Number(o.id), String(o.operation_name)]));
 
     // 1. Update draft header metadata
     if (data.details) {
@@ -612,18 +722,44 @@ export async function saveDraftDetails(
     if (data.routes && Array.isArray(data.routes)) {
         const exRoutesRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
         const existingRoutes: Record<string, unknown>[] = exRoutesRes.ok ? (await exRoutesRes.json()).data || [] : [];
-        const incomingRouteIds = new Set(data.routes.map(r => Number(r.draft_route_id || r.route_id || 0)).filter(Boolean));
 
-        // Soft-delete routes not in payload
+        // Build route match plan: match by draft_route_id first; if not positive or not found, match by sequence_order
+        const matchedRouteIds = new Set<number>();
+        const routePlan: { incoming: Record<string, unknown>; targetDraftRouteId: number | null; isNew: boolean }[] = [];
+
+        for (let i = 0; i < data.routes.length; i++) {
+            const r = data.routes[i];
+            const seq = Number(r.sequence_order || i + 1);
+            const rId = Number(r.draft_route_id || r.route_id || 0);
+
+            let targetDraftRouteId: number | null = null;
+            if (rId > 0 && existingRoutes.some(er => Number(er.draft_route_id) === rId && !matchedRouteIds.has(rId))) {
+                targetDraftRouteId = rId;
+            } else {
+                const matchBySeq = existingRoutes.find(er => Number(er.sequence_order) === seq && !matchedRouteIds.has(Number(er.draft_route_id)));
+                if (matchBySeq) {
+                    targetDraftRouteId = Number(matchBySeq.draft_route_id);
+                }
+            }
+
+            if (targetDraftRouteId) {
+                matchedRouteIds.add(targetDraftRouteId);
+                routePlan.push({ incoming: r, targetDraftRouteId, isNew: false });
+            } else {
+                routePlan.push({ incoming: r, targetDraftRouteId: null, isNew: true });
+            }
+        }
+
+        // Soft-delete existing routes that are no longer part of the specification
         for (const exR of existingRoutes) {
-            if (!incomingRouteIds.has(Number(exR.draft_route_id))) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes/${exR.draft_route_id}`, {
+            const exRouteId = Number(exR.draft_route_id);
+            if (!matchedRouteIds.has(exRouteId)) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes/${exRouteId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({ is_deleted: 1, deleted_at: nowIso, deleted_by: userId || null })
                 });
-                // Soft-delete all BOM items under this route
-                const bomsRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_eq]=${exR.draft_route_id}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
+                const bomsRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_eq]=${exRouteId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
                 const boms: Record<string, unknown>[] = bomsRes.ok ? (await bomsRes.json()).data || [] : [];
                 for (const b of boms) {
                     await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${b.draft_bom_id}`, {
@@ -635,28 +771,55 @@ export async function saveDraftDetails(
             }
         }
 
-        // Insert or update incoming routes
-        for (let i = 0; i < data.routes.length; i++) {
-            const r = data.routes[i];
-            const rId = Number(r.draft_route_id || r.route_id || 0);
+        // Insert or update incoming routes and their BOM items
+        for (let i = 0; i < routePlan.length; i++) {
+            const { incoming: r, targetDraftRouteId, isNew } = routePlan[i];
+            let activeDraftRouteId = targetDraftRouteId;
 
-            let activeDraftRouteId = rId;
+            let resolvedOpId: number | null = r.operation_id ? Number(r.operation_id) : (r.operationId ? Number(r.operationId) : null);
+            let resolvedOpName = (r.operation_name as string) || (r.stage as string) || "";
+            if (!resolvedOpId && resolvedOpName) {
+                resolvedOpId = opsByName.get(resolvedOpName.toLowerCase().trim()) || null;
+            }
+            if (!resolvedOpName && resolvedOpId) {
+                resolvedOpName = opsById.get(resolvedOpId) || `Step ${r.sequence_order || i + 1}`;
+            }
+            if (!resolvedOpName) {
+                resolvedOpName = `Step ${r.sequence_order || i + 1}`;
+            }
+
+            const stepBatchSize = (r.step_batch_size !== undefined && r.step_batch_size !== null && r.step_batch_size !== "")
+                ? Number(r.step_batch_size)
+                : (r.batch_capacity !== undefined && r.batch_capacity !== null && r.batch_capacity !== "" ? Number(r.batch_capacity) : 1);
+
+            const stdTimeMinutes = (r.run_time_hours !== undefined && r.run_time_hours !== null && r.run_time_hours !== "")
+                ? Math.round(Number(r.run_time_hours) * 60 * 100) / 100
+                : (r.standard_time_minutes !== undefined && r.standard_time_minutes !== null && r.standard_time_minutes !== "" ? Number(r.standard_time_minutes) : 0);
+
+            const setupTimeMinutes = (r.setup_time_hours !== undefined && r.setup_time_hours !== null && r.setup_time_hours !== "")
+                ? Math.round(Number(r.setup_time_hours) * 60 * 100) / 100
+                : (r.setup_time_minutes !== undefined && r.setup_time_minutes !== null && r.setup_time_minutes !== "" ? Number(r.setup_time_minutes) : 0);
+
+            const laborCost = (r.expected_labor_cost !== undefined && r.expected_labor_cost !== null && r.expected_labor_cost !== "")
+                ? Number(r.expected_labor_cost)
+                : (r.labor_cost_per_hour !== undefined && r.labor_cost_per_hour !== null && r.labor_cost_per_hour !== "" ? Number(r.labor_cost_per_hour) : 0);
+
             const baseRoutePayload = {
                 draft_id: draftId,
-                sequence_order: r.sequence_order || i + 1,
-                operation_name: r.operation_name || r.stage || `Step ${r.sequence_order || i + 1}`,
-                operation_id: r.operation_id ? Number(r.operation_id) : (r.operationId ? Number(r.operationId) : null),
+                sequence_order: Number(r.sequence_order || i + 1),
+                operation_name: resolvedOpName,
+                operation_id: resolvedOpId,
                 work_center_id: r.work_center_id ? Number(r.work_center_id) : null,
-                standard_time_minutes: (r.run_time_hours ? Number(r.run_time_hours) * 60 : 0) || r.standard_time_minutes || 0,
-                setup_time_minutes: (r.setup_time_hours ? Number(r.setup_time_hours) * 60 : 0) || r.setup_time_minutes || 0,
-                labor_cost_per_hour: r.labor_cost_per_hour || r.expected_labor_cost || 0,
-                batch_capacity: r.batch_capacity || r.step_batch_size || null,
-                qa_template_id: r.qa_template_id || null,
+                standard_time_minutes: stdTimeMinutes,
+                setup_time_minutes: setupTimeMinutes,
+                labor_cost_per_hour: laborCost,
+                batch_capacity: stepBatchSize,
+                qa_template_id: r.qa_template_id ? Number(r.qa_template_id) : null,
                 is_deleted: 0
             };
 
-            if (rId > 0 && existingRoutes.some(er => er.draft_route_id === rId)) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes/${rId}`, {
+            if (!isNew && activeDraftRouteId) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_routes/${activeDraftRouteId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({
@@ -682,16 +845,43 @@ export async function saveDraftDetails(
             }
 
             // Sync BOM items under this route
-            if (activeDraftRouteId > 0 && r.bom_items && Array.isArray(r.bom_items)) {
+            if (activeDraftRouteId && activeDraftRouteId > 0 && r.bom_items && Array.isArray(r.bom_items)) {
                 const exBomsRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom?filter[draft_route_id][_eq]=${activeDraftRouteId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
                 const existingBoms: Record<string, unknown>[] = exBomsRes.ok ? (await exBomsRes.json()).data || [] : [];
                 const incomingBoms: Record<string, unknown>[] = (r.bom_items || []) as unknown as Record<string, unknown>[];
-                const incomingBomIds = new Set(incomingBoms.map(b => Number(b.draft_bom_id || b.bom_item_id || b.id || 0)).filter(Boolean));
+
+                const matchedBomIds = new Set<number>();
+                const bomPlan: { incoming: Record<string, unknown>; targetDraftBomId: number | null; isNew: boolean }[] = [];
+
+                for (const b of incomingBoms) {
+                    const bProductId = Number(b.product_id || b.productId || 0);
+                    if (!bProductId || isNaN(bProductId) || bProductId <= 0) continue;
+
+                    const bId = Number(b.draft_bom_id || b.bom_item_id || b.id || 0);
+                    let targetDraftBomId: number | null = null;
+
+                    if (bId > 0 && existingBoms.some(eb => Number(eb.draft_bom_id) === bId && !matchedBomIds.has(bId))) {
+                        targetDraftBomId = bId;
+                    } else {
+                        const matchByProduct = existingBoms.find(eb => Number(eb.product_id) === bProductId && !matchedBomIds.has(Number(eb.draft_bom_id)));
+                        if (matchByProduct) {
+                            targetDraftBomId = Number(matchByProduct.draft_bom_id);
+                        }
+                    }
+
+                    if (targetDraftBomId) {
+                        matchedBomIds.add(targetDraftBomId);
+                        bomPlan.push({ incoming: b, targetDraftBomId, isNew: false });
+                    } else {
+                        bomPlan.push({ incoming: b, targetDraftBomId: null, isNew: true });
+                    }
+                }
 
                 // Soft-delete BOM items removed from this route
                 for (const exB of existingBoms) {
-                    if (!incomingBomIds.has(Number(exB.draft_bom_id))) {
-                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${exB.draft_bom_id}`, {
+                    const exBomId = Number(exB.draft_bom_id);
+                    if (!matchedBomIds.has(exBomId)) {
+                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${exBomId}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({ is_deleted: 1, deleted_at: nowIso, deleted_by: userId || null })
@@ -700,22 +890,48 @@ export async function saveDraftDetails(
                 }
 
                 // Insert or update incoming BOM items
-                for (const b of incomingBoms) {
-                    const bId = Number(b.draft_bom_id || b.bom_item_id || b.id || 0);
+                for (const { incoming: b, targetDraftBomId, isNew: isBomNew } of bomPlan) {
+                    const bProductId = Number(b.product_id || b.productId || 0);
+
+                    // Robust UOM resolution: numeric ID or string shortcut lookup
+                    let resolvedUomId = 1;
+                    const rawUom = b.unit_of_measurement ?? b.uom_id ?? b.unit_id ?? b.uom;
+                    if (rawUom != null && rawUom !== "") {
+                        const numUom = Number(rawUom);
+                        if (!isNaN(numUom) && numUom > 0) {
+                            resolvedUomId = numUom;
+                        } else {
+                            const lookedUp = unitsMap.get(String(rawUom).toLowerCase().trim());
+                            if (lookedUp && lookedUp > 0) {
+                                resolvedUomId = lookedUp;
+                            }
+                        }
+                    }
+
+                    const expectedMatType = materialTypeFromProduct(b.product_type as number | string | null, b.has_versions as boolean | null) || "raw_material";
+                    let matType = (b.material_type as string) || expectedMatType;
+                    if (matType && typeof matType === "string") {
+                        const s = matType.toLowerCase().trim();
+                        if (s.includes("pack")) matType = "packaging";
+                        else if (s.includes("sub")) matType = "sub_assembly";
+                        else if (s.includes("finish")) matType = "finished_good";
+                        else if (s.includes("raw")) matType = "raw_material";
+                    }
+
                     const baseBomPayload = {
                         draft_route_id: activeDraftRouteId,
-                        product_id: Number(b.product_id || b.productId),
+                        product_id: bProductId,
                         quantity: Number(b.quantity_required ?? b.quantity ?? 1),
-                        uom_id: Number(b.unit_of_measurement || b.uom_id || b.unit_id || 1),
+                        uom_id: resolvedUomId,
                         wastage_percentage: Number(b.wastage_factor_percentage ?? b.wastage_percentage ?? 0),
-                        material_type: (b.material_type as string) || "Raw Material",
+                        material_type: matType,
                         notes: (b.notes as string) || null,
                         cost_per_unit: Number(b.cost_per_unit || 0),
                         is_deleted: 0
                     };
 
-                    if (bId > 0 && existingBoms.some(eb => eb.draft_bom_id === bId)) {
-                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${bId}`, {
+                    if (!isBomNew && targetDraftBomId) {
+                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom/${targetDraftBomId}`, {
                             method: "PATCH",
                             headers,
                             body: JSON.stringify({
@@ -725,7 +941,7 @@ export async function saveDraftDetails(
                             })
                         });
                     } else {
-                        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom`, {
+                        const bPostRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_bom`, {
                             method: "POST",
                             headers,
                             body: JSON.stringify({
@@ -734,6 +950,10 @@ export async function saveDraftDetails(
                                 created_at: nowIso
                             })
                         });
+                        if (!bPostRes.ok) {
+                            const errText = await bPostRes.text().catch(() => "");
+                            console.error("[saveDraftDetails] Failed to insert draft BOM item:", errText, baseBomPayload);
+                        }
                     }
                 }
             }
@@ -744,11 +964,37 @@ export async function saveDraftDetails(
     if (data.labor_positions && Array.isArray(data.labor_positions)) {
         const exPosRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
         const existingPositions: Record<string, unknown>[] = exPosRes.ok ? (await exPosRes.json()).data || [] : [];
-        const incomingPosIds = new Set(data.labor_positions.map(p => Number(p.draft_pos_id || p.id || 0)).filter(Boolean));
+
+        const matchedPosIds = new Set<number>();
+        const posPlan: { incoming: Record<string, unknown>; targetDraftPosId: number | null; isNew: boolean }[] = [];
+
+        for (const p of data.labor_positions) {
+            const pId = Number(p.draft_pos_id || p.id || 0);
+            let targetDraftPosId: number | null = null;
+
+            if (pId > 0 && existingPositions.some(ep => Number(ep.draft_pos_id) === pId && !matchedPosIds.has(pId))) {
+                targetDraftPosId = pId;
+            } else {
+                const matchByName = existingPositions.find(ep =>
+                    ep.position_name === (p.position_name || "Operator") && !matchedPosIds.has(Number(ep.draft_pos_id))
+                );
+                if (matchByName) {
+                    targetDraftPosId = Number(matchByName.draft_pos_id);
+                }
+            }
+
+            if (targetDraftPosId) {
+                matchedPosIds.add(targetDraftPosId);
+                posPlan.push({ incoming: p, targetDraftPosId, isNew: false });
+            } else {
+                posPlan.push({ incoming: p, targetDraftPosId: null, isNew: true });
+            }
+        }
 
         for (const exP of existingPositions) {
-            if (!incomingPosIds.has(Number(exP.draft_pos_id))) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions/${exP.draft_pos_id}`, {
+            const exPosId = Number(exP.draft_pos_id);
+            if (!matchedPosIds.has(exPosId)) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions/${exPosId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({ is_deleted: 1, deleted_at: nowIso, deleted_by: userId || null })
@@ -756,8 +1002,7 @@ export async function saveDraftDetails(
             }
         }
 
-        for (const p of data.labor_positions) {
-            const pId = Number(p.draft_pos_id || p.id || 0);
+        for (const { incoming: p, targetDraftPosId, isNew } of posPlan) {
             const basePosPayload = {
                 draft_id: draftId,
                 position_id: p.position_id || null,
@@ -775,8 +1020,8 @@ export async function saveDraftDetails(
                 is_deleted: 0
             };
 
-            if (pId > 0 && existingPositions.some(ep => ep.draft_pos_id === pId)) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions/${pId}`, {
+            if (!isNew && targetDraftPosId) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_positions/${targetDraftPosId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({
@@ -803,11 +1048,45 @@ export async function saveDraftDetails(
     if (data.overheads && Array.isArray(data.overheads)) {
         const exOvhRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads?filter[draft_id][_eq]=${draftId}&filter[is_deleted][_eq]=0&limit=-1`, { headers, cache: "no-store" });
         const existingOverheads: Record<string, unknown>[] = exOvhRes.ok ? (await exOvhRes.json()).data || [] : [];
-        const incomingOvhIds = new Set(data.overheads.map(o => Number(o.draft_overhead_id || o.id || 0)).filter(Boolean));
+
+        const matchedOvhIds = new Set<number>();
+        const ovhPlan: { incoming: Record<string, unknown>; targetDraftOvhId: number | null; isNew: boolean }[] = [];
+
+        for (const ovh of data.overheads) {
+            const rawId = ovh.draft_overhead_id ?? ovh.id;
+            let oId = 0;
+            if (typeof rawId === "number" && !isNaN(rawId) && rawId > 0) {
+                oId = rawId;
+            } else if (typeof rawId === "string" && /^\d+$/.test(rawId.trim())) {
+                oId = parseInt(rawId.trim(), 10);
+            }
+
+            let targetDraftOvhId: number | null = null;
+
+            if (oId > 0 && existingOverheads.some(eo => Number(eo.draft_overhead_id) === oId && !matchedOvhIds.has(oId))) {
+                targetDraftOvhId = oId;
+            } else {
+                const incomingName = String(ovh.overhead_name || ovh.remarks || ovh.overheadName || "Overhead").trim().toLowerCase();
+                const matchByName = existingOverheads.find(eo =>
+                    String(eo.overhead_name || "").trim().toLowerCase() === incomingName && !matchedOvhIds.has(Number(eo.draft_overhead_id))
+                );
+                if (matchByName) {
+                    targetDraftOvhId = Number(matchByName.draft_overhead_id);
+                }
+            }
+
+            if (targetDraftOvhId) {
+                matchedOvhIds.add(targetDraftOvhId);
+                ovhPlan.push({ incoming: ovh, targetDraftOvhId, isNew: false });
+            } else {
+                ovhPlan.push({ incoming: ovh, targetDraftOvhId: null, isNew: true });
+            }
+        }
 
         for (const exO of existingOverheads) {
-            if (!incomingOvhIds.has(Number(exO.draft_overhead_id))) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads/${exO.draft_overhead_id}`, {
+            const exOvhId = Number(exO.draft_overhead_id);
+            if (!matchedOvhIds.has(exOvhId)) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads/${exOvhId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({ is_deleted: 1, deleted_at: nowIso, deleted_by: userId || null })
@@ -815,18 +1094,30 @@ export async function saveDraftDetails(
             }
         }
 
-        for (const ovh of data.overheads) {
-            const oId = Number(ovh.draft_overhead_id || ovh.id || 0);
+        for (const { incoming: ovh, targetDraftOvhId, isNew } of ovhPlan) {
+            const costVal = (ovh.cost_per_unit !== undefined && ovh.cost_per_unit !== null && ovh.cost_per_unit !== "")
+                ? Number(ovh.cost_per_unit)
+                : (ovh.cost_allocation !== undefined && ovh.cost_allocation !== null && ovh.cost_allocation !== ""
+                    ? Number(ovh.cost_allocation)
+                    : (ovh.cost !== undefined && ovh.cost !== null ? Number(ovh.cost) : Number(ovh.amount || 0)));
+
+            const rawBasis = String(ovh.allocation_basis || "per_unit").toLowerCase().trim();
+            const validBasis = ["per_unit", "per_batch", "per_machine_hour", "percentage_of_labor"].includes(rawBasis)
+                ? rawBasis
+                : (rawBasis.includes("batch") ? "per_batch" : "per_unit");
+
+            const ovhName = String(ovh.overhead_name || ovh.remarks || ovh.overheadName || "Overhead").trim();
+
             const baseOvhPayload = {
                 draft_id: draftId,
-                overhead_name: ovh.overhead_name || "Overhead",
-                cost_allocation: Number(ovh.cost_per_unit || ovh.cost_allocation || 0),
-                allocation_basis: ovh.allocation_basis || "Per Batch",
+                overhead_name: ovhName || "Overhead",
+                cost_allocation: isNaN(costVal) ? 0 : costVal,
+                allocation_basis: validBasis,
                 is_deleted: 0
             };
 
-            if (oId > 0 && existingOverheads.some(eo => eo.draft_overhead_id === oId)) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads/${oId}`, {
+            if (!isNew && targetDraftOvhId) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft_overheads/${targetDraftOvhId}`, {
                     method: "PATCH",
                     headers,
                     body: JSON.stringify({
@@ -847,9 +1138,28 @@ export async function saveDraftDetails(
                 });
             }
         }
+
+        // Keep custom_overhead on draft header accurately aligned with overhead total
+        const totalActiveOvh = data.overheads.reduce((sum, o) => {
+            const isAct = o.is_active !== undefined ? Boolean(o.is_active) : true;
+            if (!isAct) return sum;
+            const c = Number(o.cost_per_unit ?? o.cost_allocation ?? o.cost ?? o.amount ?? 0);
+            return sum + (isNaN(c) ? 0 : c);
+        }, 0);
+        const roundedTotalOvh = Math.round(totalActiveOvh * 10000) / 10000;
+        await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${draftId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+                custom_overhead: roundedTotalOvh,
+                updated_by: userId || null,
+                updated_at: nowIso
+            })
+        }).catch(() => {});
     }
 
-    return { success: true };
+    const updatedDraft = await getDraftById(draftId, { includeDeleted: false });
+    return { success: true, draft: updatedDraft || undefined };
 }
 
 /**
@@ -866,10 +1176,10 @@ export async function cancelDraft(
     if (!draftRes.ok) return { success: false, error: "Draft not found" };
 
     const draft = (await draftRes.json()).data as VersionDraftHeader;
-    if (draft.status !== "Draft") {
+    if (draft.status !== "Draft" && draft.status !== "Pending Approval") {
         return {
             success: false,
-            error: `Cannot cancel draft: status is '${draft.status}'. Only 'Draft' status can be cancelled.`
+            error: `Cannot cancel draft: status is '${draft.status}'. Only drafts in 'Draft' or 'Pending Approval' status can be cancelled.`
         };
     }
 
@@ -890,6 +1200,44 @@ export async function cancelDraft(
     }
 
     return { success: true };
+}
+
+/**
+ * Reopen / withdraw a submitted draft back to 'Draft' status for editing.
+ * Transitions status from 'Pending Approval' back to 'Draft'.
+ */
+export async function reopenDraftForEditing(
+    draftId: number,
+    userId?: number | null
+): Promise<{ success: boolean; error?: string; draft?: VersionDraftHeader }> {
+    const draftRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${draftId}`, { headers, cache: "no-store" });
+    if (!draftRes.ok) return { success: false, error: "Draft not found" };
+
+    const draft = (await draftRes.json()).data as VersionDraftHeader;
+    if (draft.status !== "Pending Approval") {
+        return {
+            success: false,
+            error: `Cannot reopen draft: current status is '${draft.status}'. Only drafts in 'Pending Approval' can be reopened for editing.`
+        };
+    }
+
+    const patchRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version_draft/${draftId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+            status: "Draft",
+            updated_by: userId || null,
+            updated_at: getNowInPhtISO()
+        })
+    });
+
+    if (!patchRes.ok) {
+        const errText = await patchRes.text().catch(() => "");
+        return { success: false, error: errText || "Failed to reopen draft" };
+    }
+
+    const updated = await getDraftById(draftId, { includeDeleted: false });
+    return { success: true, draft: updated || undefined };
 }
 
 /**
@@ -1005,16 +1353,20 @@ export async function applyApprovedDraft(
 
         const now = phTimeIso || getNowInPhtISO();
 
-        // 5. Clear previous primary flag for this product
-        const oldPrimRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${draft.product_id}&filter[is_primary][_eq]=1&limit=-1&fields=version_id`, { headers, cache: "no-store" });
-        if (oldPrimRes.ok) {
-            const oldPrimList = (await oldPrimRes.json()).data || [];
-            for (const oldP of oldPrimList) {
-                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${oldP.version_id}`, {
+        // 5. Mark ALL previous versions for this product as is_primary = 0
+        const allPrevVerRes = await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?filter[product_id][_eq]=${draft.product_id}&limit=-1&fields=version_id`, { headers, cache: "no-store" });
+        if (allPrevVerRes.ok) {
+            const allPrevList = (await allPrevVerRes.json()).data || [];
+            for (const prev of allPrevList) {
+                await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${prev.version_id}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ is_primary: false, updated_by: userId || null, updated_at: now })
-                });
+                    body: JSON.stringify({
+                        is_primary: 0,
+                        updated_by: userId || null,
+                        updated_at: now
+                    })
+                }).catch(() => {});
             }
         }
 
@@ -1027,7 +1379,7 @@ export async function applyApprovedDraft(
             expected_yield_percentage: draft.expected_yield_percentage,
             custom_overhead: draft.custom_overhead,
             status: "Active",
-            is_primary: true,
+            is_primary: 1,
             created_by: draft.created_by || userId || null,
             created_at: draft.created_at || now,
             approved_by: userId || null,
@@ -1100,16 +1452,24 @@ export async function applyApprovedDraft(
             position_id: p.position_id != null ? Number(p.position_id) : null
         }));
 
-        const activeOverheads = (draft.overheads || []).filter((o) => !o.is_deleted).map((o) => ({
-            ...o,
-            id: 0,
-            draft_overhead_id: undefined,
-            overhead_name: (o.overhead_name as string) || (o.remarks as string) || "Overhead",
-            cost_per_unit: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
-            cost: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
-            allocation_basis: (o.allocation_basis as string) || "per_unit",
-            is_active: o.is_active !== undefined ? Boolean(o.is_active) : true
-        }));
+        const activeOverheads = (draft.overheads || []).filter((o) => !o.is_deleted).map((o) => {
+            const rawBasis = String(o.allocation_basis || "per_unit").toLowerCase().trim();
+            const validBasis = ["per_unit", "per_batch", "per_machine_hour", "percentage_of_labor"].includes(rawBasis)
+                ? rawBasis
+                : (rawBasis.includes("batch") ? "per_batch" : "per_unit");
+
+            return {
+                ...o,
+                id: 0,
+                draft_overhead_id: undefined,
+                overhead_name: (o.overhead_name as string) || (o.remarks as string) || "Overhead",
+                overhead_type_id: o.overhead_type_id ? Number(o.overhead_type_id) : undefined,
+                cost_per_unit: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
+                cost: Number(o.cost_per_unit ?? o.cost ?? o.cost_allocation ?? 0),
+                allocation_basis: validBasis,
+                is_active: o.is_active !== undefined ? Boolean(o.is_active) : true
+            };
+        });
 
         try {
             await syncRoutesAndBOM(newVersionId, activeRoutes, userId, activePositions);
