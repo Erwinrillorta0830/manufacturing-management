@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { procurementDirectusFetch } from "../_directus";
 import {
     INVENTORY_STATUS,
+    WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS,
     inventoryStatusToPurchaseOrderStatus,
     type InventoryStatusId
 } from "../_domain";
@@ -55,6 +57,8 @@ interface DirectusOrder {
     date_approved?: unknown;
     remark?: unknown;
     date_encoded?: unknown;
+    warehouse_receiving_at?: unknown;
+    warehouse_received_by?: unknown;
 }
 
 interface DirectusLine {
@@ -216,7 +220,7 @@ async function directusRows(path: string, message: string): Promise<Record<strin
 }
 
 async function loadOrder(purchaseOrderId: number): Promise<DirectusOrder> {
-    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded`);
+    const result = await directusJson(`/items/purchase_order/${purchaseOrderId}?fields=purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded,warehouse_receiving_at,warehouse_received_by`);
     if (result.response.status === 404) throw new WarehouseReceivingError("Purchase order not found.", 404);
     if (!result.response.ok) throw new WarehouseReceivingError("Unable to load the purchase order.", 503);
     const order = bodyData(result.body) as DirectusOrder | null;
@@ -380,7 +384,7 @@ async function writeWorkflowHistory(input: {
             to_inventory_status: input.toStatus,
             revision_before: input.revisionBefore,
             revision_after: input.revisionAfter,
-            created_at: new Date().toISOString()
+            created_at: formatPhtDateTime()
         })
     });
     if (!result.response.ok) throw new WarehouseReceivingError("Purchase-order workflow history could not be recorded.", 503);
@@ -413,9 +417,9 @@ async function buildOrderView(order: DirectusOrder) {
         loadBranch(orderBranchId(order))
     ]);
     const warehouseHeaders = headers.filter(header => String(header.posting_status || "") === "Reserved");
-    const warehouseHeader = warehouseHeaders.find(header =>
-        Number(header.workflow_revision) === workflowRevision(order)
-    ) || warehouseHeaders[0] || null;
+    const warehouseHeader = statusId(order) === INVENTORY_STATUS.WAREHOUSE_RECEIVING
+        ? warehouseHeaders.find(header => Number(header.workflow_revision) === workflowRevision(order)) || null
+        : null;
     const warehouseHeaderId = Number(warehouseHeader?.id || 0);
     const warehouseRows = receivingRows.filter(row =>
         isWarehouse(row)
@@ -448,8 +452,9 @@ async function buildOrderView(order: DirectusOrder) {
     });
     return {
         id: purchaseOrderId,
-        poNumber: String(order.reference || order.purchase_order_no || `PO-${purchaseOrderId}`),
+        poNumber: String(order.purchase_order_no || order.reference || `PO-${purchaseOrderId}`),
         purchaseOrderNumber: String(order.purchase_order_no || ""),
+        referenceNumber: order.reference ? String(order.reference) : null,
         supplierName,
         supplierId: relationId(order.supplier_name, ["id", "supplier_id"]),
         branch: {
@@ -468,6 +473,8 @@ async function buildOrderView(order: DirectusOrder) {
             ? null
             : numberValue(order.total_foreign_currency),
         dateApproved: order.date_approved ? String(order.date_approved) : null,
+        warehouseReceivingAt: order.warehouse_receiving_at ? String(order.warehouse_receiving_at) : null,
+        warehouseReceivedBy: relationId(order.warehouse_received_by, ["id", "user_id"]),
         remarks: String(order.remark || "").trim(),
         lines: viewLines,
         draft: warehouseHeader
@@ -641,7 +648,7 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         if (!header) throw new WarehouseReceivingError("The purchase order is in Warehouse Receiving but its draft is missing.", 409);
         return buildOrderView(order);
     }
-    if (currentStatus !== INVENTORY_STATUS.APPROVED && currentStatus !== INVENTORY_STATUS.PARTIALLY_RECEIVED) {
+    if (!WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(status => status === currentStatus)) {
         throw new WarehouseReceivingError("Only Approved or Partially Received purchase orders can be started in Warehouse Receiving.", 409);
     }
     if (currentStatus === INVENTORY_STATUS.PARTIALLY_RECEIVED) {
@@ -659,9 +666,11 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         "Unable to verify a previous warehouse receiving start."
     );
     if (existingByKey.length > 0) return buildOrderView(await loadOrder(purchaseOrderId));
+    const previousWarehouseReceivingAt = order.warehouse_receiving_at ?? null;
     const updated = await patchPurchaseOrderConditionally(purchaseOrderId, currentStatus, currentRevision, {
         inventory_status: INVENTORY_STATUS.WAREHOUSE_RECEIVING,
-        workflow_revision: nextRevision
+        workflow_revision: nextRevision,
+        warehouse_receiving_at: formatPhtDateTime()
     });
     if (!updated) throw new WarehouseReceivingError("The purchase order changed. Reload it before starting warehouse receiving.", 409);
     let createdHeaderId: number | null = null;
@@ -698,7 +707,8 @@ async function startWarehouseReceiving(order: DirectusOrder, command: WarehouseR
         if (createdHeaderId) await directusJson(`/items/purchase_order_receiving_headers/${createdHeaderId}`, { method: "DELETE" }).catch(() => undefined);
         await patchPurchaseOrderConditionally(purchaseOrderId, INVENTORY_STATUS.WAREHOUSE_RECEIVING, nextRevision, {
             inventory_status: currentStatus,
-            workflow_revision: currentRevision
+            workflow_revision: currentRevision,
+            warehouse_receiving_at: previousWarehouseReceivingAt
         }).catch(() => undefined);
         throw error;
     }
@@ -714,9 +724,11 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
     }
     await persistWarehouseDraft(order, command);
     const nextRevision = currentRevision + 1;
+    const previousWarehouseReceivedBy = relationId(order.warehouse_received_by, ["id", "user_id"]);
     const updated = await patchPurchaseOrderConditionally(purchaseOrderId, currentStatus, currentRevision, {
         inventory_status: INVENTORY_STATUS.FOR_PICKUP,
-        workflow_revision: nextRevision
+        workflow_revision: nextRevision,
+        warehouse_received_by: actorId
     });
     if (!updated) throw new WarehouseReceivingError("The purchase order changed while it was being sent to QA. Reload and try again.", 409);
     const header = await findWarehouseHeader(purchaseOrderId, currentRevision);
@@ -738,7 +750,8 @@ async function submitWarehouseReceiving(order: DirectusOrder, command: Warehouse
         await patchHeader(headerIdValue, { workflow_revision: currentRevision }).catch(() => undefined);
         await patchPurchaseOrderConditionally(purchaseOrderId, INVENTORY_STATUS.FOR_PICKUP, nextRevision, {
             inventory_status: currentStatus,
-            workflow_revision: currentRevision
+            workflow_revision: currentRevision,
+            warehouse_received_by: previousWarehouseReceivedBy
         }).catch(() => undefined);
         throw error;
     }
@@ -752,14 +765,14 @@ export async function GET(request: Request) {
         const purchaseOrderId = Number(searchParams.get("purchaseOrderId") || searchParams.get("poId") || 0);
         if (purchaseOrderId > 0) {
             const order = await loadOrder(purchaseOrderId);
-            if (!([INVENTORY_STATUS.APPROVED, INVENTORY_STATUS.PARTIALLY_RECEIVED, INVENTORY_STATUS.WAREHOUSE_RECEIVING] as number[]).includes(statusId(order))) {
+            if (!WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.some(status => status === statusId(order))) {
                 throw new WarehouseReceivingError("This purchase order is not available in Warehouse Receiving.", 409);
             }
             return NextResponse.json({ data: await buildOrderView(order) });
         }
         const params = new URLSearchParams({
-            "filter[inventory_status][_in]": `${INVENTORY_STATUS.APPROVED},${INVENTORY_STATUS.PARTIALLY_RECEIVED},${INVENTORY_STATUS.WAREHOUSE_RECEIVING}`,
-            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded",
+            "filter[inventory_status][_in]": WAREHOUSE_RECEIVING_QUEUE_INVENTORY_STATUS_IDS.join(","),
+            fields: "purchase_order_id,purchase_order_no,reference,supplier_name,branch_id,inventory_status,payment_status,workflow_revision,currency_code,total_amount,total_foreign_currency,date_approved,remark,date_encoded,warehouse_receiving_at,warehouse_received_by",
             limit: "-1",
             sort: "-date_approved,-date_encoded"
         });
@@ -780,7 +793,7 @@ export async function GET(request: Request) {
         ).values()].sort((left, right) => left.name.localeCompare(right.name));
         const filtered = views.filter(view => {
             const approvedDate = view.dateApproved?.slice(0, 10) || null;
-            return (!search || `${view.poNumber} ${view.purchaseOrderNumber} ${view.supplierName} ${view.remarks} ${view.status}`.toLowerCase().includes(search))
+            return (!search || `${view.poNumber} ${view.purchaseOrderNumber} ${view.referenceNumber || ""} ${view.supplierName} ${view.remarks} ${view.status}`.toLowerCase().includes(search))
                 && (!supplierId || view.supplierId === supplierId)
                 && (!status || status === "ALL" || view.status === status)
                 && (!dateFrom || (approvedDate !== null && approvedDate >= dateFrom))

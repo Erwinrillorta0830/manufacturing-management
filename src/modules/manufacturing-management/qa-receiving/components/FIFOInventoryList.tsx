@@ -164,8 +164,8 @@ export default function FIFOInventoryList({
                                                                 <span className="font-extrabold text-foreground font-mono text-[11px]">{batch.received_qty.toLocaleString()}</span>
                                                             </div>
                                                             <div className="col-span-2 border-t border-dashed pt-1.5 flex justify-between items-center">
-                                                                <span className="text-[8px] uppercase tracking-wider font-bold text-muted-foreground/75">Shipment Ref</span>
-                                                                <span className="font-mono text-foreground font-extrabold text-[9px]">{batch.shipment_ref}</span>
+                                                                 <span className="text-[8px] uppercase tracking-wider font-bold text-muted-foreground/75">PO Number</span>
+                                                                 <span className="font-mono text-foreground font-extrabold text-[9px]">{batch.purchase_order_no}</span>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -185,7 +185,7 @@ export default function FIFOInventoryList({
                                                             <th className="pb-2">Expiration Date</th>
                                                         )}
                                                         <th className="pb-2 text-right">Received Qty</th>
-                                                        <th className="pb-2">Shipment Ref</th>
+                                                         <th className="pb-2">PO Number</th>
                                                         <th className="pb-2 text-right">FIFO Status</th>
                                                     </tr>
                                                 </thead>
@@ -205,7 +205,7 @@ export default function FIFOInventoryList({
                                                                     {batch.received_qty.toLocaleString()}
                                                                 </td>
                                                                 <td className="py-2.5 text-muted-foreground font-mono">
-                                                                    {batch.shipment_ref}
+                                                                    {batch.purchase_order_no}
                                                                 </td>
                                                                 <td className="py-2.5 text-right">
                                                                     {item.isPackaging ? (

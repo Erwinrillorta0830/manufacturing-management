@@ -6,6 +6,7 @@ import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/a
 import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminalJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 import { resolveApplicableRouteWorkCenters, resolveApplicableWorkCenterIds } from "./_applicable-work-centers";
+import { fetchWorkCenterJobOrderAvailability } from "./_work-center-availability";
 
 interface UserRecord {
     user_id: number;
@@ -269,6 +270,16 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const joId = searchParams.get("joId");
         const action = searchParams.get("action");
+
+        // Fetch the active Job Orders assigned to each workstation. This is a
+        // read-only view for the station selector; it does not claim or start
+        // any Job Order.
+        if (action === "work-center-availability") {
+            const workCenterId = asPositiveInteger(searchParams.get("workCenterId"));
+            const branchId = asPositiveInteger(searchParams.get("branchId"));
+            const data = await fetchWorkCenterJobOrderAvailability({ workCenterId, branchId });
+            return NextResponse.json({ success: true, data });
+        }
 
         // 0. Fetch the work centers applicable to a Job Order's product version
         // routing so the scanner can only offer valid stations.
