@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Loader2, Globe, Building2, Calendar, Layers, Info, Anchor, Edit, Trash2, Printer, ArrowLeft, RotateCcw } from "lucide-react";
 import { IncomingShipment, ShipmentLineItem, Supplier, PurchaseOrderPaymentMode } from "../../types";
 import { formatMoney, getStatusBadge, displayShipmentStatus } from "./ShipmentBadges";
+import { CancelPurchaseOrderDialog } from "./CancelPurchaseOrderDialog";
 import { INVENTORY_STATUS, paymentStatusLabel } from "@/app/api/manufacturing/procurement/_domain";
 import { isLandedCostPostingEligible } from "../../landed-cost-eligibility";
 import { UNIT_PRICE_DECIMAL_SCALE } from "@/modules/manufacturing-management/decimal";
@@ -22,7 +23,6 @@ export interface ShipmentDetailViewProps {
     suppliers: Supplier[];
     branches: Array<{ id: number; branchName: string; branchCode: string }>;
     isSupplierForeign: (s: Supplier | null | undefined) => boolean;
-    onUpdateShipmentStatus: (shipmentId: number, status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected") => void;
     handleStartEdit: () => void;
     onPrintPurchaseOrder?: () => void;
     printLoading?: boolean;
@@ -44,7 +44,6 @@ export function ShipmentDetailView({
     suppliers,
     branches,
     isSupplierForeign,
-    onUpdateShipmentStatus,
     handleStartEdit,
     onPrintPurchaseOrder,
     printLoading = false,
@@ -56,6 +55,7 @@ export function ShipmentDetailView({
     onRetryDetail,
     backHref
 }: ShipmentDetailViewProps) {
+    const [isCancelDialogOpen, setIsCancelDialogOpen] = React.useState(false);
     const effectiveStatus = activeShipment ? displayShipmentStatus(activeShipment, canonicalDrafting) : "Ordered";
     const initialWorkflowStatus = canonicalDrafting ? "For Approval" : "Requested";
     const queuedForPurchaseAmountPosting = activeShipment
@@ -73,6 +73,21 @@ export function ShipmentDetailView({
     const legacyFinanceFeedback = legacyRemarkMatch
         ? storedRemark.slice(legacyRemarkMatch[0].length).trim()
         : "";
+    const resolvedSupplierName = (() => {
+        if (!activeShipment) return "Supplier";
+        const supId = typeof activeShipment.supplier_id === "object" && activeShipment.supplier_id !== null
+            ? (activeShipment.supplier_id as { id: number }).id
+            : Number(activeShipment.supplier_id);
+        const matchedSupplier = suppliers.find(sup => sup.id === supId)
+            || (typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id : null);
+        return matchedSupplier?.supplier_name || `Supplier ID: ${activeShipment.supplier_id}`;
+    })();
+    const resolvedBranchName = (() => {
+        const branchId = Number(activeShipment?.branch_id || 0);
+        if (!branchId) return null;
+        const branch = branches.find(b => b.id === branchId);
+        return branch?.branchName || `Branch #${branchId}`;
+    })();
 
     return (
         <div className="w-full min-w-0 flex-1 border rounded-xl bg-card overflow-y-auto p-4 sm:p-6 shadow-sm flex flex-col gap-6 relative min-h-[300px]">
@@ -350,11 +365,7 @@ export function ShipmentDetailView({
                                             <button
                                                 type="button"
                                                 disabled
-                                                onClick={() => {
-                                                    if (window.confirm(`Cancel this ${canonicalDrafting ? "For Approval" : "Requested"} purchase order? This action cannot be undone.`)) {
-                                                        onUpdateShipmentStatus(activeShipment.shipment_id, "Cancelled");
-                                                    }
-                                                }}
+                                                title={lockedWorkflowMessage}
                                                 className="w-full border border-border bg-muted text-muted-foreground disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all"
                                             >
                                                 Cancel PO
@@ -381,15 +392,7 @@ export function ShipmentDetailView({
                                         <button
                                             type="button"
                                             disabled={loading || !isFinanceRejected}
-                                            onClick={() => {
-                                                if (window.confirm("Cancel this rejected purchase order? This action cannot be undone.")) {
-                                                    onCancelRejectedPurchaseOrder(
-                                                        activeShipment.shipment_id,
-                                                        Number(activeShipment.workflow_revision || 0),
-                                                        "Purchase order cancelled after rejection."
-                                                    );
-                                                }
-                                            }}
+                                            onClick={() => setIsCancelDialogOpen(true)}
                                             className="w-full border border-border bg-muted text-muted-foreground hover:bg-muted disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Trash2 className="h-3.5 w-3.5" /> Cancel PO
@@ -609,6 +612,27 @@ export function ShipmentDetailView({
                     <Anchor className="h-16 w-16 mb-4 text-muted-foreground/30" />
                     {hasShipments ? "Select a shipment from the list to view details." : "No incoming shipments logged."}
                 </div>
+            )}
+
+            {activeShipment && (
+                <CancelPurchaseOrderDialog
+                    open={isCancelDialogOpen}
+                    onOpenChange={setIsCancelDialogOpen}
+                    purchaseOrderNo={activeShipment.purchase_order_no || activeShipment.reference_number || `#${activeShipment.shipment_id}`}
+                    supplierName={resolvedSupplierName}
+                    branchName={resolvedBranchName}
+                    totalLabel={formatMoney(activeShipment.total_php_value, "PHP")}
+                    loading={loading}
+                    onConfirm={async (remarks) => {
+                        if (!onCancelRejectedPurchaseOrder) return false;
+                        const result = await onCancelRejectedPurchaseOrder(
+                            activeShipment.shipment_id,
+                            Number(activeShipment.workflow_revision || 0),
+                            remarks
+                        );
+                        return result === true;
+                    }}
+                />
             )}
         </div>
     );

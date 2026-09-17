@@ -143,6 +143,8 @@ export interface IncomingShipment {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
     isForceReceived?: boolean;
     forceReceivedAt?: string | null;
     forceReceivedBy?: number | null;
@@ -514,6 +516,8 @@ export interface DirectusShipment {
     status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
     inventory_status?: number | null;
     payment_status?: number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
     payment_type?: number | null;
     payment_mode?: number | null;
     delivery_terms?: string | null;

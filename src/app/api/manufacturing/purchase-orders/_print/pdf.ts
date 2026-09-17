@@ -34,6 +34,14 @@ function setPdfFont(doc: PdfDocument, style: "normal" | "bold" | "italic" = "nor
     return doc;
 }
 
+function parsePhtDate(value: string): Date | null {
+    const phtWallClock = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/.exec(value.trim());
+    const date = phtWallClock
+        ? new Date(`${phtWallClock[1]}T${phtWallClock[2]}+08:00`)
+        : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function supportsPesoGlyph(doc: PdfDocument): boolean {
     return activeFont(doc) === PDF_FONT_NAME;
 }
@@ -59,14 +67,14 @@ function quantity(value: number): string {
 
 function displayDate(value: string): string {
     if (!value || value === "N/A") return "N/A";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-PH");
+    const date = parsePhtDate(value);
+    return date?.toLocaleString("en-PH", { timeZone: "Asia/Manila" }) || value;
 }
 
 function printableDate(value: string): string {
     if (!value || value === "N/A") return "N/A";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
+    const date = parsePhtDate(value);
+    if (!date) return value;
     return new Intl.DateTimeFormat("en-PH", {
         year: "numeric",
         month: "2-digit",

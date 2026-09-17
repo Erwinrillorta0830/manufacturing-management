@@ -95,11 +95,24 @@ export async function editPurchaseOrder(id: number, shipmentData: unknown, lineI
     return responseJson(response, "Failed to edit purchase order.");
 }
 
+export function buildPurchaseOrderRevisionShipmentData(shipmentData: unknown): Record<string, unknown> {
+    const sourceShipmentData = shipmentData && typeof shipmentData === "object" && !Array.isArray(shipmentData)
+        ? shipmentData as Record<string, unknown>
+        : {};
+    const revisionShipmentData = Object.fromEntries(
+        Object.entries(sourceShipmentData).filter(([key]) => key !== "date_received")
+    );
+    if (!Object.hasOwn(revisionShipmentData, "lead_time_receiving")) {
+        revisionShipmentData.lead_time_receiving = sourceShipmentData.date_received || null;
+    }
+    return revisionShipmentData;
+}
+
 export async function reviseRejectedPurchaseOrder(id: number, shipmentData: unknown, lineItems: unknown[], workflowRevision: number) {
     const response = await fetch(`/api/manufacturing/purchase-orders/${id}/revision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shipmentData, lineItems, workflowRevision })
+        body: JSON.stringify({ shipmentData: buildPurchaseOrderRevisionShipmentData(shipmentData), lineItems, workflowRevision })
     });
     return responseJson<PurchaseOrderRevisionResponse>(response, "Failed to revise purchase order.");
 }

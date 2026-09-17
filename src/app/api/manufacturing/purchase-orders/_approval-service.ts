@@ -60,6 +60,8 @@ interface ApprovalOrder {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | number | null;
     approval_allow_self_approval?: boolean | number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
 }
 
 interface ApprovalHistoryRow {
@@ -126,7 +128,7 @@ const ORDER_FIELDS = [
     "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
     "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
     "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
-    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval"
+    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "revised_at", "revised_by"
 ].join(",");
 
 const approvalLocks = new Map<number, Promise<void>>();
