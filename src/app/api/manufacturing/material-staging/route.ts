@@ -9,6 +9,7 @@ import {
     type MaterialStagingStockMovement
 } from "./_stock";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../services/mm-inventory-movements.service";
+import { loadMmLots, mmLotId } from "../services/mm-lots.service";
 import { isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 
 export const runtime = "nodejs";
@@ -448,6 +449,24 @@ export async function GET(request: Request) {
             }
         });
 
+        // Resolve human-readable lot names once so allocations and printed
+        // staging slips never surface raw primary keys.
+        const allocationLotIds = [...new Set(
+            [...allAllocationsByJo.values()]
+                .flat()
+                .map((allocation) => Number(allocation.mm_lot_id || allocation.lot_id || 0))
+                .filter((lotId) => Number.isSafeInteger(lotId) && lotId > 0)
+        )];
+        const lotNameById = new Map<number, string>();
+        if (allocationLotIds.length > 0) {
+            const allocationLots = await loadMmLots({ ids: allocationLotIds, onlyActive: false }).catch(() => []);
+            for (const lot of allocationLots) {
+                const lotId = mmLotId(lot.lot_id) || 0;
+                const lotName = String(lot.lot_name || "").trim();
+                if (lotId > 0 && lotName) lotNameById.set(lotId, lotName);
+            }
+        }
+
         // Assemble Job Orders
         const transformedJOs = rawJOs
             .filter((jo: { status: string }) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.FOR_PICKING))
@@ -532,6 +551,7 @@ export async function GET(request: Request) {
                         mm_lot_id: lotId,
                         inventory_lot_id: inventoryLotId,
                         lot_id: lotId,
+                        lot_name: lotNameById.get(lotId) || null,
                         batch_no: lotNo,
                         allocated_quantity: allocQty,
                         staged_quantity: effectiveStagedQty,

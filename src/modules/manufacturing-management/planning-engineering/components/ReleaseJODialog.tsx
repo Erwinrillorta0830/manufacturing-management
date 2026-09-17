@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useState, useEffect, useMemo } from "react";
-import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCircle, Clock, Package, Layers } from "lucide-react";
+import { Loader2, ArrowRight, ArrowLeft, Check, UserPlus, ShieldAlert, CheckCircle, Clock, Package, Layers, Printer } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -24,7 +24,9 @@ import { OperatorSelect } from "./OperatorSelect";
 import { SearchableVersionSelect } from "./SearchableVersionSelect";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics, formatHoursToHMS } from "../utils/containerization-helper";
-import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
+import { calculateProductionMetrics } from "../utils/production-metrics";
+import { calculateAggregateRunHours, formatProductionValue, readUomId } from "../utils/production-timing";
+import { buildReleaseSummaryHtml, type ReleaseSummaryComponent, type ReleaseSummaryFinancials, type ReleaseSummaryRoutingStep } from "../utils/release-summary-print";
 import { calculateNetRunTime } from "../../finished-goods/costing";
 
 interface ReleaseJODialogProps {
@@ -228,7 +230,7 @@ export function ReleaseJODialog({
                         setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
                         setInventories(normalizeInventoryMap(data.inventories));
                         if (data.bom) {
-                            const baseQty = Number(data.bom.base_quantity || 1);
+                            const baseQty = Number(data.bom.base_quantity);
                             setBomBaseQty(baseQty);
                             if (!isMultiRelease && targetQuantityProp <= 0 && baseQty > 0) {
                                 setTargetQuantity(baseQty);
@@ -272,7 +274,15 @@ export function ReleaseJODialog({
             if (res.ok) {
                 const data = await res.json();
                 setSubAssemblyBoms(prev => ({ ...prev, [subProdId]: data.bomItems || [] }));
-                setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing || { setup_time_hours: 0, run_time_hours_per_unit: 0, base_quantity: 1 } }));
+                if (data.routing) {
+                    setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing }));
+                } else {
+                    setSubAssemblyRoutings(prev => {
+                        const next = { ...prev };
+                        delete next[subProdId];
+                        return next;
+                    });
+                }
                 if (data.inventories) {
                     setInventories(prev => ({ ...prev, ...normalizeInventoryMap(data.inventories) }));
                 }
@@ -284,12 +294,14 @@ export function ReleaseJODialog({
         }
     };
 
+    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
+
     // Initialize default print selections for shortfalls
     useEffect(() => {
         const initialSelections: Record<string, boolean> = {};
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
 
@@ -315,31 +327,79 @@ export function ReleaseJODialog({
         setPrintSelection(initialSelections);
     }, [components, inventories, subAssemblyBoms, targetQuantity, bomBaseQty]);
 
-    // Calculate time metrics (Main assembly + Sub-assembly shortfall runs)
-    const boxSetupHours = routings.reduce((sum, r) => sum + Number(r.setup_time_hours || 0), 0);
-    const boxBatchCount = bomBaseQty > 0 ? (targetQuantity / bomBaseQty) : 1;
-    const boxRunHours = boxBatchCount * routings.reduce((sum, r) => sum + Number(r.run_time_hours || 0), 0);
-    const boxEstimatedHours = boxSetupHours + boxRunHours;
+    const productionMetricsResult = useMemo(() => {
+        if (!hasLoadedDetails || routings.length === 0 || targetQuantity <= 0) {
+            return { metrics: null, error: null };
+        }
+
+        if (bomBaseQty <= 0) {
+            return { metrics: null, error: "Recipe base quantity must be greater than zero." };
+        }
+
+        try {
+            const first = selectedLines[0] as any;
+            const product = first?.product_id as any;
+            const metrics = calculateProductionMetrics({
+                targetQuantity,
+                baseQuantity: bomBaseQty,
+                targetUomId: readUomId(first?.uom_id ?? first?.unit_of_measurement ?? first?.uom),
+                baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
+                routes: routings.map((route) => ({
+                    sequence_order: Number(route.sequence_order || 0),
+                    setup_time_hours: Number(route.setup_time_hours || 0),
+                    run_time_hours: Number(route.run_time_hours || 0),
+                    step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
+                    work_center_overhead_cost_per_hour: Number(
+                        route.work_center?.overhead_cost_per_hour ?? route.overhead_cost_per_hour ?? 0
+                    )
+                })),
+                bomItems: components.map((component) => ({
+                    quantity_required: Number(component.quantity_required || 0),
+                    wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
+                    cost_per_unit: Number(component.component_product_id?.cost_per_unit ?? component.cost_per_unit ?? 0)
+                })),
+                laborPositions: Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : [],
+                overheadItems: Array.isArray(bomData?.overhead_items) ? bomData.overhead_items : [],
+                customOverhead: bomData?.custom_overhead ?? (first as any)?.custom_overhead ?? product?.custom_overhead,
+                expectedYieldPercentage: bomData?.expected_yield_percentage
+                    ?? (first as any)?.expected_yield_percentage
+                    ?? product?.expected_yield_percentage,
+                targetSellingPrice: Number(product?.target_selling_price || product?.targetSellingPrice || 0)
+            });
+            return { metrics, error: null };
+        } catch (error) {
+            return {
+                metrics: null,
+                error: error instanceof Error ? error.message : "Unable to calculate production metrics."
+            };
+        }
+    }, [hasLoadedDetails, routings, targetQuantity, bomBaseQty, selectedLines, components, bomData]);
+
+    const productionMetrics = productionMetricsResult.metrics;
+    const productionMetricsError = productionMetricsResult.error;
+    const boxEstimatedHours = productionMetrics?.lineLeadTimeHours || 0;
 
     let subAssemblyEstimatedHours = 0;
     components.forEach((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
-        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
         const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
         if (shortfall > 0 && subRoute) {
-            const subBaseQty = Number(subRoute.base_quantity || 6986.19);
-            const subBatches = subBaseQty > 0 ? (shortfall / subBaseQty) : 1;
+            const subBaseQty = Number(subRoute.base_quantity);
+            if (!Number.isFinite(subBaseQty) || subBaseQty <= 0) return;
             const subSetup = Number(subRoute.setup_time_hours || 0);
-            const subRunPerBatch = Number((subRoute as any).total_run_time_hours || (subRoute as any).run_time_hours || (Number(subRoute.run_time_hours_per_unit || 0) * subBaseQty));
-            const subRun = subRunPerBatch * subBatches;
-            subAssemblyEstimatedHours += (subSetup + subRun);
+            const subRunPerUnit = Number((subRoute as any).run_time_hours_per_unit || 0);
+            subAssemblyEstimatedHours += calculateAggregateRunHours(
+                shortfall,
+                subBaseQty,
+                subSetup,
+                subRunPerUnit
+            );
         }
     });
 
-    const totalSetupHours = boxSetupHours;
-    const totalRunHours = boxRunHours;
     const totalEstimatedHours = boxEstimatedHours + subAssemblyEstimatedHours;
 
     const containerMetrics = useMemo(() => {
@@ -363,44 +423,92 @@ export function ReleaseJODialog({
         );
     }, [selectedLines, targetQuantity, components, bomBaseQty]);
 
-    const cogsBreakdown = useMemo(() => {
-        if (!selectedLines || selectedLines.length === 0) return null;
-        const first = selectedLines[0];
-        const prodObj = first.product_id as any;
-        if (!prodObj) return null;
-
-        const bomItemsForCosting = components.map((comp) => ({
-            quantity_required: Number(comp.quantity_required || 0),
-            wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
-            cost_per_unit: Number(comp.component_product_id?.cost_per_unit ?? comp.cost_per_unit ?? 0)
-        }));
-
-        const routeStepsForCosting = routings.map((r) => ({
-            sequence_order: Number(r.sequence_order || 0),
-            work_center_id: Number(r.work_center_id || 0),
-            setup_time_hours: Number(r.setup_time_hours || 0),
-            run_time_hours: Number(r.run_time_hours || 0),
-            step_batch_size: Number(r.step_batch_size || 1),
-            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour ?? r.overhead_cost_per_hour ?? 0)
-        }));
-
-        return calculateUnitCOGSBreakdown(
-            bomBaseQty,
-            bomData?.expected_yield_percentage ?? (first as any).expected_yield_percentage ?? prodObj.expected_yield_percentage,
-            bomData?.custom_overhead ?? (first as any).custom_overhead ?? prodObj.custom_overhead,
-            bomItemsForCosting,
-            routeStepsForCosting,
-            Number(prodObj.target_selling_price || prodObj.targetSellingPrice || 0),
-            Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : []
-        );
-    }, [selectedLines, components, routings, bomBaseQty, bomData]);
+    const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         return Math.max(0, needed - available) > 0;
     });
+
+    const releaseSummaryUom = (selectedLines[0]?.product_id as any)?.uom_name || (selectedLines[0]?.product_id as any)?.uom || "units";
+
+    const releaseSummaryComponents = useMemo<ReleaseSummaryComponent[]>(() => components.map((comp) => {
+        const compProductId = Number(comp.component_product_id?.product_id || 0);
+        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
+        const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
+        const shortfall = Math.max(0, needed - available);
+        return {
+            name: comp.component_product_id?.product_name || `Product #${compProductId}`,
+            code: comp.component_product_id?.product_code || "",
+            category: comp.component_product_id?.category_name || "Uncategorized",
+            uom: comp.unit_of_measurement || "pcs",
+            needed,
+            available,
+            sufficient: shortfall <= 0
+        };
+    }), [components, inventories, targetQuantity, bomBaseQty]);
+
+    const releaseSummaryRouting = useMemo<ReleaseSummaryRoutingStep[]>(() => [...routings]
+        .sort((left, right) => Number(left.sequence_order || 0) - Number(right.sequence_order || 0))
+        .map((route) => {
+            const sequence = Number(route.sequence_order || 0);
+            const assignedIds = assignments[sequence] || [];
+            const operatorNames = assignedIds.map((operatorId) => {
+                const operator = operators.find((candidate: any) => Number(candidate.user_id || candidate.id) === Number(operatorId));
+                const fullName = operator
+                    ? `${operator.user_fname || operator.first_name || ""} ${operator.user_lname || operator.last_name || ""}`.trim()
+                    : "";
+                return fullName || `Operator #${operatorId}`;
+            });
+            return {
+                sequence,
+                operation: route.operation_name || "Production Operation",
+                workCenter: route.work_center_name || "Factory Work Center",
+                hours: productionMetrics?.routeMetrics.find((metric) => metric.sequenceOrder === sequence)?.elapsedHours || 0,
+                operators: operatorNames
+            };
+        }), [routings, assignments, operators, productionMetrics]);
+
+    const releaseSummaryFinancials = useMemo<ReleaseSummaryFinancials | null>(() => cogsBreakdown ? {
+        materials: Number(cogsBreakdown.materialCostPerUnit || 0),
+        directLabor: Number(cogsBreakdown.directLaborCostPerUnit || 0),
+        factoryOverhead: Number(cogsBreakdown.factoryOverheadCostPerUnit || 0),
+        baseCogs: Number(cogsBreakdown.baseUnitCOGS || 0),
+        adjustedCogs: Number(cogsBreakdown.adjustedUnitCOGS || 0)
+    } : null, [cogsBreakdown]);
+
+    const releaseSummaryOrders = useMemo(() => [...new Set(selectedLines
+        .map((line) => String(line.order_no || "").trim())
+        .filter((orderNo) => orderNo.length > 0))], [selectedLines]);
+
+    const releaseSummaryShortfallCount = releaseSummaryComponents.filter((component) => !component.sufficient).length;
+    const releaseSummaryReady = hasLoadedDetails && !hasShortfalls && !productionMetricsError;
+
+    const handlePrintSummary = () => {
+        const printWin = window.open("", "_blank");
+        if (!printWin) return;
+        printWin.document.write(buildReleaseSummaryHtml({
+            joNumber,
+            productName: selectedLines[0]?.product_id?.product_name || "Product",
+            recipeVersion: selectedLines[0]?.bom_version_name || "Default",
+            branchName: selectedBranch?.branch_name || "Main Branch",
+            targetQuantity,
+            uom: releaseSummaryUom,
+            plannedDate,
+            dueDate,
+            shiftHours: shiftOption,
+            targetDurationHours: totalEstimatedHours,
+            consolidatedOrders: releaseSummaryOrders,
+            remarks,
+            components: releaseSummaryComponents,
+            routingSteps: releaseSummaryRouting,
+            financials: releaseSummaryFinancials,
+            allChecksPassed: releaseSummaryReady
+        }));
+        printWin.document.close();
+    };
 
     const handlePrintProcurementRequest = () => {
         const printWindow = window.open("", "_blank");
@@ -412,7 +520,7 @@ export function ReleaseJODialog({
         let tableRowsHtml = "";
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
@@ -634,7 +742,7 @@ export function ReleaseJODialog({
                 )}
 
                 {selectedLines.length > 0 && (
-                    <div className="py-2 space-y-4 flex-1 overflow-y-auto max-h-[68vh] px-1">
+                    <div className="py-2 space-y-4 flex-1 overflow-x-hidden overflow-y-auto max-h-[68vh] px-1">
                         
                         {/* STEP 1: CONFIGURE HEADER PARAMETERS */}
                         {currentStep === 1 && (
@@ -817,9 +925,16 @@ export function ReleaseJODialog({
                                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                         <p className="text-xs text-muted-foreground font-medium">Analyzing BOM and routes...</p>
                                     </div>
-                                ) : (
-                                    <>
-                                        {/* Time Summary Breakdown Cards */}
+                                        ) : (
+                                            <>
+                                                {productionMetricsError && (
+                                                    <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
+                                                        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                                                        <span>{productionMetricsError}</span>
+                                                    </div>
+                                                )}
+
+                                                {/* Time Summary Breakdown Cards */}
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                             {/* Main Assembly Card */}
                                             <div className="bg-card border border-border rounded-xl p-3 flex flex-col justify-between">
@@ -829,10 +944,10 @@ export function ReleaseJODialog({
                                                 </div>
                                                 <div>
                                                     <div className="text-base font-black text-foreground">
-                                                        {boxEstimatedHours.toFixed(1)} hrs
+                                                        {formatProductionValue(boxEstimatedHours)} hrs
                                                     </div>
                                                     <div className="text-[10px] text-muted-foreground font-medium">
-                                                        {Number(shiftOption) > 0 ? `~${(boxEstimatedHours / Number(shiftOption)).toFixed(1)} Days` : `${boxEstimatedHours.toFixed(1)} hrs`}
+                                                         {Number(shiftOption) > 0 ? `~${formatProductionValue(boxEstimatedHours / Number(shiftOption))} Days` : `${formatProductionValue(boxEstimatedHours)} hrs`}
                                                     </div>
                                                 </div>
                                             </div>
@@ -845,11 +960,11 @@ export function ReleaseJODialog({
                                                 </div>
                                                 <div>
                                                     <div className="text-base font-black text-foreground">
-                                                        {subAssemblyEstimatedHours.toFixed(1)} hrs
+                                                         {formatProductionValue(subAssemblyEstimatedHours)} hrs
                                                     </div>
                                                     <div className="text-[10px] text-muted-foreground font-medium">
                                                         {subAssemblyEstimatedHours > 0 && Number(shiftOption) > 0
-                                                            ? `~${(subAssemblyEstimatedHours / Number(shiftOption)).toFixed(1)} Days`
+                                                             ? `~${formatProductionValue(subAssemblyEstimatedHours / Number(shiftOption))} Days`
                                                             : "No piece shortfalls"}
                                                     </div>
                                                 </div>
@@ -866,7 +981,7 @@ export function ReleaseJODialog({
                                                         {formatHoursToHMS(totalEstimatedHours)}
                                                     </div>
                                                     <div className="text-[10px] text-primary/80 font-bold">
-                                                        {Number(shiftOption) > 0 ? `~${(totalEstimatedHours / Number(shiftOption)).toFixed(1)} Days (${totalEstimatedHours.toFixed(1)} hrs)` : `${totalEstimatedHours.toFixed(1)} hrs Total`}
+                                                         {Number(shiftOption) > 0 ? `~${formatProductionValue(totalEstimatedHours / Number(shiftOption))} Days (${formatProductionValue(totalEstimatedHours)} hrs)` : `${formatProductionValue(totalEstimatedHours)} hrs Total`}
                                                     </div>
                                                 </div>
                                             </div>
@@ -920,12 +1035,12 @@ export function ReleaseJODialog({
                                                             💰 Unit COGS & Labor Breakdown
                                                         </Badge>
                                                         <span className="text-[11px] font-semibold text-muted-foreground">
-                                                            Base COGS: <strong className="text-foreground">₱{cogsBreakdown.baseUnitCOGS.toFixed(2)}</strong> / unit
+                                                             Base COGS: <strong className="text-foreground">₱{formatProductionValue(cogsBreakdown.baseUnitCOGS)}</strong> / unit
                                                         </span>
                                                     </div>
                                                     <div className="text-right">
                                                         <span className="text-xs font-black text-sky-600 dark:text-sky-400">
-                                                            ₱{cogsBreakdown.adjustedUnitCOGS.toFixed(2)} / unit
+                                                             ₱{formatProductionValue(cogsBreakdown.adjustedUnitCOGS)} / unit
                                                         </span>
                                                         <span className="text-[9px] text-muted-foreground block font-medium">
                                                             (Adjusted for {cogsBreakdown.expectedYieldPercentage}% Yield)
@@ -935,19 +1050,19 @@ export function ReleaseJODialog({
                                                 <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
-                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.materialCostPerUnit.toFixed(2)}</span>
+                                                         <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.materialCostPerUnit)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
-                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
+                                                         <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.directLaborCostPerUnit)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">
                                                             BOM Labor Standard
                                                         </span>
                                                     </div>
                                                     <div className="bg-background border border-border/60 rounded-lg p-2">
                                                         <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
-                                                        <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
+                                                         <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.factoryOverheadCostPerUnit)}</span>
                                                         <span className="text-[9px] text-muted-foreground block">
                                                             {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
                                                         </span>
@@ -992,7 +1107,7 @@ export function ReleaseJODialog({
                                                         <tbody>
                                                             {components.map((comp, index) => {
                                                                 const compProductId = comp.component_product_id?.product_id;
-                                                                const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+                                                                const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
                                                                 const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
                                                                 const shortfall = Math.max(0, needed - available);
                                                                 const isSufficient = shortfall === 0;
@@ -1047,15 +1162,20 @@ export function ReleaseJODialog({
                                                                                                 <div className="text-[10px] bg-card/90 px-2.5 py-1 rounded-md border border-sky-500/30 flex flex-wrap items-center gap-2 font-mono shadow-sm shrink-0">
                                                                                                     <Clock className="h-3.5 w-3.5 text-sky-500 shrink-0" />
                                                                                                     <span>
-                                                                                                        Setup: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].setup_time_hours}h</strong>
+                                                                                                        Setup: <strong className="text-foreground">{formatProductionValue(subAssemblyRoutings[Number(compProductId)].setup_time_hours)}h</strong>
                                                                                                     </span>
                                                                                                     <span>|</span>
                                                                                                     <span>
-                                                                                                        Run Rate: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit.toFixed(3)}h/unit</strong>
+                                                                                                        Run Rate: <strong className="text-foreground">{formatProductionValue(subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit)}h/unit</strong>
                                                                                                     </span>
                                                                                                     {shortfall > 0 && (
                                                                                                         <span className="text-sky-600 dark:text-sky-400 font-bold ml-1">
-                                                                                                            (= {(subAssemblyRoutings[Number(compProductId)].setup_time_hours + (subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit * shortfall / (subAssemblyRoutings[Number(compProductId)].base_quantity || 1))).toFixed(1)} hrs est.)
+                                                                                                    (= {formatProductionValue(calculateAggregateRunHours(
+                                                                                                        shortfall,
+                                                                                                        subAssemblyRoutings[Number(compProductId)].base_quantity,
+                                                                                                        subAssemblyRoutings[Number(compProductId)].setup_time_hours,
+                                                                                                        subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit
+                                                                                                    ))} hrs est.)
                                                                                                         </span>
                                                                                                     )}
                                                                                                 </div>
@@ -1123,8 +1243,10 @@ export function ReleaseJODialog({
                                                                         {/* Indented child raw materials for Sub-Assemblies */}
                                                                         {isSubAssembly && children.length > 0 && children.map((cc: any, subIndex: number) => {
                                                                             const ccId = cc.component_product_id?.product_id;
-                                                                            const subBaseQty = Number(cc.base_quantity || 1);
-                                                                            const ccNeeded = (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty);
+                                                                            const subBaseQty = Number(cc.base_quantity);
+                                                                            const ccNeeded = subBaseQty > 0
+                                                                                ? (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty)
+                                                                                : 0;
                                                                             const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                                             const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                                             const ccUom = cc.unit_of_measurement || "pcs";
@@ -1210,7 +1332,10 @@ export function ReleaseJODialog({
                                         {routings.map((route, index) => {
                                             const seq = Number(route.sequence_order);
                                             const assigned = assignments[seq] || [];
-                                            const stepRunTime = targetQuantity * Number(route.run_time_hours || 0);
+                                                            const stepMetric = productionMetrics?.routeMetrics.find(
+                                                                (metric) => metric.sequenceOrder === seq
+                                                            );
+                                                            const stepRunTime = stepMetric?.elapsedHours || 0;
 
                                             return (
                                                 <div key={`${route.routing_id || "route"}_${index}`} className="border border-border bg-card/20 rounded-xl p-4 space-y-3.5 hover:border-border/60 transition-all duration-300">
@@ -1228,7 +1353,7 @@ export function ReleaseJODialog({
                                                         </div>
                                                         <div className="text-right">
                                                             <span className="text-[10px] bg-primary/10 border border-primary/20 text-primary px-2.5 py-0.5 rounded-full font-bold">
-                                                                {stepRunTime.toFixed(1)} hrs needed
+                                                                 {formatProductionValue(stepRunTime)} hrs needed
                                                             </span>
                                                             <div className="text-[9px] text-muted-foreground mt-1">
                                                                 {assigned.length} Operator{assigned.length !== 1 ? "s" : ""} Assigned
@@ -1257,7 +1382,7 @@ export function ReleaseJODialog({
 
                         {/* STEP 4: REVIEW & CONFIRM */}
                         {currentStep === 4 && (
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                                 {isMultiRelease && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         {normalizedReleaseGroups.map((group, index) => (
@@ -1273,71 +1398,165 @@ export function ReleaseJODialog({
                                         ))}
                                     </div>
                                 )}
-                                <div className="bg-muted/50 border border-border/80 rounded-xl p-4 text-xs space-y-2">
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Job Order Reference:</span>
-                                        <span className="font-mono font-bold text-foreground">{joNumber}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Product:</span>
-                                        <span className="font-bold text-foreground">{selectedLines[0]?.product_id?.product_name}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Recipe Version:</span>
-                                        <span className="font-bold text-primary">{selectedLines[0]?.bom_version_name || "Default"}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Target Branch:</span>
-                                        <span className="font-semibold text-foreground">
-                                            {(branches.find((b) => b.id === selectedBranchId) as any)?.branch_name || selectedBranchId}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Planned Production Date:</span>
-                                        <span className="font-semibold text-foreground">{plannedDate || "Not set"}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Target Quantity:</span>
-                                        <span className="font-mono font-bold text-foreground">{targetQuantity.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Due Date:</span>
-                                        <span className="font-semibold text-foreground">{dueDate || "Not set"}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Shift:</span>
-                                        <span className="font-semibold text-foreground">{shiftOption}h</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Consolidated Lines / Sales Orders:</span>
-                                        <span className="font-semibold text-foreground">{selectedLines.length}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Routing Steps:</span>
-                                        <span className="font-semibold text-foreground">{routings.length}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Operator Assignments:</span>
-                                        <span className="font-semibold text-foreground">
-                                            {Object.values(assignments).reduce((sum, ids) => sum + ids.length, 0)}
-                                        </span>
-                                    </div>
-                                    {remarks && (
-                                        <div className="border-t border-border/60 pt-2 text-muted-foreground">
-                                            Remarks: <span className="text-foreground">{remarks}</span>
+
+                                <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+                                    {/* 1. General Job Order Parameters */}
+                                    <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-1 lg:row-start-1" aria-label="General Job Order Parameters">
+                                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                                            General Job Order Parameters
+                                        </h4>
+                                        <dl className="space-y-1.5 text-[11px]">
+                                            {[
+                                                { label: "Job Order Reference", value: <span className="font-mono font-bold text-foreground">{joNumber}</span> },
+                                                { label: "Product Name", value: selectedLines[0]?.product_id?.product_name || "N/A" },
+                                                { label: "Recipe Version", value: selectedLines[0]?.bom_version_name || "Default" },
+                                                { label: "Target Branch", value: selectedBranch?.branch_name || "N/A" },
+                                                { label: "Target Quantity", value: `${targetQuantity.toLocaleString()} ${releaseSummaryUom}` },
+                                                { label: "Planned Date / Due", value: `${plannedDate || "Not set"} / ${dueDate || "Not set"}` },
+                                                { label: "Target Duration", value: `${formatProductionValue(totalEstimatedHours)} hrs (Shift: ${shiftOption} hrs)` },
+                                                { label: "Consolidated Orders", value: releaseSummaryOrders.length > 0 ? releaseSummaryOrders.join(", ") : "—" }
+                                            ].map((row) => (
+                                                <div key={row.label} className="flex min-w-0 items-start justify-between gap-3">
+                                                    <dt className="shrink-0 text-muted-foreground">{row.label}</dt>
+                                                    <dd className="min-w-0 max-w-[65%] break-words text-right font-semibold text-foreground">{row.value}</dd>
+                                                </div>
+                                            ))}
+                                        </dl>
+                                    </section>
+
+                                    {/* 2. Remarks and readiness context */}
+                                    <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-1 lg:row-start-2" aria-label="Remarks and Order Context">
+                                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                                            Remarks / Order Context
+                                        </h4>
+                                        <div className="space-y-1.5 text-[11px] text-foreground">
+                                            <p>
+                                                {releaseSummaryOrders.length > 0
+                                                    ? `Production run initialized for Sales Order${releaseSummaryOrders.length === 1 ? "" : "s"}: ${releaseSummaryOrders.join(", ")}.`
+                                                    : "Production run initialized for the selected demand."}
+                                            </p>
+                                            <p className={releaseSummaryReady ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
+                                                {releaseSummaryReady
+                                                    ? "All component allocations passed. Ready for picking."
+                                                    : `${releaseSummaryShortfallCount} component shortfall${releaseSummaryShortfallCount === 1 ? "" : "s"} detected. Child job orders / procurement requests will be generated on release.`}
+                                            </p>
+                                            {remarks.trim() && (
+                                                <p className="border-t border-border/60 pt-1.5 text-foreground">
+                                                    <span className="font-semibold">Planning Remarks:</span>{" "}
+                                                    <span className="italic">&quot;{remarks}&quot;</span>
+                                                </p>
+                                            )}
                                         </div>
-                                    )}
+                                    </section>
+
+                                    {/* 3. Component Sufficiency Summary */}
+                                    <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-2 lg:row-start-1" aria-label="Component Sufficiency Summary">
+                                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                                            Component Sufficiency Summary
+                                        </h4>
+                                        <div className="max-h-[260px] overflow-x-hidden overflow-y-auto pr-0.5">
+                                            <table className="w-full table-fixed text-[10px]">
+                                                <thead className="sticky top-0 bg-card">
+                                                    <tr className="text-left text-[9px] uppercase tracking-wider text-muted-foreground">
+                                                        <th className="w-[48%] py-1.5 pr-2 font-bold">Component</th>
+                                                        <th className="w-[18%] py-1.5 pr-2 text-right font-bold">Req. Qty</th>
+                                                        <th className="w-[18%] py-1.5 pr-2 text-right font-bold">Available</th>
+                                                        <th className="w-[16%] py-1.5 text-right font-bold">Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-border/60">
+                                                    {releaseSummaryComponents.map((component, index) => (
+                                                        <tr key={`${component.name}-${index}`}>
+                                                            <td className="min-w-0 break-words py-1.5 pr-2">
+                                                                <div className="break-words font-bold text-foreground">{component.name}</div>
+                                                                {component.code && <div className="break-words text-[9px] text-muted-foreground">{component.code}</div>}
+                                                            </td>
+                                                            <td className="py-1.5 pr-2 text-right font-semibold tabular-nums">
+                                                                {component.needed.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="font-normal text-muted-foreground">{component.uom}</span>
+                                                            </td>
+                                                            <td className="py-1.5 pr-2 text-right text-muted-foreground tabular-nums">
+                                                                {component.available.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="font-normal">{component.uom}</span>
+                                                            </td>
+                                                            <td className="py-1.5 text-right">
+                                                                {component.sufficient ? (
+                                                                    <span className="inline-flex items-center whitespace-nowrap rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400">Sufficient</span>
+                                                                ) : (
+                                                                    <span className="inline-flex items-center whitespace-nowrap rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-bold text-red-600 dark:text-red-400">Insufficient</span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {releaseSummaryComponents.length === 0 && (
+                                                        <tr>
+                                                            <td colSpan={4} className="py-3 text-center text-muted-foreground">No raw material requirements specified.</td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </section>
+
+                                    {/* 4. Routing Steps & Financial Sanity Check */}
+                                    <section className="min-w-0 rounded-xl border border-border bg-card p-3.5 lg:col-start-2 lg:row-start-2" aria-label="Routing Steps and Financial Sanity Check">
+                                        <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-foreground border-b border-border pb-2 mb-2">
+                                            Routing Steps &amp; Financial Sanity Check
+                                        </h4>
+                                        <div className="space-y-1.5">
+                                            {releaseSummaryRouting.map((step) => (
+                                                <div key={`route-${step.sequence}-${step.operation}`} className="flex items-start justify-between gap-2 text-[11px]">
+                                                    <div className="min-w-0">
+                                                        <div className="truncate font-bold text-foreground">Step {step.sequence}: {step.operation}</div>
+                                                        <div className="flex min-w-0 flex-wrap items-center gap-x-1 text-[9px] text-muted-foreground">
+                                                            <span className="shrink-0 font-semibold">Op {step.sequence} ({step.operators.length > 0 ? "Assigned" : "Unassigned"})</span>
+                                                            <span className="min-w-0 break-words">{step.workCenter}</span>
+                                                            {step.operators.length > 0 && <span className="min-w-0 break-words">· {step.operators.join(", ")}</span>}
+                                                        </div>
+                                                    </div>
+                                                     <span className="shrink-0 whitespace-nowrap font-mono font-semibold text-foreground">{formatProductionValue(step.hours)} hrs</span>
+                                                </div>
+                                            ))}
+                                            {releaseSummaryRouting.length === 0 && (
+                                                <p className="text-[10px] text-muted-foreground">No routing steps defined.</p>
+                                            )}
+                                        </div>
+                                        <div className="mt-2 space-y-1 border-t border-border pt-2 text-[11px]">
+                                            {releaseSummaryFinancials ? (
+                                                <>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-muted-foreground">Direct Materials / unit</span>
+                                                        <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.materials)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-muted-foreground">Direct Labor / unit</span>
+                                                        <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.directLabor)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-muted-foreground">Factory Overhead / unit</span>
+                                                        <span className="font-mono font-semibold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.factoryOverhead)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between border-t border-border/60 pt-1">
+                                                        <span className="font-bold text-foreground">Est. Unit COGS (Base)</span>
+                                                        <span className="font-mono font-bold text-foreground">₱{formatProductionValue(releaseSummaryFinancials.baseCogs)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="font-bold text-sky-700 dark:text-sky-400">Est. Unit COGS (Yield-Adjusted)</span>
+                                                        <span className="font-mono font-black text-sky-700 dark:text-sky-400">₱{formatProductionValue(releaseSummaryFinancials.adjustedCogs)}</span>
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <p className="text-[10px] text-muted-foreground">Costing data unavailable.</p>
+                                            )}
+                                        </div>
+                                    </section>
                                 </div>
-                                <p className="text-[11px] text-muted-foreground">
-                                    Review the details above, then save the Job Order as Draft or initialize it for material picking.
-                                </p>
+
                             </div>
                         )}
 
                     </div>
                 )}
 
-                <DialogFooter className="border-t border-border pt-3 gap-2 flex items-center justify-between sm:justify-between w-full">
+                <DialogFooter className="flex w-full flex-wrap items-center justify-between gap-2 border-t border-border pt-3 sm:justify-between">
                     <div>
                         {currentStep > 1 && (
                             <Button
@@ -1350,7 +1569,7 @@ export function ReleaseJODialog({
                             </Button>
                         )}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                         <Button
                             variant="ghost"
                             size="sm"
@@ -1364,13 +1583,22 @@ export function ReleaseJODialog({
                             <Button
                                 size="sm"
                                 onClick={() => setCurrentStep((prev) => prev + 1)}
-                                disabled={loadingDetails || !joNumber || targetQuantity <= 0}
+                                 disabled={loadingDetails || !joNumber || targetQuantity <= 0 || (currentStep === 2 && !!productionMetricsError)}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 {currentStep === 3 ? "Next: Review" : "Next"} <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
                             </Button>
                         ) : (
                             <>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={handlePrintSummary}
+                                    disabled={releasingJO || loadingDetails}
+                                    className="border-border text-foreground hover:bg-accent h-8 font-semibold"
+                                >
+                                    <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Summary
+                                </Button>
                                 <Button
                                     size="sm"
                                     variant="outline"
@@ -1387,7 +1615,7 @@ export function ReleaseJODialog({
                                             : undefined,
                                         false
                                     )}
-                                    disabled={releasingJO}
+                                    disabled={releasingJO || !!productionMetricsError}
                                     className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
                                 >
                                     {releasingJO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -1409,7 +1637,7 @@ export function ReleaseJODialog({
                                             : undefined,
                                         true
                                     )}
-                                    disabled={releasingJO || !plannedDate || priority < 0}
+                                    disabled={releasingJO || !!productionMetricsError || !plannedDate || priority < 0}
                                     className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                                 >
                                     {releasingJO ? (

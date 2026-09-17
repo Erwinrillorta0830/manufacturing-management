@@ -28,6 +28,7 @@ import { StagingJobOrder, MaterialStagingItem, AllocatedLot, BatchStageResult } 
 import { isCancelledJobOrderStatus } from "../../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
+import { downloadStagingSlipPdf } from "../utils/generateStagingSlipPdf";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
 import { NextStepCallout } from "../../shared/components/NextStepCallout";
 
@@ -78,7 +79,7 @@ export function StagingPickList({
     };
 
     const handlePrintPickList = () => {
-        window.print();
+        downloadStagingSlipPdf(jobOrder);
     };
 
     const isAllStaged = jobOrder.all_staged;
@@ -280,7 +281,7 @@ export function StagingPickList({
                                             className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md bg-muted/40 px-2 py-1.5 text-[11px]"
                                         >
                                             <span className="font-mono text-foreground">
-                                                {lot.batch_no || "Unknown batch"} <span className="text-muted-foreground">(Lot {lot.lot_id || "N/A"})</span>
+                                                {lot.batch_no || "Unknown batch"} <span className="text-muted-foreground">(Lot {lot.lot_name || `#${lot.lot_id}`})</span>
                                             </span>
                                             <span className="text-muted-foreground">
                                                 {lot.status === "SKIPPED"

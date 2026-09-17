@@ -9,6 +9,8 @@ import {
     JOB_ORDER_STATUS
 } from "@/modules/manufacturing-management/job-order-status";
 import { deleteJobOrder } from "./delete-helper";
+import { calculateProductionMetrics } from "@/modules/manufacturing-management/planning-engineering/utils/production-metrics";
+import { readUomId, roundProductionValue } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -213,6 +215,7 @@ export async function createJobOrder(
                     product_id: pId,
                     product_name: p.product_name || `Product #${pId}`,
                     quantity: 0,
+                    uom_id: (p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? null,
                     bom: versionId ? { version_id: versionId } : null
                 };
             }
@@ -316,7 +319,10 @@ export async function createJobOrder(
                 for (const bItem of components) {
                     const compProductId = Number(bItem.product_id);
                     const wastage = 1 + (Number(bItem.wastage_factor_percentage || 0) / 100);
-                    const baseQuantity = Number(version?.base_quantity || 1);
+                    const baseQuantity = Number(version?.base_quantity);
+                    if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                        throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
+                    }
                     const quantityRequired = (productionQty * Number(bItem.quantity_required || 0) * wastage) / baseQuantity;
 
                     // Verify if it has an active version (making it a sub-assembly)
@@ -457,24 +463,74 @@ export async function createJobOrder(
                 : await getActiveVersionForProduct(p.product_id);
 
             let productionQty = Number(p.quantity);
+            let productionUomId = readUomId((p as any).uom_id ?? (p as any).uomId ?? (joData as any).uom_id ?? (joData as any).uomId);
             if (version && version.product_id && Number(version.product_id) !== Number(p.product_id)) {
                 try {
                     const originalUomCount = await getUomCountForProduct(Number(p.product_id));
                     const targetUomCount = await getUomCountForProduct(Number(version.product_id));
                     productionQty = productionQty * (originalUomCount / targetUomCount);
+                    productionUomId = readUomId(version.uom_id) || productionUomId;
                 } catch (e) {
                     console.error("Error scaling quantity for job order product variant:", e);
                 }
             }
 
-            const baseQuantity = Number(version?.base_quantity || 1);
+            const baseQuantity = Number(version?.base_quantity);
+            const costingComponents = (routes || []).flatMap((route) => route.bom_items || []);
+            const productionMetrics = routes && routes.length > 0
+                ? calculateProductionMetrics({
+                    targetQuantity: productionQty,
+                    baseQuantity,
+                    targetUomId: productionUomId,
+                    baseUomId: readUomId(version?.uom_id),
+                    routes: routes.map((route) => ({
+                        sequence_order: Number(route.sequence_order || 0),
+                        setup_time_hours: Number(route.setup_time_hours || 0),
+                        run_time_hours: Number(route.run_time_hours || 0),
+                        step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
+                        work_center_overhead_cost_per_hour: Number(
+                            (route as any).work_center?.overhead_cost_per_hour
+                                ?? (route as any).overhead_cost_per_hour
+                                ?? 0
+                        )
+                    })),
+                    bomItems: costingComponents.map((component) => ({
+                        quantity_required: Number(component.quantity_required || 0),
+                        wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
+                        cost_per_unit: Number(component.cost_per_unit || 0)
+                    })),
+                    laborPositions: version?.labor_positions || [],
+                    overheadItems: version?.overhead_items || [],
+                    customOverhead: version?.custom_overhead,
+                    expectedYieldPercentage: version?.expected_yield_percentage
+                })
+                : null;
+
+            if (productionMetrics) {
+                totalEstimatedHours += productionMetrics.lineLeadTimeHours;
+            }
 
             if (routes && routes.length > 0) {
+                if (!productionMetrics) {
+                    throw new Error(`Unable to calculate production metrics for Product '${p.product_name}'.`);
+                }
                 for (const r of routes) {
-                    const plannedSetup = Number(r.setup_time_hours || 0);
-                    const plannedRun = (productionQty / Number(r.step_batch_size || 1)) * Number(r.run_time_hours || 0);
-                    const plannedLabor = (plannedSetup + plannedRun) * 150;
-                    totalEstimatedHours += (plannedSetup + plannedRun);
+                    const sequenceOrder = Number(r.sequence_order || 0);
+                    const routeMetric = productionMetrics?.routeMetrics.find(
+                        (metric) => metric.sequenceOrder === sequenceOrder
+                    );
+                    if (!routeMetric) {
+                        throw new Error(`Unable to calculate production metrics for routing step ${sequenceOrder || ""}.`);
+                    }
+
+                    const plannedSetup = roundProductionValue(routeMetric.setupTimeHours);
+                    const plannedRun = roundProductionValue(routeMetric.plannedRunHours);
+                    const laborWorkloadShare = productionMetrics.cumulativeWorkloadHours > 0
+                        ? routeMetric.elapsedHours / productionMetrics.cumulativeWorkloadHours
+                        : 0;
+                    const plannedLabor = roundProductionValue(productionMetrics.cogsBreakdown.directLaborCostPerUnit
+                        * productionQty
+                        * laborWorkloadShare);
 
                     const masterRoutingId = Number((r as any).route_id || (r as any).routing_id || (r as any).id || 0);
                     const rawQaTemplate = (r as any).qa_template_id;
@@ -497,7 +553,7 @@ export async function createJobOrder(
                         planned_run_hours: plannedRun,
                         actual_setup_hours: 0,
                         actual_run_hours: 0,
-                        step_batch_size: Number(r.step_batch_size || 1),
+                        step_batch_size: roundProductionValue(routeMetric.stepBatchSize),
                         run_time_hours_factor: Number(r.run_time_hours || 0),
                         estimated_labor_cost: plannedLabor,
                         status: "Pending"
@@ -587,7 +643,10 @@ export async function createJobOrder(
                         for (const bItem of r.bom_items) {
                             const compProductId = Number(bItem.product_id);
                             const wastage = 1 + (Number(bItem.wastage_factor_percentage || 0) / 100);
-                            const baseQuantity = Number(version?.base_quantity || 1);
+                            const baseQuantity = Number(version?.base_quantity);
+                            if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                                throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
+                            }
                             const quantityRequired = (productionQty * Number(bItem.quantity_required || 0) * wastage) / baseQuantity;
 
                              // Check if component is a sub-assembly
@@ -676,46 +735,9 @@ export async function createJobOrder(
                             // The reservation record is the authoritative source
                             // for the material's exact lot and batch. The legacy
                             // job-order allocation collection is reserved for
-                            // Sales Order linkage and requires sales_order_detail_id;
-                            // writing material-lot rows there would either fail
-                            // validation or inflate SO fulfillment quantities.
+                            // Sales Order linkage and is written once per selected
+                            // Sales Order detail below.
                             for (const alloc of allocations) {
-                                // The legacy allocation collection models a
-                                // Sales Order line and requires
-                                // sales_order_detail_id. Buffer JOs are not
-                                // linked to Sales Orders, so their authoritative
-                                // lot allocation is the reservation below.
-                                if (!options.physicalOnHandInitialization) {
-                                    const firstDetailId = salesOrderDetailIds && salesOrderDetailIds.length > 0 ? Number(salesOrderDetailIds[0]) : null;
-                                    const allocationPayload: Record<string, unknown> = {
-                                        job_order_id: joIdInt,
-                                        job_order_material_id: jomId,
-                                        lot_id: alloc.purchase_order_product_id || null,
-                                        batch_no: alloc.batch_no || null,
-                                        allocated_quantity: alloc.allocated,
-                                        reservation_type: "SOFT",
-                                        status: "ACTIVE",
-                                        created_by: joData.created_by ? Number(joData.created_by) : null,
-                                        created_at: formatPhtDateTime()
-                                    };
-                                    if (firstDetailId && firstDetailId > 0) {
-                                        allocationPayload.sales_order_detail_id = firstDetailId;
-                                    }
-                                    const allocationRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_allocations`, {
-                                        method: "POST",
-                                        headers,
-                                        body: JSON.stringify(allocationPayload)
-                                    });
-                                    if (!allocationRes.ok) {
-                                        const errText = await allocationRes.text();
-                                        if (/sales_order_detail_id|FAILED_VALIDATION|unknown field|invalid field/i.test(errText)) {
-                                            console.warn("[createJobOrder] Legacy lot allocation payload skipped due to collection schema constraint:", errText);
-                                        } else {
-                                            throw new Error(`Failed to create Job Order lot allocation: ${allocationRes.status} - ${errText}`);
-                                        }
-                                    }
-                                }
-
                                 const reservationPayload: Record<string, unknown> = {
                                     product_id: compProductId,
                                     branch_id: numericBranchId,
@@ -757,15 +779,23 @@ export async function createJobOrder(
 
                                     if (activeVer && activeVer.version) {
                                         const subRoutes = activeVer.routes || [];
-                                        const subBaseQty = Number(activeVer.version.base_quantity || 1);
-                                        let subSetup = 0;
-                                        let subRunPerUnit = 0;
-                                        subRoutes.forEach((r: any) => {
-                                            const stepBatch = Number(r.step_batch_size || 1);
-                                            subSetup += Number(r.setup_time_hours || 0);
-                                            subRunPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
-                                        });
-                                        const subHours = subSetup + ((subRunPerUnit * shortfall) / subBaseQty);
+                                         const subBaseQty = Number(activeVer.version.base_quantity);
+                                         const subMetrics = calculateProductionMetrics({
+                                             targetQuantity: shortfall,
+                                             baseQuantity: subBaseQty,
+                                             routes: subRoutes.map((route: any) => ({
+                                                 sequence_order: Number(route.sequence_order || 0),
+                                                 setup_time_hours: Number(route.setup_time_hours || 0),
+                                                 run_time_hours: Number(route.run_time_hours || 0),
+                                                 step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
+                                                 work_center_overhead_cost_per_hour: Number(
+                                                     route.work_center?.overhead_cost_per_hour
+                                                         ?? route.overhead_cost_per_hour
+                                                         ?? 0
+                                                 )
+                                             }))
+                                         });
+                                         const subHours = subMetrics.lineLeadTimeHours;
                                         totalEstimatedHours += subHours;
 
                                         const childJoNo = `${joNoStr}-SUB${compProductId}`;

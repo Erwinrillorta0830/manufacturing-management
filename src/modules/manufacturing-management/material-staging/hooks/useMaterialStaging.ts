@@ -344,7 +344,7 @@ function toBatchStageMaterialResult(material: {
     product_name: string;
     uom: string;
     remaining_quantity: number;
-    proposed_allocations: Array<{ mm_lot_id: number; batch_no: string; quantity: number; available_quantity?: number }>;
+    proposed_allocations: Array<{ mm_lot_id: number; lot_name?: string; batch_no: string; quantity: number; available_quantity?: number }>;
 }): BatchStageMaterialResult {
     const stagedQuantity = material.proposed_allocations.reduce((total, line) => total + line.quantity, 0);
     return {
@@ -359,6 +359,7 @@ function toBatchStageMaterialResult(material: {
         message: "Auto FEFO preview completed with exceptions.",
         lot_results: material.proposed_allocations.map(line => ({
             lot_id: line.mm_lot_id,
+            lot_name: line.lot_name,
             batch_no: line.batch_no,
             requested_quantity: line.quantity,
             staged_quantity: line.quantity,
