@@ -346,9 +346,11 @@ export function useQAReceiving({
             // Warehouse-received orders enter QA; legacy For Pickup orders remain supported.
             if (!isReceivingQueueShipmentStatus(s.inventory_status ?? s.status) && s.status !== "Received") return false;
 
-            // 1. PO# filter (case-insensitive search on reference_number or shipment_id)
+            // 1. PO# filter (case-insensitive search on PO number, reference, or shipment ID)
             if (searchPO.trim()) {
-                const poMatch = s.reference_number.toLowerCase().includes(searchPO.toLowerCase()) || 
+                const normalizedSearch = searchPO.toLowerCase();
+                const poMatch = String(s.purchase_order_no || "").toLowerCase().includes(normalizedSearch) ||
+                                String(s.reference_number || "").toLowerCase().includes(normalizedSearch) ||
                                 String(s.shipment_id).includes(searchPO);
                 if (!poMatch) return false;
             }
@@ -1001,6 +1003,41 @@ export function useQAReceiving({
         }));
     };
 
+    const handleApplyBatchDates = (manufacturingDate: string, expirationDate: string) => {
+        if (receivingIsReadOnly || !manufacturingDate || !expirationDate || expirationDate < manufacturingDate) return;
+        previewController.current?.abort();
+        setValidatingInspection(false);
+        setReceivingCommitContext(null);
+        setCommittedResult(null);
+        setPreviewOpen(false);
+        setPreviewAcknowledged(false);
+        setPreviewError(null);
+        setProcessOverDeliveryState(false);
+        setQaEvaluationResults({});
+        setInspectionRows(previous => {
+            const next = { ...previous };
+            for (const key of Object.keys(next)) {
+                const lineId = Number(key);
+                const row = next[lineId];
+                if (!row) continue;
+                next[lineId] = {
+                    ...row,
+                    acceptedLotAllocations: row.acceptedLotAllocations.map(allocation => ({
+                        ...allocation,
+                        manufacturingDate,
+                        expirationDate
+                    })),
+                    rejectedLotAllocations: row.rejectedLotAllocations.map(allocation => ({
+                        ...allocation,
+                        manufacturingDate,
+                        expirationDate
+                    }))
+                };
+            }
+            return next;
+        });
+    };
+
     const handleUpdateQaReading = (lineId: number, specId: number, value: string) => {
         if (receivingIsReadOnly) return;
         previewController.current?.abort();
@@ -1418,7 +1455,7 @@ export function useQAReceiving({
                 workflowRevision: Number(selectedShipment.workflow_revision || 0),
                 reason
             }, uuidv4());
-            toast.success(`${selectedShipment.reference_number} was force-received.`);
+            toast.success(`${selectedShipment.purchase_order_no || `PO #${selectedShipment.shipment_id}`} was force-received.`);
             const updatedShipment: Shipment = {
                 ...selectedShipment,
                 status: "Received",
@@ -1520,7 +1557,7 @@ export function useQAReceiving({
                     expiration_date: item.expiration_date,
                     received_qty: Number(item.quantity_received || 0),
                     reception_date: item.shipment_id?.date_received || item.shipment_id?.created_at?.split('T')[0] || "N/A",
-                    shipment_ref: item.shipment_id?.reference_number || "N/A",
+                    purchase_order_no: item.shipment_id?.purchase_order_no || `PO #${item.shipment_id?.shipment_id || "N/A"}`,
                     qa_status: item.qa_status || "Passed"
                 });
 
@@ -1637,6 +1674,7 @@ export function useQAReceiving({
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,
+        handleApplyBatchDates,
         handleUpdateQaReading,
         handleSubmitInspection,
         clearInspection,

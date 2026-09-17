@@ -13,6 +13,8 @@ import { normalizeJobOrderStatus, JOB_ORDER_STATUS } from "@/modules/manufacturi
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 interface DirectusResponse<T> {
     data?: T[];
@@ -98,6 +100,7 @@ interface DirectusReservation {
     batch_no?: string | null;
     lot_no?: string | null;
     mm_lot_id?: number | string | null;
+    inventory_lot_id?: number | string | null;
     staging_bin?: string | null;
     bin_location?: string | null;
     reserved_quantity?: number | string;
@@ -130,6 +133,7 @@ interface DirectusOperator {
 interface DirectusProduct {
     product_id?: number | string;
     product_name?: string;
+    description?: string;
     product_code?: string;
     unit_of_measurement?: number | string;
     standard_cost?: number | string;
@@ -140,6 +144,13 @@ interface DirectusBranch {
     id?: number | string;
     branch_name?: string;
     branch_code?: string;
+}
+
+interface DirectusLot {
+    lot_id?: number | string;
+    id?: number | string;
+    lot_name?: string;
+    branch_id?: number | string;
 }
 
 interface DirectusUnit {
@@ -206,40 +217,61 @@ export async function GET(req: NextRequest) {
             productsRes,
             branchesRes,
             unitsRes,
-            usersRes
+            itemsUserRes,
+            systemUsersRes,
+            lotsRes
         ] = await Promise.all([
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
-            fetch(`${DIRECTUS_URL}/items/work_centers?limit=-1&fields=*`, {
-                headers: headersNoCache
+            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=*`, {
+                headers: headersNoCache,
+                cache: "no-store"
             }),
-            fetch(`${DIRECTUS_URL}/items/operations?limit=-1&fields=*`, {
-                headers: headersNoCache
+            fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1&fields=*`, {
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
+            }),
+            fetch(`${DIRECTUS_URL}/items/user?limit=-1&fields=*`, {
+                headers: headersNoCache,
+                cache: "no-store"
             }),
             fetch(`${DIRECTUS_URL}/users?limit=-1&fields=*`, {
-                headers: headersNoCache
+                headers: headersNoCache,
+                cache: "no-store"
+            }),
+            fetch(`${DIRECTUS_URL}/items/mm_lots?limit=-1&fields=lot_id,lot_name,branch_id`, {
+                headers: headersNoCache,
+                cache: "no-store"
             })
         ]);
 
@@ -262,7 +294,9 @@ export async function GET(req: NextRequest) {
         const productsData: DirectusResponse<DirectusProduct> = productsRes.ok ? await productsRes.json() : { data: [] };
         const branchesData: DirectusResponse<DirectusBranch> = branchesRes.ok ? await branchesRes.json() : { data: [] };
         const unitsData: DirectusResponse<DirectusUnit> = unitsRes.ok ? await unitsRes.json() : { data: [] };
-        const usersData: DirectusResponse<DirectusUser> = usersRes.ok ? await usersRes.json() : { data: [] };
+        const itemsUserData: DirectusResponse<DirectusUser> = itemsUserRes.ok ? await itemsUserRes.json() : { data: [] };
+        const systemUsersData: DirectusResponse<DirectusUser> = systemUsersRes.ok ? await systemUsersRes.json() : { data: [] };
+        const lotsData: DirectusResponse<DirectusLot> = lotsRes.ok ? await lotsRes.json() : { data: [] };
 
         const allJobOrders = joData.data || [];
         const allRoutes = routesData.data || [];
@@ -274,7 +308,8 @@ export async function GET(req: NextRequest) {
         const allProducts = productsData.data || [];
         const allBranches = branchesData.data || [];
         const allUnits = unitsData.data || [];
-        const allUsers = usersData.data || [];
+        const allUsers = [...(itemsUserData.data || []), ...(systemUsersData.data || [])];
+        const allLots = lotsData.data || [];
 
         // Build Master Lookups
         const workCenterMap = new Map<number, DirectusWorkCenter>();
@@ -292,16 +327,29 @@ export async function GET(req: NextRequest) {
         const unitMap = new Map<number, string>();
         allUnits.forEach((u) => unitMap.set(Number(u.unit_id), u.unit_symbol || u.unit_name || u.name || "units"));
 
+        const lotMap = new Map<number, string>();
+        allLots.forEach((l) => {
+            const lId = Number(l.lot_id || l.id);
+            if (lId && l.lot_name) {
+                lotMap.set(lId, l.lot_name.trim());
+            }
+        });
+
         // User / Operator Map: Map by user_id and id with first and last name
-        const userMap = new Map<number, { name: string; position?: string }>();
+        const userMap = new Map<number | string, { name: string; position?: string }>();
         allUsers.forEach((u) => {
-            const uId = Number(u.user_id ?? u.id);
-            if (!uId) return;
+            const rawId = u.user_id ?? u.id;
+            if (!rawId) return;
             const fname = String(u.user_fname ?? u.first_name ?? "").trim();
             const lname = String(u.user_lname ?? u.last_name ?? "").trim();
-            const fullName = [fname, lname].filter(Boolean).join(" ").trim() || u.nickname || u.user_email || u.email || `User #${uId}`;
+            const fullName = [fname, lname].filter(Boolean).join(" ").trim() || u.nickname || u.user_email || u.email || `User #${rawId}`;
             const position = u.user_position || u.position || undefined;
-            userMap.set(uId, { name: fullName, position });
+            const entry = { name: fullName, position };
+            userMap.set(rawId, entry);
+            const numId = Number(rawId);
+            if (!Number.isNaN(numId)) {
+                userMap.set(numId, entry);
+            }
         });
 
         // Group route operators by jo_route_id / task_id / routing_id
@@ -312,11 +360,12 @@ export async function GET(req: NextRequest) {
             const rawOpId = (typeof op.operator_id === "object" && op.operator_id !== null)
                 ? op.operator_id.user_id ?? op.operator_id.id
                 : op.operator_id ?? ((typeof op.user_id === "object" && op.user_id !== null) ? op.user_id.user_id : op.user_id);
-            const opId = Number(rawOpId);
-            const userMeta = userMap.get(opId);
+            if (!rawOpId) return;
+            const opId = Number(rawOpId) || String(rawOpId);
+            const userMeta = userMap.get(opId) || (typeof opId === "number" ? userMap.get(String(opId)) : userMap.get(Number(opId)));
             const entry: WipOperatorAssignment = {
                 id: Number(op.jo_route_operator_id || op.id),
-                operator_id: opId,
+                operator_id: Number(opId) || 0,
                 operator_name: userMeta?.name || `Operator #${opId}`,
                 operator_position: userMeta?.position || undefined,
                 logged_hours: roundHours(op.logged_hours || op.actual_hours || 0),
@@ -494,15 +543,21 @@ export async function GET(req: NextRequest) {
                         const returned = roundQty(res.returned_quantity || 0);
                         const remainingWip = roundQty(Math.max(0, (issued || staged) - actualUsed - returned));
 
+                        const hasInventoryLot = res.inventory_lot_id !== null && res.inventory_lot_id !== undefined && res.inventory_lot_id !== 0 && String(res.inventory_lot_id).trim() !== "";
+                        const rawBatch = hasInventoryLot && res.batch_no ? String(res.batch_no).trim() : null;
+                        const lotId = res.mm_lot_id ? Number(res.mm_lot_id) : null;
+                        const lotName = lotId ? (lotMap.get(lotId) || null) : null;
+
                         wipMaterials.push({
                             jo_materials_reservation_id: Number(res.jo_materials_reservation_id || res.id),
                             jo_material_id: matId,
                             product_id: matProdId,
-                            product_name: matProd?.product_name || `Item #${matProdId}`,
+                            product_name: matProd?.description || matProd?.product_name || `Item #${matProdId}`,
                             product_code: matProd?.product_code,
                             uom_name: matUom,
-                            batch_no: res.batch_no || res.lot_no || null,
-                            mm_lot_id: res.mm_lot_id ? Number(res.mm_lot_id) : null,
+                            batch_no: rawBatch,
+                            mm_lot_id: lotId,
+                            lot_name: lotName,
                             staging_bin: res.staging_bin || res.bin_location || null,
                             reserved_quantity: reserved,
                             staged_quantity: staged,
@@ -521,11 +576,12 @@ export async function GET(req: NextRequest) {
                         jo_materials_reservation_id: 0,
                         jo_material_id: matId,
                         product_id: matProdId,
-                        product_name: matProd?.product_name || `Item #${matProdId}`,
+                        product_name: matProd?.description || matProd?.product_name || `Item #${matProdId}`,
                         product_code: matProd?.product_code,
                         uom_name: matUom,
                         batch_no: null,
                         mm_lot_id: null,
+                        lot_name: null,
                         staging_bin: null,
                         reserved_quantity: plannedQty,
                         staged_quantity: 0,
@@ -551,7 +607,7 @@ export async function GET(req: NextRequest) {
                 job_order_id: joId,
                 job_order_no: jo.job_order_no || `JO-${joId}`,
                 product_id: pId,
-                product_name: prod?.product_name || `Product #${pId}`,
+                product_name: prod?.description || prod?.product_name || `Product #${pId}`,
                 product_code: prod?.product_code || "",
                 uom_name: uom,
                 target_quantity: targetQty,
@@ -713,7 +769,7 @@ export async function GET(req: NextRequest) {
             })),
             products: allProducts.map((p) => ({
                 product_id: Number(p.product_id),
-                product_name: p.product_name || `Product #${p.product_id}`,
+                product_name: p.description || p.product_name || `Product #${p.product_id}`,
                 product_code: p.product_code || undefined
             })),
             branches: allBranches.map((b) => ({
@@ -723,16 +779,25 @@ export async function GET(req: NextRequest) {
             }))
         };
 
-        return NextResponse.json({
-            success: true,
-            data: {
-                jobs: filteredJobs,
-                summary,
-                workCenterQueues,
-                masterData,
-                serverTimestamp: new Date().toISOString()
+        return NextResponse.json(
+            {
+                success: true,
+                data: {
+                    jobs: filteredJobs,
+                    summary,
+                    workCenterQueues,
+                    masterData,
+                    serverTimestamp: new Date().toISOString()
+                }
+            },
+            {
+                headers: {
+                    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                    Pragma: "no-cache",
+                    Expires: "0"
+                }
             }
-        });
+        );
     } catch (error: unknown) {
         console.error("[BIA WIP Tracking Report API Error]:", error);
         const message = error instanceof Error ? error.message : "Failed to load WIP tracking report";

@@ -1,6 +1,6 @@
 import React from "react";
 import { motion } from "framer-motion";
-import { Search, Trash2, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History } from "lucide-react";
+import { Search, Loader2, Layers, ChevronsLeft, ChevronsRight, AlertTriangle, ShieldAlert, History } from "lucide-react";
 import { Batch, Lot, type BatchStatus } from "../types";
 import { getFefoPriorityMap } from "../utils/fefoEngine";
 import { SearchableLotSelect } from "./SearchableLotSelect";
@@ -33,7 +33,7 @@ interface BatchTableProps {
     statusFilter: string;
     onStatusFilterChange: (value: string) => void;
     selectedProductId?: number | "ALL";
-    onDelete: (batchId: number) => void;
+    onDelete?: (batchId: number) => void;
     onRefresh?: () => void;
     onAddClick?: () => void;
     onViewMovements?: (batch: Batch) => void;
@@ -50,7 +50,7 @@ export default function BatchTable({
     statusFilter,
     onStatusFilterChange,
     selectedProductId = "ALL",
-    onDelete,
+ 
     onAddClick,
     onViewMovements
 }: BatchTableProps) {
@@ -273,15 +273,7 @@ export default function BatchTable({
                                                         <History className="h-4 w-4" />
                                                     </Button>
                                                 )}
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={() => onDelete(batch.batchId)}
-                                                    className="h-8 w-8 text-muted-foreground hover:text-rose-500"
-                                                    title="Delete Batch"
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
+ 
                                             </div>
                                         </TableCell>
                                      </motion.tr>

@@ -53,7 +53,8 @@ import {
     initiateVersionDraft,
     saveVersionDraft,
     cancelVersionDraft,
-    submitVersionDraftForApproval
+    submitVersionDraftForApproval,
+    reopenVersionDraft
 } from "../services/finished-goods-api";
 import { fetchWorkCenters } from "../../work-stations/services/work-stations-api";
 import {
@@ -360,10 +361,16 @@ export function useFinishedGoods(initialTab: string = "details") {
                     return b.version_id - a.version_id;
                 });
                 setVersions(sortedList);
-                if (sortedList && sortedList.length > 0) {
-                    const activeVer = sortedList.find((v: any) => v.is_active || v.status === "Active");
+                if (activeDrafts && activeDrafts.length > 0) {
+                    setActiveDraft(activeDrafts[0]);
+                    setSelectedVersionId(activeDrafts[0].draft_id);
+                } else if (sortedList && sortedList.length > 0) {
+                    setActiveDraft(null);
+                    const primaryVer = sortedList.find((v: any) => !v.is_draft && v.is_primary);
+                    const activeVer = primaryVer || sortedList.find((v: any) => !v.is_draft && (v.is_active || v.status === "Active")) || sortedList[0];
                     setSelectedVersionId(activeVer ? activeVer.version_id : sortedList[0].version_id);
                 } else {
+                    setActiveDraft(null);
                     setSelectedVersionId(null);
                 }
             } catch (e) {
@@ -526,6 +533,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                         run_time_hours: route.run_time_hours != null ? Number(route.run_time_hours) : (route.standard_time_minutes ? Number(route.standard_time_minutes) / 60 : 0),
                         setup_time_hours: route.setup_time_hours != null ? Number(route.setup_time_hours) : (route.setup_time_minutes ? Number(route.setup_time_minutes) / 60 : 0),
                         step_batch_size: route.step_batch_size != null ? Number(route.step_batch_size) : (route.batch_capacity != null ? Number(route.batch_capacity) : 1),
+                        batch_capacity: route.step_batch_size != null ? Number(route.step_batch_size) : (route.batch_capacity != null ? Number(route.batch_capacity) : 1),
                         bom_items: (route.bom_items || []).map((item: any) => {
                             let matType = item.material_type;
                             if (matType && typeof matType === "string") {
@@ -770,7 +778,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     parent_id: registerForm.parentId ? Number(registerForm.parentId) : null,
 
                 },
-                registerForm.versionName.trim(),
+                `${registerForm.sku.trim()} Rev 1`,
                 registerForm.supplierIds.map(Number),
                 Number(registerForm.expectedYield),
                 1,
@@ -902,76 +910,51 @@ export function useFinishedGoods(initialTab: string = "details") {
         }
     };
 
-    const handleRegisterNewVersion = async (form: typeof versionForm) => {
+    const handleInitializeInitialSpecification = async () => {
         const numericId = Number(selectedProductId);
-        if (isNaN(numericId) || numericId <= 0) {
+        if (isNaN(numericId) || numericId <= 0 || !selectedProduct) {
             toast.error("Please select a product first.");
             return;
         }
 
-        if (!form.versionName.trim()) {
-            toast.error("Version Name is required.");
-            return;
-        }
+        const skuCode = selectedProduct.sku?.trim() || `FG-${selectedProductId}`;
+        const autoName = `${skuCode} Rev 1`;
 
-        const trimmedName = form.versionName.trim();
-        const exists = versions.some(v => v.version_name.trim().toLowerCase() === trimmedName.toLowerCase());
-        if (exists) {
-            toast.error(`A version with name "${trimmedName}" already exists. Please choose a unique name.`);
-            return;
+        let matchedUomId = 0;
+        if (units.length > 0) {
+            const matchedUnit = units.find(u => u.unit_shortcut === selectedProduct.baseUom);
+            matchedUomId = matchedUnit ? matchedUnit.unit_id : units[0].unit_id;
         }
 
         setSavingBOM(true);
-        setSaveProgress(20);
-        setSaveStatus("Registering draft version in database...");
-
+        setSaveStatus("Initializing initial specification (Rev 1)...");
         try {
-            const baseVerId = form.baseVersionId ? Number(form.baseVersionId) : null;
-            const yieldNum = Number(form.expectedYield) || 100;
-            const baseQtyNum = Number(form.baseQuantity) || 1;
-            const uomIdNum = form.uomId ? Number(form.uomId) : undefined;
-
-            setSaveStatus("Saving version to database...");
             const res = await registerNewVersion(
                 numericId,
-                baseVerId,
-                yieldNum,
-                trimmedName,
-                baseQtyNum,
-                uomIdNum
+                null,
+                Number(selectedProduct.expectedYieldPercent) || 100,
+                autoName,
+                1,
+                matchedUomId
             );
-
-            if (!res || !res.version || !res.version.version_id) {
-                throw new Error("Failed to register version in database");
+            if (res?.version?.version_id) {
+                const list = await fetchVersions(numericId);
+                setVersions(list || []);
+                setSelectedVersionId(res.version.version_id);
+                setHasUnsavedChanges(false);
+                toast.success(`Specification "${autoName}" initialized in Draft status.`);
             }
-
-            const createdVer = res.version;
-            const newVersionId = createdVer.version_id;
-
-            setSaveStatus("Loading version details...");
-            const list = await fetchVersions(numericId);
-            const sortedList = (list || []).sort((a: any, b: any) => {
-                const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
-                const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
-                if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
-                return b.version_id - a.version_id;
-            });
-            setVersions(sortedList);
-            setSelectedVersionId(newVersionId);
-            setActiveBOMId(newVersionId);
-            setHasUnsavedChanges(false);
-            setIsVersionModalOpen(false);
-
-            toast.success(`Draft version "${trimmedName}" created! Configure recipes below and click "Submit for Approval" when ready.`);
-        } catch (e) {
-            console.error("Draft version creation error:", e);
-            const error = e instanceof Error ? e : new Error(String(e));
-            toast.error(error.message || "Failed to create draft version");
+        } catch (e: any) {
+            console.error("Specification initialization error:", e);
+            toast.error(e.message || "Failed to initialize specification");
         } finally {
             setSavingBOM(false);
-            setSaveProgress(0);
             setSaveStatus("");
         }
+    };
+
+    const handleRegisterNewVersion = async (form?: typeof versionForm) => {
+        await handleInitializeInitialSpecification();
     };
 
     const handleSave = async () => {
@@ -1093,16 +1076,43 @@ export function useFinishedGoods(initialTab: string = "details") {
             setSavingBOM(true);
             setSaveStatus("Saving draft revision...");
             try {
-                await saveVersionDraft(activeDraft.draft_id, {
+                const targetOverheads = editedVersionDetails?.overhead_items !== undefined
+                    ? editedVersionDetails.overhead_items
+                    : editedOverheads;
+
+                const saveRes = await saveVersionDraft(activeDraft.draft_id, {
                     details: {
                         base_quantity: Number(editedVersionDetails.base_quantity ?? 1),
                         expected_yield_percentage: Number(editedVersionDetails.expected_yield_percentage ?? 100),
                         custom_overhead: Number(editedVersionDetails.custom_overhead ?? 0)
                     },
-                    routes: editedRoutes,
+                    routes: routesPayload,
                     laborPositions: editedVersionDetails.labor_positions || [],
-                    overheads: editedVersionDetails.overhead_items || []
+                    overheads: targetOverheads
                 });
+                if (saveRes?.draft) {
+                    setActiveDraft(saveRes.draft);
+                    if (saveRes.draft.routes) {
+                        setEditedRoutes(saveRes.draft.routes);
+                    }
+                    if (saveRes.draft.overheads) {
+                        const mappedOvh = (saveRes.draft.overheads || []).map((ov: any) => ({
+                            ...ov,
+                            id: String(ov.draft_overhead_id || ov.id),
+                            draft_overhead_id: ov.draft_overhead_id,
+                            overhead_name: ov.overhead_name || "Overhead",
+                            cost_per_unit: Number(ov.cost_per_unit ?? ov.cost_allocation ?? ov.cost ?? 0),
+                            is_active: ov.is_active !== undefined ? Boolean(ov.is_active) : true,
+                            remarks: ov.remarks || ov.overhead_name || ""
+                        }));
+                        setEditedVersionDetails((prev: any) => ({
+                            ...prev,
+                            custom_overhead: Number(saveRes.draft.custom_overhead ?? prev?.custom_overhead ?? 0),
+                            overhead_items: mappedOvh
+                        }));
+                        setEditedOverheads(mappedOvh);
+                    }
+                }
                 setHasUnsavedChanges(false);
                 setSaveStatus("Draft revision saved!");
                 toast.success("Draft revision changes saved.");
@@ -1175,9 +1185,14 @@ export function useFinishedGoods(initialTab: string = "details") {
 
             let saveSucceeded = false;
 
-            if (activeDraft) {
+            const targetDraftId = activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null);
+            if (targetDraftId) {
+                const targetOverheads = editedVersionDetails?.overhead_items !== undefined
+                    ? editedVersionDetails.overhead_items
+                    : editedOverheads;
+
                 // Save exclusively to draft tables — never touch production tables
-                await saveVersionDraft(activeDraft.draft_id, {
+                await saveVersionDraft(targetDraftId, {
                     details: {
                         base_quantity: Number(editedVersionDetails?.base_quantity ?? 1),
                         expected_yield_percentage: Number(editedVersionDetails?.expected_yield_percentage ?? 100),
@@ -1185,7 +1200,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     },
                     routes: routesPayload,
                     laborPositions: editedVersionDetails?.labor_positions || [],
-                    overheads: editedOverheads
+                    overheads: targetOverheads
                 });
                 saveSucceeded = true;
             } else if (selectedVersionId !== null && selectedVersionId < 0) {
@@ -1479,17 +1494,52 @@ export function useFinishedGoods(initialTab: string = "details") {
         setSaveStatus("Submitting version for approval...");
         try {
             if (activeDraft) {
+                const routesPayload = editedRoutes.map(r => ({
+                    ...r,
+                    bom_items: (r.bom_items || []).map(item => ({
+                        ...item,
+                        material_type: item.material_type || materialTypeFromProduct(item.product_type, item.has_versions)
+                    }))
+                }));
+
+                const targetOverheads = editedVersionDetails?.overhead_items !== undefined
+                    ? editedVersionDetails.overhead_items
+                    : editedOverheads;
+
                 // Save any pending draft changes first
-                await saveVersionDraft(activeDraft.draft_id, {
+                const saveRes = await saveVersionDraft(activeDraft.draft_id, {
                     details: {
                         base_quantity: Number(editedVersionDetails?.base_quantity ?? 1),
                         expected_yield_percentage: Number(editedVersionDetails?.expected_yield_percentage ?? 100),
                         custom_overhead: Number(editedVersionDetails?.custom_overhead ?? 0)
                     },
-                    routes: editedRoutes,
+                    routes: routesPayload,
                     laborPositions: editedVersionDetails?.labor_positions || [],
-                    overheads: editedVersionDetails?.overhead_items || []
+                    overheads: targetOverheads
                 });
+                if (saveRes?.draft) {
+                    setActiveDraft(saveRes.draft);
+                    if (saveRes.draft.routes) {
+                        setEditedRoutes(saveRes.draft.routes);
+                    }
+                    if (saveRes.draft.overheads) {
+                        const mappedOvh = (saveRes.draft.overheads || []).map((ov: any) => ({
+                            ...ov,
+                            id: String(ov.draft_overhead_id || ov.id),
+                            draft_overhead_id: ov.draft_overhead_id,
+                            overhead_name: ov.overhead_name || "Overhead",
+                            cost_per_unit: Number(ov.cost_per_unit ?? ov.cost_allocation ?? ov.cost ?? 0),
+                            is_active: ov.is_active !== undefined ? Boolean(ov.is_active) : true,
+                            remarks: ov.remarks || ov.overhead_name || ""
+                        }));
+                        setEditedVersionDetails((prev: any) => ({
+                            ...prev,
+                            custom_overhead: Number(saveRes.draft.custom_overhead ?? prev?.custom_overhead ?? 0),
+                            overhead_items: mappedOvh
+                        }));
+                        setEditedOverheads(mappedOvh);
+                    }
+                }
 
                 const res = await submitVersionDraftForApproval(activeDraft.draft_id);
                 if (res.success) {
@@ -1497,6 +1547,7 @@ export function useFinishedGoods(initialTab: string = "details") {
                     toast.success(`Revision draft for '${selectedVersion?.version_name || vId}' submitted for approval!`);
                     setActiveDraft((prev: any) => prev ? { ...prev, status: "Pending Approval" } : null);
                     setSelectedVersion((prev: any) => prev ? { ...prev, status: "Pending Approval" } : null);
+                    setVersions(prev => prev.map(v => (v.is_draft || v.draft_id === activeDraft.draft_id ? { ...v, status: "Pending Approval" } : v)));
                     setHasUnsavedChanges(false);
                 }
             } else if (vId < 0) {
@@ -1553,16 +1604,48 @@ export function useFinishedGoods(initialTab: string = "details") {
         optionsOrVersionId?: number | {
             productId: number;
             sourceVersionId?: number | null;
-            versionName: string;
+            versionName?: string;
             baseQuantity?: number;
             uomId?: number;
             expectedYieldPercentage?: number;
             customOverhead?: number;
         }
     ) => {
+        const skuCode = selectedProduct?.sku?.trim() || `FG-${selectedProductId}`;
+        let maxRev = 0;
+        for (const v of versions) {
+            const m = (v.version_name || "").match(/Rev\s*(\d+)/i);
+            if (m && m[1]) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxRev) maxRev = n;
+            }
+        }
+        const nextRevNum = maxRev > 0 ? maxRev + 1 : Math.max(versions.length + 1, 2);
+        const autoVersionName = `${skuCode} Rev ${nextRevNum}`;
+
+        if (activeDraft && activeDraft.draft_id) {
+            setSelectedVersionId(activeDraft.draft_id);
+            toast.info(`Revision draft "${activeDraft.version_name}" is already open in editor.`);
+            return;
+        }
+
+        // Check if an existing open draft is present in versions list
+        const existingDraft = versions.find(v => v.is_draft && v.status !== "Cancelled" && v.status !== "Applied");
+        if (existingDraft) {
+            const targetDraftId = existingDraft.draft_id || existingDraft.version_id;
+            setSelectedVersionId(targetDraftId);
+            toast.info(`Revision draft "${existingDraft.version_name}" is already open in editor.`);
+            return;
+        }
+
         let params: any;
         if (typeof optionsOrVersionId === "object" && optionsOrVersionId !== null) {
-            params = optionsOrVersionId;
+            params = {
+                ...optionsOrVersionId,
+                versionName: optionsOrVersionId.versionName && !optionsOrVersionId.versionName.startsWith("v")
+                    ? optionsOrVersionId.versionName
+                    : autoVersionName
+            };
         } else {
             const vId = optionsOrVersionId || selectedVersionId;
             if (!vId) {
@@ -1572,7 +1655,7 @@ export function useFinishedGoods(initialTab: string = "details") {
             params = {
                 productId: Number(selectedProductId),
                 sourceVersionId: vId,
-                versionName: `v${versions.length + 1}.0`
+                versionName: autoVersionName
             };
         }
 
@@ -1722,6 +1805,41 @@ export function useFinishedGoods(initialTab: string = "details") {
             toast.error(err.message || "Failed to cancel revision draft");
         } finally {
             setCancellingRevision(false);
+        }
+    };
+
+    const [reopeningDraft, setReopeningDraft] = useState(false);
+
+    const handleReopenDraftForEditing = async () => {
+        const targetDraftId = activeDraft?.draft_id || (selectedVersion?.is_draft ? (selectedVersion.draft_id || selectedVersion.version_id) : null);
+        if (!targetDraftId) {
+            toast.error("No active draft found to reopen.");
+            return;
+        }
+
+        setReopeningDraft(true);
+        try {
+            const res = await reopenVersionDraft(targetDraftId);
+            if (res.success) {
+                toast.success("Submission cancelled. Revision is now open for editing.");
+                if (res.draft) {
+                    setActiveDraft(res.draft);
+                } else {
+                    setActiveDraft((prev: any) => prev ? { ...prev, status: "Draft" } : null);
+                }
+                setSelectedVersion((prev: any) => prev ? { ...prev, status: "Draft" } : null);
+                setEditedVersionDetails((prev: any) => prev ? { ...prev, status: "Draft" } : prev);
+                setVersions((prev) => prev.map((v) =>
+                    (v.is_draft || v.draft_id === targetDraftId || v.version_id === targetDraftId)
+                        ? { ...v, status: "Draft" }
+                        : v
+                ));
+                setHasUnsavedChanges(false);
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to reopen revision draft");
+        } finally {
+            setReopeningDraft(false);
         }
     };
 
@@ -1917,6 +2035,9 @@ export function useFinishedGoods(initialTab: string = "details") {
         setIsCancelRevisionModalOpen,
         cancellingRevision,
         handleInitiateRevisionDraft,
-        handleCancelRevisionDraft
+        handleCancelRevisionDraft,
+        handleInitializeInitialSpecification,
+        reopeningDraft,
+        handleReopenDraftForEditing
     };
 }

@@ -10,9 +10,11 @@ import { toast } from "sonner";
 
 export interface VersionOverheadItem {
     id: string;
+    draft_overhead_id?: number;
     overhead_type_id?: number;
     overhead_name: string;
     cost_per_unit: number;
+    allocation_basis?: string;
     is_active: boolean;
     remarks?: string;
 }
@@ -115,8 +117,8 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
         });
     }, [chartOfAccounts]);
 
-    // Initialize overhead items strictly from active version state
-    const [overheadItems, setOverheadItems] = useState<VersionOverheadItem[]>(() => {
+    // Derive overhead items strictly from active version details state
+    const overheadItems: VersionOverheadItem[] = useMemo(() => {
         if (editedVersionDetails?.overhead_items && Array.isArray(editedVersionDetails.overhead_items)) {
             return editedVersionDetails.overhead_items;
         }
@@ -134,7 +136,7 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
             ];
         }
         return [];
-    });
+    }, [editedVersionDetails?.overhead_items, editedVersionDetails?.custom_overhead]);
 
     const [selectedTypeId, setSelectedTypeId] = useState<string>("");
     const [customOverheadName, setCustomOverheadName] = useState<string>("");
@@ -149,39 +151,32 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
             .reduce((sum, item) => sum + (Number(item.cost_per_unit) || 0), 0);
     }, [overheadItems]);
 
-    // Sync active overhead total with editedVersionDetails.custom_overhead
-    useEffect(() => {
-        if (setEditedVersionDetails) {
-            setEditedVersionDetails((prev: any) => {
-                if (prev?.custom_overhead === totalActiveOverhead && prev?.overhead_items === overheadItems) {
-                    return prev;
-                }
-                return {
-                    ...prev,
-                    custom_overhead: Math.round(totalActiveOverhead * 10000) / 10000,
-                    overhead_items: overheadItems
-                };
-            });
-        }
-    }, [totalActiveOverhead, overheadItems, setEditedVersionDetails]);
+    const updateOverheadItems = (updated: VersionOverheadItem[]) => {
+        const total = updated
+            .filter((item) => item.is_active)
+            .reduce((sum, item) => sum + (Number(item.cost_per_unit) || 0), 0);
+        const roundedTotal = Math.round(total * 10000) / 10000;
+        setEditedVersionDetails((prev: any) => ({
+            ...prev,
+            custom_overhead: roundedTotal,
+            overhead_items: updated
+        }));
+        setHasUnsavedChanges(true);
+    };
 
     const handleUpdateItem = (id: string, field: keyof VersionOverheadItem, value: any) => {
-        setOverheadItems((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-        );
-        setHasUnsavedChanges(true);
+        const updated = overheadItems.map((item) => (item.id === id ? { ...item, [field]: value } : item));
+        updateOverheadItems(updated);
     };
 
     const handleDeleteItem = (id: string) => {
-        setOverheadItems((prev) => prev.filter((item) => item.id !== id));
-        setHasUnsavedChanges(true);
+        const updated = overheadItems.filter((item) => item.id !== id);
+        updateOverheadItems(updated);
     };
 
     const handleToggleActive = (id: string) => {
-        setOverheadItems((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, is_active: !item.is_active } : item))
-        );
-        setHasUnsavedChanges(true);
+        const updated = overheadItems.map((item) => (item.id === id ? { ...item, is_active: !item.is_active } : item));
+        updateOverheadItems(updated);
     };
 
     // Formal Registration Handler (Linked to Chart of Accounts)
@@ -261,17 +256,18 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
             overhead_type_id: finalTypeId,
             overhead_name: finalName,
             cost_per_unit: costVal,
+            allocation_basis: "per_unit",
             is_active: true,
             remarks: newRemarks.trim() || undefined
         };
 
-        setOverheadItems((prev) => [...prev, newItem]);
+        const updated = [...overheadItems, newItem];
+        updateOverheadItems(updated);
         setSelectedTypeId("");
         setCustomOverheadName("");
         setNewCostPerUnit("");
         setNewRemarks("");
         setIsAdding(false);
-        setHasUnsavedChanges(true);
     };
 
     return (
@@ -383,6 +379,8 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                 required
                                 placeholder="0.0000"
                                 value={newCostPerUnit}
+                                onFocus={(e) => e.target.select()}
+                                onClick={(e) => (e.target as HTMLInputElement).select()}
                                 onChange={(e) => setNewCostPerUnit(e.target.value)}
                                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary h-9"
                             />
@@ -502,6 +500,8 @@ export const OverheadManagementTab: React.FC<OverheadManagementTabProps> = ({
                                                 min="0"
                                                 disabled={isVersionLocked}
                                                 value={item.cost_per_unit}
+                                                onFocus={(e) => e.target.select()}
+                                                onClick={(e) => (e.target as HTMLInputElement).select()}
                                                 onChange={(e) =>
                                                     handleUpdateItem(
                                                         item.id,

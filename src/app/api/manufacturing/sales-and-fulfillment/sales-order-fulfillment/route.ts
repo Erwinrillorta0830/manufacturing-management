@@ -281,24 +281,30 @@ export async function GET(req: NextRequest) {
                 }
 
                 const joIdsArr = Array.from(pageJoIds);
-                const joProducedMap = new Map<number, number>();
+                const joPassedProducedMap = new Map<number, number>();
                 if (joIdsArr.length > 0) {
-                    const joRes = await fetch(
-                        `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_in]=${joIdsArr.join(
+                    const yieldRes = await fetch(
+                        `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_in]=${joIdsArr.join(
                             ","
-                        )}&limit=-1&fields=job_order_id,actual_quantity_produced,completed_quantity`,
+                        )}&filter[qa_status][_eq]=Passed&limit=-1&fields=ledger_id,job_order_id,yield_quantity,qa_status,commit_status`,
                         { headers: directusHeaders, cache: "no-store" }
                     ).catch(() => null);
 
-                    if (joRes && joRes.ok) {
-                        const joData = await joRes.json();
-                        for (const jo of joData.data || []) {
-                            const actual = Number(jo.actual_quantity_produced || 0);
-                            const completed = Number(jo.completed_quantity || 0);
-                            joProducedMap.set(Number(jo.job_order_id), Math.max(actual, completed));
+                    if (yieldRes && yieldRes.ok) {
+                        const yieldData = await yieldRes.json();
+                        for (const y of yieldData.data || []) {
+                            const commitStatus = String(y.commit_status || "COMMITTED").toUpperCase();
+                            if (commitStatus === "CANCELLED" || commitStatus === "CANCELED" || commitStatus === "VOID") {
+                                continue;
+                            }
+                            const joId = Number(y.job_order_id);
+                            const yQty = Number(y.yield_quantity || 0);
+                            joPassedProducedMap.set(joId, (joPassedProducedMap.get(joId) || 0) + yQty);
                         }
                     }
                 }
+
+                const remainingPassedYieldMap = new Map<number, number>(joPassedProducedMap);
 
                 // Check readiness for each order
                 for (const order of paginatedData) {
@@ -317,8 +323,11 @@ export async function GET(req: NextRequest) {
                         const lineAllocs = pageAllocMap.get(Number(line.detail_id)) || [];
                         let totalProduced = 0;
                         for (const alloc of lineAllocs) {
-                            const joMetric = joProducedMap.get(alloc.job_order_id) || 0;
-                            totalProduced += Math.min(alloc.allocated_quantity, joMetric);
+                            // Produced only counts if qa_status is 'Passed'
+                            const availablePassed = remainingPassedYieldMap.get(alloc.job_order_id) || 0;
+                            const effectiveProduced = Math.min(alloc.allocated_quantity, availablePassed);
+                            remainingPassedYieldMap.set(alloc.job_order_id, Math.max(0, availablePassed - effectiveProduced));
+                            totalProduced += effectiveProduced;
                         }
 
                         const isLineReady = onhand >= orderedQty || totalProduced >= orderedQty;

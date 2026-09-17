@@ -291,10 +291,14 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
         const hasCommittedShiftProgress = (jobOrderId: number, routeId: number): boolean => {
             return mfgYieldLedger.some((ledger: any) => {
-                if (getRelationId(ledger.job_order_id, ["job_order_id"]) !== jobOrderId
-                    || getRelationId(ledger.jo_route_id, ["jo_route_id"]) !== routeId) {
+                if (getRelationId(ledger.job_order_id, ["job_order_id"]) !== jobOrderId) {
                     return false;
                 }
+
+                const sessionScope = String(ledger.session_scope ?? "").trim().toUpperCase();
+                const appliesToRoute = sessionScope === "JOB_ORDER"
+                    || getRelationId(ledger.jo_route_id, ["jo_route_id"]) === routeId;
+                if (!appliesToRoute) return false;
 
                 const commitStatus = String(ledger.commit_status ?? "").trim().toUpperCase();
                 if (commitStatus && commitStatus !== "COMMITTED") return false;
