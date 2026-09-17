@@ -342,7 +342,7 @@ export function WipTableView({
                                                         onClick={(e) => e.stopPropagation()}
                                                         className="h-7 px-2 text-[11px] font-medium text-primary hover:text-primary hover:bg-primary/10 gap-0.5"
                                                     >
-                                                        <Link href="/mm/production">
+                                                        <Link href={`/mm/production-workflow?id=${encodeURIComponent(job.job_order_id)}&jo=${encodeURIComponent(job.job_order_no)}`}>
                                                             <span>Control</span>
                                                             <ArrowUpRight className="h-3 w-3" />
                                                         </Link>

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { motion } from "framer-motion";
 import {
     ChevronDown,
     ChevronRight,
@@ -157,7 +158,10 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
 
         return (
             <React.Fragment key={node.id}>
-                <tr
+                <motion.tr
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18 }}
                     className={`border-b transition-colors hover:bg-muted/40 text-xs ${
                         node.isSubAssembly ? "bg-muted/20 font-medium" : ""
                     }`}
@@ -261,7 +265,7 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                     <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
                         {costShare}%
                     </td>
-                </tr>
+                </motion.tr>
 
                 {/* Render children if expanded */}
                 {hasChildren && isExpanded && (
@@ -271,8 +275,17 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
         );
     };
 
+    const hasCollapsibleBranches = React.useMemo(() => {
+        return summary.maxDepth > 1 || tree.some(node => node.children && node.children.length > 0);
+    }, [summary.maxDepth, tree]);
+
     return (
-        <div className="rounded-xl border bg-card shadow-xs overflow-hidden">
+        <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="rounded-xl border bg-card shadow-xs overflow-hidden"
+        >
             {/* Header bar with controls */}
             <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b bg-muted/20">
                 <div>
@@ -287,26 +300,28 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                     </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={expandAll}
-                        className="h-7 text-xs px-2.5 font-normal"
-                    >
-                        <ChevronsUpDown className="mr-1 h-3.5 w-3.5" />
-                        Expand All
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={collapseAll}
-                        className="h-7 text-xs px-2.5 font-normal"
-                    >
-                        <ChevronsDownUp className="mr-1 h-3.5 w-3.5" />
-                        Collapse All
-                    </Button>
-                </div>
+                {hasCollapsibleBranches && (
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={expandAll}
+                            className="h-7 text-xs px-2.5 font-normal"
+                        >
+                            <ChevronsUpDown className="mr-1 h-3.5 w-3.5" />
+                            Expand All
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={collapseAll}
+                            className="h-7 text-xs px-2.5 font-normal"
+                        >
+                            <ChevronsDownUp className="mr-1 h-3.5 w-3.5" />
+                            Collapse All
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* Tree Table */}
@@ -378,6 +393,6 @@ export default function BOMCostingTreeTable({ data }: BOMCostingTreeTableProps) 
                     </div>
                 </div>
             </div>
-        </div>
+        </motion.div>
     );
 }

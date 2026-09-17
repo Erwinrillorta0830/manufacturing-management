@@ -466,35 +466,97 @@ export async function syncVersionOverheadItems(versionId: number, overheadItems:
         const typesRes = await fetch(`${DIRECTUS_URL}/items/overhead_types?limit=-1`, { headers, cache: "no-store" }).catch(() => null);
         const typesList: any[] = typesRes && typesRes.ok ? (await typesRes.json()).data || [] : [];
         const typeByName = new Map(typesList.map((t: any) => [String(t.overhead_name || "").toLowerCase().trim(), Number(t.id)]));
-        const defaultTypeId = typesList.length > 0 ? Number(typesList[0].id) : 1;
+        const validIds = new Set(typesList.map((t: any) => Number(t.id)));
+        const fallbackTypeId = typesList.length > 0 ? Number(typesList[0].id) : null;
 
         for (const item of overheadItems) {
             const cost = Number(item.cost_per_unit ?? item.cost ?? item.cost_allocation ?? 0);
             let typeId = Number(item.overhead_type_id || item.typeId || 0);
-            const remarks = item.overhead_name || item.remarks || "";
+            const remarks = String(item.overhead_name || item.remarks || "").trim();
+
+            // Validate that typeId actually exists in overhead_types
+            if (typeId > 0 && !validIds.has(typeId)) {
+                typeId = 0;
+            }
+
+            // If typeId is missing or invalid, resolve by overhead name
             if (typeId <= 0 && remarks) {
-                const matched = typeByName.get(remarks.toLowerCase().trim());
+                const norm = remarks.toLowerCase().trim();
+                const matched = typeByName.get(norm);
                 if (matched) {
                     typeId = matched;
+                } else {
+                    // Try partial / fuzzy match
+                    const partialMatch = typesList.find((t: any) => {
+                        const tName = String(t.overhead_name || "").toLowerCase().trim();
+                        return tName.includes(norm) || norm.includes(tName);
+                    });
+                    if (partialMatch) {
+                        typeId = Number(partialMatch.id);
+                    }
                 }
             }
-            if (typeId <= 0) {
-                typeId = defaultTypeId;
+
+            // If still not matched and remarks is present, auto-create the overhead type in Directus
+            if (typeId <= 0 && remarks) {
+                try {
+                    const createTypeRes = await fetch(`${DIRECTUS_URL}/items/overhead_types`, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            overhead_name: remarks,
+                            normalized_name: remarks.toLowerCase().trim(),
+                            is_active: 1
+                        })
+                    });
+                    if (createTypeRes.ok) {
+                        const createdType = (await createTypeRes.json()).data;
+                        if (createdType?.id) {
+                            typeId = Number(createdType.id);
+                            validIds.add(typeId);
+                            typeByName.set(remarks.toLowerCase().trim(), typeId);
+                            typesList.push(createdType);
+                        }
+                    }
+                } catch (createErr) {
+                    console.error("[Manufacturing Directus API] Failed to auto-create overhead type:", createErr);
+                }
             }
+
+            // Fallback to first available active overhead type if still missing
+            if (typeId <= 0 && fallbackTypeId) {
+                typeId = fallbackTypeId;
+            }
+
+            if (typeId <= 0) {
+                console.error(`[Manufacturing Directus API] Unable to resolve valid overhead_type_id for item "${remarks}"`);
+                continue;
+            }
+
             const is_active = item.is_active !== undefined ? Boolean(item.is_active) : true;
 
-            await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
+            const rawBasis = String(item.allocation_basis || "per_unit").toLowerCase().trim();
+            const validBasis = ["per_unit", "per_batch", "per_machine_hour", "percentage_of_labor"].includes(rawBasis)
+                ? rawBasis
+                : (rawBasis.includes("batch") ? "per_batch" : "per_unit");
+
+            const postRes = await fetch(`${DIRECTUS_URL}/items/product_version_overheads`, {
                 method: "POST",
                 headers,
                 body: JSON.stringify({
                     version_id: versionId,
                     overhead_type_id: typeId,
                     cost,
-                    allocation_basis: item.allocation_basis || "per_unit",
+                    allocation_basis: validBasis,
                     is_active,
-                    remarks
+                    remarks: remarks || "Overhead"
                 })
-            }).catch(() => {});
+            });
+
+            if (!postRes.ok) {
+                const errText = await postRes.text().catch(() => "");
+                console.error(`[Manufacturing Directus API] Error inserting overhead item for version ${versionId}:`, errText);
+            }
         }
 
         return true;
