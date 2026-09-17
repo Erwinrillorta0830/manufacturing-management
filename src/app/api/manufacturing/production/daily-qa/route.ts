@@ -192,17 +192,11 @@ async function persistOutputTraceability(
     }
 }
 
-function isCompletedRouteStatus(value: unknown): boolean {
-    return ["completed", "done", "closed"].includes(textValue(value).toLowerCase());
-}
-
-async function syncPassedQARoutes(
+function validateSubmittedQARoutes(
     jobOrderId: number,
     routeRows: any[],
-    inspectionRows: any[],
-    submittedInspections: any[],
-    completedAt: string
-): Promise<number[]> {
+    submittedInspections: any[]
+): void {
     const submittedRouteIds = new Set<number>();
 
     for (const entry of submittedInspections) {
@@ -216,7 +210,7 @@ async function syncPassedQARoutes(
         submittedRouteIds.add(routeId);
     }
 
-    if (submittedRouteIds.size === 0) return [];
+    if (submittedRouteIds.size === 0) return;
 
     const routesById = new Map<number, Record<string, any>>(
         routeRows.map((route: Record<string, any>) => [
@@ -224,36 +218,13 @@ async function syncPassedQARoutes(
             route
         ])
     );
-    const completedRouteIds: number[] = [];
-
     for (const routeId of submittedRouteIds) {
         const route = routesById.get(routeId);
         const routeJobOrderId = relationId(route?.job_order_id, ["job_order_id", "id"]);
         if (!route || routeJobOrderId !== jobOrderId) {
             throw new DailyQAValidationError(422, "INSPECTION_ROUTE_MISMATCH", "The QA audit references a routing step from a different Job Order.");
         }
-
-        const routeInspections = inspectionRows.filter((inspection: Record<string, any>) => (
-            relationId(inspection.jo_route_id, ["jo_route_id", "id"]) === routeId
-        ));
-        const routeOutcome = deriveDailyQAOutcome(routeInspections, [routeId]);
-        if (routeOutcome.status !== "Passed") continue;
-
-        if (!isCompletedRouteStatus(route.status)) {
-            await patchDirectusRecord(
-                `/items/manufacturing_job_order_routes/${encodeURIComponent(String(routeId))}`,
-                {
-                    status: "Completed",
-                    completed_at: completedAt
-                },
-                `Complete QA routing step ${routeId}`
-            );
-        }
-
-        completedRouteIds.push(routeId);
     }
-
-    return completedRouteIds;
 }
 
 async function fetchDailyQAQueue(searchParams: URLSearchParams): Promise<any[]> {
@@ -543,12 +514,10 @@ export async function POST(request: Request) {
         );
         const finalLedgerStatus = outcome.status;
 
-        const completedRouteIds = await syncPassedQARoutes(
+        validateSubmittedQARoutes(
             jobOrderId,
             routes,
-            inspections,
-            inspectionsList,
-            timestamp
+            inspectionsList
         );
 
         if (outcome.hasFailure) {
@@ -647,7 +616,6 @@ export async function POST(request: Request) {
         return NextResponse.json({
             success: true,
             message: "Daily yield QA inspection logged successfully.",
-            completedRouteIds,
             outputMetadata
         });
     } catch (e) {

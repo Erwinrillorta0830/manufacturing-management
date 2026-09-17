@@ -1,6 +1,6 @@
 /* eslint-disable */
-import { Search, Loader2, AlertCircle, CornerDownRight, Building2 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { AlertCircle, Building2, CornerDownRight, ExternalLink, Play, RefreshCw, Search } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -39,190 +39,192 @@ export function ReleasedJobQueue({
     onClearFilters,
     onAssignWorkstation
 }: ReleasedJobQueueProps) {
-    // Find all Job Orders that have a parent present in the current filtered list
-    const childJobOrderIds = new Set<string>();
-    filteredJobOrders.forEach((jo) => {
-        if (jo.parentJobOrderId) {
-            const hasParentInList = filteredJobOrders.some((p) => Number(p.order_id) === Number(jo.parentJobOrderId));
-            if (hasParentInList) {
-                childJobOrderIds.add(jo.jo_id);
-            }
-        }
-    });
+    const parentByChildId = new Map(
+        filteredJobOrders
+            .filter((jo) => jo.parentJobOrderId)
+            .map((jo) => [jo.jo_id, jobOrders.find((parent) => Number(parent.order_id) === Number(jo.parentJobOrderId))])
+    );
 
-    // Filter top-level Job Orders (not inside the child set)
-    const topLevelJobOrders = filteredJobOrders.filter((jo) => !childJobOrderIds.has(jo.jo_id));
-
-    const renderJobCard = (jo: JobOrder, isChild: boolean) => {
-        const isSelected = jo.jo_id === selectedJobOrderId;
-        const parentJo = isChild ? jobOrders.find((j) => Number(j.order_id) === Number(jo.parentJobOrderId)) : null;
-        const parentJoNo = parentJo?.jo_id || (jo.parentJobOrderId ? `JO #${jo.parentJobOrderId}` : null);
-
-        const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
-        const needsWorkstation = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED) && !jo.primary_work_center_id;
-        const workstationLabel = jo.primary_work_center_name
-            || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
-        const journey = resolveJobOrderJourney({
-            status: jo.status,
-            allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
-            jobOrderNo: jo.jo_id
-        });
-
-        return (
-            <div
-                onClick={() => setSelectedJobOrderId(jo.jo_id)}
-                className={`p-3 rounded-lg border cursor-pointer transition-all hover:bg-muted/60 relative ${
-                    isSelected
-                        ? "border-primary bg-primary/5 ring-1 ring-primary"
-                        : "bg-card border-border"
-                } ${
-                    isChild ? "border-l-2 border-l-primary/45 pl-3" : ""
-                }`}
-            >
-                {isChild && parentJoNo && (
-                    <div className="flex items-center gap-1 text-[10px] text-primary/80 font-bold mb-1.5 pl-0.5">
-                        <CornerDownRight className="h-3 w-3 shrink-0 text-primary" />
-                        <span>Sub-Assembly of {parentJoNo}</span>
-                    </div>
-                )}
-                <div className="flex justify-between items-start mb-1.5">
-                    <span className="font-mono text-sm font-semibold tracking-tight">
-                        {jo.jo_id}
-                    </span>
-                    <JobOrderStatusBadge status={jo.status} />
-                </div>
-                <h4 className="font-medium text-sm line-clamp-1 mb-1">{jo.product_name}</h4>
-                <JobOrderJourneyBar journey={journey} compact className="mb-2" />
-                {jo.version_name && (
-                    <div className="text-[10px] font-mono text-primary font-bold mb-2">
-                        Recipe: {jo.version_name}
-                    </div>
-                )}
-                
-                <div className="flex justify-between items-center text-xs text-muted-foreground font-medium">
-                    <span>Target/Prod: <strong className="text-foreground">{jo.quantity.toLocaleString()}</strong> / <strong className="text-emerald-400 font-mono">{producedQty.toLocaleString()}</strong></span>
-                    <span>Due: <strong className="text-foreground">{new Date(jo.due_date).toLocaleDateString()}</strong></span>
-                </div>
-
-                <div className="mt-2 text-[10px] font-semibold text-muted-foreground">
-                    Workstation:{" "}
-                    <strong className={jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}>
-                        {workstationLabel}
-                    </strong>
-                </div>
-                {needsWorkstation && (
-                    <Button
-                        type="button"
-                        size="sm"
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onAssignWorkstation?.(jo);
-                        }}
-                        className="mt-2 h-8 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm shadow-emerald-500/20"
-                    >
-                        <Building2 className="mr-1.5 h-3.5 w-3.5" /> Assign Workstation
-                    </Button>
-                )}
-
-                {/* Est. Production Days */}
-                {(() => {
-                    const totalHours = jo.routing_tasks 
-                        ? jo.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
-                        : 0;
-                    const shiftHours = Number(jo.shiftOption || 8);
-                    const estDays = totalHours / shiftHours;
-                    return (
-                        <div className="flex justify-between items-center text-[10px] text-muted-foreground/85 font-semibold mt-1.5 border-t border-border/25 pt-1.5">
-                            <span>Est. Run Time: <strong className="text-foreground">{estDays.toFixed(1)} days</strong> <span className="text-[9px] text-muted-foreground/50 font-normal">({shiftHours}h/shift)</span></span>
-                            <span>Planned: <strong className="text-foreground">{totalHours.toFixed(1)} hrs</strong></span>
-                        </div>
-                    );
-                })()}
-            </div>
-        );
-    };
+    const openTerminal = (jo: JobOrder) => setSelectedJobOrderId(jo.jo_id);
 
     return (
-        <Card className="h-full">
+        <Card className="h-full overflow-hidden">
             <CardHeader className="pb-3">
-                <CardTitle className="flex justify-between items-center text-lg">
-                    <span>Production Job Orders</span>
-                    <Badge variant="outline" className="ml-2 font-mono">
+                <CardTitle className="flex items-center justify-between gap-2 text-lg">
+                    <span>Production Job Order Queue</span>
+                    <Badge variant="outline" className="font-mono">
                         {filteredJobOrders.length}
                     </Badge>
                 </CardTitle>
-                <CardDescription>Staged and In Production Job Orders on the shop floor</CardDescription>
+                <CardDescription>
+                    Start production for Picked orders or open the terminal for Job Orders already In Production.
+                </CardDescription>
             </CardHeader>
-            
-            <CardContent className="space-y-4">
-                {/* Search bar */}
-                <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search Job No or Product..."
-                        className="pl-8 h-9 text-xs"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                </div>
 
-                {/* Branch selection filter */}
-                <div className="space-y-1.5">
+            <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_220px_auto]">
+                    <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search Job No or Product..."
+                            className="h-9 pl-8 text-xs"
+                            value={searchQuery}
+                            onChange={(event) => setSearchQuery(event.target.value)}
+                        />
+                    </div>
+
                     <select
                         id="branchFilter"
                         className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                         value={selectedBranchFilter}
-                        onChange={(e) => setSelectedBranchFilter(e.target.value)}
+                        onChange={(event) => setSelectedBranchFilter(event.target.value)}
                     >
                         <option value="All">All Branches</option>
-                        {branches.map((b, index) => {
-                            const bId = b.id || b.branch_id || index;
+                        {branches.map((branch, index) => {
+                            const branchId = branch.id || branch.branch_id || index;
                             return (
-                                <option key={`${bId}_${index}`} value={bId}>
-                                    {b.branch_name}
+                                <option key={`${branchId}_${index}`} value={branchId}>
+                                    {branch.branch_name}
                                 </option>
                             );
                         })}
                     </select>
+
+                    {onClearFilters && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={onClearFilters}
+                            className="h-9 text-xs"
+                            disabled={!searchQuery && selectedBranchFilter === "All"}
+                        >
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Clear
+                        </Button>
+                    )}
                 </div>
 
-                {/* Job list scrolling wrapper */}
                 {loadingJobs ? (
-                    <div className="flex justify-center items-center py-12">
-                        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <div className="flex items-center justify-center py-12">
+                        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
                     </div>
                 ) : filteredJobOrders.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground text-sm border-2 border-dashed rounded-lg">
-                        <AlertCircle className="mx-auto h-8 w-8 mb-2 text-muted-foreground/60" />
+                    <div className="border-2 border-dashed rounded-lg py-12 text-center text-sm text-muted-foreground">
+                        <AlertCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
                         <p>No staged or In Production Job Orders found.</p>
-                        <p className="text-xs mt-1">Try a different search or branch, or clear the filters.</p>
-                        {onClearFilters && (
-                            <Button variant="outline" size="sm" onClick={onClearFilters} className="mt-3 h-8 text-xs">
-                                Clear filters
-                            </Button>
-                        )}
+                        <p className="mt-1 text-xs">Try a different search or branch, or clear the filters.</p>
                     </div>
                 ) : (
-                    <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-                        {topLevelJobOrders.map((parentJo) => {
-                            const children = filteredJobOrders.filter(
-                                (jo) => Number(jo.parentJobOrderId) === Number(parentJo.order_id)
-                            );
+                    <div className="overflow-x-auto rounded-xl border border-border/60">
+                        <table className="w-full min-w-[1060px] border-collapse text-left">
+                            <thead className="bg-muted/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                <tr>
+                                    <th className="px-3 py-3 font-bold">Job Order</th>
+                                    <th className="px-3 py-3 font-bold">Product / Journey</th>
+                                    <th className="px-3 py-3 text-right font-bold">Target / Produced</th>
+                                    <th className="px-3 py-3 font-bold">Workstation</th>
+                                    <th className="px-3 py-3 font-bold">Due</th>
+                                    <th className="px-3 py-3 text-right font-bold">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/50">
+                                {filteredJobOrders.map((jo) => {
+                                    const isSelected = jo.jo_id === selectedJobOrderId;
+                                    const isPicked = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED);
+                                    const isInProduction = isJobOrderStatus(jo.status, JOB_ORDER_STATUS.IN_PRODUCTION);
+                                    const needsWorkstation = isPicked && !jo.primary_work_center_id;
+                                    const parent = parentByChildId.get(jo.jo_id);
+                                    const producedQty = jo.productionOutputQuantity ?? jo.producedQty ?? jo.completed_quantity ?? 0;
+                                    const workstationLabel = jo.primary_work_center_name
+                                        || (jo.primary_work_center_id ? `WC #${jo.primary_work_center_id}` : "Unassigned");
+                                    const journey = resolveJobOrderJourney({
+                                        status: jo.status,
+                                        allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
+                                        jobOrderNo: jo.jo_id
+                                    });
+                                    const totalHours = (jo.routing_tasks || []).reduce(
+                                        (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
+                                        0
+                                    );
 
-                            return (
-                                <div key={parentJo.jo_id} className="space-y-2">
-                                    {/* Parent Card */}
-                                    {renderJobCard(parentJo, false)}
-
-                                    {/* Children Cards (nested & indented) */}
-                                    {children.map((childJo) => (
-                                        <div key={childJo.jo_id} className="pl-4 ml-2 border-l border-primary/20 space-y-2">
-                                            {renderJobCard(childJo, true)}
-                                        </div>
-                                    ))}
-                                </div>
-                            );
-                        })}
+                                    return (
+                                        <tr
+                                            key={jo.jo_id}
+                                            className={isSelected ? "bg-primary/[0.06]" : "bg-card hover:bg-muted/20"}
+                                        >
+                                            <td className="px-3 py-3 align-top">
+                                                <div className="flex items-start gap-2">
+                                                    {parent && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
+                                                    <div className="min-w-0">
+                                                        <div className="font-mono text-sm font-bold tracking-tight">{jo.jo_id}</div>
+                                                        {parent && (
+                                                            <div className="mt-1 text-[10px] font-semibold text-primary/80">
+                                                                Sub-assembly of {parent.jo_id}
+                                                            </div>
+                                                        )}
+                                                        <div className="mt-2">
+                                                            <JobOrderStatusBadge status={jo.status} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="max-w-[300px] px-3 py-3 align-top">
+                                                <div className="font-semibold text-sm text-foreground truncate" title={jo.product_name}>
+                                                    {jo.product_name}
+                                                </div>
+                                                {jo.version_name && (
+                                                    <div className="mt-1 font-mono text-[10px] font-bold text-primary">Recipe: {jo.version_name}</div>
+                                                )}
+                                                <JobOrderJourneyBar journey={journey} compact className="mt-2" />
+                                            </td>
+                                            <td className="px-3 py-3 text-right align-top">
+                                                <div className="font-mono text-sm font-bold text-foreground">{Number(jo.quantity || 0).toLocaleString()}</div>
+                                                <div className="mt-1 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                                    {Number(producedQty || 0).toLocaleString()}
+                                                </div>
+                                                <div className="mt-2 text-[10px] text-muted-foreground">
+                                                    {totalHours.toFixed(1)} planned hrs
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-3 align-top">
+                                                <div className={`flex items-center gap-1.5 text-xs font-semibold ${jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
+                                                    <Building2 className="h-3.5 w-3.5 shrink-0" />
+                                                    <span>{workstationLabel}</span>
+                                                </div>
+                                                {needsWorkstation && (
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => onAssignWorkstation?.(jo)}
+                                                        className="mt-2 h-7 border-emerald-500/30 px-2 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 dark:text-emerald-400"
+                                                    >
+                                                        <Building2 className="mr-1 h-3 w-3" /> Assign
+                                                    </Button>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-3 align-top text-xs font-semibold text-muted-foreground">
+                                                {jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "—"}
+                                            </td>
+                                            <td className="px-3 py-3 text-right align-top">
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    onClick={() => openTerminal(jo)}
+                                                    disabled={!isPicked && !isInProduction}
+                                                    className={isPicked
+                                                        ? "h-9 bg-primary px-3 text-xs font-bold text-primary-foreground hover:bg-primary/90"
+                                                        : "h-9 px-3 text-xs font-bold"}
+                                                >
+                                                    {isPicked ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
+                                                    {isPicked ? "Start Production" : isInProduction ? "Open Terminal" : "Unavailable"}
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 )}
             </CardContent>

@@ -57,8 +57,9 @@ interface MaterialLine {
 }
 
 interface SessionInput {
+    sessionScope: "ROUTE" | "JOB_ORDER";
     sessionKey: string;
-    taskId: number;
+    taskId: number | null;
     joId: number;
     workCenterId: number | null;
     shiftName: string;
@@ -264,11 +265,20 @@ function normalizeSessionInput(body: any): SessionInput {
         throw new ProductionSessionError(422, "VARIANCE_REASON_TOO_LONG", "Variance reason cannot exceed 5,000 characters.");
     }
 
+    const rawSessionScope = textValue(body?.sessionScope).toUpperCase() || "ROUTE";
+    if (rawSessionScope !== "ROUTE" && rawSessionScope !== "JOB_ORDER") {
+        throw new ProductionSessionError(422, "INVALID_FIELD", "Session scope must be ROUTE or JOB_ORDER.", { field: "Session scope" });
+    }
+    const sessionScope = rawSessionScope as SessionInput["sessionScope"];
+
     return {
+        sessionScope,
         sessionKey,
-        taskId: requiredInteger(body?.taskId, "Routing task ID"),
+        taskId: sessionScope === "JOB_ORDER" ? null : requiredInteger(body?.taskId, "Routing task ID"),
         joId: requiredInteger(body?.joId, "Job Order ID"),
-        workCenterId: body?.workCenterId === undefined || body?.workCenterId === null || body?.workCenterId === ""
+        workCenterId: sessionScope === "JOB_ORDER"
+            ? null
+            : body?.workCenterId === undefined || body?.workCenterId === null || body?.workCenterId === ""
             ? null
             : requiredInteger(body.workCenterId, "Work center ID"),
         shiftName,
@@ -338,7 +348,9 @@ async function readShiftRunRequest(request: Request): Promise<ShiftRunRequestDat
 }
 
 function sessionSourceKey(input: SessionInput): string {
-    return `production-session:${input.joId}:${input.sessionKey}`;
+    return input.sessionScope === "JOB_ORDER"
+        ? `production-session:${input.joId}:JOB_ORDER:${input.sessionKey}`
+        : `production-session:${input.joId}:${input.sessionKey}`;
 }
 
 function lineSourceKey(input: SessionInput, reservationId: number): string {
@@ -349,6 +361,7 @@ type RequestHashOutput = Pick<SessionInput, "batchNo" | "manufacturingDate" | "e
 
 function requestHash(input: SessionInput, output: Partial<RequestHashOutput> = {}): string {
     const canonical = {
+        sessionScope: input.sessionScope,
         sessionKey: input.sessionKey,
         taskId: input.taskId,
         joId: input.joId,
@@ -923,7 +936,7 @@ async function updateJobOrderAggregates(joId: number, ledgerId: number, actorId:
     );
 }
 
-function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[], genealogyRows: any[], actorId: number, workCenterId: number, idempotent: boolean, varianceTolerancePct: number) {
+function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[], genealogyRows: any[], actorId: number, workCenterId: number | null, idempotent: boolean, varianceTolerancePct: number) {
     const persistedBatchNo = textValue(ledger.lot_number) || null;
     const persistedMmLotId = numberId(ledger.mm_lot_id, ["mm_lot_id", "lot_id", "id"]) || null;
     const persistedManufacturingDate = textValue(ledger.manufacturing_date) || null;
@@ -937,6 +950,7 @@ function responsePayload(input: SessionInput, ledger: any, consumptionRows: any[
         sessionKey: input.sessionKey,
         sourceEventKey: textValue(ledger.source_event_key) || sessionSourceKey(input),
         jobOrderId: input.joId,
+        sessionScope: input.sessionScope,
         shiftName: input.shiftName,
         operatorId: numberId(ledger.logged_by) || actorId,
         workCenterId,
@@ -1028,6 +1042,13 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
             && !compatibleHashes.has(textValue(existingLedger.request_hash))) {
             throw new ProductionSessionError(409, "SESSION_CONFLICT", `Production session ${input.sessionKey} already exists with a different payload.`);
         }
+        if (existingLedger) {
+            const persistedScope = textValue(existingLedger.session_scope).toUpperCase()
+                || (numberId(existingLedger.jo_route_id) ? "ROUTE" : "JOB_ORDER");
+            if (persistedScope !== input.sessionScope) {
+                throw new ProductionSessionError(409, "SESSION_SCOPE_CONFLICT", `Production session ${input.sessionKey} already exists with scope ${persistedScope}.`);
+            }
+        }
         const status = normalizeJobOrderStatus(jobOrder.status || JOB_ORDER_STATUS.DRAFT);
         if (!status) {
             throw new ProductionSessionError(409, "JOB_ORDER_STATUS_UNKNOWN", `Job Order ${input.joId} has an unknown status and cannot accept a production session.`);
@@ -1052,20 +1073,23 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
         }
         const variancePolicy = await loadMaterialVariancePolicy(jobOrder, producedProductId);
 
-        const route = await directusRequest<any>(
-            `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${encodeURIComponent(String(input.taskId))}?fields=jo_route_id,job_order_id,work_center_id,status`,
-            `Load routing task ${input.taskId}`
-        );
-        if (numberId(route.job_order_id) !== input.joId) {
-            throw new ProductionSessionError(422, "ROUTING_TASK_MISMATCH", `Routing task ${input.taskId} does not belong to Job Order ${input.joId}.`);
-        }
-        const routeWorkCenterId = numberId(route.work_center_id);
-        const workCenterId = routeWorkCenterId || numberId(jobOrder.primary_work_center_id);
-        if (!workCenterId) {
-            throw new ProductionSessionError(422, "STATION_REQUIRED", "A production station/work center must be assigned before recording a session.");
-        }
-        if (input.workCenterId && input.workCenterId !== workCenterId) {
-            throw new ProductionSessionError(422, "STATION_MISMATCH", `The submitted station ${input.workCenterId} does not match routing task ${input.taskId}.`);
+        let workCenterId: number | null = null;
+        if (input.sessionScope === "ROUTE") {
+            const route = await directusRequest<any>(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${encodeURIComponent(String(input.taskId))}?fields=jo_route_id,job_order_id,work_center_id,status`,
+                `Load routing task ${input.taskId}`
+            );
+            if (numberId(route.job_order_id) !== input.joId) {
+                throw new ProductionSessionError(422, "ROUTING_TASK_MISMATCH", `Routing task ${input.taskId} does not belong to Job Order ${input.joId}.`);
+            }
+            const routeWorkCenterId = numberId(route.work_center_id);
+            workCenterId = routeWorkCenterId || numberId(jobOrder.primary_work_center_id) || null;
+            if (!workCenterId) {
+                throw new ProductionSessionError(422, "STATION_REQUIRED", "A production station/work center must be assigned before recording a route session.");
+            }
+            if (input.workCenterId && input.workCenterId !== workCenterId) {
+                throw new ProductionSessionError(422, "STATION_MISMATCH", `The submitted station ${input.workCenterId} does not match routing task ${input.taskId}.`);
+            }
         }
 
         const targetQuantity = Math.max(0, finiteNumber(jobOrder.target_quantity ?? jobOrder.quantity));
@@ -1285,6 +1309,7 @@ export async function recordShiftRunSession(request: Request): Promise<NextRespo
                     request_hash: hash,
                     commit_status: "PENDING",
                     job_order_updated: false,
+                    session_scope: input.sessionScope,
                     jo_route_id: input.taskId,
                     work_center_id: workCenterId,
                     production_date: input.productionDate,
