@@ -27,6 +27,21 @@ function parseValidBranchId(value: unknown): number | null {
     return Number.isSafeInteger(branchId) && branchId > 0 ? branchId : null;
 }
 
+function splitJobOrderQueues(data: any[]) {
+    return {
+        queuedJobs: data.filter((jobOrder: any) => isJobOrderStatus(
+            jobOrder.status,
+            JOB_ORDER_STATUS.DRAFT,
+            JOB_ORDER_STATUS.FOR_PICKING,
+            JOB_ORDER_STATUS.PICKED
+        )),
+        cancelledJobs: data.filter((jobOrder: any) => isJobOrderStatus(
+            jobOrder.status,
+            JOB_ORDER_STATUS.CANCELLED
+        ))
+    };
+}
+
 export function usePlanningEngineering() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -76,6 +91,7 @@ export function usePlanningEngineering() {
     const [assignments, setAssignments] = useState<Record<number, number[]>>({});
 
     const [rawUnreleasedJobs, setRawUnreleasedJobs] = useState<any[]>([]);
+    const [rawCancelledJobs, setRawCancelledJobs] = useState<any[]>([]);
     const [loadingJobs, setLoadingJobs] = useState(false);
     const [releasingDraftId, setReleasingDraftId] = useState<string | null>(null);
     const [pendingDeepLinkJo, setPendingDeepLinkJo] = useState<string | null>(null);
@@ -91,6 +107,13 @@ export function usePlanningEngineering() {
         );
     }, [rawUnreleasedJobs, selectedBranchId]);
 
+    const cancelledJobs = useMemo(() => {
+        if (selectedBranchId === null) return [];
+        return rawCancelledJobs.filter(
+            (jo) => jo.branch_id !== undefined && jo.branch_id !== null && Number(jo.branch_id) === Number(selectedBranchId)
+        );
+    }, [rawCancelledJobs, selectedBranchId]);
+
     const loadUnreleasedJobs = async () => {
         setLoadingJobs(true);
         try {
@@ -99,13 +122,9 @@ export function usePlanningEngineering() {
                 const data = await res.json();
                 // The queue keeps released Job Orders visible so users can see
                 // where they moved after scheduling instead of losing them.
-                const queuedJobs = data.filter((j: any) => isJobOrderStatus(
-                    j.status,
-                    JOB_ORDER_STATUS.DRAFT,
-                    JOB_ORDER_STATUS.FOR_PICKING,
-                    JOB_ORDER_STATUS.PICKED
-                ));
+                const { queuedJobs, cancelledJobs } = splitJobOrderQueues(data);
                 setRawUnreleasedJobs(queuedJobs);
+                setRawCancelledJobs(cancelledJobs);
             }
         } catch (err) {
             console.error("Error loading unreleased job orders:", err);
@@ -201,28 +220,24 @@ export function usePlanningEngineering() {
         }
         void loadInProductionSalesOrders();
         try {
-            const [activeBranches, soResult, queuedJobs] = await Promise.all([
+            const [activeBranches, soResult, jobOrderQueues] = await Promise.all([
                 fetchBranches(),
                 fetchSalesOrders(),
                 fetch("/api/manufacturing/planning-engineering").then(async (res) => {
                     if (res.ok) {
                         const data = await res.json();
-                        return data.filter((j: any) => isJobOrderStatus(
-                            j.status,
-                            JOB_ORDER_STATUS.DRAFT,
-                            JOB_ORDER_STATUS.FOR_PICKING,
-                            JOB_ORDER_STATUS.PICKED
-                        ));
+                        return splitJobOrderQueues(data);
                     }
-                    return [];
-                }).catch(() => [])
+                    return { queuedJobs: [], cancelledJobs: [] };
+                }).catch(() => ({ queuedJobs: [], cancelledJobs: [] }))
             ]);
 
             setBranches(activeBranches);
 
             setSalesOrders(soResult.data || []);
             setDetailsMap(soResult.detailsMap || {});
-            setRawUnreleasedJobs(queuedJobs);
+            setRawUnreleasedJobs(jobOrderQueues.queuedJobs);
+            setRawCancelledJobs(jobOrderQueues.cancelledJobs);
         } catch (err: any) {
             console.error("Error loading initial data:", err);
             toast.error(err.message || "An error occurred while loading planning data.");
@@ -638,7 +653,7 @@ export function usePlanningEngineering() {
         // Auto generate a JO ID code
         const code = `JO-${Math.floor(100000 + Math.random() * 900000)}`;
 
-        setTargetQuantity(0);
+        setTargetQuantity(totalRemaining);
         setJoNumber(code);
         setPlannedDate(new Date().toISOString().split("T")[0]);
         setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
@@ -924,6 +939,7 @@ export function usePlanningEngineering() {
         setIsDirectAllocDialogOpen,
         handleConfirmDirectAllocate,
         unreleasedJobs,
+        cancelledJobs,
         loadingJobs,
         releasingDraftId,
         handleReleaseDraftFromPlanning

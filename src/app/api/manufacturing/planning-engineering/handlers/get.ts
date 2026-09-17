@@ -17,6 +17,7 @@ import { loadMmLots, MmLotError, mmLotId, unitId } from "../../services/mm-lots.
 import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
+import { manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -44,6 +45,17 @@ function mapQAQueueStatus(value: unknown): string {
     if (status === JOB_ORDER_STATUS.ON_HOLD || status === JOB_ORDER_STATUS.QA_HOLD) return JOB_ORDER_STATUS.ON_HOLD;
     if (status) return status;
     return String(value || "Unknown");
+}
+
+function directusFileId(value: unknown): string | null {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (value && typeof value === "object") {
+        const id = (value as Record<string, unknown>).id;
+        if (typeof id === "string" && id.trim()) return id.trim();
+        if (typeof id === "number" && Number.isFinite(id)) return String(id);
+    }
+    return null;
 }
 
 async function fetchQAJobOrderQueue(searchParams: URLSearchParams) {
@@ -1737,7 +1749,11 @@ export async function handleGET(request: Request) {
 
             // Transform snake_case keys back to camelCase for client compatibility if needed
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
-            const camelCaseList = list.map((item: any) => ({
+            const camelCaseList = list.map((item: any) => {
+                const cancellationImageId = directusFileId(item.cancellation_image_id);
+                const terminationImageId = directusFileId(item.termination_image_id);
+
+                return ({
                 jo_id: item.jo_id,
                 order_id: item.job_order_id || item.order_id || item.id,
                 order_no: item.order_no,
@@ -1778,12 +1794,21 @@ export async function handleGET(request: Request) {
                 modifiedAt: item.modified_at || null,
                 modified_at: item.modified_at || null,
                 modifiedBy: item.modified_by || null,
+                cancelled_at: item.cancelled_at || null,
+                cancelled_by: item.cancelled_by || null,
+                cancelled_by_name: item.cancelled_by_name || null,
+                cancellation_reason: item.cancellation_reason || null,
+                cancellation_image_id: cancellationImageId,
+                cancellation_image_url: cancellationImageId ? manufacturingFileUrl(cancellationImageId) : null,
+                termination_image_id: terminationImageId,
+                termination_image_url: terminationImageId ? manufacturingFileUrl(terminationImageId) : null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
                 productionOutputQuantity: Number(item.production_output_quantity ?? item.produced_quantity ?? 0),
                 yield_logs: item.yield_logs || [],
                 status_history: item.status_history || []
-            }));
+                });
+            });
             return NextResponse.json(camelCaseList);
         }
     } catch (e) {

@@ -105,6 +105,23 @@ export function isCancelledJobOrderStatus(value: unknown): boolean {
 }
 
 /**
+ * A terminated production run is stored with the terminal Cancelled status,
+ * while its workflow history keeps the terminate-production action.
+ */
+export function isTerminatedJobOrder(value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const history = (value as { status_history?: unknown }).status_history;
+    if (!Array.isArray(history)) return false;
+
+    return history.some((entry) => {
+        if (!entry || typeof entry !== "object") return false;
+        const record = entry as { workflow_action?: unknown; new_status?: unknown };
+        return String(record.workflow_action ?? "").trim().toLowerCase() === "terminate-production"
+            && isCancelledJobOrderStatus(record.new_status);
+    });
+}
+
+/**
  * A Job Order may only be cancelled before production starts. Picked JOs may
  * be cancelled after their staged material is returned/reversed by the
  * cancellation transaction.

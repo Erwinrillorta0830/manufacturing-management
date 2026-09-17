@@ -3,9 +3,11 @@ import React from "react";
 import Link from "next/link";
 import { Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
+import { isCancelledJobOrderStatus, isTerminatedJobOrder } from "../../job-order-status";
 
 export interface FamilyGroup {
     familyId: string;
@@ -19,6 +21,7 @@ export interface JOTableProps {
     familyGroups: FamilyGroup[];
     loadingJobs: boolean;
     handleOpenDetails: (jo: any) => void;
+    readOnly?: boolean;
 }
 
 function ConnectedSalesOrderCell({ jobOrder }: { jobOrder: any }) {
@@ -48,12 +51,15 @@ export function JOTable({
     unreleasedJobs,
     familyGroups,
     loadingJobs,
-    handleOpenDetails
+    handleOpenDetails,
+    readOnly = false
 }: JOTableProps) {
     if (unreleasedJobs.length === 0) {
         return (
             <div className="text-center py-12 text-sm text-muted-foreground border border-dashed rounded-lg bg-muted/20">
-                No Job Orders in this branch yet. Release a Sales Order demand line above, or create a Buffer JO to start the workflow.
+                {readOnly
+                    ? "No cancelled Job Orders found for this branch."
+                    : "No Job Orders in this branch yet. Release a Sales Order demand line above, or create a Buffer JO to start the workflow."}
             </div>
         );
     }
@@ -128,7 +134,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="space-y-1.5">
-                                            <JobOrderStatusBadge status={jo.status} />
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <JobOrderStatusBadge
+                                                    status={jo.status}
+                                                    className={isCancelledJobOrderStatus(jo.status) ? "text-xs font-medium" : undefined}
+                                                />
+                                                {isTerminatedJobOrder(jo) && (
+                                                    <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                        Terminated
+                                                    </Badge>
+                                                )}
+                                            </div>
                                             <JobOrderJourneyBar journey={journey} compact />
                                         </div>
                                     </td>
@@ -137,7 +153,16 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <div className="flex items-center justify-center gap-1.5">
-                                            {journey.nextAction?.href && !journey.nextAction.blockedReason ? (
+                                            {readOnly ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleOpenDetails(jo)}
+                                                    className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
+                                                >
+                                                    View Details
+                                                </Button>
+                                            ) : journey.nextAction?.href && !journey.nextAction.blockedReason ? (
                                                 <Button asChild size="sm" className="h-8 text-xs font-semibold">
                                                     <Link href={journey.nextAction.href}>{journey.nextAction.label}</Link>
                                                 </Button>
@@ -153,14 +178,16 @@ export function JOTable({
                                                     {journey.nextAction?.label || "Manage / View Details"}
                                                 </Button>
                                             )}
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                onClick={() => handleOpenDetails(jo)}
-                                                className="h-8 text-xs text-muted-foreground"
-                                            >
-                                                Details
-                                            </Button>
+                                            {!readOnly && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => handleOpenDetails(jo)}
+                                                    className="h-8 text-xs text-muted-foreground"
+                                                >
+                                                    Details
+                                                </Button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
@@ -204,7 +231,7 @@ export function JOTable({
                                                 onClick={() => handleOpenDetails(fg.parentJo)}
                                                 className="h-7 text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white shadow-sm px-3"
                                             >
-                                                Manage Entire Family ({1 + fg.childJos.length} JOs)
+                                                {readOnly ? "View Details" : `Manage Entire Family (${1 + fg.childJos.length} JOs)`}
                                             </Button>
                                         </div>
                                     </td>
@@ -248,7 +275,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="space-y-1.5">
-                                            <JobOrderStatusBadge status={fg.parentJo.status} />
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <JobOrderStatusBadge
+                                                    status={fg.parentJo.status}
+                                                    className={isCancelledJobOrderStatus(fg.parentJo.status) ? "text-xs font-medium" : undefined}
+                                                />
+                                                {isTerminatedJobOrder(fg.parentJo) && (
+                                                    <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                        Terminated
+                                                    </Badge>
+                                                )}
+                                            </div>
                                             <JobOrderJourneyBar
                                                 journey={resolveJobOrderJourney({ status: fg.parentJo.status, jobOrderNo: fg.parentJo.jo_id })}
                                                 compact
@@ -265,7 +302,7 @@ export function JOTable({
                                             onClick={() => handleOpenDetails(fg.parentJo)}
                                             className="border-primary/30 hover:border-primary text-primary hover:bg-primary/5 font-bold h-8 text-xs px-3 transition-all duration-200"
                                         >
-                                            Manage Family
+                                            {readOnly ? "View Details" : "Manage Family"}
                                         </Button>
                                     </td>
                                 </tr>
@@ -311,7 +348,17 @@ export function JOTable({
                                                 )}
                                             </td>
                                             <td className="px-4 py-3">
-                                                <JobOrderStatusBadge status={cJo.status} />
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    <JobOrderStatusBadge
+                                                        status={cJo.status}
+                                                        className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                    />
+                                                    {isTerminatedJobOrder(cJo) && (
+                                                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                            Terminated
+                                                        </Badge>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>
                                                 {cJo.remarks || "Auto-spawned for sub-assembly shortfall."}

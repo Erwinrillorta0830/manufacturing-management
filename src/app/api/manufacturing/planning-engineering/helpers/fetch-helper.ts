@@ -67,10 +67,15 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name`,
             { headers: headersNoCache }
         ).catch(() => null);
+        const usersPromise = fetch(
+            `${DIRECTUS_URL}/items/user?limit=-1&fields=user_id,user_fname,user_lname`,
+            { headers: headersNoCache }
+        ).catch(() => null);
         const responses = await Promise.all(fetchList);
         const statusHistoryResponse = await statusHistoryPromise;
         const dailyQAInspectionsResponse = await dailyQAInspectionsPromise;
         const workCentersResponse = await workCentersPromise;
+        const usersResponse = await usersPromise;
 
         const jos = responses[0].ok ? (await responses[0].json()).data || [] : [];
         const josos = responses[1].ok ? (await responses[1].json()).data || [] : [];
@@ -89,6 +94,9 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             : [];
         const workCenterRows = workCentersResponse?.ok
             ? (await workCentersResponse.json()).data || []
+            : [];
+        const userRows = usersResponse?.ok
+            ? (await usersResponse.json()).data || []
             : [];
 
         let mfgRoutings = [];
@@ -154,15 +162,27 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             return 0;
         };
 
+        const userNameById = new Map<number, string>();
+        userRows.forEach((user: any) => {
+            const userId = getRelationId(user.user_id ?? user.id, ["user_id"]);
+            if (!userId) return;
+            const fullName = [user.user_fname, user.user_lname].filter(Boolean).join(" ").trim();
+            if (fullName) userNameById.set(userId, fullName);
+        });
+
         const statusHistoryByJobOrder = new Map<number, any[]>();
         statusHistoryRows.forEach((history: any) => {
             const jobOrderId = getRelationId(history.job_order_id, ["job_order_id"]);
             if (!jobOrderId) return;
+            const changedBy = getRelationId(history.changed_by, ["user_id"]);
             const historyList = statusHistoryByJobOrder.get(jobOrderId) || [];
             historyList.push({
                 ...history,
                 old_status: normalizeJobOrderStatus(history.old_status) || history.old_status || null,
-                new_status: normalizeJobOrderStatus(history.new_status) || history.new_status
+                new_status: normalizeJobOrderStatus(history.new_status) || history.new_status,
+                changed_by_name: changedBy
+                    ? userNameById.get(changedBy) || `User #${changedBy}`
+                    : null
             });
             statusHistoryByJobOrder.set(jobOrderId, historyList);
         });
@@ -296,6 +316,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             jo.recipe_version_name = versionMap.get(Number(jo.version_id)) || (jo.version_id ? `Version #${jo.version_id}` : null);
 
             const joIdInt = Number(jo.job_order_id || jo.id || 0);
+            const cancelledBy = getRelationId(jo.cancelled_by, ["user_id"]);
 
             const canonicalStatus = normalizeJobOrderStatus(jo.status);
             const mappedStatus = canonicalStatus || jo.status;
@@ -548,7 +569,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 produced_quantity: totalProduced,
                 production_output_quantity: productionOutputQuantity,
                 yield_logs: joYieldLogs,
-                status_history: statusHistoryByJobOrder.get(joIdInt) || []
+                status_history: statusHistoryByJobOrder.get(joIdInt) || [],
+                cancelled_by_name: cancelledBy
+                    ? userNameById.get(cancelledBy) || `User #${cancelledBy}`
+                    : null
             };
         });
     } catch (e) {

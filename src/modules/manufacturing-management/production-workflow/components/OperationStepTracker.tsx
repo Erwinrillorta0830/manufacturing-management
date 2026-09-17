@@ -83,6 +83,8 @@ export function OperationStepTracker({
                     const isQAHold = task.status === "QA Hold";
                     const hasQARecord = task.qa_record_exists === true;
                     const hasShiftProgress = task.shift_progress_exists === true;
+                    const assignedWorkCenterId = Number(selectedJobOrder.primary_work_center_id || 0);
+                    const hasAssignedWorkstation = Number.isSafeInteger(assignedWorkCenterId) && assignedWorkCenterId > 0;
 
                     const taskOperators = routeOperators.filter((op) => op.task_id === task.id);
                     const activeTimers = taskOperators.filter((op) => op.started_at !== null && op.stopped_at === null);
@@ -229,6 +231,8 @@ export function OperationStepTracker({
                                             type="button"
                                             size="xs"
                                             variant="outline"
+                                            disabled={!hasAssignedWorkstation}
+                                            title={!hasAssignedWorkstation ? "Assign a workstation before recording step progress." : undefined}
                                             className="h-6 w-full whitespace-nowrap text-[10px] font-bold text-primary hover:text-primary"
                                             onClick={(e) => {
                                                 e.stopPropagation();
