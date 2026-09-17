@@ -36,7 +36,7 @@ export default function ForceReceivedDialog({
                 <div className="border-b px-4 py-3">
                     <h4 className="text-sm font-bold">Force Received</h4>
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                        Close remaining quantities on {shipment.reference_number}. QA intake will stop and the order will move to Received.
+                        Close remaining quantities on {shipment.purchase_order_no || `PO #${shipment.shipment_id}`}. QA intake will stop and the order will move to Received.
                     </p>
                 </div>
                 <div className="space-y-3 px-4 py-3">

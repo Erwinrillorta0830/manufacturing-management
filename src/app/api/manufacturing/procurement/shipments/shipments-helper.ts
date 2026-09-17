@@ -132,6 +132,8 @@ interface DirectusPO {
     force_received_at?: string | null;
     force_received_by?: number | Record<string, unknown> | null;
     force_received_reason?: string | null;
+    qa_received_at?: string | null;
+    qa_received_by?: number | Record<string, unknown> | null;
 }
 
 interface DirectusPaymentMode {
@@ -513,6 +515,8 @@ function mapPurchaseOrder(
         remark: po.remark || "",
         created_at: po.date_encoded || "",
         branch_id: branchId,
+        qaReceivedAt: po.qa_received_at || null,
+        qaReceivedBy: relationId(po.qa_received_by, "user_id") || relationId(po.qa_received_by, "id"),
         payment_type: po.payment_type || null,
         payment_mode: po.payment_mode || null,
         payment_mode_name: po.payment_mode ? paymentModes.get(Number(po.payment_mode))?.mode_name || null : null,
@@ -719,7 +723,7 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
     clauses.push({ purchase_order_id: { _in: [-1] } });
 }
 
-const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,revised_at,revised_by,for_revision_at,cancelled_at,cancelled_by,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
+const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,revised_at,revised_by,for_revision_at,cancelled_at,cancelled_by,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason,qa_received_at,qa_received_by";
 
 async function mapPurchaseOrderRows(rows: DirectusPO[]) {
     const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
