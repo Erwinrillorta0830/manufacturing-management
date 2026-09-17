@@ -17,8 +17,15 @@ import {
     requirePurchaseOrderModuleAccess
 } from "../../purchase-orders/_auth";
 import { ProductCategoryTypeValidationError, resolveProductCategoryTypes, type PurchaseOrderCategoryType } from "../_category-type";
-import { evaluateStorageLotEligibility } from "../../qa-receiving/_lot-eligibility";
+import {
+    evaluateStorageLotEligibility,
+    findStorageLotContentConflict,
+    productTypeClassification,
+    type StorageLotStoredProduct
+} from "../../qa-receiving/_lot-eligibility";
 import { RECEIVING_ERROR_CODES } from "../../qa-receiving/_receiving-errors";
+
+type StoredProductSummary = StorageLotStoredProduct & { productName: string };
 
 interface DirectusLotLog {
     id: number;
@@ -298,6 +305,64 @@ export async function GET(request: Request) {
                 "movement_id,product_id,mm_lot_id,lot_id,batch_no,quantity,manufacturing_date,expiry_date"
             );
             const occupiedByLot = sumMovementQuantitiesByStorageLot(movementRows);
+            const netQuantityByLotProduct = new Map<string, number>();
+            const storedProductIds = new Set<number>();
+            for (const movement of movementRows) {
+                const lotId = lotNumber(movement.mm_lot_id);
+                const productId = relationNumber(movement.product_id, ["product_id", "id"]);
+                if (!lotId || !productId) continue;
+                const key = `${lotId}:${productId}`;
+                netQuantityByLotProduct.set(key, (netQuantityByLotProduct.get(key) || 0) + Number(movement.quantity || 0));
+                storedProductIds.add(productId);
+            }
+            const storedProductTypeById = new Map<number, number | null>();
+            const storedProductNameById = new Map<number, string>();
+            if (storedProductIds.size > 0) {
+                const storedProductsRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${[...storedProductIds].join(",")}&fields=product_id,product_name,product_type&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                if (storedProductsRes.ok) {
+                    const storedProductsBody = await storedProductsRes.json();
+                    for (const row of (storedProductsBody.data || []) as Record<string, unknown>[]) {
+                        const storedProductId = relationNumber(row.product_id, ["product_id", "id"]);
+                        if (!storedProductId) continue;
+                        storedProductTypeById.set(storedProductId, relationNumber(row.product_type, ["product_type_id", "type_id", "id"]));
+                        storedProductNameById.set(storedProductId, String(row.product_name || `Product ${storedProductId}`));
+                    }
+                }
+            }
+            const buildStoredProducts = (lotId: number): StoredProductSummary[] => {
+                const stored: StoredProductSummary[] = [];
+                for (const [key, netQuantity] of netQuantityByLotProduct) {
+                    if (netQuantity <= 0) continue;
+                    const [lotIdRaw, productIdRaw] = key.split(":");
+                    if (Number(lotIdRaw) !== lotId) continue;
+                    const storedProductId = Number(productIdRaw);
+                    stored.push({
+                        productId: storedProductId,
+                        productTypeId: storedProductTypeById.get(storedProductId) ?? null,
+                        productName: storedProductNameById.get(storedProductId) || `Product ${storedProductId}`
+                    });
+                }
+                return stored;
+            };
+            const targetScope = {
+                productTypeId: product.productTypeId,
+                productFamilyIds: product.productFamilyIds,
+                uomId: product.uomId,
+                productId: product.productId
+            };
+            const storedSummary = (storedProducts: StoredProductSummary[]) => storedProducts.map(stored => {
+                const classification = productTypeClassification(stored.productTypeId);
+                return {
+                    product_id: stored.productId,
+                    product_name: stored.productName,
+                    product_type_id: stored.productTypeId,
+                    classification_code: classification.code,
+                    classification_label: classification.label
+                };
+            });
 
             if (action === "batches") {
                 const lot = lots[0] as MmLotRecord | undefined;
@@ -308,6 +373,12 @@ export async function GET(request: Request) {
                     return NextResponse.json({
                         error: "The selected storage lot is not compatible with this product.",
                         ...(eligibility.reason === "UOM" ? { code: RECEIVING_ERROR_CODES.STORAGE_LOT_UOM_MISMATCH } : {})
+                    }, { status: 409 });
+                }
+                const conflict = findStorageLotContentConflict(buildStoredProducts(lotId), targetScope);
+                if (conflict) {
+                    return NextResponse.json({
+                        error: `The selected storage lot already contains ${storedProductNameById.get(conflict.productId) || `product ${conflict.productId}`} (${productTypeClassification(conflict.productTypeId).label}) and cannot receive a different product type.`
                     }, { status: 409 });
                 }
                 const batches = new Map<string, { batchNumber: string; manufacturingDate: string | null; expirationDate: string | null }>();
@@ -332,6 +403,8 @@ export async function GET(request: Request) {
                 if (!lotId) return [];
                 const eligibility = evaluateStorageLotEligibility(lot, product, occupiedByLot.get(lotId) || 0);
                 if (!eligibility.eligible) return [];
+                const storedProducts = buildStoredProducts(lotId);
+                if (findStorageLotContentConflict(storedProducts, targetScope)) return [];
                 const uomId = lotUnitId(lot);
                 const lotProductTypeId = relationNumber(lot.product_type_id, ["product_type_id", "type_id", "id"])
                     || relationNumber(lot.product_type, ["product_type_id", "type_id", "id"]);
@@ -343,12 +416,15 @@ export async function GET(request: Request) {
                     allocation_branch_id: targetBranchId,
                     inventory_type_id: null,
                     unit_id: uomId,
-                    product_type_id: lotProductTypeId || product.productTypeId,
+                    product_type_id: lotProductTypeId,
                     product_category_type: product.categoryType,
                     capacity_status: eligibility.capacityStatus,
+                    capacity: eligibility.capacity,
                     occupiedQuantity: eligibility.occupiedQuantity,
                     availableQuantity: eligibility.remainingCapacity,
                     remainingCapacity: eligibility.remainingCapacity,
+                    stored_products: storedSummary(storedProducts),
+                    target_classification: productTypeClassification(product.productTypeId),
                     mapping_status: "CANONICAL",
                     is_selectable: true,
                     is_legacy_only: false,
@@ -502,6 +578,7 @@ export async function GET(request: Request) {
                     line_id: r.id,
                     shipment_id: {
                         shipment_id: matchedPo ? matchedPo.purchase_order_id : (parseInt(cleanPoRef) || null),
+                        purchase_order_no: matchedPo ? matchedPo.purchase_order_no : poRef,
                         reference_number: matchedPo ? (matchedPo.reference || matchedPo.purchase_order_no) : poRef,
                         date_received: matchedPo ? (matchedPo.date_received || r.created_on) : r.created_on,
                         created_at: matchedPo ? (matchedPo.date_encoded || matchedPo.datetime) : r.created_on
@@ -578,6 +655,7 @@ export async function GET(request: Request) {
                     line_id: r.id,
                     shipment_id: {
                         shipment_id: matchedPo ? matchedPo.purchase_order_id : (parseInt(cleanPoRef) || null),
+                        purchase_order_no: matchedPo ? matchedPo.purchase_order_no : poRef,
                         reference_number: matchedPo ? (matchedPo.reference || matchedPo.purchase_order_no) : poRef,
                         date_received: matchedPo ? (matchedPo.date_received || r.created_on) : r.created_on,
                         created_at: matchedPo ? (matchedPo.date_encoded || matchedPo.datetime) : r.created_on
