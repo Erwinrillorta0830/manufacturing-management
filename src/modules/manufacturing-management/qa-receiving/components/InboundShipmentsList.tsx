@@ -108,10 +108,10 @@ export default function InboundShipmentsList({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {/* PO# / Ref search */}
                     <div className="space-y-1">
-                        <label className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider block">PO# / Ref</label>
+                            <label className="text-[8px] font-bold text-muted-foreground uppercase tracking-wider block">PO Number</label>
                         <input
                             type="text"
-                            placeholder="Search PO..."
+                            placeholder="Search PO number..."
                             value={searchPO}
                             onChange={e => {
                                 setPage(1);
@@ -181,7 +181,7 @@ export default function InboundShipmentsList({
                         >
                             <div className="flex justify-between items-start">
                                 <span className="font-extrabold text-xs text-foreground block">
-                                    {s.reference_number}
+                                    {s.purchase_order_no || `PO #${s.shipment_id}`}
                                 </span>
                                 <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-extrabold border ${
                                     s.isForceReceived

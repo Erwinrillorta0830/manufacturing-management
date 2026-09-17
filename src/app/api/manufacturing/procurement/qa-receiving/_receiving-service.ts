@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { DIRECTUS_URL, headers, procurementDirectusFetch } from "../_directus";
-import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff, receiptDateAtManilaMidnight } from "../_domain";
+import { evaluateShelfLife, INVENTORY_STATUS, PAYMENT_STATUS, paymentStatusAllowsReceivingHandoff } from "../_domain";
 import { forceReceivedIntakeMessage } from "../../qa-receiving/_force-received";
 import { receivingSubmissionSchema } from "../_schemas";
 import {
@@ -38,17 +38,24 @@ import { ReceivingDocumentTypeError, validateReceivingDocumentType } from "../..
 import { resolveBaseUnitCostPhp, resolveLandedCostCurrency } from "../landed-cost/_domain";
 import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit";
 import { normalizeProcurementMoney } from "@/modules/manufacturing-management/decimal";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     allocationCapacityKey,
     capacityAuditsEqual,
     evaluateLotCapacities,
     inspectLotCapacity,
     readLotCapacityAudit,
+    LOT_CAPACITY_EPSILON,
     type LotCapacityAllocationAudit,
     type LotCapacityAllocationInput,
     type LotCapacityAudit
 } from "../../qa-receiving/_lot-capacity";
-import { isStorageLotProductCompatible } from "../../qa-receiving/_lot-eligibility";
+import {
+    findStorageLotContentConflict,
+    isStorageLotProductCompatible,
+    productTypeClassification,
+    type StorageLotStoredProduct
+} from "../../qa-receiving/_lot-eligibility";
 import {
     discrepancyRemarkError,
     RECEIVING_ERROR_CODES,
@@ -469,7 +476,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
         ]))];
 
         const [headerRes, linesRes, branchesRes, movementTypesRes] = await Promise.all([
-            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at,currency_code,is_import,exchange_rate`),
+            procurementDirectusFetch(`/items/purchase_order/${shipmentId}?fields=purchase_order_id,branch_id,inventory_status,payment_status,date_received,force_received_at,currency_code,is_import,exchange_rate,qa_received_at,qa_received_by,receiver_id`),
             fetch(`${DIRECTUS_URL}/items/purchase_order_products?filter[purchase_order_id][_eq]=${shipmentId}&fields=*&limit=-1`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/branches?limit=200&fields=id,branch_name,branch_code,isActive,isBadStock,bad_stock_branch_id`, { headers, cache: "no-store" }),
             fetch(`${DIRECTUS_URL}/items/inventory_transaction_types?fields=transaction_type_id,type_name,direction,origin_table&limit=-1`, { headers, cache: "no-store" })
@@ -809,6 +816,8 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 poLine,
                 product,
                 productId,
+                productTypeId,
+                productUomId,
                 received,
                 accepted,
                 rejected,
@@ -885,7 +894,10 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             const headerRestore = await mutate("purchase_order", shipmentId, "PATCH", {
                 inventory_status: shipment.inventory_status,
                 payment_status: shipment.payment_status ?? null,
-                date_received: shipment.date_received
+                date_received: shipment.date_received,
+                qa_received_at: shipment.qa_received_at ?? null,
+                qa_received_by: relationValueId(shipment.qa_received_by, ["user_id", "id"]),
+                receiver_id: relationValueId(shipment.receiver_id, ["user_id", "id"])
             });
             if (!headerRestore.ok) return false;
             for (const change of [...lineChanges].reverse()) await mutate("purchase_order_products", change.id, "PATCH", { received: change.received });
@@ -919,9 +931,65 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
             }
             const freshMovementRows = await loadMovementRowsForMmLots(
                 allocationLotIds,
-                "movement_id,mm_lot_id,lot_id,quantity"
+                "movement_id,mm_lot_id,lot_id,quantity,product_id"
             );
             const freshOccupied = sumMovementQuantitiesByStorageLot(freshMovementRows);
+            const netQuantityByLotProduct = new Map<string, number>();
+            const storedProductIds = new Set<number>();
+            for (const movement of freshMovementRows) {
+                const lotId = relationValueId(movement.mm_lot_id, ["lot_id", "id"]);
+                const movementProductId = relationValueId(movement.product_id, ["product_id", "id"]);
+                if (!lotId || !movementProductId) continue;
+                const key = `${lotId}:${movementProductId}`;
+                netQuantityByLotProduct.set(key, (netQuantityByLotProduct.get(key) || 0) + Number(movement.quantity || 0));
+                storedProductIds.add(movementProductId);
+            }
+            const storedProductTypeById = new Map<number, number | null>();
+            const storedProductNameById = new Map<number, string>();
+            if (storedProductIds.size > 0) {
+                const storedProductsRes = await fetch(
+                    `${DIRECTUS_URL}/items/products?filter[product_id][_in]=${[...storedProductIds].join(",")}&fields=product_id,product_name,product_type&limit=-1`,
+                    { headers, cache: "no-store" }
+                );
+                if (storedProductsRes.ok) {
+                    const storedProductsBody = await storedProductsRes.json();
+                    for (const row of (storedProductsBody.data || []) as Record<string, unknown>[]) {
+                        const storedProductId = relationValueId(row.product_id, ["product_id", "id"]);
+                        if (!storedProductId) continue;
+                        storedProductTypeById.set(storedProductId, relationValueId(row.product_type, ["product_type_id", "type_id", "id"]));
+                        storedProductNameById.set(storedProductId, String(row.product_name || `Product ${storedProductId}`));
+                    }
+                }
+            }
+            const storedProductsByLot = new Map<number, StorageLotStoredProduct[]>();
+            for (const [key, netQuantity] of netQuantityByLotProduct) {
+                if (netQuantity <= 0) continue;
+                const [lotIdRaw, productIdRaw] = key.split(":");
+                const lotId = Number(lotIdRaw);
+                const storedProductId = Number(productIdRaw);
+                const stored = storedProductsByLot.get(lotId) || [];
+                stored.push({ productId: storedProductId, productTypeId: storedProductTypeById.get(storedProductId) ?? null });
+                storedProductsByLot.set(lotId, stored);
+            }
+            for (const line of prepared) {
+                for (const allocation of [...line.acceptedLotAllocations, ...line.rejectedLotAllocations]) {
+                    const contentConflict = findStorageLotContentConflict(
+                        storedProductsByLot.get(allocation.storageLotId) || [],
+                        {
+                            productTypeId: line.productTypeId,
+                            productFamilyIds: [line.productId],
+                            uomId: line.productUomId,
+                            productId: line.productId
+                        }
+                    );
+                    if (contentConflict) {
+                        throw new ReceivingError(
+                            `Storage lot ${allocation.storageLotId} already contains ${storedProductNameById.get(contentConflict.productId) || `product ${contentConflict.productId}`} (${productTypeClassification(contentConflict.productTypeId).label}) and cannot receive a different product type.`,
+                            409
+                        );
+                    }
+                }
+            }
             const freshCapacityByLot = new Map<number, number | null>();
             for (const lotId of allocationLotIds) {
                 const lot = freshLots.find(row => Number(row.lot_id) === lotId);
@@ -952,6 +1020,14 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 }))
             ]);
             const capacityEvaluations = evaluateLotCapacities(freshCapacityByLot, freshOccupied, capacityInputs);
+            for (const evaluation of capacityEvaluations.values()) {
+                if (evaluation.receiptOverageQuantity > LOT_CAPACITY_EPSILON) {
+                    throw new ReceivingError(
+                        `Storage lot ${evaluation.lotId} would exceed its maximum occupancy: ${evaluation.occupiedQuantity} on hand + ${evaluation.incomingQuantity} incoming against ${evaluation.capacity ?? 0} capacity. Reduce the allocated quantity or choose another lot.`,
+                        409
+                    );
+                }
+            }
             capacityAuditsByAllocationKey = new Map(
                 [...capacityEvaluations.values()].flatMap(evaluation => evaluation.allocations.map(audit => [audit.key, audit] as const))
             );
@@ -971,7 +1047,7 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     total_amount: normalizeProcurementMoney(String(line.poLine.net_amount ?? line.poLine.total_amount ?? 0)),
                     allocated_expense_php: normalizeProcurementMoney(allocation.allocatedExpense),
                     final_landed_unit_cost: normalizeProcurementMoney(allocation.finalLandedUnitCost), branch_id: branchId,
-                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDateAtManilaMidnight(receiptDate),
+                    receipt_no: receiptNumberForLine(referenceNumber, line.item.line_id), received_date: receiptDate,
                     isPosted: 1, qa_status: line.item.qa_status, quantity_rejected: line.rejected, rejection_reason: line.item.rejection_reason,
                     receipt_type: supplierDocumentTypeId,
                     quarantine_disposition_id: replacementDispositionId || null,
@@ -1207,8 +1283,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                 allocationChanges
             );
 
+            commitPhase = "status";
+            const qaAuditPayload = {
+                qa_received_at: formatPhtDateTime(),
+                qa_received_by: options.actorUserId,
+                receiver_id: options.actorUserId
+            };
             if (!replacementDispositionId) {
-                commitPhase = "status";
                 const nextInventoryStatus = receivingStatus.status === "Partially Received"
                     ? INVENTORY_STATUS.PARTIALLY_RECEIVED
                     : receivingStatus.status === "Rejected"
@@ -1219,9 +1300,13 @@ export async function handleQaReceivingPost(request: Request, options: Receiving
                     ...(nextInventoryStatus === INVENTORY_STATUS.RECEIVED
                         ? { payment_status: PAYMENT_STATUS.AWAITING_PAYMENT }
                         : {}),
-                    ...(receivingStatus.status !== "Partially Received" ? { date_received: receiptDate } : {})
+                    ...(receivingStatus.status !== "Partially Received" ? { date_received: formatPhtDateTime() } : {}),
+                    ...qaAuditPayload
                 });
                 if (!statusRes.ok) throw new Error(`Failed to update purchase-order status (${statusRes.status}).`);
+            } else {
+                const auditRes = await mutate("purchase_order", shipmentId, "PATCH", qaAuditPayload);
+                if (!auditRes.ok) throw new Error(`Failed to update purchase-order QA audit fields (${auditRes.status}).`);
             }
         } catch (error) {
             let persistedMovementIds: number[] = finalMovements.map(movement => movement.movementId);

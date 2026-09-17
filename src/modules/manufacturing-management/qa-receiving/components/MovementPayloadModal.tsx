@@ -13,7 +13,7 @@ interface MovementPayloadModalProps {
     onOpenChange: (open: boolean) => void;
     preview: ReceivingPreview | null;
     lineItems: ShipmentLineItem[];
-    purchaseOrderReference?: string | null;
+    purchaseOrderNumber?: string | null;
     commitReady: boolean;
     posting: boolean;
     onCommit: () => void;
@@ -33,7 +33,7 @@ export default function MovementPayloadModal({
     onOpenChange,
     preview,
     lineItems,
-    purchaseOrderReference,
+    purchaseOrderNumber,
     commitReady,
     posting,
     onCommit,
@@ -163,7 +163,7 @@ export default function MovementPayloadModal({
                     <DialogDescription className="text-xs">
                         {committedResult
                             ? `Receipt ${committedResult.commitReference} was posted successfully. Confirm the persisted records below.`
-                            : `Receipt Number ${preview?.receivingTicketNumber ? `“${preview.receivingTicketNumber}” ` : ""}will be posted for PO ${purchaseOrderReference || "the selected purchase order"}. Review the movement and allocation records before posting.`}
+                            : `Receipt Number ${preview?.receivingTicketNumber ? `“${preview.receivingTicketNumber}” ` : ""}will be posted for PO ${purchaseOrderNumber || "the selected purchase order"}. Review the movement and allocation records before posting.`}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -194,7 +194,7 @@ export default function MovementPayloadModal({
                                             <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">
                                                 <dt className="text-xs font-bold uppercase tracking-wider text-foreground/70">PO Number</dt>
                                                 <dd className="mt-1 break-words font-mono text-lg font-extrabold leading-tight text-foreground sm:text-xl">
-                                                    {purchaseOrderReference || "Current purchase order"}
+                                                    {purchaseOrderNumber || "Current purchase order"}
                                                 </dd>
                                             </div>
                                             <div className="min-w-0 rounded-lg border bg-background px-3 py-3 sm:px-4 sm:py-4 lg:col-span-2">

@@ -107,6 +107,7 @@ export default function QAReceivingModule({
         handleUpdateRow,
         handleUpdateAllocations,
         handleUpdateRejectedAllocations,
+        handleApplyBatchDates,
         handleUpdateQaReading,
         handleSubmitInspection,
         clearInspection,
@@ -138,6 +139,9 @@ export default function QAReceivingModule({
         handleProcessQuarantineReturn,
         handleCancelQuarantineDisposition
     } = useQAReceiving({ mode, shipmentId, replacementDispositionId });
+
+    const selectedPurchaseOrderNumber = selectedShipment?.purchase_order_no?.trim()
+        || (selectedShipment ? `PO #${selectedShipment.shipment_id}` : "");
 
     const openShipment = (shipment: Shipment) => {
         router.push(`/mm/qa-receiving/${encodeURIComponent(String(shipment.shipment_id))}`);
@@ -208,6 +212,7 @@ export default function QAReceivingModule({
                 handleUpdateRow={handleUpdateRow}
                 handleUpdateAllocations={handleUpdateAllocations}
                 handleUpdateRejectedAllocations={handleUpdateRejectedAllocations}
+                onApplyBatchDates={handleApplyBatchDates}
                 handleUpdateQaReading={handleUpdateQaReading}
                 handleSubmitInspection={handleSubmitInspection}
                 onReviewPreview={() => setPreviewOpen(true)}
@@ -232,7 +237,7 @@ export default function QAReceivingModule({
                             Back to Inbound QA Queue
                         </button>
                         <h2 className="truncate text-sm font-extrabold text-foreground">
-                            {selectedShipment ? `Cargo Manifest Inspection: ${selectedShipment.reference_number}` : `Purchase Order ${shipmentId ?? ""}`}
+                            {selectedShipment ? `Cargo Manifest Inspection: ${selectedPurchaseOrderNumber}` : `Purchase Order ${shipmentId ?? ""}`}
                         </h2>
                         <p className="mt-1 text-[11px] text-muted-foreground">
                             Review one purchase order at a time without keeping the inspection queue open beside the worksheet.
@@ -275,7 +280,7 @@ export default function QAReceivingModule({
                     onOpenChange={setPreviewOpen}
                     preview={receivingPreview}
                     lineItems={lineItems}
-                    purchaseOrderReference={selectedShipment?.reference_number}
+                    purchaseOrderNumber={selectedPurchaseOrderNumber}
                     commitReady={receivingCommitReady}
                     posting={postingInspection}
                     onCommit={handleCommitReceiving}

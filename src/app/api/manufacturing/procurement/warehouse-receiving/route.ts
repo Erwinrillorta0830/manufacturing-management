@@ -384,7 +384,7 @@ async function writeWorkflowHistory(input: {
             to_inventory_status: input.toStatus,
             revision_before: input.revisionBefore,
             revision_after: input.revisionAfter,
-            created_at: new Date().toISOString()
+            created_at: formatPhtDateTime()
         })
     });
     if (!result.response.ok) throw new WarehouseReceivingError("Purchase-order workflow history could not be recorded.", 503);
