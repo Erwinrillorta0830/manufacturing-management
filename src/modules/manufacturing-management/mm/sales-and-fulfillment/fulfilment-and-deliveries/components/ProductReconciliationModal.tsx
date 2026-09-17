@@ -540,10 +540,6 @@ export default function ProductReconciliationModal({
         });
     };
 
-    const handleReceivedQtyChange = (originalIndex: number, newReceivedQty: number) => {
-        updateLine(originalIndex, { received_quantity: newReceivedQty });
-    };
-
     const handleConfirmLotAllocation = (updatedReservations: LineItemReservation[]) => {
         if (allocationModalItemIndex === null) return;
         updateLine(allocationModalItemIndex, {

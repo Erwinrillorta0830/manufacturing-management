@@ -206,7 +206,7 @@ export function InventoryReportsTable({
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {paginatedProducts.map((product, index) => {
+                        {paginatedProducts.map((product) => {
                             const isExpanded = expandedProductIds.has(product.productId);
                             const isCritical = product.stockStatus === "out_of_stock";
                             const isLow = product.stockStatus === "low_stock";

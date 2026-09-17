@@ -116,6 +116,7 @@ const RowQuantityInput = React.memo(function RowQuantityInput({
   disabled = false,
   hasError = false,
 }: RowQuantityInputProps) {
+  const [prevValue, setPrevValue] = useState(value);
   const [localVal, setLocalVal] = useState<string>(
     value === 0 || value === undefined || value === null ? "" : String(value)
   );
@@ -123,11 +124,12 @@ const RowQuantityInput = React.memo(function RowQuantityInput({
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync from props when value changes externally and input is not focused
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value);
     if (!isFocused) {
       setLocalVal(value === 0 || value === undefined || value === null ? "" : String(value));
     }
-  }, [value, isFocused]);
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -1125,7 +1127,7 @@ export function StockAdjustmentManualForm({
     if (activeLotBatchIndex === null) return null;
     const allItems = form.getValues("items") || [];
     return allItems[activeLotBatchIndex] || null;
-  }, [activeLotBatchIndex, lotBatchModalOpen, form]);
+  }, [activeLotBatchIndex, form]);
 
   const modalExistingFormAllocations = useMemo(() => {
     if (activeLotBatchIndex === null || !lotBatchModalOpen) return undefined;

@@ -63,8 +63,6 @@ export function VersionManagementTab({
     units,
     allCatalogProducts,
     setHasUnsavedChanges,
-    isSyncingYield,
-    handleSyncHistoricalYield,
     isVersionLocked = false,
     onSetPrimary,
     onSubmitForApproval,

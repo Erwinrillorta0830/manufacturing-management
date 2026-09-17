@@ -138,19 +138,21 @@ function BatchQuantityInput({
   onChange: (val: number) => void;
   hasError?: boolean;
 }) {
+  const [prevValue, setPrevValue] = useState(value);
   const [localValue, setLocalValue] = useState<string>(() =>
     value === 0 || value === undefined || value === null ? '' : String(value)
   );
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value);
     const strVal = value === 0 || value === undefined || value === null ? '' : String(value);
-    setLocalValue((prev) => {
-      const prevNum = prev === '' ? 0 : parseInt(prev, 10);
-      const newNum = strVal === '' ? 0 : parseInt(strVal, 10);
-      return prevNum === newNum ? prev : strVal;
-    });
-  }, [value]);
+    const prevNum = localValue === '' ? 0 : parseInt(localValue, 10);
+    const newNum = strVal === '' ? 0 : parseInt(strVal, 10);
+    if (prevNum !== newNum) {
+      setLocalValue(strVal);
+    }
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;

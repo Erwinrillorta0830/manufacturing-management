@@ -121,7 +121,7 @@ export async function GET(request: Request) {
         });
 
         // Reconcile: Ensure only one active version is primary; set older versions' is_primary to 0
-        const primaryCandidate = versionsList.find((v: any) => v.is_primary && v.status === "Active") || versionsList.find((v: any) => v.is_primary) || versionsList[0];
+        const primaryCandidate = versionsList.find((v: { is_primary?: boolean; status?: string }) => Boolean(v.is_primary) && v.status === "Active") || versionsList.find((v: { is_primary?: boolean }) => Boolean(v.is_primary)) || versionsList[0];
         if (primaryCandidate) {
             for (const v of versionsList) {
                 if (v.version_id !== primaryCandidate.version_id && v.is_primary) {
