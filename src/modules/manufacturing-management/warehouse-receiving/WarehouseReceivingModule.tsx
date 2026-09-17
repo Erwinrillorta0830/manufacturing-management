@@ -92,6 +92,7 @@ export default function WarehouseReceivingModule() {
 
     const isStarted = selectedOrder?.status === "Warehouse Receiving";
     const isContinuation = selectedOrder?.status === "Partially Received";
+    const hasRemainingQuantity = selectedLines.some(line => line.remainingQuantity > 1e-9);
     const actionBusy = submitting !== null || printing;
     const totalEntered = selectedLines.reduce((sum, line) => sum + Math.max(0, Number(quantities[line.lineId] || 0)), 0);
     const overReceivingLines = selectedLines.filter(line => Math.max(0, Number(quantities[line.lineId] || 0)) > line.allowableQuantity + 1e-9);
@@ -201,7 +202,10 @@ export default function WarehouseReceivingModule() {
                                     <tbody className="divide-y">
                                         {orders.map(order => (
                                             <tr key={order.id} className="transition-colors hover:bg-muted/30">
-                                                <td className="whitespace-nowrap px-4 py-4 font-semibold">{order.poNumber}</td>
+                                                <td className="whitespace-nowrap px-4 py-4 font-semibold">
+                                                    {order.poNumber}
+                                                    {order.referenceNumber && <span className="block text-xs font-normal text-muted-foreground">Ref: {order.referenceNumber}</span>}
+                                                </td>
                                                 <td className="max-w-56 px-4 py-4"><span className="block truncate" title={order.supplierName}>{order.supplierName}</span></td>
                                                 <td className="whitespace-nowrap px-4 py-4">{formatDate(order.dateApproved)}</td>
                                                 <td className="whitespace-nowrap px-4 py-4"><span className="font-medium">{order.currencyCode}</span>{order.currencyCode !== "PHP" && <span className="block text-xs text-muted-foreground">Base PHP</span>}</td>
@@ -227,6 +231,7 @@ export default function WarehouseReceivingModule() {
                                                 <span className="font-semibold">{order.poNumber}</span>
                                                 <Badge variant="outline" className={statusClass(order.status)}>{order.status}</Badge>
                                             </div>
+                                            {order.referenceNumber && <p className="mt-0.5 text-xs text-muted-foreground">Ref: {order.referenceNumber}</p>}
                                             <p className="mt-1 truncate text-sm text-muted-foreground">{order.supplierName} · {order.branch.name} {order.branch.code ? `(${order.branch.code})` : ""}</p>
                                         </div>
                                         <div className="flex shrink-0 items-center gap-6 text-sm">
@@ -260,6 +265,7 @@ export default function WarehouseReceivingModule() {
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                     <div className="flex flex-wrap items-center gap-2"><CardTitle>{selectedOrder.poNumber}</CardTitle><Badge variant="outline" className={statusClass(selectedOrder.status)}>{selectedOrder.status}</Badge></div>
+                                    {selectedOrder.referenceNumber && <p className="mt-1 text-xs text-muted-foreground">Ref: {selectedOrder.referenceNumber}</p>}
                                     <p className="mt-1 text-sm text-muted-foreground">{selectedOrder.supplierName} · Receiving branch: {selectedOrder.branch.name} {selectedOrder.branch.code ? `(${selectedOrder.branch.code})` : ""}</p>
                                 </div>
                                 <div className="text-left sm:text-right"><p className="text-xs text-muted-foreground">PHP total</p><p className="font-semibold">{formatAmount(selectedOrder.totalPhpAmount, "PHP")}</p>{foreignTotal(selectedOrder) && <p className="text-xs text-muted-foreground">{selectedOrder.currencyCode} {foreignTotal(selectedOrder)}</p>}</div>
@@ -294,7 +300,8 @@ export default function WarehouseReceivingModule() {
                             <div className="space-y-3 text-sm"><div className="flex items-center gap-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-4 w-4" /></span><div><p className="font-medium">Approved</p><p className="text-xs text-muted-foreground">Finance approval complete</p></div></div><div className={`flex items-center gap-3 ${isStarted ? "text-foreground" : "text-muted-foreground"}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full ${isStarted ? "bg-primary text-primary-foreground" : "bg-muted"}`}>2</span><div><p className="font-medium">Warehouse Receiving</p><p className="text-xs text-muted-foreground">Confirm physical quantities</p></div></div><div className="flex items-center gap-3 text-muted-foreground"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted">3</span><div><p className="font-medium">Receiving QA</p><p className="text-xs">Lot and quality inspection</p></div></div></div>
                             <Separator />
                             {overReceivingLines.length > 0 && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This receipt contains an over-receipt. Submission is allowed, and the excess will be visible for review.</p>}
-                            {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
+                            {isContinuation && !hasRemainingQuantity && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">This purchase order has no remaining quantity available for another warehouse receipt.</p>}
+                            {!isStarted ? <Button className="w-full" onClick={() => void start()} disabled={actionBusy || (isContinuation && !hasRemainingQuantity)} title={isContinuation && !hasRemainingQuantity ? "No remaining quantity is available for another warehouse receipt." : undefined}>{submitting === "start" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<PackageCheck className="mr-2 h-4 w-4" /> {isContinuation ? "Start Next Warehouse Receipt" : "Start Warehouse Receiving"}</Button> : <><Button variant="outline" className="w-full" onClick={() => void saveDraft()} disabled={actionBusy}>{submitting === "save_draft" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Save Draft</Button>{selectedOrder.draft && <Button variant="outline" className="w-full" onClick={() => void printSummary()} disabled={actionBusy}>{printing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />} Print Receiving Summary</Button>}<Button className="w-full" onClick={() => void submitToQa()} disabled={actionBusy}>{submitting === "submit_to_qa" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}<ClipboardCheck className="mr-2 h-4 w-4" /> Complete &amp; Send to QA</Button></>}
                             <p className="text-center text-xs leading-5 text-muted-foreground">Sending to QA locks this warehouse receipt and makes it available in QA Receiving.</p>
                         </CardContent>
                     </Card>
