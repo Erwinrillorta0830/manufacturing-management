@@ -9,9 +9,9 @@ import {
     getInventoryStatusBadge,
     getPaymentStatusBadge,
     getStatusBadge,
-    INVENTORY_STATUS_FILTER_OPTIONS,
     PAYMENT_STATUS_FILTER_OPTIONS
 } from "./ShipmentBadges";
+import { useInventoryStatusOptions } from "../../hooks/useInventoryStatusOptions";
 
 export interface ShipmentListSidebarProps {
     fullWidth?: boolean;
@@ -64,9 +64,16 @@ function supplierDetails(shipment: IncomingShipment, suppliers: Supplier[]) {
 
 function formatRequestedDate(value?: string | null) {
     if (!value) return "—";
-    const date = new Date(value);
+    const raw = String(value).trim();
+    const phtWallClock = /^(\d{4}-\d{2}-\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/.exec(raw);
+    const date = phtWallClock ? new Date(`${phtWallClock[1]}T00:00:00+08:00`) : new Date(raw);
     if (Number.isNaN(date.getTime())) return "—";
-    return date.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" });
+    return date.toLocaleDateString("en-PH", {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        timeZone: "Asia/Manila"
+    });
 }
 
 function transactionCurrency(shipment: IncomingShipment): "PHP" | "USD" {
@@ -116,6 +123,7 @@ export function ShipmentListSidebar({
     isSupplierForeign,
     onOpenCreateModal
 }: ShipmentListSidebarProps) {
+    const inventoryStatusOptions = useInventoryStatusOptions();
     const supplierOptions = useMemo(() => [
         { value: "", label: "All Suppliers" },
         ...[...suppliers]
@@ -405,7 +413,7 @@ export function ShipmentListSidebar({
                                     aria-label="Filter by inventory status"
                                     className="h-9 w-full rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground outline-none focus:ring-1 focus:ring-primary"
                                 >
-                                    {INVENTORY_STATUS_FILTER_OPTIONS.map(option => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
+                                    {inventoryStatusOptions.map(option => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
                                 </select>
                             </label>
                             <label className="space-y-1">

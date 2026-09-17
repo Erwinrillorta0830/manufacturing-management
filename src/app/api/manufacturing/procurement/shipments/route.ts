@@ -121,11 +121,11 @@ export async function PATCH(request: Request) {
                 error: "Received status can only be set by the QA Receiving commit after accepted quantities are verified."
             }, { status: 409 });
         }
-        if (parsed.data.status === "Approved" || parsed.data.status === "Awaiting Payment" || parsed.data.status === "Rejected") {
-            return NextResponse.json({ error: "Approved, Awaiting Payment, and Rejected transitions must use their dedicated workflow endpoints." }, { status: 409 });
+        if (parsed.data.status === "Approved" || parsed.data.status === "Awaiting Payment" || parsed.data.status === "Revision" || parsed.data.status === "Rejected") {
+            return NextResponse.json({ error: "Approved, Awaiting Payment, Revision, and Rejected transitions must use their dedicated workflow endpoints." }, { status: 409 });
         }
         if (parsed.data.status === "Cancelled") {
-            return NextResponse.json({ error: "Purchase orders can only be cancelled after a formal Finance rejection." }, { status: 409 });
+            return NextResponse.json({ error: "Purchase orders can only be cancelled after a Finance Revision decision." }, { status: 409 });
         }
         const actor = await requirePurchaseOrderModuleAccess({ modulePaths: modulesForStatus(parsed.data.status) });
         await requireAllowedTransition(parsed.data.shipmentId, shipmentStatusToInventoryStatus(parsed.data.status));

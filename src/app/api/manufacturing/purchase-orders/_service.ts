@@ -1,6 +1,7 @@
 import { INVENTORY_STATUS, PAYMENT_STATUS } from "../procurement/_domain";
 import { procurementDirectusFetch } from "../procurement/_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { getPurchaseOrderCreationTimestamps } from "../procurement/_purchase-order-timestamps";
 
 import {
     buildPurchaseOrderProductPayload,
@@ -458,7 +459,8 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
     assertExpectedTotals(order, totals);
     const selectedRule = await selectRuleForDraft(order, totals.netPhp, productCategoryIds);
     const now = new Date();
-    const header = await reservePurchaseOrderNumber(now.getFullYear(), {
+    const creationTimestamps = getPurchaseOrderCreationTimestamps(now);
+    const header = await reservePurchaseOrderNumber(creationTimestamps.year, {
         reference: order.externalReference || null,
         remark: order.remark === "" ? null : order.remark || null,
         supplier_name: order.supplierId,
@@ -467,10 +469,10 @@ export async function createPurchaseOrderDraft(order: PurchaseOrderDraft, actorI
         payment_mode: order.paymentModeId,
         price_type: resolvedCommercial.priceTypeName,
         delivery_terms: order.deliveryTerms,
-        date_encoded: now.toISOString(),
-        date: await getTodayDateString(),
-        time: now.toTimeString().split(" ")[0],
-        datetime: now.toISOString().replace("Z", "").replace("T", " "),
+        date_encoded: creationTimestamps.dateEncoded,
+        date: creationTimestamps.date,
+        time: creationTimestamps.time,
+        datetime: creationTimestamps.datetime,
         gross_amount: totals.grossPhp,
         total_amount: totals.netPhp,
         inventory_status: INVENTORY_STATUS.REQUESTED,

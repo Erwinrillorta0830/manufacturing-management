@@ -38,7 +38,7 @@ export async function PUT(_request: Request, context: { params: Promise<{ id: st
         const id = idFrom((await context.params).id);
         if (!id) return NextResponse.json({ error: "Invalid purchase-order ID." }, { status: 400 });
         return NextResponse.json({
-            error: "Direct purchase-order edits are disabled after creation. Use the Finance-rejection revision workflow."
+            error: "Direct purchase-order edits are disabled after creation. Use the Finance Revision workflow."
         }, { status: 409 });
     } catch (error) {
         return NextResponse.json({ error: (error as Error).message || "Failed to edit purchase order." }, {
