@@ -163,7 +163,7 @@ export async function fetchReturnDetails(
         batches: batchStr ? [batchObj] : [],
       } : null;
 
-      const gross = itemQty * agreedPrice;
+      const gross = Math.round(itemQty * unitPrice * 100) / 100;
       const percentage = discId ? discountPercentMap.get(discId) || 0 : 0;
       const discountAmt = Math.round(gross * (percentage / 100) * 100) / 100;
       const variance = Math.round((unitPrice - agreedPrice) * itemQty * 100) / 100;
@@ -526,8 +526,8 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
 
   const totalGross = payload.items.reduce(
     (sum: number, item: any) => {
-      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
-      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+      const uPrice = Number(item.unitPrice || 0);
+      return Math.round((sum + Number(item.quantity) * uPrice) * 100) / 100;
     },
     0,
   );
@@ -627,7 +627,7 @@ export async function submitReturn(payload: any, userId: number): Promise<any> {
       : returnTypes[0]?.type_id || 1;
 
     const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
-    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
+    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice || 0) * 100) / 100;
     const discId =
       item.discountType && item.discountType !== ""
         ? Number(item.discountType)
@@ -706,8 +706,8 @@ export async function updateReturn(
 
   const totalGross = payload.items.reduce(
     (sum: number, item: any) => {
-      const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
-      return Math.round((sum + Number(item.quantity) * agPrice) * 100) / 100;
+      const uPrice = Number(item.unitPrice || 0);
+      return Math.round((sum + Number(item.quantity) * uPrice) * 100) / 100;
     },
     0,
   );
@@ -848,7 +848,7 @@ export async function updateReturn(
       : returnTypes[0]?.type_id || 1;
 
     const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice);
-    const gross = Math.round(Number(item.quantity) * agPrice * 100) / 100;
+    const gross = Math.round(Number(item.quantity) * Number(item.unitPrice || 0) * 100) / 100;
     const discId =
       item.discountType &&
       item.discountType !== "No Discount" &&

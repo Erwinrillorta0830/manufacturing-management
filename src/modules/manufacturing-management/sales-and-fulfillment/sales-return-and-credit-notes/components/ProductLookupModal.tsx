@@ -263,17 +263,18 @@ export function ProductLookupModal({
   // --- HANDLERS ---
 
   /**
-   * Helper to resolve the default price from productPrices state
+   * Helper to resolve the default price from productPrices state,
+   * falling back to product.cost_per_unit if no price is set for the selected price type.
    */
   const resolvePrice = (product: Product, currentType: string) => {
     const pt = priceTypeOptions.find(p => p.price_type_name === currentType || p.price_type_id.toString() === currentType);
     if (pt) {
       const priceRecord = productPrices.find(p => Number(p.product_id) === Number(product.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
-      if (priceRecord && priceRecord.price !== undefined) {
+      if (priceRecord && priceRecord.price !== undefined && Number(priceRecord.price) > 0) {
         return Number(priceRecord.price);
       }
     }
-    return 0; // Fallback
+    return product.cost_per_unit ? Number(product.cost_per_unit) : 0; // Fallback strictly to cost_per_unit
   };
 
   const handleAddItem = (

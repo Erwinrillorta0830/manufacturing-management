@@ -7,8 +7,11 @@ interface ExportQuotationPDFParams {
     snapshots: {
         node_name: string;
         type_name: string;
-        version_name: string;
+        version_name?: string;
         uom: string;
+        standard_unit_price?: number;
+        agreed_unit_price?: number;
+        variance_php?: number;
         frozen_unit_cost_php: number;
         frozen_total_cost_php: number;
     }[];
@@ -99,25 +102,40 @@ export function generateQuotationPDF({
     doc.text(qDate.toLocaleDateString('en-US', dateOpts), (pageWidth / 2) + 5, 53);
     doc.text(createdByName || "System", (pageWidth / 2) + 5, 63);
 
-    // Table Data
-    const tableBody = snapshots.map(snap => [
-        snap.node_name,
-        snap.type_name,
-        snap.version_name,
-        snap.uom || "pcs",
-        `P ${Number(snap.frozen_unit_cost_php || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        `P ${Number(snap.frozen_total_cost_php || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    ]);
+    // Table Data: Product Type | Product Name | UOM | Standard Unit Price | Agreed Price | Variance | Total Simulated Cost | Total Selling Price
+    const tableBody = snapshots.map(snap => {
+        const stdPrice = snap.standard_unit_price !== undefined ? snap.standard_unit_price : snap.frozen_total_cost_php;
+        const agreedPrice = snap.agreed_unit_price !== undefined ? snap.agreed_unit_price : snap.frozen_total_cost_php;
+        const variance = snap.variance_php !== undefined ? snap.variance_php : (agreedPrice - stdPrice);
+        const simCost = Number(snap.frozen_unit_cost_php || 0);
+        const sellingPrice = Number(snap.frozen_total_cost_php || 0);
+
+        return [
+            snap.type_name || "Finished Goods",
+            snap.node_name,
+            snap.uom || "pcs",
+            `P ${Number(stdPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `P ${Number(agreedPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `P ${Number(variance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `P ${simCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            `P ${sellingPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        ];
+    });
 
     // Add Grand Total Row
+    const grandTotalStdPrice = snapshots.reduce((sum, s) => sum + Number(s.standard_unit_price !== undefined ? s.standard_unit_price : s.frozen_total_cost_php || 0), 0);
+    const grandTotalAgreedPrice = snapshots.reduce((sum, s) => sum + Number(s.agreed_unit_price !== undefined ? s.agreed_unit_price : s.frozen_total_cost_php || 0), 0);
+    const grandTotalVariance = snapshots.reduce((sum, s) => sum + Number(s.variance_php !== undefined ? s.variance_php : ((s.agreed_unit_price !== undefined ? s.agreed_unit_price : s.frozen_total_cost_php || 0) - (s.standard_unit_price !== undefined ? s.standard_unit_price : s.frozen_total_cost_php || 0))), 0);
     const grandTotalCost = snapshots.reduce((sum, s) => sum + Number(s.frozen_unit_cost_php || 0), 0);
     const grandTotalPrice = snapshots.reduce((sum, s) => sum + Number(s.frozen_total_cost_php || 0), 0);
 
     tableBody.push([
-        "",
-        "",
-        "",
         "GRAND TOTAL",
+        "",
+        "",
+        `P ${grandTotalStdPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        `P ${grandTotalAgreedPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        `P ${grandTotalVariance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         `P ${grandTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         `P ${grandTotalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     ]);
@@ -125,34 +143,45 @@ export function generateQuotationPDF({
     autoTable(doc, {
         startY: 75,
         margin: { left: margin, right: margin },
-        head: [["PRODUCT DESCRIPTION", "TYPE", "VERSION", "UOM", "TOTAL SIMULATED COST", "TOTAL SELLING PRICE"]],
+        head: [["PRODUCT TYPE", "PRODUCT NAME", "UOM", "STANDARD UNIT PRICE", "AGREED PRICE", "VARIANCE", "TOTAL SIMULATED COST", "TOTAL SELLING PRICE"]],
         body: tableBody,
         theme: "plain",
         headStyles: {
             fillColor: [30, 25, 45],
             textColor: [255, 255, 255],
             fontStyle: "bold",
-            fontSize: 8,
-            cellPadding: 3,
-            halign: "left"
+            fontSize: 7.5,
+            cellPadding: 2.5
         },
         bodyStyles: {
-            fontSize: 9,
+            fontSize: 8,
             textColor: [50, 50, 50],
-            cellPadding: 3,
+            cellPadding: 2.5,
         },
         columnStyles: {
-            0: { cellWidth: 60 },
-            1: { cellWidth: 23 },
-            2: { cellWidth: 20 },
-            3: { cellWidth: 16 },
-            4: { halign: "right", cellWidth: 34 },
-            5: { halign: "right", cellWidth: 34 }
+            0: { halign: "left", cellWidth: 24 },
+            1: { halign: "left", cellWidth: 42 },
+            2: { halign: "center", cellWidth: 14 },
+            3: { halign: "right", cellWidth: 21 },
+            4: { halign: "right", cellWidth: 21 },
+            5: { halign: "right", cellWidth: 19 },
+            6: { halign: "right", cellWidth: 23 },
+            7: { halign: "right", cellWidth: 23 }
         },
         didParseCell: (data) => {
-            // Span the Grand Total row's first column across the first 4 columns
+            // Ensure header alignment matches data alignment
+            if (data.section === "head") {
+                if (data.column.index === 2) {
+                    data.cell.styles.halign = "center";
+                } else if (data.column.index >= 3) {
+                    data.cell.styles.halign = "right";
+                } else {
+                    data.cell.styles.halign = "left";
+                }
+            }
+            // Span the Grand Total row's first column across the first 3 columns
             if (data.row.index === tableBody.length - 1 && data.column.index === 0) {
-                data.cell.colSpan = 4;
+                data.cell.colSpan = 3;
                 data.cell.styles.halign = "right";
             }
         },
@@ -164,7 +193,7 @@ export function generateQuotationPDF({
             }
         },
         didDrawCell: (data) => {
-            if (data.row.index === tableBody.length - 1 && data.column.index >= 3) {
+            if (data.row.index === tableBody.length - 1 && data.column.index >= 0) {
                 doc.setDrawColor(30, 25, 45);
                 doc.setLineWidth(0.5);
                 // Top border

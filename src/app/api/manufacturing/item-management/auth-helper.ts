@@ -18,9 +18,26 @@ function asPositiveUserId(value: unknown): number | null {
 export async function getUserIdFromToken(): Promise<number | null> {
     try {
         const cookieStore = await cookies();
-        const token = cookieStore.get(COOKIE_NAME)?.value;
+        const token = cookieStore.get(COOKIE_NAME)?.value || cookieStore.get("vos_access_token")?.value || cookieStore.get("access_token")?.value;
+        if (!token) return null;
+
+        let jwtUserId: number | null = null;
+        try {
+            const parts = token.split(".");
+            if (parts.length >= 2) {
+                const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+                const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+                const json = Buffer.from(padded, "base64").toString("utf8");
+                const payload = JSON.parse(json);
+                const rawId = payload.user_id || payload.userId || payload.id || payload.sub;
+                jwtUserId = asPositiveUserId(rawId);
+            }
+        } catch {
+            // ignore decode error
+        }
+
         const springBase = process.env.SPRING_API_BASE_URL?.replace(/\/$/, "");
-        if (!token || !springBase) return null;
+        if (!springBase) return jwtUserId;
 
         const response = await fetch(`${springBase}/auth/me`, {
             headers: {
@@ -28,16 +45,16 @@ export async function getUserIdFromToken(): Promise<number | null> {
                 Accept: "application/json"
             },
             cache: "no-store",
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(3000)
         });
 
-        if (!response.ok) return null;
+        if (!response.ok) return jwtUserId;
 
         const body = await response.json().catch(() => null) as unknown;
         const user = body !== null && typeof body === "object"
             ? (body as { data?: unknown }).data ?? body
             : null;
-        if (user === null || typeof user !== "object") return null;
+        if (user === null || typeof user !== "object") return jwtUserId;
 
         const typedUser = user as { id?: unknown; isDeleted?: unknown; is_deleted?: unknown };
         const userId = asPositiveUserId(typedUser.id);

@@ -389,8 +389,10 @@ export function SalesOrderDraftEditor({
             if (item.product_id) {
                 seenProductIds.add(item.product_id);
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                const isFinishedGood = typeObj?.name === 'Finished Goods';
+                const typeObj = item.product_type_id 
+                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                    : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
+                const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                 if (isFinishedGood) {
                     const versionState = versionStates[item.product_id] || versionStates[item.parent_product_id];
                     if (!versionState || versionState.status === "loading") lineErrors.product = "BOM version is still loading.";
@@ -449,8 +451,10 @@ export function SalesOrderDraftEditor({
                 remarks: finalRemarks,
                 items: items.map(item => {
                     const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                    const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                    const isFinishedGood = typeObj?.name === 'Finished Goods';
+                    const typeObj = item.product_type_id 
+                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                        : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
+                    const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                     return {
                         parent_product_id: item.parent_product_id as number,
                         product_id: item.product_id,
@@ -681,21 +685,24 @@ export function SalesOrderDraftEditor({
                         />
                     </div>
                 </div>
-                {formErrors.items?.[0]?.product && <p className="text-xs text-destructive">{formErrors.items[0].product}</p>}
-
+                {formErrors.items?.[0]?.product && (
+                    <p className="text-xs text-destructive">
+                        {formErrors.items[0].product}
+                    </p>
+                )}
                 <div className="overflow-x-auto overflow-y-visible rounded-md border bg-card">
-                    <table className="block w-full min-w-[1100px] text-left text-xs md:table">
+                    <table className="block w-full min-w-[1080px] text-left text-xs md:table">
                         <thead className="hidden md:table-header-group">
                             <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                <th className="py-2.5 px-4 text-left">Product Type</th>
-                                <th className="py-2.5 px-4 text-left">Parent product</th>
-                                <th className="py-2.5 px-4 text-left w-32">UOM</th>
-                                <th className="py-2.5 px-4 text-left min-w-[14rem]">Version</th>
-                                <th className="py-2.5 px-4 text-right w-24">Unit Price (PHP)</th>
-                                <th className="py-2.5 px-4 text-right w-24">Discount (PHP)</th>
-                                <th className="py-2.5 px-4 text-right w-20">Quantity</th>
-                                <th className="py-2.5 px-4 text-right">Total Net</th>
-                                <th className="py-2.5 px-4 text-center">Action</th>
+                                <th className="py-2.5 px-3 w-32 min-w-[120px] text-left">Product Type</th>
+                                <th className="py-2.5 px-3 w-48 min-w-[180px] text-left">Parent product</th>
+                                <th className="py-2.5 px-3 w-36 min-w-[130px] text-left">UOM</th>
+                                <th className="py-2.5 px-3 w-32 min-w-[120px] text-left">Version</th>
+                                <th className="py-2.5 px-3 w-28 min-w-[100px] text-right">Quantity</th>
+                                <th className="py-2.5 px-3 w-28 min-w-[110px] text-right">Unit Price (PHP)</th>
+                                <th className="py-2.5 px-3 w-28 min-w-[100px] text-right">Discount (PHP)</th>
+                                <th className="py-2.5 px-3 w-32 min-w-[110px] text-right">Total Net</th>
+                                <th className="py-2.5 px-3 w-14 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="block divide-y md:table-row-group">
@@ -742,7 +749,7 @@ export function SalesOrderDraftEditor({
                                                  if (availableVariants.length === 0) return false;
                                              }
                                              return true;
-                                        })
+                                         })
                                         .map(p => ({ value: String(p.product_id), label: `${p.product_name} (${p.product_code || `SKU-${p.product_id}`})` }));
                                     const uomOptions = products.filter(p => Number(p.parent_product_id) === Number(item.parent_product_id))
                                         .filter(p => Number(p.product_id) === Number(item.product_id) || !otherSelectedVariantIds.includes(Number(p.product_id)))
@@ -761,38 +768,45 @@ export function SalesOrderDraftEditor({
 
                                     return (
                                         <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
-                                            <td className="block p-0 md:table-cell md:p-3 overflow-visible md:w-48">
+                                            <td className="block p-0 md:table-cell md:px-3 md:py-2.5 overflow-visible md:w-32 md:min-w-[120px]">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Product Type</span>
                                                 <CreatableSelect options={productTypes.map(t => ({ value: String(t.id), label: t.name }))} value={item.product_type_id ? String(item.product_type_id) : ""} onValueChange={(val: any) => handleProductTypeChange(trueIndex, Number(val))} placeholder="Choose Type..." className="h-8 text-xs font-semibold" disabled={!lookupsReady} aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product_type)} />
                                                 {formErrors.items?.[item.line_id]?.product_type && <p className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
                                             </td>
-                                            <td className="block overflow-visible p-0 md:table-cell md:p-3 md:w-64">
+                                            <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5 md:w-48 md:min-w-[180px]">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Parent Product</span>
                                                 <CreatableSelect options={parentOptions} value={item.parent_product_id ? String(item.parent_product_id) : ""} onValueChange={(val: any) => handleParentProductChange(trueIndex, Number(val))} placeholder="Choose Parent..." className="h-8 text-xs font-semibold" disabled={!lookupsReady || !item.product_type_id} aria-invalid={Boolean(formErrors.items?.[item.line_id]?.product)} />
                                                 {formErrors.items?.[item.line_id]?.product && <p className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
                                             </td>
-                                            <td className="block overflow-visible p-0 md:table-cell md:w-44 md:min-w-44 md:p-3">
+                                            <td className="block overflow-visible p-0 md:table-cell md:w-36 md:min-w-[130px] md:px-3 md:py-2.5">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Unit of Measure</span>
                                                 <CreatableSelect options={uomOptions} value={item.product_id ? String(item.product_id) : ""} onValueChange={(val: any) => handleUomChange(trueIndex, Number(val))} placeholder="Choose UOM..." className="h-8 text-xs font-semibold" disabled={!item.parent_product_id || uomOptions.length === 0} aria-invalid={Boolean(formErrors.items?.[item.line_id]?.uom)} />
                                                 {formErrors.items?.[item.line_id]?.uom && <p className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
                                                 {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM available.</p>}
                                             </td>
-                                            <td className="block p-0 md:table-cell md:p-3 overflow-visible md:min-w-[14rem]">
+                                            <td className="block p-0 md:table-cell md:w-32 md:min-w-[120px] md:px-3 md:py-2.5 overflow-visible">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                {activeVerState?.versions && activeVerState.versions.length > 0 ? (
-                                                    activeVerState.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                        : activeVerState.status === "resolved" ? (
-                                                            <select value={item.bom_version_id || activeVerState.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate">
-                                                                {activeVerState.versions.map((v: any) => (
-                                                                    <option key={v.version_id} value={v.version_id}>{v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}</option>
-                                                                ))}
-                                                            </select>
-                                                        ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
-                                                ) : <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>}
+                                                {isFinishedGoods ? (
+                                                    activeVerState?.versions && activeVerState.versions.length > 0 ? (
+                                                        activeVerState.status === "loading" ? <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                            : activeVerState.status === "resolved" ? (
+                                                                <select value={item.bom_version_id || activeVerState.defaultVersionId || ""} onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))} className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]">
+                                                                    {activeVerState.versions.map((v: any) => (
+                                                                        <option key={v.version_id} value={v.version_id}>{v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}</option>
+                                                                    ))}
+                                                                </select>
+                                                            ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                    ) : <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                ) : <span className="text-muted-foreground text-xs font-semibold text-center block">N/A</span>}
                                             </td>
-                                            <td className="block p-0 md:table-cell md:w-28 md:p-3 md:text-right">
+                                            <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
+                                                <span className="mb-1 block text-xs font-semibold md:hidden">Quantity</span>
+                                                <input type="number" min={1} value={item.quantity} onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))} aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)} className="w-full bg-background border rounded-lg px-2.5 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary font-semibold" />
+                                                {formErrors.items?.[item.line_id]?.quantity && <p className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
+                                            </td>
+                                            <td className="block p-0 md:table-cell md:w-28 md:min-w-[110px] md:px-3 md:py-2.5 md:text-right">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                <div className={`h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono border rounded-lg ${
+                                                <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${
                                                     formErrors.items?.[item.line_id]?.unit_price 
                                                         ? "border-destructive bg-destructive/10 text-destructive" 
                                                         : "text-muted-foreground bg-muted/50 border-input"
@@ -803,20 +817,15 @@ export function SalesOrderDraftEditor({
                                                     <p className="mt-1 text-[10px] text-destructive font-normal text-right">Price is ₱0.00</p>
                                                 )}
                                             </td>
-                                            <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                            <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
                                                 <span className="mb-1 block text-xs font-semibold md:hidden">Discount</span>
-                                                <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">{item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}</div>
+                                                <div className="h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">{item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}</div>
                                             </td>
-                                            <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
-                                                <span className="mb-1 block text-xs font-semibold md:hidden">Quantity</span>
-                                                <input type="number" min={1} value={item.quantity} onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))} aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)} className="w-full bg-background border rounded-lg px-2 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary font-semibold" />
-                                                {formErrors.items?.[item.line_id]?.quantity && <p className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
-                                            </td>
-                                            <td className="flex items-center justify-between p-0 text-right font-bold md:table-cell md:p-3">
+                                            <td className="flex items-center justify-between p-0 text-right font-bold md:table-cell md:w-32 md:min-w-[110px] md:px-3 md:py-2.5 whitespace-nowrap">
                                                 <span className="text-xs md:hidden">Total</span>
                                                 ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </td>
-                                            <td className="block p-0 text-right md:table-cell md:p-3 md:text-center">
+                                            <td className="block p-0 text-right md:table-cell md:w-14 md:px-3 md:py-2.5 md:text-center">
                                                 <button type="button" onClick={() => handleRemoveItem(trueIndex)} className="p-1 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-lg cursor-pointer transition-colors"><Trash2 className="h-4 w-4" /></button>
                                             </td>
                                         </tr>
@@ -832,13 +841,13 @@ export function SalesOrderDraftEditor({
             </div>
 
             <div className="shrink-0 border-t bg-background pt-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="grid grid-cols-3 gap-x-5 text-xs">
-                        <div className="flex justify-between text-xs text-muted-foreground font-bold"><span>Subtotal:</span><span>₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-                        <div className="flex justify-between text-xs text-rose-500 font-bold"><span>Total Discount:</span><span>-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-                        <div className="flex justify-between text-xs text-foreground font-black"><span>Grand Total:</span><span className="text-primary">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                        <div className="flex items-center gap-2 font-bold text-muted-foreground whitespace-nowrap"><span>Subtotal:</span><span className="font-mono text-foreground">₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                        <div className="flex items-center gap-2 font-bold text-rose-500 whitespace-nowrap"><span>Total Discount:</span><span className="font-mono">-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                        <div className="flex items-center gap-2 font-black text-foreground whitespace-nowrap"><span>Grand Total:</span><span className="font-mono text-primary text-sm font-extrabold">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                     </div>
-                    <div className="flex justify-end gap-2">
+                    <div className="flex justify-end gap-2 shrink-0">
                         <button type="button" onClick={() => setConfirmingAction("cancel")} disabled={submitting} className="h-9 rounded-md border bg-background px-4 text-xs font-semibold transition-colors hover:bg-muted cursor-pointer">Cancel</button>
                         <button type="submit" onClick={() => setSubmitMode("draft")} disabled={submitting || !lookupsReady || grandTotal <= 0 || items.some(it => !it.unit_price || it.unit_price <= 0)} className="bg-muted hover:bg-muted/80 text-foreground text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50">
                             Save as Draft

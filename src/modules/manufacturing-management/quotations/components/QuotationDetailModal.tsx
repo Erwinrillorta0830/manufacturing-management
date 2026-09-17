@@ -124,7 +124,11 @@ export function QuotationDetailModal({
                 }))
             };
             sessionStorage.setItem("pending_so_conversion", JSON.stringify(payload));
-            router.push("/mm/sales-order");
+            try {
+                router.push("/mm/sales-and-fulfillment/sales-order");
+            } catch {
+                window.location.assign("/mm/sales-and-fulfillment/sales-order");
+            }
         } catch (e) {
             console.error(e);
             toast.error("Failed to route to Sales Order module");
@@ -137,11 +141,11 @@ export function QuotationDetailModal({
     const displayQuote = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
         ? projectQuoteHistory.find(q => q.id === activeHistoryQuoteId) || selectedQuote
         : selectedQuote;
-    
+
     const displaySnapshots = activeHistoryQuoteId && activeHistoryQuoteId !== selectedQuote.id
         ? historySnapshots
         : snapshots;
-    
+
     const isHistoryView = displayQuote.id !== selectedQuote.id;
     const hasNoQuote = !selectedQuote.id || selectedQuote.id === 0;
 
@@ -171,7 +175,7 @@ export function QuotationDetailModal({
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">Quote Number:</span>
-                            <select 
+                            <select
                                 value={activeHistoryQuoteId || selectedQuote.id}
                                 onChange={(e) => setActiveHistoryQuoteId(Number(e.target.value))}
                                 disabled={projectQuoteHistory.length <= 1}
@@ -292,6 +296,7 @@ export function QuotationDetailModal({
                                         <thead className="bg-muted/20 text-muted-foreground font-bold">
                                             <tr>
                                                 <th className="p-2.5 uppercase">Product / Node Name</th>
+                                                <th className="p-2.5 uppercase text-left">Product Type</th>
                                                 <th className="p-2.5 uppercase text-left">Version</th>
                                                 <th className="p-2.5 uppercase">UOM</th>
                                                 <th className="p-2.5 uppercase text-right">Unit Cost (₱)</th>
@@ -302,10 +307,13 @@ export function QuotationDetailModal({
                                             {displaySnapshots.map((item) => {
                                                 const unitCost = Number(item.frozen_unit_cost_php || 0);
                                                 const totalCost = Number(item.frozen_total_cost_php || 0);
+                                                const typeLabel = item.product_type_name || "Finished Goods";
+                                                const versionLabel = item.version_name || (item.version_id ? `v${item.version_id}.0` : "v1.0");
                                                 return (
                                                     <tr key={item.id} className="hover:bg-muted/10">
                                                         <td className="p-2.5 font-medium text-foreground">{item.node_name}</td>
-                                                        <td className="p-2.5 text-left font-medium text-muted-foreground">{item.version_name || "N/A"}</td>
+                                                        <td className="p-2.5 text-left text-muted-foreground">{typeLabel}</td>
+                                                        <td className="p-2.5 text-left font-medium text-muted-foreground">{versionLabel}</td>
                                                         <td className="p-2.5 text-muted-foreground">{item.uom}</td>
                                                         <td className="p-2.5 text-right font-semibold text-muted-foreground">{formatCurrency(unitCost)}</td>
                                                         <td className="p-2.5 text-right font-bold text-primary">{formatCurrency(totalCost)}</td>
