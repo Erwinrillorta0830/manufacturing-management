@@ -110,10 +110,6 @@ export default function FinishedGoodsModule() {
         selectedVersion,
         editedRoutes,
         setEditedRoutes,
-        isVersionModalOpen,
-        setIsVersionModalOpen,
-        versionForm,
-        setVersionForm,
         isRegisterModalOpen,
         setIsRegisterModalOpen,
         registerForm,
@@ -139,7 +135,6 @@ export default function FinishedGoodsModule() {
         simulatedForexRate,
         setSimulatedForexRate,
         handleRegisterProduct,
-        handleRegisterNewVersion,
         handleSave,
         handleActivateVersion,
         handleSubmitVersionForApproval,
@@ -155,7 +150,10 @@ export default function FinishedGoodsModule() {
         setIsCancelRevisionModalOpen,
         cancellingRevision,
         handleInitiateRevisionDraft,
-        handleCancelRevisionDraft
+        handleCancelRevisionDraft,
+        handleInitializeInitialSpecification,
+        reopeningDraft,
+        handleReopenDraftForEditing
     } = useFinishedGoods(initialTab);
 
     const requestedProductId = searchParams.get("productId");
@@ -267,12 +265,43 @@ export default function FinishedGoodsModule() {
     const [versionSearchQuery, setVersionSearchQuery] = useState("");
 
     const displayedVersions = useMemo(() => {
-        const sorted = [...versions].sort((a, b) => {
-            const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
-            const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
-            if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+        // 1. Check if there is an active draft or in-progress revision (Draft, Revision Required, Pending Approval, For Approval)
+        const inProgressVersion = versions.find(v => v.is_draft || v.status === "Draft" || v.status === "Revision Required" || v.status === "Pending Approval" || v.status === "For Approval");
+
+        const visibleList: typeof versions = [];
+
+        if (inProgressVersion) {
+            // When revising or awaiting approval, the approved baseline is HIDDEN and only the in-progress revision is shown
+            visibleList.push(inProgressVersion);
+        } else {
+            // No revision in progress: display ONLY the single active primary approved specification (hiding older/superseded versions)
+            const approvedVersions = versions
+                .filter(v => !v.is_draft && v.status !== "Draft" && v.status !== "Cancelled")
+                .sort((a, b) => {
+                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+                    if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) return timeB - timeA;
+                    return b.version_id - a.version_id;
+                });
+
+            let currentApproved = approvedVersions.find(v => v.is_primary);
+            if (!currentApproved && approvedVersions.length > 0) {
+                currentApproved = approvedVersions.find(v => v.status === "Active") || approvedVersions[0];
+            }
+
+            if (currentApproved) {
+                visibleList.push(currentApproved);
+            } else if (versions.length > 0) {
+                visibleList.push(versions[0]);
+            }
+        }
+
+        const sorted = visibleList.sort((a, b) => {
+            if (a.is_draft && !b.is_draft) return -1;
+            if (!a.is_draft && b.is_draft) return 1;
             return b.version_id - a.version_id;
         });
+
         if (!versionSearchQuery.trim()) return sorted;
         const q = versionSearchQuery.trim().toLowerCase();
         return sorted.filter(v =>
@@ -280,6 +309,16 @@ export default function FinishedGoodsModule() {
             (v.status && v.status.toLowerCase().includes(q))
         );
     }, [versions, versionSearchQuery]);
+
+    // Keep selectedVersionId pointed to an active visible version
+    useEffect(() => {
+        if (displayedVersions.length > 0 && selectedVersionId) {
+            const isCurrentlySelected = displayedVersions.some(v => v.version_id === selectedVersionId);
+            if (!isCurrentlySelected) {
+                setSelectedVersionId(displayedVersions[0].version_id);
+            }
+        }
+    }, [displayedVersions, selectedVersionId, setSelectedVersionId]);
 
     // Sync tab param on load
     useEffect(() => {
@@ -297,59 +336,50 @@ export default function FinishedGoodsModule() {
         router.replace(`/mm/inventory-warehousing/finished-goods-master?tab=${tab}`);
     };
 
-    const [revisionSourceVersion, setRevisionSourceVersion] = useState<ProductVersion | null>(null);
-
-    const handleOpenRevisionModal = async (baseVer?: ProductVersion | null) => {
-        const sourceVer = baseVer || selectedVersion;
-        if (!sourceVer) {
-            toast.error("Please select a base specification version to revise.");
+    const handleReviseSpecification = async (baseVer?: ProductVersion | null) => {
+        if (activeDraft && activeDraft.draft_id) {
+            setSelectedVersionId(activeDraft.draft_id);
+            toast.info(`Revision draft "${activeDraft.version_name}" is already open in editor.`);
             return;
         }
 
-        let matchedUomId = 0;
-        if (selectedProduct && units.length > 0) {
-            const matchedUnit = units.find(u => u.unit_shortcut === selectedProduct.baseUom);
-            matchedUomId = matchedUnit ? matchedUnit.unit_id : units[0].unit_id;
+        const existingDraft = versions.find(v => v.is_draft && v.status !== "Cancelled" && v.status !== "Applied");
+        if (existingDraft) {
+            setSelectedVersionId(existingDraft.draft_id || existingDraft.version_id);
+            toast.info(`Revision draft "${existingDraft.version_name}" is already open in editor.`);
+            return;
         }
 
-        const suggestedName = getSuggestedNextVersionName(
-            sourceVer.version_name,
-            versions,
-            selectedProduct?.sku
-        );
+        const sourceVer = baseVer || selectedVersion;
+        if (!sourceVer) {
+            toast.error("Please select an approved specification to revise.");
+            return;
+        }
 
-        setRevisionSourceVersion(sourceVer);
-        setVersionForm({
-            versionName: suggestedName,
-            baseQuantity: Number(sourceVer.base_quantity),
-            uomId: sourceVer.uom_id ? Number(sourceVer.uom_id) : matchedUomId,
-            expectedYield: Number(sourceVer.expected_yield_percentage) || 100,
-            baseVersionId: String(sourceVer.version_id)
+        const skuCode = selectedProduct?.sku?.trim() || `FG-${selectedProductId}`;
+        let maxRev = 0;
+        for (const v of versions) {
+            const m = (v.version_name || "").match(/Rev\s*(\d+)/i);
+            if (m && m[1]) {
+                const n = parseInt(m[1], 10);
+                if (!isNaN(n) && n > maxRev) maxRev = n;
+            }
+        }
+        const nextRevNum = maxRev > 0 ? maxRev + 1 : Math.max(versions.length + 1, 2);
+        const autoVersionName = `${skuCode} Rev ${nextRevNum}`;
+
+        await handleInitiateRevisionDraft({
+            productId: Number(selectedProductId),
+            sourceVersionId: sourceVer.version_id,
+            versionName: autoVersionName,
+            baseQuantity: Number(sourceVer.base_quantity) || 1,
+            uomId: sourceVer.uom_id ? Number(sourceVer.uom_id) : undefined,
+            expectedYieldPercentage: Number(sourceVer.expected_yield_percentage) || 100
         });
-        setIsVersionModalOpen(true);
     };
 
-    const handleOpenVersionModal = () => {
-        setRevisionSourceVersion(null);
-        let matchedUomId = 0;
-        if (selectedProduct && units.length > 0) {
-            const matchedUnit = units.find(u => u.unit_shortcut === selectedProduct.baseUom);
-            matchedUomId = matchedUnit ? matchedUnit.unit_id : units[0].unit_id;
-        }
-
-        const nextVerNum = `v${versions.length + 1}.0`;
-        const skuCode = selectedProduct?.sku?.trim();
-        const defaultVersionName = skuCode ? `${skuCode} - ${nextVerNum}` : nextVerNum;
-        const activeVerId = selectedVersionId ? String(selectedVersionId) : "";
-
-        setVersionForm({
-            versionName: defaultVersionName,
-            baseQuantity: 1,
-            uomId: matchedUomId,
-            expectedYield: selectedProduct ? Number(selectedProduct.expectedYieldPercent) || 100 : 100,
-            baseVersionId: activeVerId
-        });
-        setIsVersionModalOpen(true);
+    const handleInitializeSpecification = async () => {
+        await handleInitializeInitialSpecification();
     };
 
     // Sync simulation defaults when active details or ingredients load
@@ -536,6 +566,17 @@ export default function FinishedGoodsModule() {
         () => calculateCurrentCost({}, Number(editedVersionDetails.expected_yield_percentage) || 100),
         [editedRoutes, workCenters, editedVersionDetails]
     );
+
+    // Keep editedDetails.cost_per_unit synchronized with the calculated Yield-Adjusted Unit Cost
+    useEffect(() => {
+        const derivedCost = standardCostBreakdown.yieldAdjustedUnitCost;
+        if (derivedCost !== undefined && !isNaN(derivedCost) && derivedCost > 0) {
+            setEditedDetails(prev => {
+                if (prev.cost_per_unit === derivedCost) return prev;
+                return { ...prev, cost_per_unit: derivedCost };
+            });
+        }
+    }, [standardCostBreakdown.yieldAdjustedUnitCost, setEditedDetails]);
 
     const simulatedCostBreakdown = useMemo(
         () => calculateCurrentCost(simulationPriceOverrides, Number(simulationYield) || 100),
@@ -899,9 +940,9 @@ export default function FinishedGoodsModule() {
                 setSelectedProductId={setSelectedProductId}
                 selectedProduct={selectedProduct}
                 onRequestSwitchProduct={handleRequestSwitchProduct}
-                isVersionLocked={(selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected") && !activeDraft}
+                isVersionLocked={selectedVersion?.status !== "Draft" && selectedVersion?.status !== "Revision Required"}
                 selectedVersion={selectedVersion}
-                onCreateRevision={handleOpenRevisionModal}
+                onCreateRevision={handleReviseSpecification}
                 onSubmitForApproval={handlePromptSubmitForApproval}
                 onCancelRevision={() => setIsCancelRevisionModalOpen(true)}
                 activeDraft={activeDraft}
@@ -918,7 +959,7 @@ export default function FinishedGoodsModule() {
                                     Product Versions
                                 </span>
                                 <span className="text-[10px] font-bold bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                                    {versions.length}
+                                    {displayedVersions.length}
                                 </span>
                             </div>
                         </div>
@@ -986,6 +1027,7 @@ export default function FinishedGoodsModule() {
                                     const isPending = v.status === "Pending Approval" || v.status === "For Approval";
                                     const isRevision = v.status === "Revision" || v.status === "Revision Required";
                                     const isRejected = v.status === "Rejected";
+                                    const isSuperseded = v.status === "Superseded";
                                     const isDraft = v.status === "Draft" || v.version_id < 0;
 
                                     return (
@@ -1035,10 +1077,10 @@ export default function FinishedGoodsModule() {
                                                             type="button"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleOpenRevisionModal(v);
+                                                                handleReviseSpecification(v);
                                                             }}
                                                             className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
-                                                            title={`Create new revision branched from ${v.version_name}`}
+                                                            title={`Revise specification from ${v.version_name}`}
                                                         >
                                                             <GitFork className="h-3 w-3" />
                                                         </button>
@@ -1070,6 +1112,10 @@ export default function FinishedGoodsModule() {
                                                         <span className="bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
                                                             <XCircle className="h-2.5 w-2.5" /> Rejected
                                                         </span>
+                                                    ) : isSuperseded ? (
+                                                        <span className="bg-slate-500/10 text-slate-700 dark:text-slate-300 border border-slate-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                                                            <Clock className="h-2.5 w-2.5" /> Superseded
+                                                        </span>
                                                     ) : (
                                                         <span className="bg-slate-500/10 text-slate-700 dark:text-slate-300 border border-slate-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0">
                                                             Draft
@@ -1087,13 +1133,13 @@ export default function FinishedGoodsModule() {
                                 })
                             ) : (
                                 <div className="p-6 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
-                                    <span>No versions found for this product.</span>
+                                    <span>No specifications found for this product.</span>
                                     <button
                                         type="button"
-                                        onClick={handleOpenVersionModal}
+                                        onClick={handleInitializeSpecification}
                                         className="inline-flex items-center gap-1 text-primary font-bold hover:underline cursor-pointer"
                                     >
-                                        <Plus className="h-3 w-3" /> Create First Version
+                                        <Plus className="h-3 w-3" /> Initialize Specification (Rev 1)
                                     </button>
                                 </div>
                             )}
@@ -1215,21 +1261,22 @@ export default function FinishedGoodsModule() {
                                             handleCreateSegment={handleCreateSegment}
                                             handleCreateSection={handleCreateSection}
                                             products={products}
+                                            derivedCostPerUnit={standardCostBreakdown.yieldAdjustedUnitCost || 0}
                                         />
                                     )}
 
                                     {activeTab !== "details" && versions.length === 0 ? (
                                         <div className="flex flex-col items-center justify-center p-20 text-center max-w-md mx-auto my-auto h-full">
                                             <Layers className="h-16 w-16 mb-4 text-muted-foreground/30" />
-                                            <h3 className="text-base font-bold mb-2 text-foreground">No Registered Versions</h3>
+                                            <h3 className="text-base font-bold mb-2 text-foreground">No Registered Specification</h3>
                                             <p className="text-xs text-muted-foreground mb-6">
-                                                To start configuring the Bill of Materials (BOM) and manufacturing routings for <strong>{selectedProduct.title}</strong>, please register an initial version.
+                                                To start configuring the Bill of Materials (BOM) and manufacturing routings for <strong>{selectedProduct.title}</strong>, please initialize its specification.
                                             </p>
                                             <button
-                                                onClick={handleOpenVersionModal}
+                                                onClick={handleInitializeSpecification}
                                                 className="inline-flex items-center gap-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all text-xs cursor-pointer"
                                             >
-                                                <Plus className="h-4 w-4" /> Register Initial Version
+                                                <Plus className="h-4 w-4" /> Initialize Specification (Rev 1)
                                             </button>
                                         </div>
                                     ) : (
@@ -1251,11 +1298,13 @@ export default function FinishedGoodsModule() {
                                                     qaTemplates={qaTemplates}
                                                     units={units}
                                                     setHasUnsavedChanges={setHasUnsavedChanges}
-                                                    isVersionLocked={(selectedVersion?.status === "Active" || selectedVersion?.status === "Pending Approval" || selectedVersion?.status === "For Approval" || selectedVersion?.status === "Rejected") && !activeDraft}
+                                                    isVersionLocked={selectedVersion?.status !== "Draft" && selectedVersion?.status !== "Revision Required"}
                                                     onSetPrimary={handlePromptSetPrimary}
                                                     onSubmitForApproval={handlePromptSubmitForApproval}
-                                                    onCreateRevision={handleOpenRevisionModal}
+                                                    onCreateRevision={handleReviseSpecification}
                                                     onCancelRevision={() => setIsCancelRevisionModalOpen(true)}
+                                                    onReopenDraft={handleReopenDraftForEditing}
+                                                    isReopeningDraft={reopeningDraft}
                                                     activeDraft={activeDraft}
                                                 />
                                             )}
@@ -1370,215 +1419,6 @@ export default function FinishedGoodsModule() {
                     </div>
                 </div>
             )}
-
-            {/* Version Registration Modal */}
-            <AnimatePresence>
-                {isVersionModalOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.14 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
-                    >
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.96, y: -8 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.96, y: -8 }}
-                            transition={{ duration: 0.14, ease: "easeOut" }}
-                            className="bg-card border border-border/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-w-lg w-full"
-                        >
-                            {/* Header */}
-                            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0 bg-muted/20">
-                                <div className="flex items-center gap-2">
-                                    {revisionSourceVersion ? (
-                                        <GitFork className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                                    ) : (
-                                        <Plus className="h-5 w-5 text-primary" />
-                                    )}
-                                    <div>
-                                        <h3 className="text-base font-bold text-foreground">
-                                            {revisionSourceVersion ? "Create New Recipe Revision" : "Register New BOM Version"}
-                                        </h3>
-                                        <p className="text-xs text-muted-foreground">
-                                            {revisionSourceVersion
-                                                ? `Branching specification from ${revisionSourceVersion.version_name}`
-                                                : "Add a new version for manufacturing specifications."}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Form */}
-                            <form
-                                onSubmit={async (e) => {
-                                    e.preventDefault();
-                                    if (revisionSourceVersion) {
-                                        await handleInitiateRevisionDraft({
-                                            productId: Number(selectedProductId),
-                                            sourceVersionId: revisionSourceVersion.version_id,
-                                            versionName: versionForm.versionName.trim(),
-                                            baseQuantity: Number(versionForm.baseQuantity) || 1,
-                                            uomId: Number(versionForm.uomId) || undefined,
-                                            expectedYieldPercentage: Number(versionForm.expectedYield) || 100
-                                        });
-                                        setIsVersionModalOpen(false);
-                                    } else {
-                                        handleRegisterNewVersion(versionForm);
-                                    }
-                                }}
-                                className="p-6 space-y-4 text-xs"
-                            >
-                                {/* Revision Context Banner */}
-                                {revisionSourceVersion && (
-                                    <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            <GitFork className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                                            <p className="text-xs font-bold text-blue-700 dark:text-blue-300">
-                                                Cloning Specification: <span className="font-extrabold">{revisionSourceVersion.version_name}</span>
-                                            </p>
-                                        </div>
-                                        <p className="text-[11px] text-blue-600/90 dark:text-blue-400/90 leading-relaxed">
-                                            All workstation routes, BOM materials, wastage factors, direct labor standards, and overheads will be cloned into this new draft revision. The approved primary version remains active and locked for current job orders.
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Version Name */}
-                                <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Version Name <span className="text-red-500">*</span></label>
-                                    <input
-                                        type="text"
-                                        required
-                                        placeholder="e.g. FG-OIL-500ML - v2.0"
-                                        value={versionForm.versionName}
-                                        onFocus={(e) => e.target.select()}
-                                        onClick={(e) => (e.target as HTMLInputElement).select()}
-                                        onChange={e => setVersionForm(prev => ({ ...prev, versionName: e.target.value }))}
-                                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                    />
-                                </div>
-
-                                {/* Base Qty & Base UOM */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Base Quantity</label>
-                                        <input
-                                            type="number"
-                                            step="any"
-                                            min="0.0001"
-                                            required
-                                            value={versionForm.baseQuantity}
-                                            onFocus={(e) => e.target.select()}
-                                            onClick={(e) => (e.target as HTMLInputElement).select()}
-                                            onChange={e => setVersionForm(prev => ({ ...prev, baseQuantity: e.target.value }))}
-                                            onBlur={() => {
-                                                const num = parseFloat(String(versionForm.baseQuantity));
-                                                if (isNaN(num) || num <= 0) {
-                                                    setVersionForm(prev => ({ ...prev, baseQuantity: 1 }));
-                                                } else {
-                                                    setVersionForm(prev => ({ ...prev, baseQuantity: num }));
-                                                }
-                                            }}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
-                                            <span>Base UOM</span>
-                                            <span className="text-[9px] text-muted-foreground font-semibold lowercase">(bound to product)</span>
-                                        </label>
-                                        <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm text-muted-foreground font-semibold flex items-center justify-between cursor-not-allowed">
-                                            <span>{selectedProduct?.baseUom || "PCS"}</span>
-                                            <Lock className="h-3.5 w-3.5 text-muted-foreground" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Expected Yield & Clone Source */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">Expected Yield (%)</label>
-                                        <input
-                                            type="number"
-                                            step="any"
-                                            min="0.01"
-                                            max="100"
-                                            required
-                                            value={versionForm.expectedYield}
-                                            onFocus={(e) => e.target.select()}
-                                            onClick={(e) => (e.target as HTMLInputElement).select()}
-                                            onChange={e => setVersionForm(prev => ({ ...prev, expectedYield: e.target.value }))}
-                                            onBlur={() => {
-                                                const num = parseFloat(String(versionForm.expectedYield));
-                                                if (isNaN(num) || num <= 0) {
-                                                    setVersionForm(prev => ({ ...prev, expectedYield: 100 }));
-                                                } else if (num > 100) {
-                                                    setVersionForm(prev => ({ ...prev, expectedYield: 100 }));
-                                                } else {
-                                                    setVersionForm(prev => ({ ...prev, expectedYield: num }));
-                                                }
-                                            }}
-                                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1 flex items-center justify-between">
-                                            <span>Clone Source</span>
-                                            {revisionSourceVersion && (
-                                                <span className="text-[9px] text-blue-600 dark:text-blue-400 font-semibold">(locked to parent)</span>
-                                            )}
-                                        </label>
-                                        {revisionSourceVersion ? (
-                                            <div className="w-full rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground flex items-center justify-between cursor-not-allowed">
-                                                <span className="truncate">{revisionSourceVersion.version_name}</span>
-                                                <Lock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                            </div>
-                                        ) : (
-                                            <select
-                                                value={versionForm.baseVersionId}
-                                                onChange={e => setVersionForm(prev => ({ ...prev, baseVersionId: e.target.value }))}
-                                                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary transition-all"
-                                            >
-                                                <option value="">Start Blank (No Clone)</option>
-                                                {versions.map(v => (
-                                                    <option key={v.version_id} value={String(v.version_id)}>{v.version_name}</option>
-                                                ))}
-                                            </select>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Footer Buttons */}
-                                <div className="flex justify-end gap-3 pt-3 border-t shrink-0">
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsVersionModalOpen(false)}
-                                        className="px-4 py-2 border border-border rounded-lg text-xs font-semibold hover:bg-muted transition-colors text-muted-foreground cursor-pointer"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        disabled={savingBOM}
-                                        className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground font-semibold rounded-lg text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-primary/20 flex items-center gap-1.5 cursor-pointer"
-                                    >
-                                        {savingBOM ? (
-                                            <div className="h-3 w-3 animate-spin border border-current border-t-transparent rounded-full" />
-                                        ) : revisionSourceVersion ? (
-                                            <GitFork className="h-3.5 w-3.5" />
-                                        ) : (
-                                            <Plus className="h-3.5 w-3.5" />
-                                        )}
-                                        {savingBOM
-                                            ? (revisionSourceVersion ? "Cloning Revision..." : "Registering...")
-                                            : (revisionSourceVersion ? "Create Draft Revision" : "Register Version")}
-                                    </button>
-                                </div>
-                            </form>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
 
             {/* Product Registration Modal Popup */}
             <RegisterProductModal

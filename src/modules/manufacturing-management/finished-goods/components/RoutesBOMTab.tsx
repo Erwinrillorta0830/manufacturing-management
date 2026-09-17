@@ -222,7 +222,14 @@ export const RoutesBOMTab: React.FC<RoutesBOMTabProps> = ({
     };
 
     const handleUpdateRoute = (routeId: number, field: keyof RouteStep, value: unknown) => {
-        setEditedRoutes(prev => prev.map(r => r.route_id === routeId ? { ...r, [field]: value } : r));
+        setEditedRoutes(prev => prev.map(r => {
+            if (r.route_id !== routeId) return r;
+            const updated = { ...r, [field]: value };
+            if (field === "step_batch_size") {
+                (updated as any).batch_capacity = value;
+            }
+            return updated;
+        }));
         setHasUnsavedChanges(true);
     };
 

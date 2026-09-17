@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     FileSpreadsheet,
     AlertTriangle,
     RefreshCw,
     Layers,
-    Sparkles
+    Loader2
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -191,61 +191,91 @@ export default function BOMCostingReportModule() {
             />
 
             {/* Error Display */}
-            {errorMessage && (
-                <motion.div
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-xs text-destructive flex items-start gap-3"
-                >
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div className="space-y-1 flex-1">
-                        <div className="font-semibold">Unable to generate report</div>
-                        <div>{errorMessage}</div>
-                    </div>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleGenerate}
-                        className="h-7 text-xs border-destructive/30 hover:bg-destructive/20 text-destructive"
+            <AnimatePresence>
+                {errorMessage && (
+                    <motion.div
+                        key="error-banner"
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-xs text-destructive flex items-start gap-3"
                     >
-                        <RefreshCw className="mr-1 h-3 w-3" />
-                        Retry
-                    </Button>
-                </motion.div>
-            )}
+                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <div className="space-y-1 flex-1">
+                            <div className="font-semibold">Unable to generate report</div>
+                            <div>{errorMessage}</div>
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleGenerate}
+                            className="h-7 text-xs border-destructive/30 hover:bg-destructive/20 text-destructive"
+                        >
+                            <RefreshCw className="mr-1 h-3 w-3" />
+                            Retry
+                        </Button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
-            {/* Content Area */}
-            {isGenerating ? (
-                <div className="rounded-xl border bg-card p-12 text-center shadow-xs flex flex-col items-center justify-center space-y-3">
-                    <Sparkles className="h-8 w-8 text-primary animate-spin" />
-                    <div className="text-sm font-semibold text-foreground">Decomposing Multi-Level Bill of Materials...</div>
-                    <p className="text-xs text-muted-foreground max-w-sm">
-                        Traversing assembly routes, computing scrap factors, and rolling up unit material valuations.
-                    </p>
-                </div>
-            ) : reportData ? (
-                <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-4"
-                >
-                    <BOMCostingSummaryCards data={reportData} />
-                    <BOMCostingTreeTable data={reportData} />
-                </motion.div>
-            ) : (
-                <div className="rounded-xl border border-dashed bg-card/50 p-12 text-center shadow-xs flex flex-col items-center justify-center space-y-3">
-                    <div className="p-3 rounded-full bg-primary/10 text-primary">
-                        <Layers className="h-6 w-6" />
-                    </div>
-                    <div className="space-y-1">
-                        <div className="text-sm font-semibold text-foreground">No Costing Report Generated Yet</div>
-                        <p className="text-xs text-muted-foreground max-w-md">
-                            Select a target product and active manufacturing version above, adjust the target batch size if desired, and click <strong>Generate Costing Report</strong>.
-                        </p>
-                    </div>
-                </div>
-            )}
+            {/* Content Area with smooth enter and exit transitions */}
+            <AnimatePresence mode="wait">
+                {isGenerating ? (
+                    <motion.div
+                        key="loading-state"
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border bg-card p-12 text-center shadow-xs flex flex-col items-center justify-center space-y-4"
+                    >
+                        <div className="relative flex items-center justify-center">
+                            <div className="absolute h-14 w-14 rounded-full bg-primary/10 animate-ping" />
+                            <div className="h-12 w-12 rounded-full bg-primary/15 flex items-center justify-center">
+                                <Loader2 className="h-6 w-6 text-primary animate-spin" />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <div className="text-sm font-semibold text-foreground">Calculating Bill of Materials Costing...</div>
+                            <p className="text-xs text-muted-foreground max-w-sm">
+                                Traversing recipe structure, computing scrap allowances, and rolling up component unit valuations.
+                            </p>
+                        </div>
+                    </motion.div>
+                ) : reportData ? (
+                    <motion.div
+                        key={`report-${reportData.targetProduct.product_id}-${reportData.targetProduct.version_id}`}
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.25 }}
+                        className="space-y-4"
+                    >
+                        <BOMCostingSummaryCards data={reportData} />
+                        <BOMCostingTreeTable data={reportData} />
+                    </motion.div>
+                ) : (
+                    <motion.div
+                        key="empty-state"
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.2 }}
+                        className="rounded-xl border border-dashed bg-card/50 p-12 text-center shadow-xs flex flex-col items-center justify-center space-y-3"
+                    >
+                        <div className="p-3 rounded-full bg-primary/10 text-primary">
+                            <Layers className="h-6 w-6" />
+                        </div>
+                        <div className="space-y-1">
+                            <div className="text-sm font-semibold text-foreground">No Costing Report Generated Yet</div>
+                            <p className="text-xs text-muted-foreground max-w-md">
+                                Select a target product above, adjust the simulated batch size if desired, and click <strong>Generate Costing Report</strong>.
+                            </p>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

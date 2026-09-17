@@ -1,6 +1,6 @@
 // VOS ERP - Core Directus API Client Service
 
-export const DIRECTUS_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+export const DIRECTUS_URL = process.env.DIRECTUS_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
 export const DIRECTUS_TOKEN = process.env.DIRECTUS_STATIC_TOKEN !== undefined ? process.env.DIRECTUS_STATIC_TOKEN : "test";
 
 export const headers: Record<string, string> = {

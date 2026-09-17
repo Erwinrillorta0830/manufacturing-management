@@ -76,12 +76,14 @@ export function SearchableSelect({
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
     if (!newOpen) {
-      setSearch("");
+      setTimeout(() => {
+        setSearch("");
+      }, 150);
     }
   };
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange} modal={false}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -114,6 +116,7 @@ export function SearchableSelect({
         align="start"
         sideOffset={4}
         data-radix-scroll-lock-ignore="true"
+        onCloseAutoFocus={(e) => e.preventDefault()}
         onWheelCapture={(e) => e.stopPropagation()}
         onTouchMoveCapture={(e) => e.stopPropagation()}
       >
@@ -148,7 +151,9 @@ export function SearchableSelect({
                       onSelect={() => {
                         onValueChange(opt.value);
                         setOpen(false);
-                        setSearch("");
+                        setTimeout(() => {
+                          setSearch("");
+                        }, 150);
                       }}
                       className={cn(
                         "flex items-center justify-between text-xs px-2.5 py-1.5 cursor-pointer rounded-md transition-colors",

@@ -380,11 +380,11 @@ export async function POST(request: Request) {
                 if (versionsRes.ok) {
                     const versionsData = (await versionsRes.json()).data || [];
                     for (const v of versionsData) {
-                        if (v.version_id !== targetId && (v.is_primary === true || v.is_primary === 1)) {
+                        if (v.version_id !== targetId) {
                             await fetch(`${DIRECTUS_URL}/items/product_manufacturing_version/${v.version_id}`, {
                                 method: "PATCH",
                                 headers,
-                                body: JSON.stringify({ is_primary: false })
+                                body: JSON.stringify({ is_primary: 0 })
                             }).catch(() => {});
                         }
                     }
@@ -393,7 +393,7 @@ export async function POST(request: Request) {
 
             updatePayload = {
                 status: "Active",
-                is_primary: isSetPrimary,
+                is_primary: isSetPrimary ? 1 : 0,
                 approved_by: userId,
                 approved_at: phTimeIso,
                 updated_by: userId,
@@ -407,7 +407,7 @@ export async function POST(request: Request) {
             }
             updatePayload = {
                 status: "Rejected",
-                is_primary: false,
+                is_primary: 0,
                 remarks: finalReason.trim(),
                 updated_by: userId,
                 updated_at: phTimeIso
@@ -415,7 +415,7 @@ export async function POST(request: Request) {
         } else if (normalizedAction === "request_revision") {
             updatePayload = {
                 status: "Revision",
-                is_primary: false,
+                is_primary: 0,
                 remarks: remarks.trim(),
                 updated_by: userId,
                 updated_at: phTimeIso

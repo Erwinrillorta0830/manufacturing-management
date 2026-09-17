@@ -354,9 +354,10 @@ export async function POST(request: Request) {
         const productId = prodJson.data?.product_id;
 
         // 2. Create Product Version (Draft status by default)
+        const initialVersionName = validatedDetails.versionName || (validatedDetails.productCode ? `${validatedDetails.productCode} Rev 1` : "Rev 1");
         const versionPayload = {
             product_id: productId,
-            version_name: validatedDetails.versionName,
+            version_name: initialVersionName,
             base_quantity: 1.0,
             uom_id: validatedDetails.unitOfMeasurement,
             expected_yield_percentage: validatedDetails.expectedYield,
