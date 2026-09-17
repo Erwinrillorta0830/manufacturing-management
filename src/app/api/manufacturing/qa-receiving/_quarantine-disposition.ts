@@ -350,7 +350,7 @@ async function fetchSourceReceivingVariants(id: number): Promise<SourceReceiving
             sourceReceivingId,
             purchaseOrderId,
             purchaseOrderLineId,
-            purchaseOrderReference: String(purchaseOrder.reference || purchaseOrder.purchase_order_no || `PO #${purchaseOrderId}`),
+            purchaseOrderReference: String(purchaseOrder.purchase_order_no || purchaseOrder.reference || `PO #${purchaseOrderId}`),
             productId,
             productName: String(product.product_name || `Product #${productId}`),
             productCode: String(product.product_code || "N/A"),

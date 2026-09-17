@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
             onhandMap.set(pId, res?.onhandQuantity || 0);
         });
 
-        // 4. Resolve Job Orders for allocations
+        // 4. Resolve Job Orders for allocations (Counting only QA Passed yield)
         const rawAllocations: Array<{
             sales_order_detail_id: number;
             job_order_id: number;
@@ -101,26 +101,31 @@ export async function POST(req: NextRequest) {
         }> = allocRes && allocRes.ok ? (await allocRes.json()).data || [] : [];
 
         const joIds = Array.from(new Set(rawAllocations.map((a) => Number(a.job_order_id)).filter(Boolean)));
-        const joMap = new Map<number, { actual_quantity_produced: number; completed_quantity: number }>();
+        const passedYieldByJo = new Map<number, number>();
 
         if (joIds.length > 0) {
-            const joRes = await fetch(
-                `${DIRECTUS_URL}/items/manufacturing_job_orders?filter[job_order_id][_in]=${joIds.join(
+            const yieldRes = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?filter[job_order_id][_in]=${joIds.join(
                     ","
-                )}&limit=-1&fields=job_order_id,actual_quantity_produced,completed_quantity`,
+                )}&filter[qa_status][_eq]=Passed&limit=-1&fields=ledger_id,job_order_id,yield_quantity,qa_status,commit_status`,
                 { headers: directusHeaders, cache: "no-store" }
             ).catch(() => null);
 
-            if (joRes && joRes.ok) {
-                const joJson = await joRes.json();
-                for (const jo of joJson.data || []) {
-                    joMap.set(Number(jo.job_order_id), {
-                        actual_quantity_produced: Number(jo.actual_quantity_produced || 0),
-                        completed_quantity: Number(jo.completed_quantity || 0),
-                    });
+            if (yieldRes && yieldRes.ok) {
+                const yieldJson = await yieldRes.json();
+                for (const y of yieldJson.data || []) {
+                    const commitStatus = String(y.commit_status || "COMMITTED").toUpperCase();
+                    if (commitStatus === "CANCELLED" || commitStatus === "CANCELED" || commitStatus === "VOID") {
+                        continue;
+                    }
+                    const joId = Number(y.job_order_id);
+                    const yQty = Number(y.yield_quantity || 0);
+                    passedYieldByJo.set(joId, (passedYieldByJo.get(joId) || 0) + yQty);
                 }
             }
         }
+
+        const remainingPassedYieldMap = new Map<number, number>(passedYieldByJo);
 
         // 5. Strictly validate that 100% of line items are satisfied
         const unfulfilledItems: string[] = [];
@@ -135,12 +140,11 @@ export async function POST(req: NextRequest) {
 
             let totalProduced = 0;
             for (const alloc of lineAllocations) {
-                const jo = joMap.get(Number(alloc.job_order_id));
-                const joProducedMetric = Math.max(
-                    Number(jo?.actual_quantity_produced || 0),
-                    Number(jo?.completed_quantity || 0)
-                );
-                totalProduced += Math.min(Number(alloc.allocated_quantity || 0), joProducedMetric);
+                const joId = Number(alloc.job_order_id);
+                const availablePassed = remainingPassedYieldMap.get(joId) || 0;
+                const effectiveProduced = Math.min(Number(alloc.allocated_quantity || 0), availablePassed);
+                remainingPassedYieldMap.set(joId, Math.max(0, availablePassed - effectiveProduced));
+                totalProduced += effectiveProduced;
             }
 
             const meetsByOnhand = liveOnhand >= orderedQty;

@@ -2,12 +2,10 @@
 
 import React, { useState } from "react";
 import {
-    Check,
     ChevronsUpDown,
     Layers,
     Package,
     RotateCcw,
- 
     Scale
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,9 +32,9 @@ interface BOMCostingFiltersProps {
     products: ProductOption[];
     selectedProduct: ProductOption | null;
     onSelectProduct: (product: ProductOption) => void;
-    versions: VersionOption[];
+    versions?: VersionOption[];
     selectedVersion: VersionOption | null;
-    onSelectVersion: (version: VersionOption) => void;
+    onSelectVersion?: (version: VersionOption) => void;
     targetQuantity: number;
     onChangeTargetQuantity: (qty: number) => void;
     onGenerate: () => void;
@@ -50,9 +48,7 @@ export default function BOMCostingFilters({
     products,
     selectedProduct,
     onSelectProduct,
-    versions,
     selectedVersion,
-    onSelectVersion,
     targetQuantity,
     onChangeTargetQuantity,
     onGenerate,
@@ -62,7 +58,6 @@ export default function BOMCostingFilters({
     isGenerating
 }: BOMCostingFiltersProps) {
     const [isProductOpen, setIsProductOpen] = useState(false);
-    const [isVersionOpen, setIsVersionOpen] = useState(false);
     const [rawQtyInput, setRawQtyInput] = useState<string>(String(targetQuantity || 1));
 
     // Synchronize local input string when external targetQuantity changes
@@ -163,7 +158,7 @@ export default function BOMCostingFilters({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* 1. PRODUCT SELECTOR (COMBOBOX) */}
                 <div className="space-y-1.5">
                     <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
@@ -194,7 +189,7 @@ export default function BOMCostingFilters({
                                         title={selectedProduct ? (selectedProduct.description || selectedProduct.product_name) : ""}
                                     >
                                         {selectedProduct
-                                            ? `${selectedProduct.description || selectedProduct.product_name} - ${selectedProduct.uom_name || "PCS"}`
+                                            ? (selectedProduct.description || selectedProduct.product_name)
                                             : isLoadingProducts
                                             ? "Loading finished goods..."
                                             : "Select finished good..."}
@@ -376,103 +371,22 @@ export default function BOMCostingFilters({
                     </Popover>
                 </div>
 
-                {/* 2. RECIPE VERSION SELECTOR (COMBOBOX) */}
-                <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                        <Layers className="h-3.5 w-3.5 text-primary" />
-                        Manufacturing Version / Recipe
-                    </Label>
-                    <Popover open={isVersionOpen} onOpenChange={setIsVersionOpen}>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant="outline"
-                                role="combobox"
-                                aria-expanded={isVersionOpen}
-                                disabled={!selectedProduct || isLoadingVersions || isGenerating}
-                                className="w-full justify-between h-9 text-xs font-normal bg-background"
-                            >
-                                <div className="flex items-center gap-2 truncate">
-                                    <span className="truncate">
-                                        {selectedVersion
-                                            ? `${selectedVersion.version_name} (Base: ${selectedVersion.base_quantity} ${selectedVersion.uom_name})`
-                                            : !selectedProduct
-                                            ? "Select product first..."
-                                            : isLoadingVersions
-                                            ? "Loading versions..."
-                                            : versions.length === 0
-                                            ? "No versions available"
-                                            : "Select version..."}
-                                    </span>
-                                </div>
-                                <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[300px] p-0" align="start">
-                            <Command>
-                                <CommandInput placeholder="Search version name..." className="h-9 text-xs" />
-                                <CommandList className="max-h-56">
-                                    <CommandEmpty>No versions found for this product.</CommandEmpty>
-                                    <CommandGroup heading="Manufacturing Versions">
-                                        {versions.map(v => (
-                                            <CommandItem
-                                                key={v.version_id}
-                                                value={`${v.version_name} ${v.status}`}
-                                                onSelect={() => {
-                                                    onSelectVersion(v);
-                                                    setIsVersionOpen(false);
-                                                }}
-                                                className="text-xs flex items-center justify-between cursor-pointer py-2"
-                                            >
-                                                <div className="flex items-center gap-2 truncate mr-2">
-                                                    <Check
-                                                        className={cn(
-                                                            "h-3.5 w-3.5 shrink-0 text-primary",
-                                                            selectedVersion?.version_id === v.version_id
-                                                                ? "opacity-100"
-                                                                : "opacity-0"
-                                                        )}
-                                                    />
-                                                    <div>
-                                                        <div className="font-medium text-foreground flex items-center gap-1.5">
-                                                            {v.version_name}
-                                                            {v.is_primary && (
-                                                                <span className="text-[9px] px-1 py-0 rounded-xs bg-amber-500/10 text-amber-600 font-semibold">
-                                                                    Primary
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <div className="text-[10px] text-muted-foreground">
-                                                            Batch: {v.base_quantity} {v.uom_name} • Yield: {v.expected_yield_percentage}%
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <Badge
-                                                    variant={v.status.toLowerCase() === "active" ? "default" : "outline"}
-                                                    className="text-[10px] shrink-0 font-normal px-1.5 py-0 h-4"
-                                                >
-                                                    {v.status}
-                                                </Badge>
-                                            </CommandItem>
-                                        ))}
-                                    </CommandGroup>
-                                </CommandList>
-                            </Command>
-                        </PopoverContent>
-                    </Popover>
-                </div>
-
-                {/* 3. SIMULATED BATCH QUANTITY */}
+                {/* 2. SIMULATED BATCH QUANTITY */}
                 <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                         <Label className="text-xs font-medium text-foreground flex items-center gap-1.5">
                             <Scale className="h-3.5 w-3.5 text-primary" />
                             Target Batch Size ({selectedVersion?.uom_name || "Units"})
                         </Label>
-                        {selectedVersion && (
-                            <span className="text-[10px] text-muted-foreground">
-                                Recipe Base: {selectedVersion.base_quantity} {selectedVersion.uom_name}
+                        {isLoadingVersions ? (
+                            <span className="text-[10px] text-muted-foreground animate-pulse">
+                                Loading primary recipe...
                             </span>
-                        )}
+                        ) : selectedVersion ? (
+                            <span className="text-[10px] text-muted-foreground">
+                                Recipe: <strong className="text-foreground font-medium">{selectedVersion.version_name}</strong> (Base: {selectedVersion.base_quantity} {selectedVersion.uom_name})
+                            </span>
+                        ) : null}
                     </div>
                     <div className="relative">
                         <Input

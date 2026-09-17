@@ -5,6 +5,52 @@ export interface LotProductScope {
     productTypeId: number;
     productFamilyIds?: number[];
     uomId: number;
+    productId?: number;
+}
+
+export interface StorageLotStoredProduct {
+    productId: number;
+    productTypeId: number | null;
+}
+
+// Mirrors the client-side resolveProductClassification mapping used by the
+// Stock Adjustment lot allocation modal so server and UI agree on conflicts.
+const CLASSIFIED_PRODUCT_TYPE_IDS: Record<number, "RM" | "PKG" | "FG"> = {
+    389: "RM",
+    390: "PKG",
+    388: "FG"
+};
+
+const CLASSIFICATION_LABELS: Record<"RM" | "PKG" | "FG" | "OTHER", string> = {
+    RM: "Raw Material",
+    PKG: "Packaging",
+    FG: "Finished Good",
+    OTHER: "General Stock"
+};
+
+export function productTypeClassification(productTypeId: number | null): { code: "RM" | "PKG" | "FG" | "OTHER"; label: string } {
+    const code = productTypeId === null ? null : CLASSIFIED_PRODUCT_TYPE_IDS[productTypeId] ?? null;
+    return code ? { code, label: CLASSIFICATION_LABELS[code] } : { code: "OTHER", label: CLASSIFICATION_LABELS.OTHER };
+}
+
+/**
+ * A storage lot may not hold products of different product types. Empty lots
+ * (and lots whose stored stock has an unknown/general classification) accept
+ * any product type.
+ */
+export function findStorageLotContentConflict(
+    storedProducts: readonly StorageLotStoredProduct[],
+    product: LotProductScope
+): StorageLotStoredProduct | null {
+    const target = productTypeClassification(product.productTypeId);
+    if (target.code === "OTHER") return null;
+    for (const stored of storedProducts) {
+        if (product.productId && stored.productId === product.productId) continue;
+        const storedClassification = productTypeClassification(stored.productTypeId);
+        if (storedClassification.code === "OTHER" || storedClassification.code === target.code) continue;
+        return stored;
+    }
+    return null;
 }
 
 export interface StorageLotEligibility {

@@ -8,7 +8,6 @@ import {
     ClipboardCheck,
     Printer,
     Tag,
-    MapPin,
     Layers,
     ShieldAlert,
     Trash2,
@@ -34,7 +33,6 @@ interface JobOrderShiftLogModalProps {
     onOpenChange: (open: boolean) => void;
     selectedJobOrder: JobOrder;
     sortedTasks: RoutingTask[];
-    activeStep: RoutingTask | null;
     users: UserType[];
     allJobOperators: RouteOperatorRecord[];
     onSuccess?: () => void;
@@ -45,7 +43,6 @@ export function JobOrderShiftLogModal({
     onOpenChange,
     selectedJobOrder,
     sortedTasks,
-    activeStep,
     users,
     allJobOperators,
     onSuccess
@@ -69,21 +66,16 @@ export function JobOrderShiftLogModal({
     const [submittingShiftLog, setSubmittingShiftLog] = useState(false);
     const [insufficiencyError, setInsufficiencyError] = useState<string | null>(null);
     const [isInsufficiencyOpen, setIsInsufficiencyOpen] = useState(false);
-    const [targetTaskId, setTargetTaskId] = useState<number>(0);
     const [topUpTarget, setTopUpTarget] = useState<TopUpTarget | null>(null);
     const [isTopUpOpen, setIsTopUpOpen] = useState(false);
     const [evidenceImage, setEvidenceImage] = useState<File | null>(null);
     const [evidenceImageError, setEvidenceImageError] = useState<string | null>(null);
     const [evidenceImagePreview, setEvidenceImagePreview] = useState<string | null>(null);
 
-    const selectedTask = sortedTasks.find((task) => task.id === targetTaskId) || activeStep;
-    const stationId = Number(selectedJobOrder?.primary_work_center_id || 0) || null;
-    const stationLabel = selectedJobOrder?.primary_work_center_name
-        || (stationId ? `Work Center #${stationId}` : "Unassigned");
-
-    const totalPlannedHours = selectedJobOrder?.routing_tasks 
-        ? selectedJobOrder.routing_tasks.reduce((sum, t) => sum + Number(t.planned_setup_hours || 0) + Number(t.planned_run_hours || 0), 0)
-        : 0;
+    const totalPlannedHours = sortedTasks.reduce(
+        (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
+        0
+    );
     const shiftHours = Number(selectedJobOrder?.shiftOption || 8);
     const estDays = Math.ceil(totalPlannedHours / shiftHours) || 1;
 
@@ -212,8 +204,6 @@ export function JobOrderShiftLogModal({
             setShiftMaterials([]);
             setMaterialsLoadError(null);
             setProductionDay("1");
-            setTargetTaskId(activeStep?.id ?? (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0));
-            
             const todayStr = new Date().toISOString().split("T")[0];
             setProductionDate(todayStr);
             setSessionKey(typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -337,15 +327,12 @@ export function JobOrderShiftLogModal({
         try {
             const fullShiftName = `Day ${productionDay} - ${shiftName}`;
             
-            // Target routing task (explicit selection wins over the inferred
-            // first-incomplete step).
-            const resolvedTaskId = targetTaskId || activeStep?.id || (sortedTasks.length > 0 ? sortedTasks[sortedTasks.length - 1].id : 0);
-
             const payload: ShiftRunLogPayload = {
+                sessionScope: "JOB_ORDER",
                 sessionKey,
-                taskId: resolvedTaskId,
+                taskId: null,
                 joId: selectedJobOrder.order_id || selectedJobOrder.job_order_id || 0,
-                workCenterId: stationId || 0,
+                workCenterId: null,
                 shiftName: fullShiftName,
                 productionDate,
                 yieldQty: newYield,
@@ -372,7 +359,6 @@ export function JobOrderShiftLogModal({
 
             const res = await submitShiftRunLog(payload);
             if (res.success) {
-                const targetStep = sortedTasks.find((t) => t.id === resolvedTaskId);
                 const targetQty = Number(selectedJobOrder.quantity || 0);
                 const producedAfter = Number(selectedJobOrder.producedQty || selectedJobOrder.completed_quantity || 0) + newYield;
                 const reachedTarget = targetQty > 0 && producedAfter >= targetQty;
@@ -380,7 +366,7 @@ export function JobOrderShiftLogModal({
                 if (reachedTarget) {
                     toast.success(`Shift closed for ${fullShiftName}. Output target reached (${producedAfter.toLocaleString()}/${targetQty.toLocaleString()} pcs) — route this Job Order to QA.`);
                 } else {
-                    toast.success(`Shift closed for ${fullShiftName}. Posted to Step ${targetStep?.sequence_order ?? "?"} — ${targetStep?.name ?? "routing step"}; staging materials backflushed.`);
+                    toast.success(`Shift closed for ${fullShiftName} across ${sortedTasks.length || "all"} routing steps; staging materials backflushed.`);
                 }
                 onOpenChange(false);
                 if (onSuccess) onSuccess();
@@ -560,7 +546,6 @@ export function JobOrderShiftLogModal({
         || !hasOutput
         || !sessionKey
         || !productionDate
-        || !stationId
         || !shiftName.trim();
     const isPrintDisabled = loadingShiftMaterials || Boolean(materialsLoadError) || hasInsufficiency || !hasOutput || !shiftName.trim();
 
@@ -576,10 +561,10 @@ export function JobOrderShiftLogModal({
                                 </div>
                                 <div className="min-w-0">
                                     <DialogTitle className="font-bold text-sm sm:text-base md:text-lg tracking-tight text-foreground truncate">
-                                        End-of-Shift & Step Progress Entry
+                                        End-of-Shift / Job Order Progress Entry
                                     </DialogTitle>
                                     <DialogDescription className="text-muted-foreground text-[10px] sm:text-xs mt-0.5 line-clamp-2 sm:line-clamp-none">
-                                         Record this production session's output and exact WIP-reservation consumption for <strong className="text-foreground">Job Order #{selectedJobOrder?.order_no || selectedJobOrder?.jo_id}</strong>. Output remains Pending QA until it is released.
+                                         Record one production session's output and exact WIP-reservation consumption for all routing steps in <strong className="text-foreground">Job Order #{selectedJobOrder?.order_no || selectedJobOrder?.jo_id}</strong>. Output remains Pending QA until it is released.
                                     </DialogDescription>
                                 </div>
                             </div>
@@ -657,22 +642,6 @@ export function JobOrderShiftLogModal({
                                              />
                                          </div>
 
-                                        <div className="space-y-1.5 sm:col-span-3">
-                                            <Label htmlFor="targetStep" className="text-muted-foreground font-medium text-[11px]">Post Output To Routing Step</Label>
-                                             <select
-                                                id="targetStep"
-                                                value={targetTaskId}
-                                                onChange={(e) => setTargetTaskId(Number(e.target.value))}
-                                                className="w-full h-10 rounded-xl border border-border/80 bg-background text-foreground px-3 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200 cursor-pointer"
-                                            >
-                                                {sortedTasks.map((t) => (
-                                                    <option key={t.id} value={t.id}>
-                                                        Step {t.sequence_order} — {t.name}{t.status === "Completed" ? " (Completed)" : ""}
-                                                    </option>
-                                                ))}
-                                             </select>
-                                             <p className="text-[9px] text-muted-foreground">The station is recorded from this routing step; material consumption remains tied to its selected WIP reservations.</p>
-                                         </div>
                                      </div>
 
                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl border border-border/60 bg-muted/20 p-3">
@@ -684,10 +653,10 @@ export function JobOrderShiftLogModal({
                                              </div>
                                          </div>
                                          <div className="flex items-center gap-2 min-w-0">
-                                             <MapPin className="h-4 w-4 text-primary shrink-0" />
+                                             <Layers className="h-4 w-4 text-primary shrink-0" />
                                              <div className="min-w-0">
-                                                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Station / Work Center</p>
-                                                 <p className="text-xs font-semibold text-foreground truncate">{stationLabel}</p>
+                                                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Route Scope</p>
+                                                 <p className="text-xs font-semibold text-foreground truncate">All {sortedTasks.length || "available"} routing steps</p>
                                              </div>
                                          </div>
                                          <div className="flex items-center gap-2 min-w-0">

@@ -9,7 +9,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Package, Minus, Plus, Filter, Box, Layers, Archive } from "lucide-react";
+import {
+  Search,
+  Package,
+  Minus,
+  Plus,
+  Filter,
+  Box,
+  Layers,
+  Archive,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
 import {
   StockAdjustmentManualProduct,
   StockAdjustmentManualItem,
@@ -98,54 +111,17 @@ export function getProductClassification(product: StockAdjustmentManualProduct):
 
   if (typeName) {
     if (typeName.includes("raw") || typeName.includes("ingredient") || typeName === "rm" || typeName.includes("bulk")) return "RM";
-    if (typeName.includes("packag") || typeName.includes("container") || typeName.includes("bottle") || typeName === "pkg" || typeName.includes("wrapper") || typeName.includes("cap")) return "PKG";
-    if (typeName.includes("finish") || typeName.includes("commercial") || typeName === "fg") return "FG";
+    if (typeName.includes("pack") || typeName.includes("box") || typeName.includes("bottle") || typeName.includes("pouch") || typeName.includes("cap") || typeName.includes("label") || typeName === "pkg") return "PKG";
+    if (typeName.includes("finish") || typeName.includes("fg") || typeName.includes("product") || typeName.includes("item")) return "FG";
   }
 
-  // 2. Category name check
-  const cat = product.category_name || (typeof product.product_category === "object" && product.product_category !== null ? (product.product_category as { category_name?: string }).category_name : String(product.product_category || ""));
-  const catLower = String(cat || "").toLowerCase();
-  if (catLower) {
-    if (catLower.includes("raw") || catLower.includes("ingredient") || catLower.includes("bulk") || catLower.includes("chemical")) return "RM";
-    if (catLower.includes("packag") || catLower.includes("bottle") || catLower.includes("cap") || catLower.includes("container") || catLower.includes("wrapping") || catLower.includes("label")) return "PKG";
-    if (catLower.includes("finish") || catLower.includes("commercial")) return "FG";
-  }
+  // 2. Classification by product code prefixes
+  const code = (product.product_code || "").toUpperCase();
+  if (code.startsWith("RM-") || code.startsWith("ING-") || code.startsWith("RAW-")) return "RM";
+  if (code.startsWith("PKG-") || code.startsWith("BOX-") || code.startsWith("BTL-") || code.startsWith("CAP-")) return "PKG";
+  if (code.startsWith("FG-") || code.startsWith("FIN-") || code.startsWith("PRD-")) return "FG";
 
-  // 3. Product code prefix check
-  const codeLower = String(product.product_code || "").toLowerCase();
-  if (codeLower.startsWith("rm-") || codeLower.startsWith("rm_") || codeLower.startsWith("raw-")) return "RM";
-  if (codeLower.startsWith("pkg-") || codeLower.startsWith("pkg_") || codeLower.startsWith("pack-") || codeLower.startsWith("pkg")) return "PKG";
-  if (codeLower.startsWith("fg-") || codeLower.startsWith("fg_") || codeLower.startsWith("fin-")) return "FG";
-
-  // 4. Product description / name keywords
-  const text = `${product.description || ""} ${product.product_name || ""}`.toLowerCase();
-  if (
-    text.includes("purified process water") ||
-    text.includes("purified water") ||
-    text.includes("raw material") ||
-    text.includes("ingredient") ||
-    text.includes("chemical") ||
-    text.includes("flavor") ||
-    text.includes("bulk liquid") ||
-    text.includes("bulk ")
-  ) {
-    return "RM";
-  }
-  if (
-    text.includes("pet bottle") ||
-    text.includes("bottle") ||
-    text.includes("cap") ||
-    text.includes("packaging") ||
-    text.includes("wrapper") ||
-    text.includes("sheet") ||
-    text.includes("pouch") ||
-    text.includes("carton") ||
-    text.includes("label") ||
-    text.includes("seal")
-  ) {
-    return "PKG";
-  }
-
+  // 3. Fallback to Finished Goods
   return "FG";
 }
 
@@ -161,8 +137,30 @@ export function ProductSelectionModal({
   onConfirm,
 }: ProductSelectionModalProps) {
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [productTypeFilter, setProductTypeFilter] = useState<ProductTypeFilter>("ALL");
   const [cartItems, setCartItems] = useState<StockAdjustmentManualItem[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 24;
+
+  // Clean up pointer-events on body whenever modal closes or unmounts
+  useEffect(() => {
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.style.removeProperty("pointer-events");
+        document.body.style.removeProperty("overflow");
+      }
+    };
+  }, [isOpen]);
+
+  // Debounce search query to prevent synchronous main-thread blocking on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(catalogSearch);
+      setCurrentPage(1);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [catalogSearch]);
 
   // Initialize cart when modal opens
   useEffect(() => {
@@ -170,7 +168,9 @@ export function ProductSelectionModal({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCartItems(initialSelectedItems || []);
       setCatalogSearch("");
+      setDebouncedSearch("");
       setProductTypeFilter("ALL");
+      setCurrentPage(1);
     }
   }, [isOpen, initialSelectedItems]);
 
@@ -203,7 +203,7 @@ export function ProductSelectionModal({
     return counts;
   }, [classifiedProducts]);
 
-  // Filter products by classification and search query
+  // Filter products by classification and debounced search query
   const filteredProducts = useMemo(() => {
     let result = classifiedProducts;
 
@@ -212,9 +212,9 @@ export function ProductSelectionModal({
       result = result.filter((p) => p._classification === productTypeFilter);
     }
 
-    // 2. Search query filter
-    if (catalogSearch.trim()) {
-      const t = catalogSearch.toLowerCase();
+    // 2. Debounced search query filter
+    if (debouncedSearch.trim()) {
+      const t = debouncedSearch.toLowerCase();
       result = result.filter(
         (p) =>
           p.description?.toLowerCase().includes(t) ||
@@ -225,7 +225,14 @@ export function ProductSelectionModal({
     }
 
     return result;
-  }, [classifiedProducts, productTypeFilter, catalogSearch]);
+  }, [classifiedProducts, productTypeFilter, debouncedSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / ITEMS_PER_PAGE));
+
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredProducts, currentPage]);
 
   const addedProductIds = useMemo(() => {
     const ids = new Set<number>();
@@ -465,88 +472,146 @@ export function ProductSelectionModal({
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-8">
-                  {filteredProducts.map((product) => {
-                    const pid = Number(product.product_id || product.id);
-                    const isAdded = addedProductIds.has(pid);
-                    const classification = product._classification;
-                    const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
-                    const ClassIcon = config.icon;
+                <div className="flex flex-col gap-4 pb-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {paginatedProducts.map((product) => {
+                      const pid = Number(product.product_id || product.id);
+                      const isAdded = addedProductIds.has(pid);
+                      const classification = product._classification;
+                      const config = PRODUCT_CLASSIFICATION_CONFIG[classification];
+                      const ClassIcon = config.icon;
 
-                    return (
-                      <div
-                        key={pid}
-                        className={`flex flex-col bg-card rounded-xl border p-4 transition-all shadow-sm ${
-                          isAdded
-                            ? "border-primary/60 dark:border-primary/40 ring-1 ring-primary/20 bg-primary/[0.02]"
-                            : "border-border hover:border-primary/30 hover:shadow-md"
-                        }`}
-                      >
-                        <div className="flex-1">
-                          {/* Classification Tag & SKU Header */}
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}>
-                              <ClassIcon className="w-2.5 h-2.5" />
-                              {config.shortLabel}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground font-mono font-bold">
-                              {product.product_code || "SKU: N/A"}
-                            </span>
+                      return (
+                        <div
+                          key={pid}
+                          className={`flex flex-col bg-card rounded-xl border p-4 transition-all shadow-sm ${
+                            isAdded
+                              ? "border-primary/60 dark:border-primary/40 ring-1 ring-primary/20 bg-primary/[0.02]"
+                              : "border-border hover:border-primary/30 hover:shadow-md"
+                          }`}
+                        >
+                          <div className="flex-1">
+                            {/* Classification Tag & SKU Header */}
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${config.badgeBg} ${config.badgeText} ${config.badgeBorder}`}>
+                                <ClassIcon className="w-2.5 h-2.5" />
+                                {config.shortLabel}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground font-mono font-bold">
+                                {product.product_code || "SKU: N/A"}
+                              </span>
+                            </div>
+
+                            <div className="flex justify-between items-start gap-2 mb-2">
+                              <h3 className="text-sm font-bold text-foreground leading-tight line-clamp-2 pr-1 group-hover:text-primary transition-colors">
+                                {product.description || product.product_name}
+                              </h3>
+                              {isAdded && (
+                                <div className="bg-primary text-primary-foreground rounded-full p-0.5 shrink-0 mt-0.5 shadow-sm">
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+                                    <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
+                                  </svg>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Brand & UoM */}
+                            <div className="flex items-center gap-2 mb-3">
+                              <Badge variant="outline" className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0 h-4 border-border/70 text-muted-foreground">
+                                {product.brand_name || "GENERIC"}
+                              </Badge>
+                              {product.unit_name && (
+                                <div className="inline-flex items-center gap-1 text-[9px] font-bold uppercase text-primary font-mono">
+                                  <Package className="w-2.5 h-2.5" />
+                                  {product.unit_name}
+                                </div>
+                              )}
+                            </div>
                           </div>
 
-                          <div className="flex justify-between items-start gap-2 mb-2">
-                            <h3 className="text-sm font-bold text-foreground leading-tight line-clamp-2 pr-1 group-hover:text-primary transition-colors">
-                              {product.description || product.product_name}
-                            </h3>
-                            {isAdded && (
-                              <div className="bg-primary text-primary-foreground rounded-full p-0.5 shrink-0 mt-0.5 shadow-sm">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
-                                  <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
-                                </svg>
-                              </div>
-                            )}
-                          </div>
+                          <div className="mt-auto pt-2 text-center border-t border-border/40">
+                            <div className="text-lg font-black text-primary font-mono mb-0.5">
+                              ₱{Number(product.cost_per_unit || product.price_per_unit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-3">/ {product.unit_name || "UNIT"}</div>
 
-                          {/* Brand & UoM */}
-                          <div className="flex items-center gap-2 mb-3">
-                            <Badge variant="outline" className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0 h-4 border-border/70 text-muted-foreground">
-                              {product.brand_name || "GENERIC"}
-                            </Badge>
-                            {product.unit_name && (
-                              <div className="inline-flex items-center gap-1 text-[9px] font-bold uppercase text-primary font-mono">
-                                <Package className="w-2.5 h-2.5" />
-                                {product.unit_name}
-                              </div>
+                            {isAdded ? (
+                              <Button
+                                variant="outline"
+                                className="w-full h-9 text-[11px] font-bold border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/50 dark:hover:bg-red-950/30 uppercase rounded-md"
+                                onClick={() => handleRemoveFromCart(pid)}
+                              >
+                                REMOVE
+                              </Button>
+                            ) : (
+                              <Button
+                                className="w-full h-9 text-[11px] font-bold bg-primary hover:bg-primary/90 text-white shadow-sm uppercase rounded-md"
+                                onClick={() => handleAddToCart(product)}
+                              >
+                                ADD TO ORDER
+                              </Button>
                             )}
                           </div>
                         </div>
+                      );
+                    })}
+                  </div>
 
-                        <div className="mt-auto pt-2 text-center border-t border-border/40">
-                          <div className="text-lg font-black text-primary font-mono mb-0.5">
-                            ₱{Number(product.cost_per_unit || product.price_per_unit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                          <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider mb-3">/ {product.unit_name || "UNIT"}</div>
-
-                          {isAdded ? (
-                            <Button
-                              variant="outline"
-                              className="w-full h-9 text-[11px] font-bold border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/50 dark:hover:bg-red-950/30 uppercase rounded-md"
-                              onClick={() => handleRemoveFromCart(pid)}
-                            >
-                              REMOVE
-                            </Button>
-                          ) : (
-                            <Button
-                              className="w-full h-9 text-[11px] font-bold bg-primary hover:bg-primary/90 text-white shadow-sm uppercase rounded-md"
-                              onClick={() => handleAddToCart(product)}
-                            >
-                              ADD TO ORDER
-                            </Button>
-                          )}
-                        </div>
+                  {/* Pagination Controls */}
+                  {filteredProducts.length > ITEMS_PER_PAGE && (
+                    <div className="flex items-center justify-between border-t border-border pt-4 px-2 mt-2 bg-card/40 rounded-lg p-3">
+                      <span className="text-xs text-muted-foreground font-medium">
+                        Showing <span className="font-bold text-foreground">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{" "}
+                        <span className="font-bold text-foreground">{Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)}</span> of{" "}
+                        <span className="font-bold text-foreground">{filteredProducts.length}</span> products
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 text-xs"
+                          disabled={currentPage === 1}
+                          onClick={() => setCurrentPage(1)}
+                          title="First Page"
+                        >
+                          <ChevronsLeft className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 text-xs"
+                          disabled={currentPage === 1}
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          title="Previous Page"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-xs font-bold px-2 text-foreground">
+                          {currentPage} / {totalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 text-xs"
+                          disabled={currentPage >= totalPages}
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          title="Next Page"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 text-xs"
+                          disabled={currentPage >= totalPages}
+                          onClick={() => setCurrentPage(totalPages)}
+                          title="Last Page"
+                        >
+                          <ChevronsRight className="h-4 w-4" />
+                        </Button>
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

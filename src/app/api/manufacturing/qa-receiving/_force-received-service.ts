@@ -1,5 +1,6 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
-import { INVENTORY_STATUS, PAYMENT_STATUS, todayInManila } from "../procurement/_domain";
+import { INVENTORY_STATUS, PAYMENT_STATUS } from "../procurement/_domain";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { acceptedQuantity } from "./_receiving-status";
 import { summarizeReceivingHistory } from "./_receiving-history";
 import {
@@ -31,7 +32,7 @@ async function directusJson(path: string, init?: RequestInit) {
 
 async function loadOrder(shipmentId: number) {
     const { response, body } = await directusJson(
-        `/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,workflow_revision,date_received,force_received_at,force_received_by,force_received_reason`
+        `/items/purchase_order/${shipmentId}?fields=purchase_order_id,inventory_status,payment_status,workflow_revision,date_received,force_received_at,force_received_by,force_received_reason,receiver_id`
     );
     if (response.status === 404 || !body?.data) throw new ForceReceivedError("Purchase order not found.", 404);
     if (!response.ok) throw new ForceReceivedError("Unable to load the purchase order.", 503);
@@ -125,7 +126,7 @@ function successPayload(
 
 async function conditionalPatch(id: number, expectedRevision: number, data: Record<string, unknown>) {
     const response = await procurementDirectusFetch(
-        "/items/purchase_order?fields=purchase_order_id,inventory_status,payment_status,workflow_revision,date_received,force_received_at,force_received_by,force_received_reason",
+        "/items/purchase_order?fields=purchase_order_id,inventory_status,payment_status,workflow_revision,date_received,force_received_at,force_received_by,force_received_reason,receiver_id",
         {
             method: "PATCH",
             body: JSON.stringify({
@@ -187,14 +188,15 @@ export async function forceReceivePurchaseOrder(input: {
 
         const revision = Number(order.workflow_revision || 0);
         const nextRevision = revision + 1;
-        const now = new Date().toISOString();
+        const now = formatPhtDateTime();
         const headerPatch = {
             inventory_status: INVENTORY_STATUS.RECEIVED,
             payment_status: PAYMENT_STATUS.AWAITING_PAYMENT,
-            date_received: todayInManila(),
+            date_received: now,
             force_received_at: now,
             force_received_by: actor.userId,
             force_received_reason: reason,
+            receiver_id: actor.userId,
             workflow_revision: nextRevision
         };
         const updated = await conditionalPatch(shipmentId, revision, headerPatch);
@@ -232,6 +234,7 @@ export async function forceReceivePurchaseOrder(input: {
                 force_received_at: null,
                 force_received_by: null,
                 force_received_reason: null,
+                receiver_id: order.receiver_id ?? null,
                 workflow_revision: revision
             }).catch(() => null);
             throw new ForceReceivedError(

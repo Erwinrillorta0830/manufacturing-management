@@ -34,6 +34,7 @@ export interface WarehouseReceivingOrder {
     id: number;
     poNumber: string;
     purchaseOrderNumber: string;
+    referenceNumber: string | null;
     supplierName: string;
     branch: { id: number; name: string; code: string };
     branchId: number;
@@ -46,6 +47,8 @@ export interface WarehouseReceivingOrder {
     totalPhpAmount: number;
     totalForeignAmount: number | null;
     dateApproved: string | null;
+    warehouseReceivingAt: string | null;
+    warehouseReceivedBy: number | null;
     remarks: string;
     lines: WarehouseReceivingLine[];
     draft: WarehouseReceivingDraft | null;

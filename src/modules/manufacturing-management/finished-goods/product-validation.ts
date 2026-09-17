@@ -164,7 +164,6 @@ function addRegistrationValidationErrors(input: unknown): ProductValidationField
 
 
 
-    if (!readText(body.versionName)) fields.versionName = "Version Name is required.";
     return fields;
 }
 
@@ -180,9 +179,13 @@ export function validateProductRegistration(input: unknown): ValidatedProductReg
 
     const body = isRecord(input) ? input : {};
     const productDetails = isRecord(body.productDetails) ? body.productDetails : {};
+    const productCode = readText(productDetails.product_code);
+    const providedVersion = readText(body.versionName);
+    const resolvedVersionName = providedVersion || (productCode ? `${productCode} Rev 1` : "Rev 1");
+
     return {
         productName: readText(productDetails.product_name),
-        productCode: readText(productDetails.product_code),
+        productCode: productCode,
         productBrand: readPositiveId(productDetails.product_brand) as number,
         productCategory: readPositiveId(productDetails.product_category) as number,
         unitOfMeasurement: readPositiveId(productDetails.unit_of_measurement) as number,
@@ -190,6 +193,6 @@ export function validateProductRegistration(input: unknown): ValidatedProductReg
         densityFactor: readNumber(productDetails.density_factor) as number,
         expectedYield: readNumber(body.expectedYield) as number,
         productShelfLife: readNumber(productDetails.product_shelf_life) as number,
-        versionName: readText(body.versionName)
+        versionName: resolvedVersionName
     };
 }

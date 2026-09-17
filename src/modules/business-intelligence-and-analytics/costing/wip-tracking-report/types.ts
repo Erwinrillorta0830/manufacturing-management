@@ -40,6 +40,7 @@ export interface WipMaterialReservation {
     uom_name: string;
     batch_no?: string | null;
     mm_lot_id?: number | null;
+    lot_name?: string | null;
     staging_bin?: string | null;
     reserved_quantity: number;
     staged_quantity: number;

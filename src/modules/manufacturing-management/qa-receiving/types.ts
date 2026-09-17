@@ -41,6 +41,17 @@ export interface StorageLot {
     occupiedQuantity?: number;
     availableQuantity?: number | null;
     remainingCapacity?: number | null;
+    capacity?: number | null;
+    stored_products?: StorageLotStoredProduct[];
+    target_classification?: { code: "RM" | "PKG" | "FG" | "OTHER"; label: string };
+}
+
+export interface StorageLotStoredProduct {
+    product_id: number;
+    product_name: string;
+    product_type_id: number | null;
+    classification_code: "RM" | "PKG" | "FG" | "OTHER";
+    classification_label: string;
 }
 
 export type StorageLotLookupStatus = "loading" | "loaded" | "error";
@@ -70,6 +81,7 @@ export interface ReceivingLotAllocationInput {
 
 export interface Shipment {
     shipment_id: number;
+    purchase_order_no: string;
     reference_number: string;
     status: string;
     total_php_value: string;
@@ -80,6 +92,8 @@ export interface Shipment {
     date_received: string;
     branch_id?: number | null;
     workflow_revision?: number;
+    qaReceivedAt?: string | null;
+    qaReceivedBy?: number | null;
     isForceReceived?: boolean;
     forceReceivedAt?: string | null;
     forceReceivedBy?: number | null;
@@ -413,7 +427,7 @@ export interface FIFOBatch {
     expiration_date?: string;
     reception_date: string;
     received_qty: number;
-    shipment_ref: string;
+    purchase_order_no: string;
 }
 
 export interface FIFOInventoryItem {

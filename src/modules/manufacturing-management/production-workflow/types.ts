@@ -205,6 +205,30 @@ export interface WorkCenter {
     } | null;
 }
 
+export type WorkCenterJobOrderAssignmentSource = "JO_ROUTE" | "VERSION_ROUTING" | "PRIMARY_WORK_CENTER";
+
+export interface StationJobOrderSummary {
+    jobOrderId: number;
+    jobOrderNo: string;
+    productId: number | null;
+    productName: string;
+    status: string;
+    branchId: number | null;
+    quantity: number;
+    routeId: number;
+    routeSequence: number;
+    operationName: string;
+    routeStatus: string;
+    assignmentSource: WorkCenterJobOrderAssignmentSource;
+}
+
+export interface WorkCenterJobOrderAvailability {
+    workCenterId: number;
+    workCenterName: string;
+    availableJobOrders: StationJobOrderSummary[];
+    inProgressJobOrders: StationJobOrderSummary[];
+}
+
 export interface JobOrderStatusHistoryRecord {
     history_id?: number;
     id?: number;
@@ -384,10 +408,11 @@ export interface ShiftRunMaterialConsumption {
 }
 
 export interface ShiftRunLogPayload {
+    sessionScope: "ROUTE" | "JOB_ORDER";
     sessionKey: string;
-    taskId: number;
+    taskId: number | null;
     joId: string | number;
-    workCenterId: number;
+    workCenterId: number | null;
     shiftName: string;
     productionDate: string;
     yieldQty: number;
