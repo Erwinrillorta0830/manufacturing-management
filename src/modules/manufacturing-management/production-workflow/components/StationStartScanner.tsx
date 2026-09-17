@@ -23,8 +23,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { JobOrder, WorkCenter, StationScanResponse } from "../types";
-import { scanStationStart, fetchWorkCenters, type RouteWorkCenterOption, type WorkCenterApplicabilitySource } from "../services/production-api";
+import { JobOrder, WorkCenter, StationScanResponse, type StationJobOrderSummary, type WorkCenterJobOrderAvailability } from "../types";
+import { scanStationStart, fetchWorkCenters, fetchWorkCenterAvailability, type RouteWorkCenterOption, type WorkCenterApplicabilitySource } from "../services/production-api";
 import { toast } from "sonner";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -68,6 +68,9 @@ export function StationStartScanner({
     const [workCenterSource, setWorkCenterSource] = useState<WorkCenterApplicabilitySource | null>(null);
     const [routeOptions, setRouteOptions] = useState<RouteWorkCenterOption[]>([]);
     const [loadingWc, setLoadingWc] = useState(false);
+    const [workCenterAvailability, setWorkCenterAvailability] = useState<WorkCenterJobOrderAvailability[]>([]);
+    const [loadingAvailability, setLoadingAvailability] = useState(false);
+    const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
     // Scanned values
     const [scannedWcBarcode, setScannedWcBarcode] = useState("");
@@ -106,6 +109,20 @@ export function StationStartScanner({
         }
     }, []);
 
+    const loadWorkCenterAvailability = React.useCallback(async () => {
+        setLoadingAvailability(true);
+        setAvailabilityError(null);
+        try {
+            const result = await fetchWorkCenterAvailability();
+            setWorkCenterAvailability(result);
+        } catch (err: any) {
+            setWorkCenterAvailability([]);
+            setAvailabilityError(err.message || "Failed to load workstation Job Order availability.");
+        } finally {
+            setLoadingAvailability(false);
+        }
+    }, []);
+
     // Load work centers on open, honoring an optional prefilled Job Order.
     useEffect(() => {
         if (!open) return;
@@ -114,6 +131,8 @@ export function StationStartScanner({
         setScannedJoBarcode("");
         setSelectedWc(null);
         setSelectedRouteId(null);
+        setWorkCenterAvailability([]);
+        setAvailabilityError(null);
 
         const prefill = initialJobOrder || null;
         setSelectedJo(prefill);
@@ -128,9 +147,14 @@ export function StationStartScanner({
         void loadWorkCentersFor(prefill).finally(() => {
             setTimeout(() => wcInputRef.current?.focus(), 150);
         });
-    }, [open, initialJobOrder, loadWorkCentersFor]);
+        void loadWorkCenterAvailability();
+    }, [open, initialJobOrder, loadWorkCentersFor, loadWorkCenterAvailability]);
 
-    const selectJobOrder = async (jobOrder: JobOrder | null) => {
+    const selectJobOrder = async (
+        jobOrder: JobOrder | null,
+        workCenterToKeep: WorkCenter | null = null,
+        routeIdToKeep: number | null = null
+    ) => {
         setSelectedJo(jobOrder);
         setScannedJoBarcode(jobOrder ? (jobOrder.job_order_no || jobOrder.jo_id) : "");
         setScanResult(null);
@@ -139,18 +163,19 @@ export function StationStartScanner({
         setScannedWcBarcode("");
         const result = await loadWorkCentersFor(jobOrder);
         const jobOrderRoutes = jobOrder?.routing_tasks || jobOrder?.routingTasks || [];
-        if (jobOrderRoutes.length === 1) {
+        if (routeIdToKeep) {
+            setSelectedRouteId(routeIdToKeep);
+        } else if (jobOrderRoutes.length === 1) {
             setSelectedRouteId(Number(jobOrderRoutes[0].id || jobOrderRoutes[0].jo_route_id) || null);
         }
-        setSelectedWc((previous) => {
-            if (!previous) return previous;
-            const stillApplicable = result.data.some((center) => Number(center.work_center_id) === Number(previous.work_center_id));
-            if (!stillApplicable) {
-                setScannedWcBarcode("");
-                return null;
-            }
-            return previous;
-        });
+        if (workCenterToKeep) {
+            const stillApplicable = result.data.find((center) =>
+                Number(center.work_center_id) === Number(workCenterToKeep.work_center_id)
+            );
+            const nextWorkCenter = stillApplicable || workCenterToKeep;
+            setSelectedWc(nextWorkCenter);
+            setScannedWcBarcode(nextWorkCenter.barcode || `WC-${nextWorkCenter.work_center_id}`);
+        }
     };
 
     const selectedJoRoutes = React.useMemo(() => {
@@ -175,6 +200,14 @@ export function StationStartScanner({
         : selectedJoRoutes.length > 1
             ? []
             : workCenters;
+
+    const availabilityByWorkCenter = React.useMemo(
+        () => new Map(workCenterAvailability.map((entry) => [entry.workCenterId, entry])),
+        [workCenterAvailability]
+    );
+    const selectedWorkCenterAvailability = selectedWc
+        ? availabilityByWorkCenter.get(Number(selectedWc.work_center_id))
+        : null;
 
     const handleRouteSelection = (value: string) => {
         const nextRouteId = Number(value) || null;
@@ -225,10 +258,8 @@ export function StationStartScanner({
         });
 
         if (matched) {
-            setSelectedWc(matched);
-            playSuccessBeep();
+            handleWorkCenterSelect(matched);
             toast.success(`Work Center matched: ${matched.work_center_name}`);
-            setTimeout(() => joInputRef.current?.focus(), 100);
         } else {
             toast.error(selectedJo
                 ? `Work Center "${code}" is not part of this Job Order's routing.`
@@ -260,6 +291,61 @@ export function StationStartScanner({
         } else {
             toast.error(`Job Order barcode "${code}" not recognized.`);
         }
+    };
+
+    const handleAvailabilityJobOrderSelect = async (
+        summary: StationJobOrderSummary,
+        workCenterToKeep: WorkCenter | null = null
+    ) => {
+        const matchedJobOrder = jobOrders.find((jobOrder) =>
+            Number(jobOrder.order_id || jobOrder.job_order_id || 0) === summary.jobOrderId
+            || (jobOrder.job_order_no || jobOrder.jo_id) === summary.jobOrderNo
+        );
+        const fallbackRoute = summary.routeId > 0
+            ? [{
+                id: summary.routeId,
+                jo_route_id: summary.routeId,
+                jo_id: summary.jobOrderNo,
+                routing_id: 0,
+                name: summary.operationName,
+                sequence_order: summary.routeSequence,
+                status: summary.routeStatus,
+                planned_setup_hours: 0,
+                planned_run_hours: 0,
+                actual_setup_hours: 0,
+                actual_run_hours: 0,
+                completed_at: null,
+                requires_qa: 0,
+                qa_record_exists: false,
+                shift_progress_exists: false,
+                assignments: [],
+                qa_logs: []
+            }]
+            : [];
+        const nextJobOrder = matchedJobOrder || {
+            jo_id: summary.jobOrderNo,
+            order_id: summary.jobOrderId,
+            job_order_id: summary.jobOrderId,
+            product_id: summary.productId || 0,
+            product_name: summary.productName,
+            quantity: summary.quantity,
+            due_date: "",
+            status: summary.status,
+            branch_id: summary.branchId || 0,
+            routing_tasks: fallbackRoute
+        } as JobOrder;
+
+        playSuccessBeep();
+        await selectJobOrder(nextJobOrder, workCenterToKeep, summary.routeId || null);
+        toast.success(`Job Order ${summary.jobOrderNo} loaded for ${workCenterToKeep?.work_center_name || "the workstation"}.`);
+    };
+
+    const handleWorkCenterSelect = (workCenter: WorkCenter) => {
+        setSelectedWc(workCenter);
+        setScannedWcBarcode(workCenter.barcode || `WC-${workCenter.work_center_id}`);
+        playSuccessBeep();
+
+        setTimeout(() => joInputRef.current?.focus(), 100);
     };
 
     // Trigger Final Station Start Execution
@@ -308,7 +394,7 @@ export function StationStartScanner({
     return (
         <>
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="w-[96vw] md:w-full md:max-w-[1100px] max-h-[94vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+            <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[94vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
                 {/* Header */}
                 <div className="bg-gradient-to-r from-primary/15 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
                     <DialogHeader>
@@ -368,8 +454,8 @@ export function StationStartScanner({
                         </div>
                     )}
 
-                    {/* Dual Scan Inputs Row */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Station Start Steps */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         {/* Step 1: Work Center Scanner */}
                         <Card className={`border transition-all duration-200 ${selectedWc ? "border-emerald-500/40 bg-emerald-500/[0.02]" : "border-border"}`}>
                             <CardHeader className="p-4 pb-2">
@@ -452,20 +538,32 @@ export function StationStartScanner({
                                                 <button
                                                     key={wc.work_center_id}
                                                     type="button"
-                                                    onClick={() => {
-                                                        setSelectedWc(wc);
-                                                        setScannedWcBarcode(wc.barcode || `WC-${wc.work_center_id}`);
-                                                        playSuccessBeep();
-                                                        setTimeout(() => joInputRef.current?.focus(), 100);
-                                                    }}
+                                                    onClick={() => handleWorkCenterSelect(wc)}
                                                     className="p-2 text-left bg-background border border-border/80 hover:border-primary hover:bg-primary/5 rounded-xl transition-all text-xs flex flex-col justify-between"
                                                 >
-                                                    <span className="font-bold text-[11px] truncate block text-foreground">
-                                                        {wc.work_center_name}
-                                                    </span>
+                                                    <div className="flex items-start justify-between gap-1.5">
+                                                        <span className="font-bold text-[11px] truncate block text-foreground">
+                                                            {wc.work_center_name}
+                                                        </span>
+                                                        <Building2 className="h-3 w-3 shrink-0 text-primary/70" />
+                                                    </div>
                                                     <span className="font-mono text-[9px] text-muted-foreground">
                                                         {wc.barcode || `WC-${wc.work_center_id}`}
                                                     </span>
+                                                    {(() => {
+                                                        const availability = availabilityByWorkCenter.get(Number(wc.work_center_id));
+                                                        if (!availability) return null;
+                                                        return (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                <Badge variant="outline" className="h-4 border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[8px] font-bold text-emerald-700 dark:text-emerald-300">
+                                                                    {availability.availableJobOrders.length} available
+                                                                </Badge>
+                                                                <Badge variant="outline" className="h-4 border-amber-500/30 bg-amber-500/10 px-1.5 text-[8px] font-bold text-amber-700 dark:text-amber-300">
+                                                                    {availability.inProgressJobOrders.length} in progress
+                                                                </Badge>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </button>
                                             ))}
                                             {!loadingWc && selectedJo && selectedJoRoutes.length > 1 && !selectedRouteId && (
@@ -477,6 +575,7 @@ export function StationStartScanner({
                                         )}
                                     </div>
                                 )}
+
                             </CardContent>
                         </Card>
 
@@ -497,7 +596,9 @@ export function StationStartScanner({
                                     <FileText className="h-4 w-4 text-primary" /> Job Order Batch Barcode
                                 </CardTitle>
                                 <CardDescription className="text-[11px]">
-                                    Scan traveller barcode, batch sheet, or tap a released job below
+                                    {selectedWc
+                                        ? "Choose an available Job Order for this workstation or scan its barcode"
+                                        : "Scan traveller barcode, batch sheet, or tap a released job below"}
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="p-4 pt-2 space-y-3">
@@ -545,6 +646,98 @@ export function StationStartScanner({
                                             </Button>
                                         </div>
                                     </div>
+                                ) : selectedWc ? (
+                                    <div className="space-y-1.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-[9px] font-bold text-muted-foreground uppercase font-mono block">
+                                                Available to Start and In Progress Here:
+                                            </span>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="xs"
+                                                onClick={() => void loadWorkCenterAvailability()}
+                                                disabled={loadingAvailability}
+                                                className="h-7 shrink-0 px-2 text-[10px]"
+                                            >
+                                                <RefreshCw className={`mr-1.5 h-3 w-3 ${loadingAvailability ? "animate-spin" : ""}`} />
+                                                Refresh
+                                            </Button>
+                                        </div>
+
+                                        {availabilityError ? (
+                                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                                                {availabilityError}
+                                            </div>
+                                        ) : loadingAvailability ? (
+                                            <div className="flex items-center justify-center rounded-xl border border-dashed p-4 text-[11px] text-muted-foreground">
+                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading workstation Job Orders...
+                                            </div>
+                                        ) : (
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                                {[
+                                                    {
+                                                        label: "Available to start",
+                                                        entries: selectedWorkCenterAvailability?.availableJobOrders || [],
+                                                        interactive: true,
+                                                        className: "border-emerald-500/30 bg-emerald-500/5",
+                                                        badgeClassName: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                                    },
+                                                    {
+                                                        label: "In progress here",
+                                                        entries: selectedWorkCenterAvailability?.inProgressJobOrders || [],
+                                                        interactive: false,
+                                                        className: "border-amber-500/30 bg-amber-500/5",
+                                                        badgeClassName: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                                    }
+                                                ].map((group) => (
+                                                    <div key={group.label} className={`rounded-xl border p-2.5 ${group.className}`}>
+                                                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                                                            <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                                                {group.label}
+                                                            </span>
+                                                            <Badge variant="outline" className={`h-4 px-1.5 text-[8px] font-bold ${group.badgeClassName}`}>
+                                                                {group.entries.length}
+                                                            </Badge>
+                                                        </div>
+                                                        {group.entries.length === 0 ? (
+                                                            <span className="text-[10px] text-muted-foreground">No matching Job Orders.</span>
+                                                        ) : (
+                                                            <div className="space-y-1.5">
+                                                                {group.entries.map((entry) => (
+                                                                    <button
+                                                                        key={`${entry.jobOrderId}-${entry.routeId || "primary"}`}
+                                                                        type="button"
+                                                                        disabled={!group.interactive}
+                                                                        onClick={() => handleAvailabilityJobOrderSelect(entry, selectedWc)}
+                                                                        className={`w-full rounded-lg border border-border/70 bg-background/80 p-2 text-left transition-colors ${group.interactive
+                                                                            ? "hover:border-primary hover:bg-primary/5"
+                                                                            : "cursor-not-allowed opacity-80"
+                                                                            }`}
+                                                                    >
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <span className="truncate font-mono text-[10px] font-bold text-foreground">
+                                                                                {entry.jobOrderNo}
+                                                                            </span>
+                                                                            <span className="shrink-0 text-[9px] font-semibold text-muted-foreground">
+                                                                                {displayJobOrderStatus(entry.status)}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                                                                            {entry.productName} - Qty {entry.quantity.toLocaleString()}
+                                                                        </div>
+                                                                        <div className="mt-0.5 truncate text-[9px] text-muted-foreground">
+                                                                            {entry.routeSequence > 0 ? `Step ${entry.routeSequence} - ` : ""}{entry.operationName} - {entry.routeStatus}
+                                                                        </div>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div className="space-y-1.5">
                                         <span className="text-[9px] font-bold text-muted-foreground uppercase font-mono block">
@@ -582,8 +775,6 @@ export function StationStartScanner({
                                 )}
                             </CardContent>
                         </Card>
-                    </div>
-
                     {selectedJo && selectedJoRoutes.length > 0 && (
                         <Card className="border-primary/30 bg-primary/[0.02]">
                             <CardHeader className="p-4 pb-2">
@@ -634,6 +825,7 @@ export function StationStartScanner({
                             </CardContent>
                         </Card>
                     )}
+                    </div>
 
                     {/* Summary & Start Button Action Strip */}
                     <div className="p-4 bg-gradient-to-r from-card via-card to-muted/20 border border-border/80 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4">

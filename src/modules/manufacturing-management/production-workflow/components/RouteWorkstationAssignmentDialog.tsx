@@ -20,9 +20,10 @@ import {
     SelectTrigger,
     SelectValue
 } from "@/components/ui/select";
-import { JobOrder, RoutingTask } from "../types";
+import { JobOrder, RoutingTask, type WorkCenterJobOrderAvailability } from "../types";
 import {
     assignRouteWorkCenters,
+    fetchWorkCenterAvailability,
     fetchWorkCenters,
     type RouteWorkCenterOption
 } from "../services/production-api";
@@ -59,6 +60,7 @@ export function RouteWorkstationAssignmentDialog({
     onSaved
 }: RouteWorkstationAssignmentDialogProps) {
     const [workCenters, setWorkCenters] = useState<Awaited<ReturnType<typeof fetchWorkCenters>>["data"]>([]);
+    const [workCenterAvailability, setWorkCenterAvailability] = useState<WorkCenterJobOrderAvailability[]>([]);
     const [routeOptions, setRouteOptions] = useState<RouteWorkCenterOption[]>([]);
     const [assignments, setAssignments] = useState<Record<number, string>>({});
     const [initialAssignments, setInitialAssignments] = useState<Record<number, string>>({});
@@ -82,13 +84,18 @@ export function RouteWorkstationAssignmentDialog({
         setError(null);
         setAssignments({});
         setInitialAssignments({});
+        setWorkCenterAvailability([]);
 
-        void fetchWorkCenters(jobOrderId)
-            .then((result) => {
+        void Promise.all([
+            fetchWorkCenters(jobOrderId),
+            fetchWorkCenterAvailability().catch(() => [] as WorkCenterJobOrderAvailability[])
+        ])
+            .then(([result, availability]) => {
                 if (disposed) return;
 
                 setWorkCenters(result.data);
                 setRouteOptions(result.routeOptions || []);
+                setWorkCenterAvailability(availability);
 
                 const optionMap = new Map((result.routeOptions || []).map((option) => [option.joRouteId, option]));
                 const nextAssignments: Record<number, string> = {};
@@ -105,6 +112,7 @@ export function RouteWorkstationAssignmentDialog({
                 if (disposed) return;
                 setWorkCenters([]);
                 setRouteOptions([]);
+                setWorkCenterAvailability([]);
                 setError(loadError?.message || "Failed to load route workstations.");
             })
             .finally(() => {
@@ -119,6 +127,11 @@ export function RouteWorkstationAssignmentDialog({
     const optionMap = useMemo(
         () => new Map(routeOptions.map((option) => [option.joRouteId, option])),
         [routeOptions]
+    );
+
+    const availabilityByWorkCenter = useMemo(
+        () => new Map(workCenterAvailability.map((entry) => [entry.workCenterId, entry])),
+        [workCenterAvailability]
     );
 
     const changed = useMemo(
@@ -246,6 +259,7 @@ export function RouteWorkstationAssignmentDialog({
                                                 {task.status || "Pending"}
                                             </Badge>
                                             {pending ? (
+                                                <>
                                                 <Select
                                                     value={currentValue}
                                                     onValueChange={(value) => setAssignments((previous) => ({ ...previous, [id]: value }))}
@@ -265,6 +279,20 @@ export function RouteWorkstationAssignmentDialog({
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
+                                                {routeWorkCenters.some((workCenter) => availabilityByWorkCenter.has(Number(workCenter.work_center_id))) && (
+                                                    <div className="col-start-4 text-[9px] font-semibold text-muted-foreground">
+                                                        {routeWorkCenters.map((workCenter) => {
+                                                            const availability = availabilityByWorkCenter.get(Number(workCenter.work_center_id));
+                                                            if (!availability) return null;
+                                                            return (
+                                                                <span key={workCenter.work_center_id} className="mr-2 inline-block">
+                                                                    {workCenter.work_center_name}: {availability.availableJobOrders.length} available · {availability.inProgressJobOrders.length} in progress
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                                </>
                                             ) : (
                                                 <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                                                     <CheckCircle2 className="h-4 w-4 text-emerald-500" />
