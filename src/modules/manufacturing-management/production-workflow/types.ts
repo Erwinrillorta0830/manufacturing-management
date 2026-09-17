@@ -51,6 +51,16 @@ export interface RoutingTask {
     }[];
 }
 
+export interface SalesOrderLink {
+    jo_id?: string;
+    order_id?: number;
+    sales_order_detail_id?: number | null;
+    order_no: string;
+    customer_code?: string | null;
+    customer_name?: string | null;
+    quantity?: number;
+}
+
 export interface JobOrder {
     jo_id: string;
     order_id?: number;
@@ -93,7 +103,8 @@ export interface JobOrder {
     created_by?: number | null;
     created_at?: string | null;
     yield_logs?: any[];
-    sales_orders?: any[];
+    sales_orders?: SalesOrderLink[];
+    salesOrders?: SalesOrderLink[];
 }
 
 export interface JobOrderMaterialReturnLine {

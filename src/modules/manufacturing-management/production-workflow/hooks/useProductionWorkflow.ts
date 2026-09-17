@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview, SalesOrderLink } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
@@ -14,7 +14,7 @@ import {
     returnJobOrderMaterials,
     executeJobOrderWorkflow
 } from "../services/production-api";
-import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { isJobOrderStatus, JOB_ORDER_STATUS, displayJobOrderStatus, normalizeJobOrderStatus } from "../../job-order-status";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
 export function useProductionWorkflow() {
@@ -35,6 +35,9 @@ export function useProductionWorkflow() {
     const [searchQuery, setSearchQuery] = useState("");
     const [branches, setBranches] = useState<any[]>([]);
     const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("All");
+    const [selectedProductFilter, setSelectedProductFilter] = useState<string>("All");
+    const [selectedCustomerFilter, setSelectedCustomerFilter] = useState<string>("All");
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("All");
     const [pendingDeepLinkTarget, setPendingDeepLinkTarget] = useState<{ id?: string | null; jo?: string | null } | null>(null);
     const selectedJobOrderIdRef = useRef(selectedJobOrderId);
 
@@ -64,6 +67,48 @@ export function useProductionWorkflow() {
     const terminalJobOrders = useMemo(() => {
         return jobOrders.filter((jo) => isJobOrderStatus(jo.status, JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION));
     }, [jobOrders]);
+
+    const salesOrderLinksOf = useCallback((jo: JobOrder): SalesOrderLink[] => {
+        return jo.salesOrders || jo.sales_orders || [];
+    }, []);
+
+    const productFilterOptions = useMemo(() => {
+        const byProductId = new Map<string, string>();
+        for (const jo of terminalJobOrders) {
+            const value = String(jo.product_id);
+            if (!byProductId.has(value)) {
+                byProductId.set(value, jo.product_name || `Product #${jo.product_id}`);
+            }
+        }
+        return [...byProductId.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((left, right) => left.label.localeCompare(right.label));
+    }, [terminalJobOrders]);
+
+    const customerFilterOptions = useMemo(() => {
+        const byCustomerCode = new Map<string, string>();
+        for (const jo of terminalJobOrders) {
+            for (const salesOrder of salesOrderLinksOf(jo)) {
+                const code = String(salesOrder?.customer_code || "").trim();
+                if (!code || byCustomerCode.has(code)) continue;
+                byCustomerCode.set(code, String(salesOrder?.customer_name || "").trim() || code);
+            }
+        }
+        return [...byCustomerCode.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((left, right) => left.label.localeCompare(right.label));
+    }, [terminalJobOrders, salesOrderLinksOf]);
+
+    const statusFilterOptions = useMemo(() => {
+        const presentStatuses = new Set<string>();
+        for (const jo of terminalJobOrders) {
+            const canonical = normalizeJobOrderStatus(jo.status);
+            if (canonical) presentStatuses.add(canonical);
+        }
+        return [JOB_ORDER_STATUS.PICKED, JOB_ORDER_STATUS.IN_PRODUCTION]
+            .filter((status) => presentStatuses.has(status))
+            .map((status) => ({ value: status, label: displayJobOrderStatus(status) }));
+    }, [terminalJobOrders]);
 
     // Get current Job Order object. The details modal follows the queue scope.
     const selectedJobOrder = useMemo(() => {
@@ -623,9 +668,39 @@ const selectedTask = useMemo(() => {
                 return false;
             }
 
+            if (selectedProductFilter !== "All" && String(jo.product_id) !== selectedProductFilter) {
+                return false;
+            }
+
+            if (selectedStatusFilter !== "All" && normalizeJobOrderStatus(jo.status) !== selectedStatusFilter) {
+                return false;
+            }
+
+            if (
+                selectedCustomerFilter !== "All"
+                && !salesOrderLinksOf(jo).some((salesOrder: any) => String(salesOrder?.customer_code || "").trim() === selectedCustomerFilter)
+            ) {
+                return false;
+            }
+
             return true;
         });
-    }, [terminalJobOrders, searchQuery, selectedBranchFilter]);
+    }, [terminalJobOrders, searchQuery, selectedBranchFilter, selectedProductFilter, selectedStatusFilter, selectedCustomerFilter, salesOrderLinksOf]);
+
+    const hasActiveFilters =
+        searchQuery.trim().length > 0
+        || selectedBranchFilter !== "All"
+        || selectedProductFilter !== "All"
+        || selectedCustomerFilter !== "All"
+        || selectedStatusFilter !== "All";
+
+    const clearFilters = useCallback(() => {
+        setSearchQuery("");
+        setSelectedBranchFilter("All");
+        setSelectedProductFilter("All");
+        setSelectedCustomerFilter("All");
+        setSelectedStatusFilter("All");
+    }, []);
 
     return {
         jobOrders,
@@ -661,6 +736,17 @@ const selectedTask = useMemo(() => {
         branches,
         selectedBranchFilter,
         setSelectedBranchFilter,
+        selectedProductFilter,
+        setSelectedProductFilter,
+        selectedCustomerFilter,
+        setSelectedCustomerFilter,
+        selectedStatusFilter,
+        setSelectedStatusFilter,
+        productFilterOptions,
+        customerFilterOptions,
+        statusFilterOptions,
+        hasActiveFilters,
+        clearFilters,
         releasingDraft,
         handleReleaseDraftJO,
         cancellationModalOpen,

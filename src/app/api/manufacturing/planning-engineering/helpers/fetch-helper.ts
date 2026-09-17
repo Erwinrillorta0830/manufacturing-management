@@ -3,6 +3,10 @@ import { DIRECTUS_URL, headersNoCache, DirectusJobOrder } from "./shared";
 import { fetchMmInventoryMovements, MmInventoryMovementError } from "../../services/mm-inventory-movements.service";
 import { normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { getDailyQAAuditStatus, type DailyQAOutcomeStatus } from "@/modules/manufacturing-management/manufacturing-qa/daily-qa-outcome";
+import {
+    calculateBatchScaledMaterialRequirement,
+    roundProductionValue
+} from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -41,7 +45,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_qa_records?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1`, { headers: headersNoCache }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_yield_ledger?limit=-1`, { headers: headersNoCache }),
-            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name`, { headers: headersNoCache })
+            fetch(`${DIRECTUS_URL}/items/product_manufacturing_version?limit=-1&fields=version_id,version_name,base_quantity,uom_id`, { headers: headersNoCache })
         ];
 
         if (!useCache) {
@@ -210,7 +214,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 ));
                 if (parentOrderIds.length > 0) {
                     const ordersRes = await fetch(
-                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_no&limit=-1`,
+                        `${DIRECTUS_URL}/items/sales_order?filter[order_id][_in]=${parentOrderIds.join(",")}&fields=order_id,order_no,customer_code&limit=-1`,
                         { headers: headersNoCache }
                     );
                     salesOrderParents = ordersRes.ok ? (await ordersRes.json()).data || [] : [];
@@ -227,6 +231,31 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             salesOrderParents.map((order: any) => [getRelationId(order.order_id, ["order_id"]), order])
         );
 
+        // Resolve human-readable customer names for the linked sales orders so
+        // the shop floor terminal can filter Job Orders by customer.
+        const customerCodes = [...new Set(
+            salesOrderParents
+                .map((order: any) => String(order.customer_code || "").trim())
+                .filter((code: string) => code.length > 0)
+        )];
+        const customerNameByCode = new Map<string, string>();
+        if (customerCodes.length > 0) {
+            try {
+                const customersRes = await fetch(
+                    `${DIRECTUS_URL}/items/customer?filter[customer_code][_in]=${encodeURIComponent(customerCodes.join(","))}&fields=customer_code,customer_name&limit=-1`,
+                    { headers: headersNoCache }
+                );
+                const customers = customersRes.ok ? (await customersRes.json()).data || [] : [];
+                for (const customer of customers) {
+                    const code = String(customer.customer_code || "").trim();
+                    const name = String(customer.customer_name || "").trim();
+                    if (code && name) customerNameByCode.set(code, name);
+                }
+            } catch (error) {
+                console.warn("[Manufacturing Directus API] Failed to resolve customer names for Job Orders:", error);
+            }
+        }
+
         const isEnabledFlag = (value: unknown): boolean => {
             if (value === true || value === 1) return true;
             const normalized = String(value ?? "").trim().toLowerCase();
@@ -234,8 +263,11 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         };
 
         const versionMap = new Map<number, string>();
+        const versionById = new Map<number, any>();
         mfgVersions.forEach((v: any) => {
-            versionMap.set(Number(v.version_id || v.id), v.version_name);
+            const versionId = Number(v.version_id || v.id);
+            versionMap.set(versionId, v.version_name);
+            versionById.set(versionId, v);
         });
 
         const unitsMap = new Map<number, any>();
@@ -328,6 +360,11 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             const matchedProduct = productsList.find((p: any) => Number(p.product_id) === Number(jo.product_id));
             const productName = matchedProduct?.product_name || `Product #${jo.product_id}`;
             const uomId = Number(matchedProduct?.unit_of_measurement?.unit_id || matchedProduct?.unit_of_measurement || 0);
+            const recipeVersion = versionById.get(Number(jo.version_id));
+            // Queue reads must remain tolerant of existing packaging/legacy UOM
+            // mappings. Compatibility is enforced when a JO is created or moved
+            // through a workflow transition; rejecting one row here would cause
+            // the entire terminal queue to be returned as an empty list.
             const unitObj = unitsMap.get(uomId) || (typeof matchedProduct?.unit_of_measurement === "object" ? matchedProduct.unit_of_measurement : null);
             const uomName = unitObj?.unit_name || unitObj?.unit_shortcut || "Pieces";
             const uomShortcut = unitObj?.unit_shortcut || unitObj?.unit_name || "PCS";
@@ -345,6 +382,10 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         order_id: orderId || detailId,
                         sales_order_detail_id: detailId || null,
                         order_no: order?.order_no || (orderId ? `SO-${orderId}` : `SO-DETAIL-${detailId}`),
+                        customer_code: String(order?.customer_code || "").trim() || null,
+                        customer_name: String(order?.customer_code || "").trim()
+                            ? (customerNameByCode.get(String(order.customer_code).trim()) || String(order.customer_code).trim())
+                            : null,
                         quantity: Number(s.allocated_quantity || 0)
                     };
                 });
@@ -402,16 +443,25 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                     const shiftProgressExists = hasCommittedShiftProgress(joIdInt, Number(task.jo_route_id));
                     const routeId = masterRoutingId || taskRoutingId;
                     const stepBoms = routeId ? mfgRoutesBom.filter((b: any) => Number(b.route_id) === Number(routeId)) : [];
+                    const baseQuantity = Number(recipeVersion?.base_quantity);
+                    if (stepBoms.length > 0 && (!Number.isFinite(baseQuantity) || baseQuantity <= 0)) {
+                        throw new Error(`Recipe base quantity is required for Job Order '${joNo}'.`);
+                    }
                     
                     const stepBomItems = stepBoms.map((b: any) => {
                         const prod = productsList.find((p: any) => Number(p.product_id) === Number(b.product_id));
-                        const qtyPerUnit = Number(b.quantity_required || 0);
-                        const wastage = 1 + (Number(b.wastage_factor_percentage || 0) / 100);
-                        const totalNeeded = qtyPerUnit * targetQuantity * wastage;
+                        const qtyPerBatch = Number(b.quantity_required || 0);
+                        const wastagePercentage = Number(b.wastage_factor_percentage || 0);
+                        const totalNeeded = roundProductionValue(calculateBatchScaledMaterialRequirement(
+                            targetQuantity,
+                            baseQuantity,
+                            qtyPerBatch,
+                            wastagePercentage
+                        ));
                         return {
                             product_id: b.product_id,
                             product_name: prod?.product_name || `Product #${b.product_id}`,
-                            qty_per_unit: qtyPerUnit,
+                            qty_per_unit: qtyPerBatch,
                             total_needed: totalNeeded,
                             unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "pcs"
                         };

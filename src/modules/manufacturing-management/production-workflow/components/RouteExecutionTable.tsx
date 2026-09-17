@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
+import { formatProductionValue } from "../../planning-engineering/utils/production-timing";
 import { JobOrder, RouteOperatorRecord, RoutingTask, User as UserType } from "../types";
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
 
@@ -418,7 +419,7 @@ function RouteExecutionRow({
                                     <div key={`${item.product_id}_${index}`} className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2 text-xs">
                                         <span className="truncate font-semibold text-foreground" title={item.product_name}>{item.product_name}</span>
                                         <span className="shrink-0 font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                            {Number(item.total_needed || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {item.unit_shortcut || "units"}
+                                            {formatProductionValue(item.total_needed)} {item.unit_shortcut || "units"}
                                         </span>
                                     </div>
                                 ))}

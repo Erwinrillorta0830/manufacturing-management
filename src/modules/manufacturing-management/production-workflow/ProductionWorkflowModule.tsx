@@ -79,6 +79,17 @@ export default function ProductionWorkflowModule() {
         branches,
         selectedBranchFilter,
         setSelectedBranchFilter,
+        selectedProductFilter,
+        setSelectedProductFilter,
+        selectedCustomerFilter,
+        setSelectedCustomerFilter,
+        selectedStatusFilter,
+        setSelectedStatusFilter,
+        productFilterOptions,
+        customerFilterOptions,
+        statusFilterOptions,
+        hasActiveFilters,
+        clearFilters,
         releasingDraft,
         handleReleaseDraftJO,
         cancellationModalOpen,
@@ -254,7 +265,7 @@ export default function ProductionWorkflowModule() {
                                 <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                             </div>
                             <span className="text-xs font-semibold tracking-wider uppercase text-emerald-500 bg-emerald-500/10 px-2.5 py-0.5 rounded-full">
-                                Shop Floor Terminal Active
+                                Shop Floor Execution Terminal Active
                             </span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
@@ -356,10 +367,17 @@ export default function ProductionWorkflowModule() {
                     branches={branches}
                     selectedBranchFilter={selectedBranchFilter}
                     setSelectedBranchFilter={setSelectedBranchFilter}
-                    onClearFilters={() => {
-                        setSearchQuery("");
-                        setSelectedBranchFilter("All");
-                    }}
+                    productFilter={selectedProductFilter}
+                    setProductFilter={setSelectedProductFilter}
+                    productOptions={productFilterOptions}
+                    customerFilter={selectedCustomerFilter}
+                    setCustomerFilter={setSelectedCustomerFilter}
+                    customerOptions={customerFilterOptions}
+                    statusFilter={selectedStatusFilter}
+                    setStatusFilter={setSelectedStatusFilter}
+                    statusOptions={statusFilterOptions}
+                    hasActiveFilters={hasActiveFilters}
+                    onClearFilters={clearFilters}
                     onAssignWorkstation={(jo) => openStationScanner(jo)}
                 />
             </div>
