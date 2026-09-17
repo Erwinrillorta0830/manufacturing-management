@@ -3,6 +3,7 @@ import React from "react";
 import { CheckCircle2, ShieldAlert, Clock, Users, Package, MapPin, Calendar, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Branch } from "../../types";
+import { formatProductionValue } from "../../utils/production-timing";
 
 export interface Step4ReviewProps {
     selectedBranch?: Branch;
@@ -43,12 +44,13 @@ export function Step4Review({
     remarks
 }: Step4ReviewProps) {
     const totalAssignedOperators = Object.values(assignments).flat().length;
+    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
 
     // Check material shortfalls
     let shortfallCount = 0;
     components.forEach((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / (bomBaseQty || 1));
+        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         if (needed > available) shortfallCount++;
     });
@@ -128,7 +130,7 @@ export function Step4Review({
                                 <span className="text-muted-foreground flex items-center gap-1.5">
                                     <Clock className="h-3.5 w-3.5 text-primary" /> Est. Lead Time:
                                 </span>
-                                <span className="font-bold text-foreground">{totalEstimatedHours.toFixed(1)} hrs (~{estimatedDays} Days)</span>
+                                <span className="font-bold text-foreground">{formatProductionValue(totalEstimatedHours)} hrs (~{estimatedDays} Days)</span>
                             </div>
                             <div className="flex items-center justify-between">
                                 <span className="text-muted-foreground flex items-center gap-1.5">

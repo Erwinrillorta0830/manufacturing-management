@@ -1,10 +1,12 @@
 /* eslint-disable */
 import React from "react";
 import { OperatorSelect } from "../OperatorSelect";
+import type { ProductionRouteMetric } from "../../utils/production-metrics";
+import { formatProductionValue } from "../../utils/production-timing";
 
 export interface Step3SchedulingProps {
     routings: any[];
-    targetQuantity: number;
+    routeMetrics: ProductionRouteMetric[];
     assignments: Record<number, number[]>;
     operators: any[];
     handleToggleOperator: (seq: number, opId: number) => void;
@@ -12,7 +14,7 @@ export interface Step3SchedulingProps {
 
 export function Step3Scheduling({
     routings,
-    targetQuantity,
+    routeMetrics,
     assignments,
     operators,
     handleToggleOperator
@@ -37,7 +39,8 @@ export function Step3Scheduling({
                     {routings.map((route, index) => {
                         const seq = Number(route.sequence_order);
                         const assigned = assignments[seq] || [];
-                        const stepRunTime = targetQuantity * Number(route.run_time_hours || 0);
+                        const stepMetric = routeMetrics.find((metric) => metric.sequenceOrder === seq);
+                        const stepRunTime = stepMetric?.elapsedHours || 0;
 
                         return (
                             <div key={`${route.routing_id || "route"}_${index}`} className="border border-border bg-card/20 rounded-xl p-4 space-y-3.5 hover:border-border/60 transition-all duration-300">
@@ -55,7 +58,7 @@ export function Step3Scheduling({
                                     </div>
                                     <div className="text-right">
                                         <span className="text-[10px] bg-primary/10 border border-primary/20 text-primary px-2.5 py-0.5 rounded-full font-bold">
-                                            {stepRunTime.toFixed(1)} hrs needed
+                                            {formatProductionValue(stepRunTime)} hrs needed
                                         </span>
                                         <div className="text-[9px] text-muted-foreground mt-1">
                                             {assigned.length} Operator{assigned.length !== 1 ? "s" : ""} Assigned

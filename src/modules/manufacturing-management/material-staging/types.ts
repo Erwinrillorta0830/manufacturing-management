@@ -30,6 +30,7 @@ export interface AllocatedLot {
     mm_lot_id?: number;
     inventory_lot_id?: number;
     lot_id: number;
+    lot_name?: string | null;
     batch_no: string;
     allocated_quantity: number;
     staged_quantity: number;
@@ -152,6 +153,7 @@ export type BatchStageLotStatus = "STAGED" | "SKIPPED" | "FAILED";
 export interface BatchStageLotResult {
     allocation_id?: number;
     lot_id: number;
+    lot_name?: string | null;
     batch_no: string;
     requested_quantity: number;
     staged_quantity: number;

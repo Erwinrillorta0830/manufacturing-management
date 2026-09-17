@@ -1105,6 +1105,7 @@ export async function commitAllocation(
             lot_results: material.proposed_allocations.map(line => ({
                 allocation_id: undefined,
                 lot_id: line.mm_lot_id,
+                lot_name: line.lot_name,
                 batch_no: line.batch_no,
                 requested_quantity: line.quantity,
                 staged_quantity: line.quantity,

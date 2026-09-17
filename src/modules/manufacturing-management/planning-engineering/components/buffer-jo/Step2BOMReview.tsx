@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableVersionSelect } from "../SearchableVersionSelect";
 import { formatHoursToHMS } from "../../utils/containerization-helper";
+import { calculateAggregateRunHours, formatProductionValue } from "../../utils/production-timing";
 
 export interface Step2BOMReviewProps {
     loadingDetails: boolean;
     detailsError: string | null;
+    productionMetricsError?: string | null;
     retryDetails: () => void;
     parentUomLabel: string;
     boxEstimatedHours: number;
@@ -38,6 +40,7 @@ export interface Step2BOMReviewProps {
 export function Step2BOMReview({
     loadingDetails,
     detailsError,
+    productionMetricsError,
     retryDetails,
     parentUomLabel,
     boxEstimatedHours,
@@ -62,6 +65,8 @@ export function Step2BOMReview({
     hasShortfalls,
     handlePrintProcurementRequest
 }: Step2BOMReviewProps) {
+    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
+
     if (loadingDetails) {
         return (
             <div className="flex flex-col items-center justify-center py-10 space-y-3">
@@ -88,6 +93,13 @@ export function Step2BOMReview({
 
     return (
         <div className="space-y-4">
+            {productionMetricsError && (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
+                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{productionMetricsError}</span>
+                </div>
+            )}
+
             {/* Time Summary Categorized Breakdown */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Box Assembly Card */}
@@ -98,10 +110,10 @@ export function Step2BOMReview({
                     </div>
                     <div>
                         <div className="text-base font-black text-foreground">
-                            {boxEstimatedHours.toFixed(1)} hrs
+                            {formatProductionValue(boxEstimatedHours)} hrs
                         </div>
                         <div className="text-[10px] text-muted-foreground font-medium">
-                            {Number(shiftOption) > 0 ? `~${(boxEstimatedHours / Number(shiftOption)).toFixed(1)} Days` : `${boxEstimatedHours.toFixed(1)} hrs`}
+                            {Number(shiftOption) > 0 ? `~${formatProductionValue(boxEstimatedHours / Number(shiftOption))} Days` : `${formatProductionValue(boxEstimatedHours)} hrs`}
                         </div>
                     </div>
                 </div>
@@ -114,7 +126,7 @@ export function Step2BOMReview({
                     </div>
                     <div>
                         <div className="text-base font-black text-foreground">
-                            {subAssemblyEstimatedHours.toFixed(1)} hrs
+                            {formatProductionValue(subAssemblyEstimatedHours)} hrs
                         </div>
                         <div className="text-[10px] text-muted-foreground font-medium">
                             {subAssemblyEstimatedHours > 0 && Number(shiftOption) > 0
@@ -135,7 +147,7 @@ export function Step2BOMReview({
                             {formatHoursToHMS(totalEstimatedHours)}
                         </div>
                         <div className="text-[10px] text-primary/80 font-bold">
-                            {Number(shiftOption) > 0 ? `~${(totalEstimatedHours / Number(shiftOption)).toFixed(1)} Days (${totalEstimatedHours.toFixed(1)} hrs)` : `${totalEstimatedHours.toFixed(1)} hrs Total`}
+                            {Number(shiftOption) > 0 ? `~${formatProductionValue(totalEstimatedHours / Number(shiftOption))} Days (${formatProductionValue(totalEstimatedHours)} hrs)` : `${formatProductionValue(totalEstimatedHours)} hrs Total`}
                         </div>
                     </div>
                 </div>
@@ -189,12 +201,12 @@ export function Step2BOMReview({
                                 💰 Unit COGS & Labor Breakdown
                             </Badge>
                             <span className="text-[11px] font-semibold text-muted-foreground">
-                                Base COGS: <strong className="text-foreground">₱{cogsBreakdown.baseUnitCOGS.toFixed(2)}</strong> / unit
+                                Base COGS: <strong className="text-foreground">₱{formatProductionValue(cogsBreakdown.baseUnitCOGS)}</strong> / unit
                             </span>
                         </div>
                         <div className="text-right">
                             <span className="text-xs font-black text-sky-600 dark:text-sky-400">
-                                ₱{cogsBreakdown.adjustedUnitCOGS.toFixed(2)} / unit
+                                ₱{formatProductionValue(cogsBreakdown.adjustedUnitCOGS)} / unit
                             </span>
                             <span className="text-[9px] text-muted-foreground block font-medium">
                                 (Adjusted for {cogsBreakdown.expectedYieldPercentage}% Yield)
@@ -204,19 +216,19 @@ export function Step2BOMReview({
                     <div className="grid grid-cols-3 gap-2 pt-1 text-[11px]">
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🥦 Direct Materials</span>
-                            <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.materialCostPerUnit.toFixed(2)}</span>
+                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.materialCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">Raw Materials & Packaging</span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">👥 Direct Labor</span>
-                            <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.directLaborCostPerUnit.toFixed(2)}</span>
+                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.directLaborCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">
                                 BOM Labor Standard
                             </span>
                         </div>
                         <div className="bg-background border border-border/60 rounded-lg p-2">
                             <span className="text-[10px] font-medium text-muted-foreground block">🏭 Factory Overhead</span>
-                            <span className="font-extrabold text-foreground text-xs">₱{cogsBreakdown.factoryOverheadCostPerUnit.toFixed(2)}</span>
+                                <span className="font-extrabold text-foreground text-xs">₱{formatProductionValue(cogsBreakdown.factoryOverheadCostPerUnit)}</span>
                             <span className="text-[9px] text-muted-foreground block">
                                 {cogsBreakdown.hasCustomOverhead ? "Machine rates + custom overhead" : "Machine rates × runtime"}
                             </span>
@@ -261,7 +273,7 @@ export function Step2BOMReview({
                             <tbody>
                                 {components.map((comp, index) => {
                                     const compProductId = comp.component_product_id?.product_id;
-                                    const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+                                    const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
                                     const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
                                     const shortfall = Math.max(0, needed - available);
                                     const isSufficient = shortfall === 0;
@@ -316,15 +328,20 @@ export function Step2BOMReview({
                                                                     <div className="text-[10px] bg-card/90 px-2.5 py-1 rounded-md border border-sky-500/30 flex flex-wrap items-center gap-2 font-mono shadow-sm shrink-0">
                                                                         <Clock className="h-3.5 w-3.5 text-sky-500 shrink-0" />
                                                                         <span>
-                                                                            Setup: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].setup_time_hours}h</strong>
+                                                                            Setup: <strong className="text-foreground">{formatProductionValue(subAssemblyRoutings[Number(compProductId)].setup_time_hours)}h</strong>
                                                                         </span>
                                                                         <span>|</span>
                                                                         <span>
-                                                                            Run Rate: <strong className="text-foreground">{subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit.toFixed(3)}h/unit</strong>
+                                                                            Run Rate: <strong className="text-foreground">{formatProductionValue(subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit)}h/unit</strong>
                                                                         </span>
                                                                         {shortfall > 0 && (
                                                                             <span className="text-sky-600 dark:text-sky-400 font-bold ml-1">
-                                                                                (= {(subAssemblyRoutings[Number(compProductId)].setup_time_hours + (subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit * shortfall / (subAssemblyRoutings[Number(compProductId)].base_quantity || 1))).toFixed(1)} hrs est.)
+                                                                                (= {formatProductionValue(calculateAggregateRunHours(
+                                                                                    shortfall,
+                                                                                    subAssemblyRoutings[Number(compProductId)].base_quantity,
+                                                                                    subAssemblyRoutings[Number(compProductId)].setup_time_hours,
+                                                                                    subAssemblyRoutings[Number(compProductId)].run_time_hours_per_unit
+                                                                                ))} hrs est.)
                                                                             </span>
                                                                         )}
                                                                     </div>
@@ -392,8 +409,10 @@ export function Step2BOMReview({
                                             {/* Indented child raw materials for Sub-Assemblies */}
                                             {isSubAssembly && children.length > 0 && children.map((cc: any, subIndex: number) => {
                                                 const ccId = cc.component_product_id?.product_id;
-                                                const subBaseQty = Number(cc.base_quantity || 1);
-                                                const ccNeeded = (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty);
+                                                const subBaseQty = Number(cc.base_quantity);
+                                                const ccNeeded = subBaseQty > 0
+                                                    ? (Number(cc.quantity_required) * (1 + (Number(cc.wastage_factor_percentage || 0) / 100))) * (shortfall / subBaseQty)
+                                                    : 0;
                                                 const ccAvailable = ccId ? (inventories[Number(ccId)]?.on_hand || 0) : 0;
                                                 const ccShortfall = Math.max(0, ccNeeded - ccAvailable);
                                                 const ccUom = cc.unit_of_measurement || "pcs";

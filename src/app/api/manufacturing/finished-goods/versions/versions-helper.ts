@@ -20,6 +20,17 @@ type VersionSelectionCandidate = {
     status?: unknown;
 };
 
+function readDirectusBoolean(value: unknown, fallback: boolean): boolean {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+
+    const normalized = String(value).trim().toLowerCase();
+    if (["false", "0", "no", "off", "inactive"].includes(normalized)) return false;
+    if (["true", "1", "yes", "on", "active"].includes(normalized)) return true;
+    return fallback;
+}
+
 export function isStandardBOMVersion(version: VersionSelectionCandidate) {
     const normalizedName = String(version.version_name ?? "")
         .trim()
@@ -170,8 +181,8 @@ export async function getBOMDetailsForVersion(
                     id: String(item.id),
                     overhead_type_id: Number(item.overhead_type_id),
                     overhead_name: typesMap.get(Number(item.overhead_type_id)) || (item.remarks as string) || "Overhead Item",
-                    cost_per_unit: Number(item.cost || 0),
-                    is_active: Boolean(item.is_active ?? true),
+                    cost_per_unit: Number(item.cost ?? item.cost_per_unit ?? 0),
+                    is_active: readDirectusBoolean(item.is_active, true),
                     remarks: (item.remarks as string) || ""
                 }));
             }
@@ -194,7 +205,7 @@ export async function getBOMDetailsForVersion(
             hours_required: item.hours_required != null ? Number(item.hours_required) : undefined,
             daily_rate: item.daily_rate != null ? Number(item.daily_rate) : undefined,
             ot_hours: item.ot_hours != null ? Number(item.ot_hours) : 0,
-            include_mandates: item.include_mandates !== undefined ? Boolean(item.include_mandates) : true,
+            include_mandates: readDirectusBoolean(item.include_mandates, true),
             sss_amount: item.sss_amount != null ? Number(item.sss_amount) : undefined,
             phic_amount: item.phic_amount != null ? Number(item.phic_amount) : undefined,
             hdmf_amount: item.hdmf_amount != null ? Number(item.hdmf_amount) : undefined
@@ -244,9 +255,16 @@ export async function getBOMDetailsForVersion(
                 version_id: version!.version_id,
                 position_id: item.position_id != null ? Number(item.position_id) : null,
                 position_name: String(item.position_name || "Operator"),
+                category: item.category === "maintenance" ? "maintenance" : "direct_labor",
                 manpower_count: Number(item.manpower_count || 1),
                 hourly_rate: Number(item.hourly_rate || 0),
-                daily_rate: item.daily_rate != null ? Number(item.daily_rate) : undefined
+                hours_required: item.hours_required != null ? Number(item.hours_required) : undefined,
+                daily_rate: item.daily_rate != null ? Number(item.daily_rate) : undefined,
+                ot_hours: item.ot_hours != null ? Number(item.ot_hours) : 0,
+                include_mandates: readDirectusBoolean(item.include_mandates, true),
+                sss_amount: item.sss_amount != null ? Number(item.sss_amount) : undefined,
+                phic_amount: item.phic_amount != null ? Number(item.phic_amount) : undefined,
+                hdmf_amount: item.hdmf_amount != null ? Number(item.hdmf_amount) : undefined
             }));
         }
 
@@ -282,9 +300,16 @@ export async function getBOMDetailsForVersion(
                         route_id: getRouteId(p.route_id),
                         position_id: p.position_id != null ? Number(p.position_id) : undefined,
                         position_name: String(p.position_name || "Operator"),
+                        category: p.category === "maintenance" ? "maintenance" : "direct_labor",
                         manpower_count: Number(p.manpower_count || 1),
                         hourly_rate: Number(p.hourly_rate || 0),
-                        daily_rate: p.daily_rate != null ? Number(p.daily_rate) : undefined
+                        hours_required: p.hours_required != null ? Number(p.hours_required) : undefined,
+                        daily_rate: p.daily_rate != null ? Number(p.daily_rate) : undefined,
+                        ot_hours: p.ot_hours != null ? Number(p.ot_hours) : 0,
+                        include_mandates: readDirectusBoolean(p.include_mandates, true),
+                        sss_amount: p.sss_amount != null ? Number(p.sss_amount) : undefined,
+                        phic_amount: p.phic_amount != null ? Number(p.phic_amount) : undefined,
+                        hdmf_amount: p.hdmf_amount != null ? Number(p.hdmf_amount) : undefined
                     }));
             });
         }
