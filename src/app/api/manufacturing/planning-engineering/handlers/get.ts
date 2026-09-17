@@ -18,6 +18,7 @@ import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
+import { requirePositiveProductionNumber } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -1393,7 +1394,7 @@ export async function handleGET(request: Request) {
                             items: combinedItems,
                             versionId: subRes?.version?.version_id || null,
                             routes: subRoutes,
-                            baseQuantity: Number(subRes?.version?.base_quantity || 1)
+                            baseQuantity: Number(subRes?.version?.base_quantity)
                         });
                     }
                 });
@@ -1458,7 +1459,8 @@ export async function handleGET(request: Request) {
 
                 const subItems = subData.items || [];
                 const subRoutes = subData.routes || [];
-                const baseQty = subData.baseQuantity || 1;
+                const baseQty = Number(subData.baseQuantity);
+                if (!Number.isFinite(baseQty) || baseQty <= 0) return;
                 const subVersionId = subData.versionId || null;
 
                 subAssemblyBoms[subProdId] = subItems.map(item => {
@@ -1487,7 +1489,10 @@ export async function handleGET(request: Request) {
                 let setupHours = 0;
                 let runHoursPerUnit = 0;
                 subRoutes.forEach((r: any) => {
-                    const stepBatch = Number(r.step_batch_size || 1);
+                    const stepBatch = requirePositiveProductionNumber(
+                        r.step_batch_size,
+                        `Sub-assembly routing step ${Number(r.sequence_order || 0) || ""} batch size`
+                    );
                     setupHours += Number(r.setup_time_hours || 0);
                     runHoursPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
                 });
@@ -1587,7 +1592,10 @@ export async function handleGET(request: Request) {
                 return "Material / Component";
             };
 
-            const baseQty = Number(version?.base_quantity || 1);
+            const baseQty = Number(version?.base_quantity);
+            if (!Number.isFinite(baseQty) || baseQty <= 0) {
+                return NextResponse.json({ error: "Recipe base quantity must be greater than zero." }, { status: 422 });
+            }
             const bomItems = verBomItems.map((item: any) => {
                 const cPid = extractProductId(item.product_id);
                 const pDetails = productsMap.get(cPid);
@@ -1611,7 +1619,10 @@ export async function handleGET(request: Request) {
             let setupHours = 0;
             let runHoursPerUnit = 0;
             routes.forEach((r: any) => {
-                const stepBatch = Number(r.step_batch_size || 1);
+                const stepBatch = requirePositiveProductionNumber(
+                    r.step_batch_size,
+                    `Sub-assembly routing step ${Number(r.sequence_order || 0) || ""} batch size`
+                );
                 setupHours += Number(r.setup_time_hours || 0);
                 runHoursPerUnit += (Number(r.run_time_hours || 0) / stepBatch);
             });

@@ -794,7 +794,7 @@ export async function handlePOST(request: Request) {
                 idempotencyKey: String(body.idempotencyKey || `planning-initialize-${joData.job_order_id}-${Date.now()}`).trim(),
                 remarks: String(body.remarks || "Initialize Job Order for material picking").trim(),
                 overrideReason: forceInitialize ? overrideReason : (shortfallMsg ? `Initialized with raw material shortfalls: ${shortfallMsg}` : undefined),
-                force: true
+                force: forceInitialize
             });
             return NextResponse.json({
                 success: true,

@@ -26,7 +26,6 @@ import {
 import { useMaterialStaging } from "./hooks/useMaterialStaging";
 import { StagingPickList } from "./components/StagingPickList";
 import { AllocationModal } from "./components/AllocationModal";
-import { StagingSlipPrint } from "./components/StagingSlipPrint";
 import { isCancelledJobOrderStatus } from "../job-order-status";
 import { resolveJobOrderJourney, stagingStateInfo } from "../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
@@ -72,7 +71,7 @@ export default function MaterialStagingModule() {
 
     return (
         <div className="flex flex-col space-y-6 max-w-[1600px] mx-auto p-1 sm:p-2">
-            <div className="flex flex-col space-y-6 print:hidden">
+            <div className="flex flex-col space-y-6">
             {/* Header Toolbar */}
             <div className="relative overflow-hidden bg-gradient-to-br from-card via-card to-muted/30 p-6 rounded-2xl border shadow-sm transition-all duration-300">
                 <div className="absolute -right-16 -top-16 w-36 h-36 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
@@ -448,9 +447,6 @@ export default function MaterialStagingModule() {
                 isLoading={transferring}
             />
             </div>
-
-            {/* Printable staging slip (print-only) */}
-            <StagingSlipPrint jobOrder={selectedJobOrder} />
         </div>
     );
 }

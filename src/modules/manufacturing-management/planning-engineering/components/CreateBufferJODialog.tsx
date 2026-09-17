@@ -14,7 +14,8 @@ import { Branch } from "../types";
 import { toast } from "sonner";
 import { SubmittingLoadingOverlay } from "./SubmittingLoadingOverlay";
 import { calculateContainerizationMetrics } from "../utils/containerization-helper";
-import { calculateUnitCOGSBreakdown } from "../utils/cogs-helper";
+import { calculateProductionMetrics } from "../utils/production-metrics";
+import { calculateAggregateRunHours, readUomId } from "../utils/production-timing";
 import { calculateNetRunTime } from "../../finished-goods/costing";
 import { Step1BasicDetails } from "./buffer-jo/Step1BasicDetails";
 import { Step2BOMReview } from "./buffer-jo/Step2BOMReview";
@@ -365,7 +366,7 @@ export function CreateBufferJODialog({
                     setSubAssemblyVersions(data.subAssemblyVersions || {});
                     setSelectedSubAssemblyVersions(data.selectedSubAssemblyVersions || {});
                     setInventories(normalizeInventoryMap(data.inventories));
-                    setBomBaseQty(Number(data.bom.base_quantity || 1));
+                    setBomBaseQty(Number(data.bom.base_quantity));
                     setHasLoadedDetails(true);
                 } catch (err) {
                     console.error("Failed to load wizard details:", err);
@@ -395,7 +396,15 @@ export function CreateBufferJODialog({
             if (res.ok) {
                 const data = await res.json();
                 setSubAssemblyBoms(prev => ({ ...prev, [subProdId]: data.bomItems || [] }));
-                setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing || { setup_time_hours: 0, run_time_hours_per_unit: 0, base_quantity: 1 } }));
+                if (data.routing) {
+                    setSubAssemblyRoutings(prev => ({ ...prev, [subProdId]: data.routing }));
+                } else {
+                    setSubAssemblyRoutings(prev => {
+                        const next = { ...prev };
+                        delete next[subProdId];
+                        return next;
+                    });
+                }
                 if (data.inventories) {
                     setInventories(prev => ({ ...prev, ...normalizeInventoryMap(data.inventories) }));
                 }
@@ -407,12 +416,14 @@ export function CreateBufferJODialog({
         }
     };
 
+    const bomQuantityScale = bomBaseQty > 0 ? targetQuantity / bomBaseQty : 0;
+
     // Initialize default print selections for shortfalls
     useEffect(() => {
         const initialSelections: Record<string, boolean> = {};
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
 
@@ -438,33 +449,81 @@ export function CreateBufferJODialog({
         setPrintSelection(initialSelections);
     }, [components, inventories, subAssemblyBoms, targetQuantity, bomBaseQty]);
 
-    // Calculate time metrics
-    const boxSetupHours = routings.reduce((sum, r) => sum + Number(r.setup_time_hours || 0), 0);
-    const boxBatchCount = bomBaseQty > 0 ? (targetQuantity / bomBaseQty) : 1;
-    const boxRunHours = boxBatchCount * routings.reduce((sum, r) => sum + Number(r.run_time_hours || 0), 0);
-    const boxEstimatedHours = boxSetupHours + boxRunHours;
+    const selectedProdObj = products.find((p) => String(p.product_id) === selectedProductId);
+
+    const productionMetricsResult = useMemo(() => {
+        if (!hasLoadedDetails || routings.length === 0 || targetQuantity <= 0) {
+            return { metrics: null, error: null };
+        }
+
+        if (bomBaseQty <= 0) {
+            return { metrics: null, error: "Recipe base quantity must be greater than zero." };
+        }
+
+        try {
+            const selectedVersion = versions.find((version) => String(version.version_id) === String(selectedVersionId));
+            const metrics = calculateProductionMetrics({
+                targetQuantity,
+                baseQuantity: bomBaseQty,
+                targetUomId: readUomId(selectedProdObj?.unit_of_measurement ?? selectedProdObj?.uom_id ?? selectedProdObj?.uom),
+                baseUomId: readUomId(bomData?.uom_id ?? bomData?.unit_of_measurement ?? bomData?.uom),
+                routes: routings.map((route) => ({
+                    sequence_order: Number(route.sequence_order || 0),
+                    setup_time_hours: Number(route.setup_time_hours || 0),
+                    run_time_hours: Number(route.run_time_hours || 0),
+                    step_batch_size: route.step_batch_size == null ? undefined : Number(route.step_batch_size),
+                    work_center_overhead_cost_per_hour: Number(
+                        route.work_center?.overhead_cost_per_hour ?? route.overhead_cost_per_hour ?? 0
+                    )
+                })),
+                bomItems: components.map((component) => ({
+                    quantity_required: Number(component.quantity_required || 0),
+                    wastage_factor_percentage: Number(component.wastage_factor_percentage || 0),
+                    cost_per_unit: Number(component.component_product_id?.cost_per_unit ?? component.cost_per_unit ?? 0)
+                })),
+                laborPositions: Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : [],
+                overheadItems: Array.isArray(bomData?.overhead_items) ? bomData.overhead_items : [],
+                customOverhead: bomData?.custom_overhead ?? selectedVersion?.custom_overhead,
+                expectedYieldPercentage: bomData?.expected_yield_percentage ?? selectedVersion?.expected_yield_percentage,
+                targetSellingPrice: Number(selectedProdObj?.targetSellingPrice || selectedProdObj?.target_selling_price || 0)
+            });
+            return { metrics, error: null };
+        } catch (error) {
+            return {
+                metrics: null,
+                error: error instanceof Error ? error.message : "Unable to calculate production metrics."
+            };
+        }
+    }, [hasLoadedDetails, routings, targetQuantity, bomBaseQty, components, bomData, versions, selectedVersionId, selectedProdObj]);
+
+    const productionMetrics = productionMetricsResult.metrics;
+    const productionMetricsError = productionMetricsResult.error;
+    const boxEstimatedHours = productionMetrics?.lineLeadTimeHours || 0;
 
     let subAssemblyEstimatedHours = 0;
     components.forEach((comp) => {
         const compProductId = Number(comp.component_product_id?.product_id || 0);
-        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+        const needed = (Number(comp.quantity_required || 0) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
         const available = compProductId ? Number(inventories[compProductId]?.on_hand || 0) : 0;
         const shortfall = Math.max(0, needed - available);
         const subRoute = compProductId ? (subAssemblyRoutings[compProductId] || (subAssemblyRoutings as any)[String(compProductId)]) : null;
         if (shortfall > 0 && subRoute) {
-            const subBaseQty = Number(subRoute.base_quantity || 6986.19);
-            const subBatches = subBaseQty > 0 ? (shortfall / subBaseQty) : 1;
+            const subBaseQty = Number(subRoute.base_quantity);
+            if (!Number.isFinite(subBaseQty) || subBaseQty <= 0) return;
             const subSetup = Number(subRoute.setup_time_hours || 0);
-            const subRunPerBatch = Number((subRoute as any).total_run_time_hours || (subRoute as any).run_time_hours || (Number(subRoute.run_time_hours_per_unit || 0) * subBaseQty));
-            const subRun = subRunPerBatch * subBatches;
-            subAssemblyEstimatedHours += (subSetup + subRun);
+            const subRunPerUnit = Number((subRoute as any).run_time_hours_per_unit || 0);
+            subAssemblyEstimatedHours += calculateAggregateRunHours(
+                shortfall,
+                subBaseQty,
+                subSetup,
+                subRunPerUnit
+            );
         }
     });
 
     const totalEstimatedHours = boxEstimatedHours + subAssemblyEstimatedHours;
 
     // Dynamic UOM labels
-    const selectedProdObj = products.find((p) => String(p.product_id) === selectedProductId);
     const parentUomLabel = (selectedProdObj?.unit_of_measurement?.unit_name || selectedProdObj?.uom_name || selectedProdObj?.uom_shortcut || "Box").toUpperCase();
 
     const containerMetrics = useMemo(() => {
@@ -485,35 +544,7 @@ export function CreateBufferJODialog({
         );
     }, [selectedProdObj, versions, selectedVersionId, targetQuantity, components, bomBaseQty]);
 
-    const cogsBreakdown = useMemo(() => {
-        if (!selectedProdObj) return null;
-        const verObj = versions.find((v) => String(v.version_id) === String(selectedVersionId));
-        
-        const bomItemsForCosting = components.map((comp) => ({
-            quantity_required: Number(comp.quantity_required || 0),
-            wastage_factor_percentage: Number(comp.wastage_factor_percentage || 0),
-            cost_per_unit: Number(comp.component_product_id?.cost_per_unit ?? comp.cost_per_unit ?? 0)
-        }));
-
-        const routeStepsForCosting = routings.map((r) => ({
-            sequence_order: Number(r.sequence_order || 0),
-            work_center_id: Number(r.work_center_id || 0),
-            setup_time_hours: Number(r.setup_time_hours || 0),
-            run_time_hours: Number(r.run_time_hours || 0),
-            step_batch_size: Number(r.step_batch_size || 1),
-            work_center_overhead_cost_per_hour: Number(r.work_center?.overhead_cost_per_hour ?? r.overhead_cost_per_hour ?? 0)
-        }));
-
-        return calculateUnitCOGSBreakdown(
-            bomBaseQty,
-            bomData?.expected_yield_percentage ?? verObj?.expected_yield_percentage,
-            bomData?.custom_overhead ?? verObj?.custom_overhead,
-            bomItemsForCosting,
-            routeStepsForCosting,
-            Number(selectedProdObj.targetSellingPrice || (selectedProdObj as any).target_selling_price || 0),
-            Array.isArray(bomData?.labor_positions) ? bomData.labor_positions : []
-        );
-    }, [selectedProdObj, versions, selectedVersionId, components, routings, bomBaseQty, bomData]);
+    const cogsBreakdown = productionMetrics?.cogsBreakdown || null;
 
     const subAssemblyUomList = Array.from(new Set(
         components
@@ -528,7 +559,7 @@ export function CreateBufferJODialog({
 
     const hasShortfalls = components.some((comp) => {
         const compProductId = comp.component_product_id?.product_id;
-        const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
         const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
         return Math.max(0, needed - available) > 0;
     });
@@ -543,7 +574,7 @@ export function CreateBufferJODialog({
         let tableRowsHtml = "";
         components.forEach((comp) => {
             const compProductId = comp.component_product_id?.product_id;
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (targetQuantity / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * bomQuantityScale;
             const available = compProductId ? (inventories[Number(compProductId)]?.on_hand || 0) : 0;
             const shortfall = Math.max(0, needed - available);
             const uom = comp.unit_of_measurement || "pcs";
@@ -740,6 +771,7 @@ export function CreateBufferJODialog({
         if (!printWindow) return;
 
         const branchName = branches?.find((b: any) => Number(b.id) === Number(selectedBranchId))?.branch_name || `Branch #${selectedBranchId}`;
+        const printQuantityScale = bomBaseQty > 0 ? qty / bomBaseQty : 0;
 
         const printRows: string[] = [];
 
@@ -751,7 +783,7 @@ export function CreateBufferJODialog({
             const code = comp.component_product_id?.product_code || "";
             const uom = comp.unit_of_measurement || "pcs";
             
-            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * (qty / bomBaseQty);
+            const needed = (Number(comp.quantity_required) * (1 + (Number(comp.wastage_factor_percentage || 0) / 100))) * printQuantityScale;
 
             printRows.push(`
                 <tr style="border-bottom: 1px solid #ddd; background: ${isSubAssembly ? '#f9f9f9' : '#fff'};">
@@ -773,7 +805,10 @@ export function CreateBufferJODialog({
                     const childCode = child.component_product_id?.product_code || "";
                     const childUom = child.unit_of_measurement || "pcs";
                     
-                    const childNeeded = (Number(child.quantity_required) * (1 + (Number(child.wastage_factor_percentage || 0) / 100))) * (needed / (child.bom_base_quantity || 1));
+                    const childBaseQty = Number(child.bom_base_quantity);
+                    const childNeeded = childBaseQty > 0
+                        ? (Number(child.quantity_required) * (1 + (Number(child.wastage_factor_percentage || 0) / 100))) * (needed / childBaseQty)
+                        : 0;
 
                     printRows.push(`
                         <tr style="border-bottom: 1px solid #eee; background: #fff;">
@@ -1020,6 +1055,7 @@ export function CreateBufferJODialog({
                     {currentStep === 2 && (
                         <Step2BOMReview
                             loadingDetails={loadingDetails}
+                            productionMetricsError={productionMetricsError}
                             parentUomLabel={parentUomLabel}
                             boxEstimatedHours={boxEstimatedHours}
                             shiftOption={shiftOption}
@@ -1054,7 +1090,7 @@ export function CreateBufferJODialog({
                     {currentStep === 3 && (
                         <Step3Scheduling
                             routings={routings}
-                            targetQuantity={targetQuantity}
+                            routeMetrics={productionMetrics?.routeMetrics || []}
                             assignments={assignments}
                             operators={operators}
                             handleToggleOperator={handleToggleOperator}
@@ -1111,7 +1147,7 @@ export function CreateBufferJODialog({
                             <Button
                                 size="sm"
                                 onClick={handleNextStep}
-                                disabled={loadingDetails || !!detailsError || (currentStep === 2 && !hasLoadedDetails) || !joNumber || targetQuantity <= 0 || !selectedProductId || !selectedVersionId}
+                                disabled={loadingDetails || !!detailsError || !!productionMetricsError || (currentStep === 2 && !hasLoadedDetails) || !joNumber || targetQuantity <= 0 || !selectedProductId || !selectedVersionId}
                                 className="bg-primary hover:bg-primary/90 text-white h-8 font-semibold shadow-lg shadow-primary/20"
                             >
                                 Next <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
@@ -1122,7 +1158,7 @@ export function CreateBufferJODialog({
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleConfirmRelease(false)}
-                                disabled={submitting}
+                                disabled={submitting || !!productionMetricsError}
                                 className="border-primary/30 text-primary hover:bg-primary/5 h-8 font-semibold"
                             >
                                 {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -1131,7 +1167,7 @@ export function CreateBufferJODialog({
                             <Button
                                 size="sm"
                                 onClick={() => handleConfirmRelease(true)}
-                                disabled={submitting || !plannedDate || priority < 0}
+                                disabled={submitting || !!productionMetricsError || !plannedDate || priority < 0}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white h-8 font-semibold shadow-lg shadow-emerald-500/20"
                             >
                                 {submitting ? (
