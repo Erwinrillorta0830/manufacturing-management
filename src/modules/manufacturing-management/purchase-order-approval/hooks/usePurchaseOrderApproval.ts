@@ -136,10 +136,10 @@ export function usePurchaseOrderApproval(
         await refreshAfterAction(id);
     };
 
-    const reject = async (id: number, remarks: string) => {
+    const requestRevision = async (id: number, remarks: string) => {
         if (!approvalDetail) throw new Error("Approval details are not loaded.");
         await submitPurchaseOrderWorkflowAction(id, {
-            action: "reject",
+            action: "revision",
             workflowRevision: Number(approvalDetail.order.workflow_revision || 0),
             expectedRuleId: approvalDetail.matchedRule.ruleId,
             remarks
@@ -172,7 +172,7 @@ export function usePurchaseOrderApproval(
         selectedShipmentLines,
         approvalDetail,
         approve,
-        reject,
+        requestRevision,
         cancel,
         load
     };

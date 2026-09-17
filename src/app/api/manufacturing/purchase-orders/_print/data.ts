@@ -623,12 +623,12 @@ export async function loadPurchaseOrderPrintableData(input: {
     ]);
     const selectedApproval = input.historyId
         ? approvals.find(entry => entry.historyId === input.historyId) || null
-        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["FinanceApproved", "Rejected", "Cancelled"].includes(entry.action)) || null;
-    if (input.historyId && selectedApproval && !["FinanceApproved", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
+        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(entry.action)) || null;
+    if (input.historyId && selectedApproval && !["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
         throw new PurchaseOrderPrintDataError(409, "The selected approval-history record is not a Finance decision.");
     }
     if (input.documentType === "FINANCE_DECISION" && !selectedApproval) {
-        throw new PurchaseOrderPrintDataError(409, "No Finance approval or rejection record is available for this purchase order.");
+        throw new PurchaseOrderPrintDataError(409, "No Finance approval or Revision record is available for this purchase order.");
     }
     const needsReceivingData = input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION";
     const receiving = needsReceivingData
