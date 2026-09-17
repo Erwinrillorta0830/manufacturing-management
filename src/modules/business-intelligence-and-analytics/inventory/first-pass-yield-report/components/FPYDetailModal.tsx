@@ -9,12 +9,7 @@ import {
     RotateCcw,
     Layers,
     Search,
-    ChevronLeft,
-    ChevronRight,
-    Award,
-    CheckCircle2,
-    AlertCircle,
-    Clock
+    AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,42 +32,46 @@ export function FPYDetailModal({
     const [searchQuery, setSearchQuery] = useState<string>("");
     const [currentPage, setCurrentPage] = useState<number>(1);
 
+    const inspectionLogs = data?.inspectionLogs;
+    const routeSteps = data?.routeSteps;
+    const yieldLedgers = data?.yieldLedgers;
+
     // Filter Inspection Logs
     const filteredInspections = useMemo(() => {
-        if (!data?.inspectionLogs) return [];
-        if (!searchQuery.trim()) return data.inspectionLogs;
+        if (!inspectionLogs) return [];
+        if (!searchQuery.trim()) return inspectionLogs;
         const q = searchQuery.toLowerCase().trim();
-        return data.inspectionLogs.filter(log =>
+        return inspectionLogs.filter(log =>
             (log.inspector_name && log.inspector_name.toLowerCase().includes(q)) ||
             (log.rejection_reason_name && log.rejection_reason_name.toLowerCase().includes(q)) ||
             (log.status && log.status.toLowerCase().includes(q)) ||
             (log.remarks && log.remarks.toLowerCase().includes(q))
         );
-    }, [data?.inspectionLogs, searchQuery]);
+    }, [inspectionLogs, searchQuery]);
 
     // Filter Route Steps
     const filteredRoutes = useMemo(() => {
-        if (!data?.routeSteps) return [];
-        if (!searchQuery.trim()) return data.routeSteps;
+        if (!routeSteps) return [];
+        if (!searchQuery.trim()) return routeSteps;
         const q = searchQuery.toLowerCase().trim();
-        return data.routeSteps.filter(r =>
+        return routeSteps.filter(r =>
             r.work_center_name.toLowerCase().includes(q) ||
             r.operation_name.toLowerCase().includes(q) ||
             r.status.toLowerCase().includes(q)
         );
-    }, [data?.routeSteps, searchQuery]);
+    }, [routeSteps, searchQuery]);
 
     // Filter Yield Ledgers
     const filteredYields = useMemo(() => {
-        if (!data?.yieldLedgers) return [];
-        if (!searchQuery.trim()) return data.yieldLedgers;
+        if (!yieldLedgers) return [];
+        if (!searchQuery.trim()) return yieldLedgers;
         const q = searchQuery.toLowerCase().trim();
-        return data.yieldLedgers.filter(y =>
+        return yieldLedgers.filter(y =>
             y.shift_name.toLowerCase().includes(q) ||
             (y.lot_number && y.lot_number.toLowerCase().includes(q)) ||
             y.qa_status.toLowerCase().includes(q)
         );
-    }, [data?.yieldLedgers, searchQuery]);
+    }, [yieldLedgers, searchQuery]);
 
     // Paginated datasets
     const paginatedInspections = useMemo(() => {

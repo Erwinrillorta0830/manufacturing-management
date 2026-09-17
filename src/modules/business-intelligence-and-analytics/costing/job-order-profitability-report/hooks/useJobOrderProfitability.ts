@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
     JobOrderProfitabilityRow,
-    ProfitabilitySummaryKPIs,
     ProfitabilityFilters,
     MasterLookupData,
     JobOrderCostBreakdown

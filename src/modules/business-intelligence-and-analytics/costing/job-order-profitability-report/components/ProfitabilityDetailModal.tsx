@@ -28,40 +28,43 @@ export function ProfitabilityDetailModal({
     };
 
     // Filter Direct Materials
+    const materials = data?.materials;
     const filteredMaterials = useMemo(() => {
-        if (!data?.materials) return [];
-        if (!searchQuery.trim()) return data.materials;
+        if (!materials) return [];
+        if (!searchQuery.trim()) return materials;
         const q = searchQuery.toLowerCase().trim();
-        return data.materials.filter(m =>
+        return materials.filter(m =>
             m.product_name.toLowerCase().includes(q) ||
             m.product_code.toLowerCase().includes(q) ||
             (m.batch_no && m.batch_no.toLowerCase().includes(q))
         );
-    }, [data?.materials, searchQuery]);
+    }, [materials, searchQuery]);
 
     // Filter Direct Labor
+    const labor = data?.labor;
     const filteredLabor = useMemo(() => {
-        if (!data?.labor) return [];
-        if (!searchQuery.trim()) return data.labor;
+        if (!labor) return [];
+        if (!searchQuery.trim()) return labor;
         const q = searchQuery.toLowerCase().trim();
-        return data.labor.filter(l =>
+        return labor.filter(l =>
             (l.operator_name && l.operator_name.toLowerCase().includes(q)) ||
             String(l.operator_id).includes(q) ||
             String(l.jo_route_id).includes(q)
         );
-    }, [data?.labor, searchQuery]);
+    }, [labor, searchQuery]);
 
     // Filter Overheads
+    const overheads = data?.overheads;
     const filteredOverheads = useMemo(() => {
-        if (!data?.overheads) return [];
-        if (!searchQuery.trim()) return data.overheads;
+        if (!overheads) return [];
+        if (!searchQuery.trim()) return overheads;
         const q = searchQuery.toLowerCase().trim();
-        return data.overheads.filter(o =>
+        return overheads.filter(o =>
             o.work_center_name.toLowerCase().includes(q) ||
             o.status.toLowerCase().includes(q) ||
             String(o.jo_route_id).includes(q)
         );
-    }, [data?.overheads, searchQuery]);
+    }, [overheads, searchQuery]);
 
     // Active Tab Item Counts and Pagination
     const currentTabTotalCount = activeTab === "materials"

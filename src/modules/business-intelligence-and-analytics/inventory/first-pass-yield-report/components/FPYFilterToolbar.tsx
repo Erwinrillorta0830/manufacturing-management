@@ -92,7 +92,7 @@ export function FPYFilterToolbar({
                     <select
                         aria-label="Filter by Quality Tier"
                         value={filters.qualityTier}
-                        onChange={(e) => onFilterChange("qualityTier", e.target.value as any)}
+                        onChange={(e) => onFilterChange("qualityTier", e.target.value as FPYFilters["qualityTier"])}
                         className="h-9 w-full sm:w-[160px] rounded-lg border bg-background px-2.5 text-xs text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
                     >
                         <option value="all">All Quality Tiers</option>

@@ -84,10 +84,10 @@ export function ProfitabilityTableView({
                                 <button
                                     type="button"
                                     onClick={() => onSort("job_order_id")}
-                                    className="flex items-center gap-1 hover:text-foreground"
+                                    className={`flex items-center gap-1 hover:text-foreground ${sortField === "job_order_id" ? "text-foreground font-bold" : ""}`}
                                 >
                                     <span>Job Order</span>
-                                    <ArrowUpDown className="h-3 w-3" />
+                                    <ArrowUpDown className={`h-3 w-3 ${sortField === "job_order_id" ? (sortDirection === "asc" ? "text-primary rotate-180" : "text-primary") : "opacity-40"}`} />
                                 </button>
                             </th>
                             <th className="py-3 px-3.5">Finished Good / Product</th>
@@ -98,30 +98,30 @@ export function ProfitabilityTableView({
                                 <button
                                     type="button"
                                     onClick={() => onSort("total_cogs")}
-                                    className="flex items-center gap-1 ml-auto hover:text-foreground"
+                                    className={`flex items-center gap-1 ml-auto hover:text-foreground ${sortField === "total_cogs" ? "text-foreground font-bold" : ""}`}
                                 >
                                     <span>Total Manufacturing Cost (TMC)</span>
-                                    <ArrowUpDown className="h-3 w-3" />
+                                    <ArrowUpDown className={`h-3 w-3 ${sortField === "total_cogs" ? (sortDirection === "asc" ? "text-primary rotate-180" : "text-primary") : "opacity-40"}`} />
                                 </button>
                             </th>
                             <th className="py-3 px-3.5 text-right">
                                 <button
                                     type="button"
                                     onClick={() => onSort("gross_profit")}
-                                    className="flex items-center gap-1 ml-auto hover:text-foreground"
+                                    className={`flex items-center gap-1 ml-auto hover:text-foreground ${sortField === "gross_profit" ? "text-foreground font-bold" : ""}`}
                                 >
                                     <span>Gross Profit</span>
-                                    <ArrowUpDown className="h-3 w-3" />
+                                    <ArrowUpDown className={`h-3 w-3 ${sortField === "gross_profit" ? (sortDirection === "asc" ? "text-primary rotate-180" : "text-primary") : "opacity-40"}`} />
                                 </button>
                             </th>
                             <th className="py-3 px-3.5">
                                 <button
                                     type="button"
                                     onClick={() => onSort("gross_margin_percent")}
-                                    className="flex items-center gap-1 hover:text-foreground"
+                                    className={`flex items-center gap-1 hover:text-foreground ${sortField === "gross_margin_percent" ? "text-foreground font-bold" : ""}`}
                                 >
-                                    <span>Gross Margin</span>
-                                    <ArrowUpDown className="h-3 w-3" />
+                                    <span>Gross Margin (%)</span>
+                                    <ArrowUpDown className={`h-3 w-3 ${sortField === "gross_margin_percent" ? (sortDirection === "asc" ? "text-primary rotate-180" : "text-primary") : "opacity-40"}`} />
                                 </button>
                             </th>
                             <th className="py-3 px-3.5 text-center">Action</th>

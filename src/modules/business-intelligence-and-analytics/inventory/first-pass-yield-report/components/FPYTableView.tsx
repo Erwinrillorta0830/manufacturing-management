@@ -4,6 +4,8 @@ import React from "react";
 import { FPYReportRow } from "../types/fpy.types";
 import {
     ArrowUpDown,
+    ArrowUp,
+    ArrowDown,
     Eye,
     RotateCcw,
     Award,
@@ -67,17 +69,28 @@ export function FPYTableView({
         );
     };
 
-    const renderSortHeader = (label: string, field: string, align: "left" | "right" | "center" = "left") => (
-        <th
-            onClick={() => onSort(field)}
-            className={`cursor-pointer select-none py-3 px-3 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors text-${align}`}
-        >
-            <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"}`}>
-                <span>{label}</span>
-                <ArrowUpDown className={`h-3 w-3 ${sortField === field ? "text-primary font-bold" : "opacity-40"}`} />
-            </div>
-        </th>
-    );
+    const renderSortHeader = (label: string, field: string, align: "left" | "right" | "center" = "left") => {
+        const isCurrent = sortField === field;
+        return (
+            <th
+                onClick={() => onSort(field)}
+                className={`cursor-pointer select-none py-3 px-3 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors text-${align}`}
+            >
+                <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"}`}>
+                    <span>{label}</span>
+                    {isCurrent ? (
+                        sortDirection === "asc" ? (
+                            <ArrowUp className="h-3 w-3 text-primary" />
+                        ) : (
+                            <ArrowDown className="h-3 w-3 text-primary" />
+                        )
+                    ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-40" />
+                    )}
+                </div>
+            </th>
+        );
+    };
 
     return (
         <div className="rounded-xl border bg-card shadow-2xs overflow-hidden">

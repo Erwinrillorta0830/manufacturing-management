@@ -31,10 +31,11 @@ export async function GET(request: NextRequest) {
 
         const reportData = await getFPYReportData();
         return NextResponse.json(reportData);
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[API] First-Pass Yield Report Error:", error);
+        const errorMessage = error instanceof Error ? error.message : "Internal server error generating First-Pass Yield report";
         return NextResponse.json(
-            { error: error?.message || "Internal server error generating First-Pass Yield report" },
+            { error: errorMessage },
             { status: 500 }
         );
     }

@@ -112,14 +112,14 @@ export interface RouteStepItem {
 
 export interface ParameterQARecord {
     qa_record_id: number;
-    jo_route_id: number;
+    jo_route_id: number | null;
     parameter_id: number;
     parameter_name?: string;
     value_text?: string | null;
     value_numeric?: number | null;
     value_boolean?: boolean | null;
     is_passed: boolean;
-    inspected_at: string;
+    inspected_at: string | null;
     remarks?: string | null;
 }
 
@@ -131,7 +131,7 @@ export interface ShiftYieldLedgerItem {
     scrap_quantity: number;
     qa_status: string;
     lot_number: string | null;
-    logged_at: string;
+    logged_at: string | null;
     production_date: string | null;
     remarks?: string | null;
 }

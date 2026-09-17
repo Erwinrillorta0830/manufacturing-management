@@ -100,9 +100,9 @@ export function useFirstPassYieldReport() {
                 }
             }
             setLastUpdated(new Date());
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("[useFirstPassYieldReport] Fetch error:", err);
-            setError(err.message || "An unexpected error occurred while loading FPY report data.");
+            setError(err instanceof Error ? err.message : "An unexpected error occurred while loading FPY report data.");
         } finally {
             setIsLoading(false);
             setIsRefreshing(false);
@@ -235,18 +235,20 @@ export function useFirstPassYieldReport() {
                 return sortDirection === "asc" ? a.job_order_id - b.job_order_id : b.job_order_id - a.job_order_id;
             }
 
-            let aVal: any = (a as any)[sortField];
-            let bVal: any = (b as any)[sortField];
+            const aRecord = a as unknown as Record<string, unknown>;
+            const bRecord = b as unknown as Record<string, unknown>;
+            const aVal = aRecord[sortField];
+            const bVal = bRecord[sortField];
 
-            if (typeof aVal === "string") {
-                aVal = aVal.toLowerCase();
-                bVal = (bVal || "").toLowerCase();
-                return sortDirection === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            if (typeof aVal === "string" || typeof bVal === "string") {
+                const strA = String(aVal ?? "").toLowerCase();
+                const strB = String(bVal ?? "").toLowerCase();
+                return sortDirection === "asc" ? strA.localeCompare(strB) : strB.localeCompare(strA);
             }
 
-            aVal = Number(aVal || 0);
-            bVal = Number(bVal || 0);
-            return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
+            const numA = Number(aVal || 0);
+            const numB = Number(bVal || 0);
+            return sortDirection === "asc" ? numA - numB : numB - numA;
         });
         return sorted;
     }, [filteredRows, sortField, sortDirection]);
@@ -258,7 +260,7 @@ export function useFirstPassYieldReport() {
     }, [sortedRows, page, pageSize]);
 
     // Filter handlers
-    const setFilter = useCallback((key: keyof FPYFilters, value: any) => {
+    const setFilter = useCallback(<K extends keyof FPYFilters>(key: K, value: FPYFilters[K]) => {
         setFilters(prev => ({ ...prev, [key]: value }));
         setPage(1);
     }, []);
