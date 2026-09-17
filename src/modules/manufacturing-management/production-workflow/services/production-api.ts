@@ -14,7 +14,8 @@ import {
     JobOrderCancellationPreview,
     JobOrderCancellationResponse,
     WipTopUpPayload,
-    WipTopUpResponse
+    WipTopUpResponse,
+    WorkCenterJobOrderAvailability
 } from "../types";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
@@ -255,6 +256,22 @@ export async function fetchWorkCenters(jobOrderId?: number | string | null): Pro
         source: hasJobOrder ? (json.source || "NONE") : "ALL",
         routeOptions: Array.isArray(json.routeOptions) ? json.routeOptions : []
     };
+}
+
+export async function fetchWorkCenterAvailability(options: {
+    workCenterId?: number | null;
+    branchId?: number | null;
+} = {}): Promise<WorkCenterJobOrderAvailability[]> {
+    const params = new URLSearchParams({ action: "work-center-availability" });
+    if (options.workCenterId) params.set("workCenterId", String(options.workCenterId));
+    if (options.branchId) params.set("branchId", String(options.branchId));
+
+    const res = await fetch(`/api/manufacturing/production/station-scan?${params.toString()}`, { cache: "no-store" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+        throw new Error(json.error || "Failed to load Job Order workstation availability.");
+    }
+    return Array.isArray(json.data) ? json.data : [];
 }
 
 export interface RouteWorkCenterAssignment {
