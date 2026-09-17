@@ -492,7 +492,7 @@ export function RawMaterialModal({
 
                         <div className="space-y-1">
                             <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">
-                                Safety Stock
+                                Maintaining Quantity
                             </label>
                             <input
                                 type="number"
@@ -500,8 +500,8 @@ export function RawMaterialModal({
                                 step="1"
                                 value={formMaintainingQuantity}
                                 onChange={event => setFormMaintainingQuantity(event.target.value)}
-                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("safetyStock") ? "border-red-500" : ""}`}
-                                aria-invalid={hasBaseValidationError("safetyStock")}
+                                className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasBaseValidationError("maintainingQuantity") ? "border-red-500" : ""}`}
+                                aria-invalid={hasBaseValidationError("maintainingQuantity")}
                             />
                         </div>
 
@@ -1105,15 +1105,15 @@ export function RawMaterialModal({
                                                     </div>
 
                                                     <div className="space-y-1">
-                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Safety Stock</label>
+                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Maintaining Quantity</label>
                                                         <input
                                                             type="number"
                                                             min="0"
                                                             step="1"
                                                             value={v.maintainingQuantity}
                                                             onChange={event => handleUpdateVariant(vIdx, "maintainingQuantity", event.target.value)}
-                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "safetyStock") ? "border-red-500" : ""}`}
-                                                            aria-invalid={hasVariantValidationError(vIdx, "safetyStock")}
+                                                            className={`w-full p-1.5 border rounded-lg text-xs font-bold bg-background outline-none focus:ring-1 focus:ring-primary ${hasVariantValidationError(vIdx, "maintainingQuantity") ? "border-red-500" : ""}`}
+                                                            aria-invalid={hasVariantValidationError(vIdx, "maintainingQuantity")}
                                                         />
                                                     </div>
 

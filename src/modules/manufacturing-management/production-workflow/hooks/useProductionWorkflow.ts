@@ -695,7 +695,7 @@ export function useProductionWorkflow() {
 
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
-        input: { remarks?: string; resolutionRemarks?: string } = {}
+        input: { remarks?: string; resolutionRemarks?: string; terminationImage?: File | null } = {}
     ): Promise<boolean> => {
         if (!selectedJobOrder) return false;
         const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;

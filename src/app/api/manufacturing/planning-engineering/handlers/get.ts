@@ -1751,6 +1751,7 @@ export async function handleGET(request: Request) {
             // disabled-lint-next-line @typescript-eslint/no-explicit-any
             const camelCaseList = list.map((item: any) => {
                 const cancellationImageId = directusFileId(item.cancellation_image_id);
+                const terminationImageId = directusFileId(item.termination_image_id);
 
                 return ({
                 jo_id: item.jo_id,
@@ -1795,9 +1796,12 @@ export async function handleGET(request: Request) {
                 modifiedBy: item.modified_by || null,
                 cancelled_at: item.cancelled_at || null,
                 cancelled_by: item.cancelled_by || null,
+                cancelled_by_name: item.cancelled_by_name || null,
                 cancellation_reason: item.cancellation_reason || null,
                 cancellation_image_id: cancellationImageId,
                 cancellation_image_url: cancellationImageId ? manufacturingFileUrl(cancellationImageId) : null,
+                termination_image_id: terminationImageId,
+                termination_image_url: terminationImageId ? manufacturingFileUrl(terminationImageId) : null,
                 parentJobOrderId: item.parent_job_order_id || null,
                 producedQty: item.produced_quantity || 0,
                 productionOutputQuantity: Number(item.production_output_quantity ?? item.produced_quantity ?? 0),
