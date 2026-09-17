@@ -44,7 +44,7 @@ export function SearchableSelect({
     }, [options, value]);
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover modal={false} open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
@@ -60,7 +60,10 @@ export function SearchableSelect({
             <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
                     <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
-                    <CommandList style={{ maxHeight: "250px", overflowY: "auto" }}>
+                    <CommandList
+                        style={{ maxHeight: "250px", overflowY: "auto" }}
+                        onWheel={(event) => event.stopPropagation()}
+                    >
                         <CommandEmpty>No results found.</CommandEmpty>
                         <CommandGroup>
                             {options.map((opt) => (

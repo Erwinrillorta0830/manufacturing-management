@@ -2,15 +2,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { JobOrder, User, RouteOperatorRecord, QATemplate, QATemplateParameter, RoutingTask, JobOrderCancellationPreview } from "../types";
+import { JobOrder, User, RouteOperatorRecord, RoutingTask, JobOrderCancellationPreview } from "../types";
 import {
     fetchJobOrders,
     fetchUsersList as apiFetchUsers,
     fetchRouteOperators,
     manageRouteOperator,
     patchRoutingTask,
-    fetchQATemplate,
-    submitQAVerification,
     fetchJobOrderCancellationPreview,
     cancelJobOrder,
     returnJobOrderMaterials,
@@ -49,16 +47,6 @@ export function useProductionWorkflow() {
     const [manualHours, setManualHours] = useState<string>("");
     const [activeManualUserId, setActiveManualUserId] = useState<number | null>(null);
 
-    // QA Checklist Modal States
-    const [qaModalOpen, setQaModalOpen] = useState(false);
-    const [qaTemplate, setQaTemplate] = useState<QATemplate | null>(null);
-    const [qaParameters, setQaParameters] = useState<QATemplateParameter[]>([]);
-    const [qaValues, setQaValues] = useState<Record<number, string>>({});
-    const [qaInspectorId, setQaInspectorId] = useState<string>("");
-    const [qaYieldQty, setQaYieldQty] = useState<string>("");
-    const [qaComments, setQaComments] = useState<string>("");
-    const [submittingQA, setSubmittingQA] = useState(false);
-
     // Job Order cancellation / raw material return state
     const [cancellationModalOpen, setCancellationModalOpen] = useState(false);
     const [cancellationMode, setCancellationMode] = useState<"cancel" | "return">("cancel");
@@ -96,13 +84,13 @@ export function useProductionWorkflow() {
         return sortedTasks.find((task) => task.status !== "Completed") || sortedTasks[sortedTasks.length - 1];
     }, [sortedTasks]);
 
-    // Selected step object
-    const selectedTask = useMemo(() => {
-        if (selectedTaskId === null) return null;
-        return sortedTasks.find((t) => t.id === selectedTaskId) || null;
-    }, [sortedTasks, selectedTaskId]);
+// Selected step object
+const selectedTask = useMemo(() => {
+    if (selectedTaskId === null) return null;
+    return sortedTasks.find((t) => t.id === selectedTaskId) || null;
+}, [sortedTasks, selectedTaskId]);
 
-    // Deep link support: /mm/production-workflow?id=... or ?jo=... selects the Job Order.
+// Deep link support: /mm/production-workflow?id=... or ?jo=JO-XXXX selects the Job Order.
     useEffect(() => {
         const idParam = searchParams.get("id");
         const joParam = searchParams.get("jo");
@@ -457,169 +445,40 @@ export function useProductionWorkflow() {
         }
     };
 
-    // Direct completion without QA
-    const handleDirectCompleteStep = async (taskObj: RoutingTask) => {
-        try {
-            const taskOps = routeOperators.filter((op) => op.task_id === taskObj.id);
-            const totalHours = taskOps.reduce((sum, r) => sum + (r.actual_hours || 0), 0);
+    // Complete a route after the terminal confirmation dialog has been accepted.
+    // QA-required routes use the same explicit completion path as every other route;
+    // the separate QA inspection workflow remains available in the manufacturing QA module.
+    const completeRouteStep = async (taskId: number): Promise<boolean> => {
+        const task = sortedTasks.find((item) => item.id === taskId);
+        if (!task || !selectedJobOrder) return false;
 
+        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
+            toast.error("Routing steps can only be progressed while the Job Order is In Production.");
+            return false;
+        }
+
+        const taskOps = routeOperators.filter((op) => op.task_id === taskId);
+        if (taskOps.some((op) => op.started_at !== null && op.stopped_at === null)) {
+            toast.warning("Cannot complete routing step while operators have active running shifts. Please clock them out first.");
+            return false;
+        }
+
+        try {
+            const totalHours = taskOps.reduce((sum, operator) => sum + (operator.actual_hours || 0), 0);
             await patchRoutingTask({
-                taskId: taskObj.id,
+                taskId,
                 taskPatch: {
                     status: "Completed",
                     completed_at: new Date().toISOString(),
                     actual_run_hours: Math.round(totalHours * 100) / 100
                 }
             });
-            toast.success(`Routing step "${taskObj.name}" completed.`);
-            fetchJobs();
+            toast.success(`Routing step "${task.name}" completed.`);
+            await fetchJobs(selectedJobOrder.jo_id, true);
+            return true;
         } catch (err: any) {
             toast.error(err.message || "Failed to complete routing step.");
-        }
-    };
-
-    // Complete button dispatcher
-    const handleCompleteStepClick = async (taskId: number) => {
-        const task = sortedTasks.find(t => t.id === taskId);
-        if (!task || !selectedJobOrder) return;
-
-        if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
-            toast.error("Routing steps can only be progressed while the Job Order is In Production.");
-            return;
-        }
-
-        setSelectedTaskId(taskId);
-
-        const taskOps = routeOperators.filter((op) => op.task_id === taskId);
-        const hasRunningTimers = taskOps.some((op) => op.started_at !== null && op.stopped_at === null);
-        if (hasRunningTimers) {
-            toast.warning("Cannot complete routing step while operators have active running shifts. Please clock them out first.");
-            return;
-        }
-
-        if (task.requires_qa === 1) {
-            setQaYieldQty(String(selectedJobOrder.quantity));
-            setQaComments("");
-            setQaInspectorId(taskOps[0] ? String(taskOps[0].user_id) : "");
-            
-            try {
-                const data = await fetchQATemplate(task.name, selectedJobOrder.product_id, task.qa_template_id);
-                setQaTemplate(data.template);
-                
-                let params = data.parameters || [];
-                if (params.length === 0) {
-                    params = [{
-                        parameter_id: 9999,
-                        template_id: data.template?.template_id || 0,
-                        test_name: "Yield & Process Control Validation",
-                        test_type: "Numeric",
-                        min_value: Math.floor(selectedJobOrder.quantity * 0.9),
-                        max_value: Math.ceil(selectedJobOrder.quantity * 1.1),
-                        target_value: String(selectedJobOrder.quantity),
-                        is_critical: true
-                    }];
-                }
-                setQaParameters(params);
-                
-                const vals: Record<number, string> = {};
-                params.forEach((p: any) => {
-                    if (p.test_type === "Boolean" || p.test_type === "Yes/No") {
-                        vals[p.parameter_id] = "true";
-                    } else if (p.test_type === "Numeric") {
-                        vals[p.parameter_id] = p.target_value || "";
-                    } else {
-                        vals[p.parameter_id] = "";
-                    }
-                });
-                setQaValues(vals);
-                setQaModalOpen(true);
-            } catch (err: any) {
-                toast.error(err.message || "Failed to load matching QA Template.");
-            }
-        } else {
-            await handleDirectCompleteStep(task);
-        }
-    };
-
-    // QA Verification Form Submit Handler
-    const handleSubmitQA = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!selectedTask || !selectedJobOrder) return;
-
-        setSubmittingQA(true);
-        try {
-            const verifications = qaParameters.map((p) => {
-                const rawVal = qaValues[p.parameter_id];
-                let isFailed = false;
-                let parsedVal: string | number | boolean = rawVal;
-
-                if (p.test_type === "Numeric") {
-                    const num = parseFloat(rawVal);
-                    parsedVal = isNaN(num) ? 0 : num;
-                    if (p.min_value !== null && num < p.min_value) isFailed = true;
-                    if (p.max_value !== null && num > p.max_value) isFailed = true;
-                } else if (p.test_type === "Boolean" || p.test_type === "Yes/No") {
-                    isFailed = rawVal !== "true";
-                    parsedVal = rawVal === "true";
-                } else {
-                    isFailed = !rawVal || rawVal.trim().length === 0;
-                }
-
-                return {
-                    parameter_id: p.parameter_id,
-                    test_name: p.test_name || p.parameter_name || "Check",
-                    value: parsedVal,
-                    min_value: p.min_value,
-                    max_value: p.max_value,
-                    target_value: p.target_value,
-                    is_failed: isFailed,
-                    is_critical: !!p.is_critical
-                };
-            });
-
-            const qaResult = await submitQAVerification({
-                action: "verify",
-                joId: selectedJobOrder.jo_id,
-                taskId: selectedTask.id,
-                taskName: selectedTask.name,
-                productName: selectedJobOrder.product_name,
-                expectedQty: selectedJobOrder.quantity,
-                actualQty: parseFloat(qaYieldQty) || selectedJobOrder.quantity,
-                verifications,
-                comments: qaComments,
-                userId: qaInspectorId ? parseInt(qaInspectorId) : null
-            });
-
-            if (qaResult.onHold) {
-                toast.error("⚠️ Critical parameter failure detected! Job Order has been placed ON HOLD. Contact a supervisor for disposition.", { duration: 8000 });
-                setQaModalOpen(false);
-                fetchJobs();
-            } else {
-                const patchRes = await fetch("/api/manufacturing/planning-engineering", {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        taskId: selectedTask.id,
-                        taskPatch: {
-                            status: "Completed",
-                            completed_at: new Date().toISOString(),
-                            actual_run_hours: operatorsSummary.total_hours
-                        }
-                    })
-                });
-
-                if (!patchRes.ok) {
-                    console.warn("QA passed, but failed to sync final actual labor cost details.");
-                }
-
-                toast.success("Quality inspection passed and routing step completed!");
-                setQaModalOpen(false);
-                fetchJobs();
-            }
-        } catch (err: any) {
-            toast.error(err.message || "Failed to submit QA audit.");
-        } finally {
-            setSubmittingQA(false);
+            return false;
         }
     };
 
@@ -788,31 +647,16 @@ export function useProductionWorkflow() {
         setManualHours,
         activeManualUserId,
         setActiveManualUserId,
-        qaModalOpen,
-        setQaModalOpen,
-        qaTemplate,
-        qaParameters,
-        qaValues,
-        setQaValues,
-        qaInspectorId,
-        setQaInspectorId,
-        qaYieldQty,
-        setQaYieldQty,
-        qaComments,
-        setQaComments,
-        submittingQA,
         selectedJobOrder,
         sortedTasks,
         activeStep,
-        selectedTask,
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,
-        handleCompleteStepClick,
-        handleSubmitQA,
+        completeRouteStep,
         filteredJobOrders,
         branches,
         selectedBranchFilter,
