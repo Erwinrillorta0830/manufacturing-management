@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DIRECTUS_URL, headers, getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 
 type DirectusProject = Record<string, unknown> & {
@@ -91,13 +91,16 @@ export async function POST(request: Request) {
         }
 
         const userId = await getUserIdFromToken().catch(() => null);
-        const serverTime = await getISOStringInConfiguredTimezone();
+        const serverTime = formatPhtDateTime();
+        const sanitizedCode = String(customer_code).trim().replace(/[^A-Za-z0-9-]+/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
 
         const payload = {
             project_name: project_name.trim().toUpperCase(),
-            customer_code: customer_code.trim(),
+            customer_code: sanitizedCode,
             created_by: userId,
-            created_at: serverTime.substring(0, 19).replace('T', ' ')
+            created_at: serverTime,
+            modified_by: null,
+            modified_at: null
         };
 
         const res = await fetch(`${DIRECTUS_URL}/items/projects`, {
@@ -116,5 +119,45 @@ export async function POST(request: Request) {
     } catch (e) {
         console.error("API Error creating project:", e);
         return NextResponse.json({ error: (e as Error).message || "Failed to create project" }, { status: 500 });
+    }
+}
+
+export async function PATCH(request: Request) {
+    try {
+        const body = await request.json();
+        const { projectId, id, status, customer_code, project_name } = body;
+        const targetId = projectId || id;
+
+        if (!targetId) {
+            return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
+        }
+
+        const userId = await getUserIdFromToken().catch(() => null);
+        const serverTime = formatPhtDateTime();
+
+        const patchPayload: Record<string, unknown> = {
+            modified_by: userId,
+            modified_at: serverTime
+        };
+        if (status) patchPayload.status = status;
+        if (customer_code) patchPayload.customer_code = String(customer_code).trim().replace(/[^A-Za-z0-9-]+/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+        if (project_name) patchPayload.project_name = String(project_name).trim().toUpperCase();
+
+        const res = await fetch(`${DIRECTUS_URL}/items/projects/${targetId}`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify(patchPayload)
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Failed to update project: ${res.status} - ${errText}`);
+        }
+
+        const data = await res.json();
+        return NextResponse.json(data.data || { success: true });
+    } catch (e) {
+        console.error("API Error updating project:", e);
+        return NextResponse.json({ error: (e as Error).message || "Failed to update project" }, { status: 500 });
     }
 }

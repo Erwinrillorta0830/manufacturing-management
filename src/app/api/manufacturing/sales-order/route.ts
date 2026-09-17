@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { getISOStringInConfiguredTimezone, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     addSalesOrderFilters,
     detailRemainingQuantity,
@@ -928,7 +928,9 @@ export async function POST(request: Request) {
                 due_date: dueDate || null,
                 payment_terms: paymentTerms ? Number(paymentTerms) : null,
                 salesman_id: salesmanId ? Number(salesmanId) : null,
-                branch_id: branchId ? Number(branchId) : null
+                branch_id: branchId ? Number(branchId) : null,
+                currency: null,
+                exchange_rate: null
             };
             const detailPayloads = directItems.map((item) => ({
                 product_id: item.product_id,
@@ -1051,7 +1053,9 @@ export async function POST(request: Request) {
             due_date: dueDate || null,
             payment_terms: paymentTerms ? Number(paymentTerms) : null,
             salesman_id: salesmanId ? Number(salesmanId) : null,
-            branch_id: branchId ? Number(branchId) : null
+            branch_id: branchId ? Number(branchId) : null,
+            currency: null,
+            exchange_rate: null
         };
         const detailPayloads = quoteItems.map((item: any) => {
             const unitPrice = Number(item.frozen_total_cost_php);
@@ -1080,7 +1084,9 @@ export async function POST(request: Request) {
                 headers,
                 body: JSON.stringify({
                     status: "Converted to SO",
-                    remarks: `${quote.remarks || ""}\n[System: Converted to Sales Order ${orderNo}]`
+                    remarks: `${quote.remarks || ""}\n[System: Converted to Sales Order ${orderNo}]`,
+                    modified_by: encoderId,
+                    modified_at: formatPhtDateTime()
                 })
             });
             if (!quoteUpdateRes.ok) {
@@ -1091,7 +1097,7 @@ export async function POST(request: Request) {
                 const projectUpdateRes = await fetch(`${DIRECTUS_URL}/items/projects/${quote.project_id}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "Executed", modified_by: encoderId })
+                    body: JSON.stringify({ status: "Executed", modified_by: encoderId, modified_at: formatPhtDateTime() })
                 });
                 if (!projectUpdateRes.ok) {
                     console.warn(`Failed to mark project ${quote.project_id} as Executed. Status: ${projectUpdateRes.status}`);
@@ -1105,7 +1111,9 @@ export async function POST(request: Request) {
                     headers,
                     body: JSON.stringify({
                         status: quote.status ?? null,
-                        remarks: quote.remarks ?? null
+                        remarks: quote.remarks ?? null,
+                        modified_by: encoderId,
+                        modified_at: formatPhtDateTime()
                     })
                 });
                 if (!restoreRes.ok) cleanupFailures.push(`quotation restore returned ${restoreRes.status}`);

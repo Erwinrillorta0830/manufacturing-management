@@ -1,4 +1,4 @@
-import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
+import { DIRECTUS_URL, headers, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
 
 export async function fetchQuotations(): Promise<unknown[]> {
@@ -85,8 +85,12 @@ export async function saveQuotation(
         project_id?: number;
         total_selling_price: number;
         total_simulated_cost: number;
-        forex_rate_used: number;
+        forex_rate_used?: number | null;
         remarks?: string;
+        created_by?: number | null;
+        created_at?: string;
+        modified_by?: number | null;
+        modified_at?: string | null;
     },
     snapshots: Array<{
         product_id: number;
@@ -119,14 +123,21 @@ export async function saveQuotation(
                     await fetch(`${DIRECTUS_URL}/items/quotation_header/${draft.id}`, {
                         method: "PATCH",
                         headers,
-                        body: JSON.stringify({ status: "Void", modified_by: userId })
+                        body: JSON.stringify({ status: "Void", modified_by: userId, modified_at: formatPhtDateTime() })
                     }).catch(e => console.error("Failed to void preceding draft", e));
                 }
             }
         }
 
         // 1. Post Header
-        const finalQuoteData = { ...quoteData, created_by: userId };
+        const finalQuoteData = {
+            ...quoteData,
+            forex_rate_used: quoteData.forex_rate_used ?? 0,
+            created_by: userId,
+            created_at: quoteData.created_at || formatPhtDateTime(),
+            modified_by: null,
+            modified_at: null
+        };
         const headerRes = await fetch(`${DIRECTUS_URL}/items/quotation_header`, {
             method: "POST",
             headers,
