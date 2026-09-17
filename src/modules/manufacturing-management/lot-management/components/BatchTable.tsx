@@ -33,7 +33,7 @@ interface BatchTableProps {
     statusFilter: string;
     onStatusFilterChange: (value: string) => void;
     selectedProductId?: number | "ALL";
-     
+    onDelete?: (batchId: number) => void;
     onRefresh?: () => void;
     onAddClick?: () => void;
     onViewMovements?: (batch: Batch) => void;
