@@ -486,9 +486,9 @@ export function useRawMaterialForm(
             "Base material"
         );
 
-        const parsedSafetyStock = Number(formMaintainingQuantity);
-        if (!Number.isSafeInteger(parsedSafetyStock) || parsedSafetyStock < 0) {
-            addBaseError("safetyStock", "Safety Stock must be a whole number greater than or equal to 0.");
+        const parsedMaintainingQuantity = Number(formMaintainingQuantity);
+        if (!Number.isSafeInteger(parsedMaintainingQuantity) || parsedMaintainingQuantity < 0) {
+            addBaseError("maintainingQuantity", "Maintaining Quantity must be a whole number greater than or equal to 0.");
         }
 
         if (effectiveParentRelationshipError) {
@@ -545,9 +545,9 @@ export function useRawMaterialForm(
                 `Variant ${index + 1}`
             );
 
-            const variantSafetyStock = Number(variant.maintainingQuantity);
-            if (!Number.isSafeInteger(variantSafetyStock) || variantSafetyStock < 0) {
-                variantErrors.safetyStock = `Variant ${index + 1}: Safety Stock must be a whole number greater than or equal to 0.`;
+            const variantMaintainingQuantity = Number(variant.maintainingQuantity);
+            if (!Number.isSafeInteger(variantMaintainingQuantity) || variantMaintainingQuantity < 0) {
+                variantErrors.maintainingQuantity = `Variant ${index + 1}: Maintaining Quantity must be a whole number greater than or equal to 0.`;
             }
 
             const variantQaError = validatePurchaseQaConfig(variant.purchaseQa, purchaseQaParameters, `Variant ${index + 1} QA`);
@@ -1120,7 +1120,7 @@ export function useRawMaterialForm(
         const densityRequirement = getSelectedDensityRequirement(units, formUom);
         const parsedWeight = formWeight.trim() !== "" ? Number(formWeight) : null;
         const parsedWeightUnitId = formWeightUnitId === "" ? null : Number(formWeightUnitId);
-        const parsedSafetyStock = Number(formMaintainingQuantity);
+        const parsedMaintainingQuantity = Number(formMaintainingQuantity);
         const weightForm = parseWeightForm(
             formNetWeight,
             formOuterCartonWeight,
@@ -1208,7 +1208,7 @@ export function useRawMaterialForm(
             unit_of_measurement_count: parsedUomCount,
             isActive: formIsActive ? 1 : 0,
             barcode: formBarcode.trim() || undefined,
-            maintaining_quantity: parsedSafetyStock,
+            maintaining_quantity: parsedMaintainingQuantity,
             product_image: formProductImage,
             purchaseQa: formPurchaseQa,
             cascadeToChildren

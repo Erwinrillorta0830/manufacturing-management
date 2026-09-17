@@ -147,6 +147,33 @@ export function formatPhtDateTime(now = new Date()): string {
     return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 }
 
+const PHT_WALL_CLOCK_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
+
+/**
+ * Parses persisted PHT DATETIME wall-clock values without letting the server
+ * timezone reinterpret them. Offset-bearing values continue to represent
+ * instants and are parsed using the native Date parser.
+ */
+export function parsePhtDateTime(value: unknown): number | null {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+
+    const wallClock = PHT_WALL_CLOCK_DATE_TIME_PATTERN.exec(raw);
+    const date = wallClock
+        ? new Date(Date.UTC(
+            Number(wallClock[1]),
+            Number(wallClock[2]) - 1,
+            Number(wallClock[3]),
+            Number(wallClock[4]) - 8,
+            Number(wallClock[5]),
+            Number(wallClock[6] || 0),
+            Number((wallClock[7] || "").padEnd(3, "0") || 0)
+        ))
+        : new Date(raw);
+
+    return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
 export async function getISOStringInConfiguredTimezone(d = new Date()): Promise<string> {
     const tz = await getConfiguredTimezone();
     

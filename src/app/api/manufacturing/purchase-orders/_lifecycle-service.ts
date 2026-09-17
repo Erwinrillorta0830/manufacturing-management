@@ -37,6 +37,7 @@ import {
     ProductWeightValidationError,
     resolveProductWeightBreakdown
 } from "@/modules/manufacturing-management/procurement/packaging-weight";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 
 type RevisionCommand = z.infer<typeof purchaseOrderRevisionSchema>;
 type CancellationCommand = z.infer<typeof purchaseOrderCancellationSchema>;
@@ -77,6 +78,11 @@ interface PurchaseOrderRecord {
     approval_requires_finance?: boolean | number | null;
     approval_allow_self_approval?: boolean | number | null;
     is_import?: boolean | number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
+    for_revision_at?: string | null;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
 }
 
 interface PurchaseOrderLineRecord {
@@ -326,12 +332,16 @@ function linePayload(
     }, amount);
 }
 
-async function conditionalPatch(id: number, expectedRevision: number, data: Record<string, unknown>, status?: number) {
+async function conditionalPatch(id: number, expectedRevision: number, data: Record<string, unknown>, status?: number | readonly number[]) {
     const filter: Record<string, unknown> = {
         purchase_order_id: { _eq: id },
         workflow_revision: { _eq: expectedRevision }
     };
-    if (status !== undefined) filter.inventory_status = { _eq: status };
+    if (status !== undefined) {
+        filter.inventory_status = Array.isArray(status)
+            ? { _in: status }
+            : { _eq: status };
+    }
     const response = await procurementDirectusFetch("/items/purchase_order", {
         method: "PATCH",
         body: JSON.stringify({ query: { filter, limit: 1 }, data })
@@ -371,7 +381,12 @@ function rollbackHeader(order: PurchaseOrderRecord) {
         approval_rule_id: order.approval_rule_id || null,
         approval_requires_finance: order.approval_requires_finance ?? null,
         approval_allow_self_approval: order.approval_allow_self_approval ?? null,
-        is_import: order.is_import ?? null
+        is_import: order.is_import ?? null,
+        revised_at: order.revised_at || null,
+        revised_by: order.revised_by ?? null,
+        for_revision_at: order.for_revision_at || null,
+        cancelled_at: order.cancelled_at || null,
+        cancelled_by: order.cancelled_by ?? null
     };
 }
 
@@ -433,7 +448,7 @@ async function writeHistory(
             revision_before: revision,
             revision_after: nextRevision,
             revision_snapshot: action === "Resubmitted" ? revisionSnapshot || null : null,
-            created_at: new Date().toISOString()
+            created_at: formatPhtDateTime()
         })
     });
     if (!response.ok) throw new PurchaseOrderLifecycleError("Purchase-order workflow history could not be recorded.", 503);
@@ -488,8 +503,9 @@ async function withRevisionLock<T>(purchaseOrderId: number, operation: () => Pro
 async function reviseRejectedPurchaseOrderUnlocked(id: number, command: RevisionCommand, actor: AuthorizedPurchaseOrderUser) {
     const order = await loadOrder(id);
     const revision = Number(order.workflow_revision || 0);
-    if (Number(order.inventory_status) !== INVENTORY_STATUS.REJECTED) {
-        throw new PurchaseOrderLifecycleError("Only Rejected purchase orders can be revised through this action.", 409);
+    const revisionableStatuses = [INVENTORY_STATUS.REVISION, INVENTORY_STATUS.REJECTED] as const;
+    if (!revisionableStatuses.includes(Number(order.inventory_status) as typeof revisionableStatuses[number])) {
+        throw new PurchaseOrderLifecycleError("Only purchase orders in Revision can be revised through this action.", 409);
     }
     if (revision !== command.workflowRevision) {
         throw new PurchaseOrderLifecycleError("This purchase order changed. Reload it before revising it.", 409);
@@ -500,7 +516,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         revision
     );
     if (rejectionStage !== "Finance") {
-        throw new PurchaseOrderLifecycleError("Purchase orders can only be revised after a formal Finance rejection.", 409);
+        throw new PurchaseOrderLifecycleError("Purchase orders can only be revised after a Finance Revision decision.", 409);
     }
 
     const exchangeRate = normalizeDecimal(command.shipmentData.exchange_rate, EXCHANGE_RATE_DECIMAL_SCALE);
@@ -566,6 +582,7 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
     }
     await assertRevisionSnapshotStorage();
     const nextRevision = revision + 1;
+    const revisedAt = formatPhtDateTime();
     const headerPayload = {
         reference: command.shipmentData.reference_number,
         remark: command.shipmentData.remark === "" ? null : command.shipmentData.remark || null,
@@ -582,8 +599,8 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         gross_amount: totals.grossPhp,
         total_amount: totals.netPhp,
         inventory_status: INVENTORY_STATUS.REQUESTED,
-        date_received: command.shipmentData.date_received || null,
-        lead_time_receiving: null,
+        date_received: null,
+        lead_time_receiving: command.shipmentData.lead_time_receiving || null,
         approver_id: null,
         date_approved: null,
         finance_id: null,
@@ -592,9 +609,11 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         approval_rule_id: rule.ruleId,
         approval_requires_finance: 1,
         approval_allow_self_approval: 1,
-        is_import: currencyCode === "PHP" ? 0 : 1
+        is_import: currencyCode === "PHP" ? 0 : 1,
+        revised_at: revisedAt,
+        revised_by: actor.userId
     };
-    const updated = await conditionalPatch(id, revision, headerPayload, INVENTORY_STATUS.REJECTED);
+    const updated = await conditionalPatch(id, revision, headerPayload, revisionableStatuses);
     if (!updated) throw new PurchaseOrderLifecycleError("Another action changed this purchase order. Reload and try again.", 409);
 
     const deletedLineIds: number[] = [];
@@ -611,8 +630,8 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
             id,
             "Resubmitted",
             actor,
-            command.remarks || "Purchase order revised and resubmitted after rejection.",
-            INVENTORY_STATUS.REJECTED,
+            command.remarks || "Purchase order revised and resubmitted after Finance Revision.",
+            order.inventory_status,
             INVENTORY_STATUS.REQUESTED,
             revision,
             nextRevision,
@@ -634,7 +653,9 @@ async function reviseRejectedPurchaseOrderUnlocked(id: number, command: Revision
         success: true,
         purchaseOrderId: id,
         status: "For Approval",
-        workflowRevision: nextRevision
+        workflowRevision: nextRevision,
+        revisedAt,
+        revisedBy: actor.userId
     };
 }
 
@@ -645,8 +666,9 @@ export async function reviseRejectedPurchaseOrder(id: number, command: RevisionC
 export async function cancelRejectedPurchaseOrder(id: number, command: CancellationCommand, actor: AuthorizedPurchaseOrderUser) {
     const order = await loadOrder(id);
     const revision = Number(order.workflow_revision || 0);
-    if (Number(order.inventory_status) !== INVENTORY_STATUS.REJECTED) {
-        throw new PurchaseOrderLifecycleError("Only Rejected purchase orders can be cancelled through this action.", 409);
+    const revisionableStatuses = [INVENTORY_STATUS.REVISION, INVENTORY_STATUS.REJECTED] as const;
+    if (!revisionableStatuses.includes(Number(order.inventory_status) as typeof revisionableStatuses[number])) {
+        throw new PurchaseOrderLifecycleError("Only purchase orders in Revision can be cancelled through this action.", 409);
     }
     if (revision !== command.workflowRevision) {
         throw new PurchaseOrderLifecycleError("This purchase order changed. Reload it before cancelling it.", 409);
@@ -657,19 +679,21 @@ export async function cancelRejectedPurchaseOrder(id: number, command: Cancellat
         revision
     );
     if (rejectionStage !== "Finance") {
-        throw new PurchaseOrderLifecycleError("Purchase orders can only be cancelled after a formal Finance rejection.", 409);
+        throw new PurchaseOrderLifecycleError("Purchase orders can only be cancelled after a Finance Revision decision.", 409);
     }
 
     const nextRevision = revision + 1;
-    const reason = command.remarks || "Purchase order cancelled after rejection.";
+    const reason = command.remarks || "Purchase order cancelled from Revision.";
     const updated = await conditionalPatch(id, revision, {
         inventory_status: INVENTORY_STATUS.CANCELLED,
-        workflow_revision: nextRevision
-    }, INVENTORY_STATUS.REJECTED);
+        workflow_revision: nextRevision,
+        cancelled_at: formatPhtDateTime(),
+        cancelled_by: actor.userId
+    }, revisionableStatuses);
     if (!updated) throw new PurchaseOrderLifecycleError("Another action changed this purchase order. Reload and try again.", 409);
 
     try {
-        await writeHistory(id, "Cancelled", actor, reason, INVENTORY_STATUS.REJECTED, INVENTORY_STATUS.CANCELLED, revision, nextRevision);
+        await writeHistory(id, "Cancelled", actor, reason, order.inventory_status, INVENTORY_STATUS.CANCELLED, revision, nextRevision);
     } catch (error) {
         const rolledBack = await conditionalPatch(id, nextRevision, rollbackHeader(order)).catch(() => false);
         if (!rolledBack) {

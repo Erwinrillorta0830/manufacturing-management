@@ -33,7 +33,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
         onCreateShipment,
         onEditShipment,
         onCancelRejectedPurchaseOrder,
-        onUpdateShipmentStatus,
         loading = false,
         listLoading = false,
         detailLoading = false,
@@ -355,7 +354,6 @@ export default function IncomingShipments(props: IncomingShipmentsProps) {
                     suppliers={suppliers}
                     branches={dynamicBranches}
                     isSupplierForeign={isSupplierForeign}
-                    onUpdateShipmentStatus={onUpdateShipmentStatus}
                     handleStartEdit={handleStartEdit}
                     onPrintPurchaseOrder={handlePrintPurchaseOrder}
                     printLoading={printLoading}

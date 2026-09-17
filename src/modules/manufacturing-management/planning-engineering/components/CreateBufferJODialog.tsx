@@ -179,16 +179,47 @@ export function CreateBufferJODialog({
 
             // Load products
             setLoadingProducts(true);
-            fetch("/api/manufacturing/finished-goods/products?excludeRollup=true")
-                .then((r) => r.json())
-                .then((data) => {
-                    if (Array.isArray(data)) {
-                        const active = data.filter((p: any) => (p.isActive === true || p.isActive === 1 || p.isActive === undefined) && Number(p.product_type) === 388);
-                        setProducts(active);
+            const loadProducts = async () => {
+                try {
+                    const response = await fetch("/api/manufacturing/finished-goods/products?excludeRollup=true", {
+                        cache: "no-store"
+                    });
+                    const contentType = response.headers.get("content-type") || "";
+                    const responseText = await response.text();
+
+                    if (!response.ok) {
+                        throw new Error(`Product lookup failed with HTTP ${response.status}.`);
                     }
-                })
-                .catch((err) => console.error("Error loading products:", err))
-                .finally(() => setLoadingProducts(false));
+
+                    if (!contentType.toLowerCase().includes("application/json")) {
+                        throw new Error("Product lookup returned an unexpected response.");
+                    }
+
+                    let data: unknown;
+                    try {
+                        data = JSON.parse(responseText);
+                    } catch {
+                        throw new Error("Product lookup returned invalid JSON.");
+                    }
+
+                    if (!Array.isArray(data)) {
+                        throw new Error("Product lookup returned an invalid catalog.");
+                    }
+
+                    const active = data.filter((p: any) =>
+                        (p.isActive === true || p.isActive === 1 || p.isActive === undefined) &&
+                        Number(p.product_type) === 388
+                    );
+                    setProducts(active);
+                } catch (err) {
+                    console.warn("Error loading products:", err);
+                    toast.error("Unable to load finished goods. Please try again.");
+                } finally {
+                    setLoadingProducts(false);
+                }
+            };
+
+            void loadProducts();
 
             // Load operators
             fetch("/api/manufacturing/planning-engineering?action=users")

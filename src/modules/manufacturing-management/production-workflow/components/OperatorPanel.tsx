@@ -327,6 +327,8 @@ export default function OperatorPanel({
     const isJobOnHold = isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD, JOB_ORDER_STATUS.CANCELLED);
     const hasQARecord = selectedTask.qa_record_exists === true;
     const hasShiftProgress = selectedTask.shift_progress_exists === true;
+    const assignedWorkCenterId = Number(selectedJobOrder.primary_work_center_id || 0);
+    const hasAssignedWorkstation = Number.isSafeInteger(assignedWorkCenterId) && assignedWorkCenterId > 0;
     const configuredShiftHours = Number(selectedJobOrder.shiftOption ?? selectedJobOrder.shift_option ?? 8);
     const shiftDurationHours = Number.isFinite(configuredShiftHours) && configuredShiftHours > 0
         ? configuredShiftHours
@@ -374,6 +376,8 @@ export default function OperatorPanel({
                                     type="button"
                                     size="xs"
                                     variant="outline"
+                                    disabled={!hasAssignedWorkstation}
+                                    title={!hasAssignedWorkstation ? "Assign a workstation before recording step progress." : undefined}
                                     className="h-7 whitespace-nowrap px-2 text-[9px] font-bold text-primary hover:text-primary"
                                     onClick={onOpenShiftLogModal}
                                 >

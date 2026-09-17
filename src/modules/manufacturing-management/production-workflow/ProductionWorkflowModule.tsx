@@ -19,7 +19,8 @@ import {
     XCircle,
     Undo2,
     AlertTriangle,
-    PauseCircle
+    PauseCircle,
+    ImagePlus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -566,6 +567,23 @@ export default function ProductionWorkflowModule() {
                             <div className="flex items-start gap-2 p-3 rounded-xl border border-destructive/30 bg-destructive/10 text-destructive text-xs font-semibold">
                                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                                 <span>This Job Order is cancelled. Station, operator, QA, and shift-run actions are disabled. Use "Return Raw Materials" for any outstanding floor stock.</span>
+                            </div>
+                        )}
+                        {selectedJobOrder?.termination_image_url && (
+                            <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs sm:flex-row sm:items-center">
+                                <img
+                                    src={selectedJobOrder.termination_image_url}
+                                    alt="Job Order termination evidence"
+                                    className="h-24 w-24 rounded-lg border border-destructive/20 object-cover"
+                                />
+                                <div className="space-y-1">
+                                    <p className="flex items-center gap-1.5 font-bold text-destructive">
+                                        <ImagePlus className="h-4 w-4" /> Termination Evidence
+                                    </p>
+                                    <p className="text-muted-foreground">
+                                        This image was attached when production was terminated for this Job Order.
+                                    </p>
+                                </div>
                             </div>
                         )}
                         {!isSelectedJobOrderCancelled && selectedCalloutAction && (

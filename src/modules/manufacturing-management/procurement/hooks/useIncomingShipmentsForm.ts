@@ -273,9 +273,9 @@ export function useIncomingShipmentsForm({
         setHasSubmitted(false);
         const storedRemark = activeShipment.remark || "";
         const legacyRemarkMatch = storedRemark.match(/^(REJECTED|CANCELLED):\s*/i);
-        const dateReceived = activeShipment.date_received
-            ? activeShipment.date_received.split("T")[0]
-            : new Date().toISOString().split("T")[0];
+        const dateReceived = activeShipment.lead_time_receiving
+            ? activeShipment.lead_time_receiving.split("T")[0]
+            : "";
 
         const supplierId = Number(activeShipment.supplier_id && typeof activeShipment.supplier_id === "object" ? activeShipment.supplier_id.id : activeShipment.supplier_id || 0);
         const storedSupplier = suppliers.find(supplier => supplier.id === supplierId);

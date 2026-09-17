@@ -3,9 +3,11 @@ import React from "react";
 import Link from "next/link";
 import { Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
+import { isCancelledJobOrderStatus, isTerminatedJobOrder } from "../../job-order-status";
 
 export interface FamilyGroup {
     familyId: string;
@@ -132,7 +134,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="space-y-1.5">
-                                            <JobOrderStatusBadge status={jo.status} />
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <JobOrderStatusBadge
+                                                    status={jo.status}
+                                                    className={isCancelledJobOrderStatus(jo.status) ? "text-xs font-medium" : undefined}
+                                                />
+                                                {isTerminatedJobOrder(jo) && (
+                                                    <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                        Terminated
+                                                    </Badge>
+                                                )}
+                                            </div>
                                             <JobOrderJourneyBar journey={journey} compact />
                                         </div>
                                     </td>
@@ -263,7 +275,17 @@ export function JOTable({
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="space-y-1.5">
-                                            <JobOrderStatusBadge status={fg.parentJo.status} />
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <JobOrderStatusBadge
+                                                    status={fg.parentJo.status}
+                                                    className={isCancelledJobOrderStatus(fg.parentJo.status) ? "text-xs font-medium" : undefined}
+                                                />
+                                                {isTerminatedJobOrder(fg.parentJo) && (
+                                                    <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                        Terminated
+                                                    </Badge>
+                                                )}
+                                            </div>
                                             <JobOrderJourneyBar
                                                 journey={resolveJobOrderJourney({ status: fg.parentJo.status, jobOrderNo: fg.parentJo.jo_id })}
                                                 compact
@@ -326,7 +348,17 @@ export function JOTable({
                                                 )}
                                             </td>
                                             <td className="px-4 py-3">
-                                                <JobOrderStatusBadge status={cJo.status} />
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                    <JobOrderStatusBadge
+                                                        status={cJo.status}
+                                                        className={isCancelledJobOrderStatus(cJo.status) ? "text-xs font-medium" : undefined}
+                                                    />
+                                                    {isTerminatedJobOrder(cJo) && (
+                                                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                                            Terminated
+                                                        </Badge>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-3 text-xs max-w-xs truncate text-muted-foreground" title={cJo.remarks || ""}>
                                                 {cJo.remarks || "Auto-spawned for sub-assembly shortfall."}

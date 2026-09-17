@@ -230,7 +230,7 @@ export function ReleaseJODialog({
                         if (data.bom) {
                             const baseQty = Number(data.bom.base_quantity || 1);
                             setBomBaseQty(baseQty);
-                            if (!isMultiRelease && baseQty > 0) {
+                            if (!isMultiRelease && targetQuantityProp <= 0 && baseQty > 0) {
                                 setTargetQuantity(baseQty);
                             }
                             const rawShift = data.bom.net_run_time ?? data.bom.shift_hours ?? data.bom.shift_option ?? data.bom.target_shift_hours;
@@ -256,7 +256,7 @@ export function ReleaseJODialog({
             };
             loadDetails();
         }
-    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, setTargetQuantity]);
+    }, [isConfirmOpen, selectedLines, selectedBranchId, hasLoadedDetails, isMultiRelease, targetQuantityProp, setTargetQuantity]);
 
     const handleSubAssemblyVersionChange = async (subProdId: number, versionId: number) => {
         const branchId = parseValidBranchId(selectedBranchId);

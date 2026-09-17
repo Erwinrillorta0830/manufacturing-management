@@ -1,5 +1,6 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
 import { INVENTORY_STATUS } from "../procurement/_domain";
+import { parsePhtDateTime } from "@/app/api/manufacturing/services/core-api.service";
 
 export type PurchaseOrderRejectionStage = "Finance";
 
@@ -29,7 +30,7 @@ function positiveId(value: unknown): number | null {
 
 function historyRank(row: ApprovalHistoryRow): [number, number, number] {
     const revision = Number(row.revision_after || 0);
-    const timestamp = Date.parse(String(row.created_at || "")) || 0;
+    const timestamp = parsePhtDateTime(row.created_at) || 0;
     const historyId = Number(row.history_id || 0);
     return [Number.isFinite(revision) ? revision : 0, timestamp, Number.isFinite(historyId) ? historyId : 0];
 }
@@ -47,7 +48,8 @@ export async function fetchCurrentPurchaseOrderRejectionStages(
     candidates: readonly PurchaseOrderRejectionCandidate[]
 ): Promise<Map<number, PurchaseOrderRejectionStage>> {
     const eligible = candidates.filter(candidate =>
-        Number(candidate.inventoryStatus) === INVENTORY_STATUS.REJECTED
+        (Number(candidate.inventoryStatus) === INVENTORY_STATUS.REVISION
+            || Number(candidate.inventoryStatus) === INVENTORY_STATUS.REJECTED)
         && Number.isSafeInteger(candidate.purchaseOrderId)
         && candidate.purchaseOrderId > 0
     );
@@ -61,10 +63,10 @@ export async function fetchCurrentPurchaseOrderRejectionStages(
         sort: "revision_after,created_at,history_id"
     });
     params.set("filter[purchase_order_id][_in]", ids.join(","));
-    params.set("filter[action][_eq]", "Rejected");
+    params.set("filter[action][_in]", "Revision,Rejected");
 
     const response = await procurementDirectusFetch(`/items/purchase_order_approval_history?${params.toString()}`);
-    if (!response.ok) throw new Error("Unable to load purchase-order rejection history.");
+    if (!response.ok) throw new Error("Unable to load purchase-order Finance decision history.");
     const rows = ((await response.json()).data || []) as ApprovalHistoryRow[];
     const candidateById = new Map(eligible.map(candidate => [candidate.purchaseOrderId, candidate]));
     const latestById = new Map<number, ApprovalHistoryRow>();

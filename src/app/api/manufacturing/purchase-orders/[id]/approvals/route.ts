@@ -60,7 +60,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const actor = await requirePurchaseOrderModuleAccess({
             modulePath: purchaseOrderApprovalModulePath(stage),
             approvalStage: stage,
-            requireReject: parsed.data.action !== "approve"
+            requireDecision: parsed.data.action !== "approve"
         });
         return NextResponse.json(await submitPurchaseOrderApproval(id, parsed.data, actor, stage));
     } catch (error) {

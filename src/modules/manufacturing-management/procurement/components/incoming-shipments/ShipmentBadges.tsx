@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, X, PackageCheck } from "lucide-react";
+import { CheckCircle2, ShieldCheck, Landmark, Anchor, AlertCircle, RefreshCw, RotateCcw, X, PackageCheck } from "lucide-react";
 import {
     PROCUREMENT_MONEY_DECIMAL_SCALE,
     formatDecimal
@@ -97,6 +97,8 @@ export function getInventoryStatusBadge(value: unknown) {
                         ? "border-blue-500/20 bg-blue-500/10 text-blue-600"
                         : status === INVENTORY_STATUS.REJECTED
                             ? "border-red-500/20 bg-red-500/10 text-red-600"
+                            : status === INVENTORY_STATUS.REVISION
+                                ? "border-orange-500/20 bg-orange-500/10 text-orange-600"
                             : status === INVENTORY_STATUS.CANCELLED
                                 ? "border-border bg-muted text-muted-foreground"
                                 : status === INVENTORY_STATUS.AWAITING_PAYMENT
@@ -178,6 +180,12 @@ export function getStatusBadge(status: string) {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wider">
                     <Anchor className="h-3 w-3" /> QA Receiving
+                </span>
+            );
+        case "Revision":
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-orange-500/10 text-orange-600 border border-orange-500/20 uppercase tracking-wider">
+                    <RotateCcw className="h-3 w-3" /> Revision
                 </span>
             );
         case "Rejected":

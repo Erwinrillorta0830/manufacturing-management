@@ -167,9 +167,11 @@ export interface PurchaseOrderRevisionResponse {
     purchaseOrderId: number;
     status: string;
     workflowRevision: number;
+    revisedAt: string;
+    revisedBy: number;
 }
 
-export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected";
+export type PurchaseOrderApprovalStage = "Finance" | "Complete" | "Rejected" | "Revision";
 export type PurchaseOrderDecisionStage = "Finance";
 
 export interface PurchaseOrderApprovalHistory {
@@ -204,6 +206,7 @@ export interface PurchaseOrderApprovalDetail {
     order: {
         purchase_order_id: number;
         purchase_order_no?: string | null;
+        date_encoded?: string | null;
         reference?: string | null;
         supplier_name?: number | string | { id?: number | string } | null;
         branch_id?: number | null;
@@ -226,6 +229,9 @@ export interface PurchaseOrderApprovalDetail {
         finance_id?: number | null;
         date_approved?: string | null;
         date_financed?: string | null;
+        revised_at?: string | null;
+        revised_by?: number | null;
+        for_revision_at?: string | null;
     };
     revisionCount: number;
     referenceLabels: PurchaseOrderApprovalReferenceLabels;
@@ -243,7 +249,7 @@ export interface PurchaseOrderApprovalDetail {
 }
 
 export interface PurchaseOrderApprovalCommand {
-    action: "approve" | "reject" | "cancel";
+    action: "approve" | "revision" | "cancel";
     workflowRevision: number;
     expectedRuleId?: number;
     remarks?: string;

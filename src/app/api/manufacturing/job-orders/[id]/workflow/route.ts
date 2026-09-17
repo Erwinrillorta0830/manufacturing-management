@@ -10,6 +10,12 @@ import {
     JOB_ORDER_WORKFLOW_ACTIONS,
     type JobOrderWorkflowAction
 } from "@/modules/manufacturing-management/job-order-workflow";
+import {
+    deleteJobOrderTerminationImage,
+    JobOrderTerminationImageError,
+    uploadJobOrderTerminationImage,
+    validateJobOrderTerminationImage
+} from "@/app/api/manufacturing/production/job-order-termination/_image";
 
 interface WorkflowActor {
     userId: number | null;
@@ -79,9 +85,59 @@ export async function POST(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    let uploadedTerminationImageId: string | null = null;
     try {
         const { id } = await params;
-        const body = await request.json().catch(() => ({}));
+        const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+        let body: Record<string, unknown>;
+        let terminationImage: File | null = null;
+
+        if (contentType.includes("multipart/form-data")) {
+            const formData = await request.formData();
+            const payloadValue = formData.get("payload");
+            if (typeof payloadValue !== "string") {
+                return NextResponse.json({
+                    success: false,
+                    error: "The Job Order workflow payload is required.",
+                    code: "WORKFLOW_PAYLOAD_REQUIRED"
+                }, { status: 400 });
+            }
+
+            let parsedPayload: unknown;
+            try {
+                parsedPayload = JSON.parse(payloadValue);
+            } catch {
+                return NextResponse.json({
+                    success: false,
+                    error: "The Job Order workflow payload is not valid JSON.",
+                    code: "WORKFLOW_PAYLOAD_INVALID"
+                }, { status: 400 });
+            }
+            if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+                return NextResponse.json({
+                    success: false,
+                    error: "The Job Order workflow payload must be an object.",
+                    code: "WORKFLOW_PAYLOAD_INVALID"
+                }, { status: 400 });
+            }
+            body = parsedPayload as Record<string, unknown>;
+
+            const imageValue = formData.get("image");
+            if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
+                return NextResponse.json({
+                    success: false,
+                    error: "The termination evidence image is invalid.",
+                    code: "TERMINATION_IMAGE_INVALID"
+                }, { status: 422 });
+            }
+            terminationImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+        } else {
+            const parsedBody = await request.json().catch(() => ({}));
+            body = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
+                ? parsedBody as Record<string, unknown>
+                : {};
+        }
+
         const action = body?.action;
         if (!isWorkflowAction(action)) {
             return NextResponse.json({
@@ -127,6 +183,25 @@ export async function POST(
             }
         }
 
+        if (action === "terminate-production") {
+            if (!terminationImage) {
+                return NextResponse.json({
+                    success: false,
+                    error: "A termination evidence image is required.",
+                    code: "TERMINATION_IMAGE_REQUIRED"
+                }, { status: 422 });
+            }
+            const imageError = validateJobOrderTerminationImage(terminationImage);
+            if (imageError) {
+                return NextResponse.json({
+                    success: false,
+                    error: imageError,
+                    code: "TERMINATION_IMAGE_INVALID"
+                }, { status: 422 });
+            }
+            uploadedTerminationImageId = await uploadJobOrderTerminationImage(terminationImage, String(id));
+        }
+
         const result = await executeJobOrderWorkflow(id, {
             action,
             actorUserId: actor.userId,
@@ -139,10 +214,26 @@ export async function POST(
                 ? null
                 : Number(body.workCenterId),
             overrideReason: overrideReason || undefined,
-            force: body?.force === true
+            force: body?.force === true,
+            terminationImageId: uploadedTerminationImageId
         });
+
+        if (result.idempotent && uploadedTerminationImageId) {
+            await deleteJobOrderTerminationImage(uploadedTerminationImageId);
+            uploadedTerminationImageId = null;
+        }
         return NextResponse.json({ success: true, data: result });
     } catch (error) {
+        if (uploadedTerminationImageId) {
+            await deleteJobOrderTerminationImage(uploadedTerminationImageId);
+        }
+        if (error instanceof JobOrderTerminationImageError) {
+            return NextResponse.json({
+                success: false,
+                error: error.message,
+                code: error.code
+            }, { status: error.status });
+        }
         if (error instanceof JobOrderWorkflowError) {
             return NextResponse.json({
                 success: false,

@@ -33,7 +33,7 @@ import { NextStepCallout } from "../shared/components/NextStepCallout";
 import { StatusLegendPopover } from "../shared/components/StatusLegendPopover";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
+import { isCancelledJobOrderStatus, isJobOrderStatus, isTerminatedJobOrder, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "../job-order-status";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -400,6 +400,18 @@ export default function PlanningEngineeringModule() {
     }, [familyActiveTab, familyChildJobs, selectedUnreleasedJo]);
 
     const isReadOnlyDetails = isCancelledJobOrderStatus(selectedUnreleasedJo?.status);
+    const isTerminatedDetails = isTerminatedJobOrder(activeFamilyJo);
+    const terminalEvidenceImageUrl = isTerminatedDetails
+        ? activeFamilyJo?.termination_image_url
+        : activeFamilyJo?.cancellation_image_url;
+    const terminalEvidenceLabel = isTerminatedDetails ? "Termination evidence" : "Cancellation evidence";
+    const terminalEvidenceDescription = isTerminatedDetails
+        ? "Attachment and audit details recorded when this Job Order was terminated."
+        : "Attachment and audit details recorded when this Job Order was cancelled.";
+    const terminalReasonLabel = isTerminatedDetails ? "Termination reason" : "Cancellation reason";
+    const terminalActorLabel = isTerminatedDetails ? "Terminated by" : "Cancelled by";
+    const terminalActorName = activeFamilyJo?.cancelled_by_name
+        || (activeFamilyJo?.cancelled_by ? `User #${activeFamilyJo.cancelled_by}` : "Not recorded");
 
     const activeFamilyMaterials = useMemo(() => {
         if (!activeFamilyJo || familyActiveTab === "family-all" || familyActiveTab === "parent") {
@@ -1293,7 +1305,14 @@ export default function PlanningEngineeringModule() {
                                 </DialogDescription>
                             </div>
                             <div className="flex flex-col items-end gap-2">
-                                <JobOrderStatusBadge status={activeFamilyJo?.status} className="px-3 py-1 text-xs font-bold" />
+                                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                                    <JobOrderStatusBadge status={activeFamilyJo?.status} className="px-3 py-1 text-xs font-bold" />
+                                    {isTerminatedDetails && (
+                                        <Badge variant="outline" className="border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                                            Terminated
+                                        </Badge>
+                                    )}
+                                </div>
                                 <JobOrderJourneyBar
                                     journey={resolveJobOrderJourney({ status: activeFamilyJo?.status, jobOrderNo: activeFamilyJo?.jo_id })}
                                     compact
@@ -1340,8 +1359,8 @@ export default function PlanningEngineeringModule() {
                             <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 shadow-sm">
                                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                                     <div>
-                                        <h3 className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">Cancellation evidence</h3>
-                                        <p className="mt-1 text-xs text-muted-foreground">Attachment and audit details recorded when this Job Order was cancelled.</p>
+                                        <h3 className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">{terminalEvidenceLabel}</h3>
+                                        <p className="mt-1 text-xs text-muted-foreground">{terminalEvidenceDescription}</p>
                                     </div>
                                     {activeFamilyJo?.cancelled_at && (
                                         <time className="text-[10px] text-muted-foreground" dateTime={activeFamilyJo.cancelled_at}>
@@ -1349,25 +1368,25 @@ export default function PlanningEngineeringModule() {
                                         </time>
                                     )}
                                 </div>
-                                {activeFamilyJo?.cancellation_image_url ? (
+                                {terminalEvidenceImageUrl ? (
                                     <img
-                                        src={activeFamilyJo.cancellation_image_url}
-                                        alt={`Cancellation evidence for ${activeFamilyJo.jo_id || "Job Order"}`}
+                                        src={terminalEvidenceImageUrl}
+                                        alt={`${terminalEvidenceLabel} for ${activeFamilyJo?.jo_id || "Job Order"}`}
                                         className="max-h-80 w-full rounded-lg border border-rose-500/20 bg-background object-contain"
                                     />
                                 ) : (
                                     <p className="rounded-lg border border-dashed border-rose-500/20 bg-background/60 px-4 py-6 text-center text-xs text-muted-foreground">
-                                        No cancellation evidence image is attached to this record.
+                                        No {isTerminatedDetails ? "termination" : "cancellation"} evidence image is attached to this record.
                                     </p>
                                 )}
                                 <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                                     <div>
-                                        <span className="text-muted-foreground">Cancellation reason:</span>{" "}
+                                        <span className="text-muted-foreground">{terminalReasonLabel}:</span>{" "}
                                         <span className="font-semibold text-foreground">{activeFamilyJo?.cancellation_reason || "Not recorded"}</span>
                                     </div>
                                     <div>
-                                        <span className="text-muted-foreground">Cancelled by:</span>{" "}
-                                        <span className="font-semibold text-foreground">{activeFamilyJo?.cancelled_by || "Not recorded"}</span>
+                                        <span className="text-muted-foreground">{terminalActorLabel}:</span>{" "}
+                                        <span className="font-semibold text-foreground">{terminalActorName}</span>
                                     </div>
                                 </div>
                             </div>
