@@ -3,11 +3,9 @@
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { 
-    AlertTriangle, 
-    Layers, 
-    Clock, 
-    PackageSearch,
+import {
+    AlertTriangle,
+    Layers,
     ChevronLeft,
     ChevronRight,
     ArrowUpRight,
@@ -110,26 +108,23 @@ export function WipTableView({
         <div className="space-y-3">
             {/* Table Container */}
             <div className="rounded-xl border border-border/70 bg-card overflow-hidden shadow-xs">
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[calc(100vh-270px)] min-h-[420px] relative">
                     <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                            <tr className="border-b border-border/70 bg-muted/40 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                                <th className="py-3 px-3.5 w-[190px]">Job Order #</th>
-                                <th className="py-3 px-3.5 w-[220px]">Finished Good Product</th>
-                                <th className="py-3 px-3 w-[150px]">Status</th>
-                                <th className="py-3 px-3 w-[200px]">Current Active Stage</th>
-                                <th className="py-3 px-3 w-[130px]">Stage Progress</th>
-                                <th className="py-3 px-3 w-[120px]">Produced vs Target</th>
-                                <th className="py-3 px-3 w-[150px]">Floor WIP Materials</th>
-                                <th className="py-3 px-3 w-[150px]">Schedule & Timing</th>
-                                <th className="py-3 px-3.5 w-[110px] text-right">Actions</th>
+                        <thead className="sticky top-0 z-20 bg-muted/95 backdrop-blur-xs border-b border-border/80 shadow-xs">
+                            <tr className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                                <th className="py-3 px-3.5 w-[180px] bg-muted/95 backdrop-blur-xs">Job Order & Location</th>
+                                <th className="py-3 px-3.5 w-[220px] bg-muted/95 backdrop-blur-xs">Product</th>
+                                <th className="py-3 px-3 w-[160px] bg-muted/95 backdrop-blur-xs">Status & Timeline</th>
+                                <th className="py-3 px-3 w-[260px] bg-muted/95 backdrop-blur-xs">Current Stage & Progress</th>
+                                <th className="py-3 px-3 w-[180px] bg-muted/95 backdrop-blur-xs">Production Output</th>
+                                <th className="py-3 px-3.5 w-[120px] text-right bg-muted/95 backdrop-blur-xs">Actions</th>
                             </tr>
                         </thead>
 
                         <tbody className="divide-y divide-border/50 font-sans">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={9} className="py-16 text-center text-muted-foreground">
+                                    <td colSpan={6} className="py-16 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-2">
                                             <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                                             <span className="text-xs">Loading active WIP jobs and stage queues...</span>
@@ -138,7 +133,7 @@ export function WipTableView({
                                 </tr>
                             ) : paginatedJobs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={9} className="py-14 text-center text-muted-foreground">
+                                    <td colSpan={6} className="py-14 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-1.5">
                                             <Layers className="h-8 w-8 text-muted-foreground/50 mb-1" />
                                             <p className="text-sm font-semibold text-foreground">No active WIP orders found</p>
@@ -154,7 +149,7 @@ export function WipTableView({
                                     const qtyProgress = job.quantity_progress_percent;
 
                                     return (
-                                        <motion.tr 
+                                        <motion.tr
                                             key={job.job_order_id}
                                             initial={{ opacity: 0, y: -8 }}
                                             animate={{ opacity: 1, y: 0 }}
@@ -162,7 +157,7 @@ export function WipTableView({
                                             onClick={() => onOpenDetail(job, "stages")}
                                             className="hover:bg-muted/30 transition-colors group cursor-pointer"
                                         >
-                                            {/* Job Order # */}
+                                            {/* 1. Job Order & Location */}
                                             <td className="py-3 px-3.5 align-top">
                                                 <div className="space-y-0.5">
                                                     <span className="font-mono text-xs font-bold text-foreground block group-hover:text-primary transition-colors">
@@ -172,18 +167,13 @@ export function WipTableView({
                                                         <Building2 className="h-3 w-3 shrink-0" />
                                                         <span className="truncate">{job.branch_name}</span>
                                                     </div>
-                                                    {job.shift_option && (
-                                                        <span className="text-[10px] text-muted-foreground/80 block font-mono">
-                                                            {job.shift_option}
-                                                        </span>
-                                                    )}
                                                 </div>
                                             </td>
 
-                                            {/* Finished Good Product */}
+                                            {/* 2. Product */}
                                             <td className="py-3 px-3.5 align-top">
                                                 <div className="space-y-0.5">
-                                                    <span className="text-xs font-semibold text-foreground block line-clamp-1">
+                                                    <span className="text-xs font-semibold text-foreground block line-clamp-1" title={job.product_name}>
                                                         {job.product_name}
                                                     </span>
                                                     {job.product_code && (
@@ -191,137 +181,104 @@ export function WipTableView({
                                                             {job.product_code}
                                                         </span>
                                                     )}
-                                                    {job.primary_work_center_name && (
-                                                        <span className="text-[10px] text-primary/80 block line-clamp-1">
-                                                            Line: {job.primary_work_center_name}
-                                                        </span>
-                                                    )}
                                                 </div>
                                             </td>
 
-                                            {/* Status */}
+                                            {/* 3. Status & Timeline */}
                                             <td className="py-3 px-3 align-top">
                                                 <div className="space-y-1">
-                                                    {renderStatusBadge(job.status)}
-                                                    {job.is_delayed && (
+                                                    <div>{renderStatusBadge(job.status)}</div>
+                                                    <div className="text-[11px] font-mono text-muted-foreground">
+                                                        Due: <span className="text-foreground font-medium">{job.end_date || "—"}</span>
+                                                    </div>
+                                                    {job.is_delayed ? (
                                                         <div className="flex items-center gap-1 text-[10px] font-bold text-rose-600 dark:text-rose-400">
                                                             <AlertTriangle className="h-3 w-3 shrink-0" />
                                                             <span>Delayed / Behind</span>
                                                         </div>
+                                                    ) : (
+                                                        <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                                                            On Track
+                                                        </span>
                                                     )}
                                                 </div>
                                             </td>
 
-                                            {/* Current Active Stage */}
+                                            {/* 4. Current Stage & Progress */}
                                             <td className="py-3 px-3 align-top">
                                                 {job.current_stage ? (
-                                                    <div className="space-y-0.5">
-                                                        <span className="text-xs font-semibold text-foreground block line-clamp-1">
-                                                            {job.current_stage.operation_name}
-                                                        </span>
-                                                        <span className="text-[11px] text-muted-foreground block line-clamp-1">
-                                                            {job.current_stage.work_center_name}
-                                                        </span>
-                                                        <span className="font-mono text-[10px] text-muted-foreground block">
-                                                            {job.current_stage.total_actual_hours}h / {job.current_stage.total_planned_hours}h
-                                                        </span>
+                                                    <div className="space-y-1.5">
+                                                        <div>
+                                                            <span className="text-xs font-semibold text-foreground block line-clamp-1" title={job.current_stage.operation_name}>
+                                                                {job.current_stage.operation_name}
+                                                            </span>
+                                                            <span className="text-[11px] text-muted-foreground block line-clamp-1">
+                                                                Work Center: <span className="text-foreground/90">{job.current_stage.work_center_name || job.primary_work_center_name || "—"}</span>
+                                                            </span>
+                                                        </div>
+                                                        <div
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onOpenDetail(job, "stages");
+                                                            }}
+                                                            className="w-full text-left space-y-1 group/bar hover:opacity-80 transition-opacity cursor-pointer"
+                                                            title="Click to view stage details"
+                                                        >
+                                                            <div className="flex items-center justify-between text-[10px] font-mono">
+                                                                <span className="text-muted-foreground">
+                                                                    Step {job.completed_stages_count}/{job.total_stages}
+                                                                </span>
+                                                                <span className="font-bold text-foreground">
+                                                                    {stageProgress}%
+                                                                </span>
+                                                            </div>
+                                                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                                                <div
+                                                                    className="h-full rounded-full bg-primary transition-all duration-300 group-hover/bar:bg-primary/80"
+                                                                    style={{ width: `${stageProgress}%` }}
+                                                                />
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 ) : (
-                                                    <span className="text-[11px] text-muted-foreground italic">
-                                                        No active stages
-                                                    </span>
+                                                    <div className="space-y-1">
+                                                        <span className="text-[11px] text-muted-foreground italic block">
+                                                            No active stages
+                                                        </span>
+                                                        {job.total_stages > 0 && (
+                                                            <div className="text-[10px] font-mono text-muted-foreground">
+                                                                {job.completed_stages_count}/{job.total_stages} steps ({stageProgress}%)
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
 
-                                            {/* Stage Progress */}
-                                            <td className="py-3 px-3 align-top">
-                                                <div
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onOpenDetail(job, "stages");
-                                                    }}
-                                                    className="w-full text-left space-y-1 group/bar hover:opacity-80 transition-opacity"
-                                                    title="Click to view stage details"
-                                                >
-                                                    <div className="flex items-center justify-between text-[11px]">
-                                                        <span className="font-bold text-foreground font-mono">
-                                                            {stageProgress}%
-                                                        </span>
-                                                        <span className="text-[10px] text-muted-foreground font-mono">
-                                                            {job.completed_stages_count}/{job.total_stages} steps
-                                                        </span>
-                                                    </div>
-                                                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                                                        <div
-                                                            className="h-full rounded-full bg-primary transition-all duration-300 group-hover/bar:bg-primary/80"
-                                                            style={{ width: `${stageProgress}%` }}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </td>
-
-                                            {/* Produced vs Target */}
-                                            <td className="py-3 px-3 align-top">
-                                                <div className="space-y-1">
+                                            {/* 5. Production Output */}
+                                            <td className="py-3 px-3 align-bottom">
+                                                <div className="space-y-1.5">
                                                     <div className="font-mono text-xs">
                                                         <strong className="font-bold text-foreground">
                                                             {job.actual_quantity_produced.toLocaleString()}
                                                         </strong>
                                                         <span className="text-muted-foreground"> / {job.target_quantity.toLocaleString()} {job.uom_name}</span>
+                                                        <div className="flex items-center justify-end text-[10px] font-mono font-medium text-muted-foreground">
+                                                            <span>{qtyProgress}% output</span>
+                                                        </div>
                                                     </div>
-                                                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                                                        <div
-                                                            className="h-full rounded-full bg-blue-600 dark:bg-blue-400 transition-all duration-300"
-                                                            style={{ width: `${qtyProgress}%` }}
-                                                        />
+                                                    <div className="space-y-1">
+                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                                                            <div
+                                                                className="h-full rounded-full bg-blue-600 dark:bg-blue-400 transition-all duration-300"
+                                                                style={{ width: `${qtyProgress}%` }}
+                                                            />
+                                                        </div>
+
                                                     </div>
                                                 </div>
                                             </td>
 
-                                            {/* Floor WIP Materials */}
-                                            <td className="py-3 px-3 align-top">
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onOpenDetail(job, "materials");
-                                                    }}
-                                                    className="inline-flex flex-col items-start rounded-lg border border-border/70 bg-muted/20 px-2 py-1 hover:bg-muted/40 transition-colors text-left"
-                                                    title="Click to view floor materials"
-                                                >
-                                                    <div className="flex items-center gap-1 text-[11px] font-mono font-semibold text-foreground">
-                                                        <PackageSearch className="h-3 w-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
-                                                        <span>{job.total_wip_remaining_quantity.toLocaleString()}</span>
-                                                    </div>
-                                                    <span className="text-[10px] text-muted-foreground">
-                                                        {job.total_wip_materials_count} items on floor
-                                                    </span>
-                                                </button>
-                                            </td>
-
-                                            {/* Schedule & Timing */}
-                                            <td className="py-3 px-3 align-top">
-                                                <div className="space-y-0.5 text-[11px] font-mono">
-                                                    {job.start_date && (
-                                                        <div className="text-muted-foreground">
-                                                            Start: <span className="text-foreground">{job.start_date}</span>
-                                                        </div>
-                                                    )}
-                                                    {job.end_date && (
-                                                        <div className="text-muted-foreground">
-                                                            Due: <span className="text-foreground">{job.end_date}</span>
-                                                        </div>
-                                                    )}
-                                                    {job.elapsed_hours > 0 && (
-                                                        <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                                            <Clock className="h-2.5 w-2.5" />
-                                                            Elapsed: {job.elapsed_hours}h
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </td>
-
-                                            {/* Actions */}
+                                            {/* 6. Actions */}
                                             <td className="py-3 px-3.5 align-top text-right">
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <Button
@@ -385,9 +342,8 @@ export function WipTableView({
                             size="sm"
                             disabled={page <= 1}
                             onClick={() => onPageChange(page - 1)}
-                            className={`h-7 px-2.5 text-xs gap-1 ${
-                                page <= 1 ? "pointer-events-none opacity-40" : "cursor-pointer"
-                            }`}
+                            className={`h-7 px-2.5 text-xs gap-1 ${page <= 1 ? "pointer-events-none opacity-40" : "cursor-pointer"
+                                }`}
                         >
                             <ChevronLeft className="h-3.5 w-3.5" />
                             <span>Previous</span>
@@ -397,8 +353,8 @@ export function WipTableView({
                         {getPageNumbers().map((p, idx) => {
                             if (p === "ellipsis") {
                                 return (
-                                    <span 
-                                        key={`ellipsis-${idx}`} 
+                                    <span
+                                        key={`ellipsis-${idx}`}
                                         className="px-1.5 py-0.5 text-xs text-muted-foreground font-bold tracking-widest select-none"
                                     >
                                         ...
@@ -413,11 +369,10 @@ export function WipTableView({
                                     variant={isCurrent ? "default" : "outline"}
                                     size="sm"
                                     onClick={() => onPageChange(p)}
-                                    className={`h-7 w-7 p-0 text-xs font-semibold cursor-pointer ${
-                                        isCurrent 
-                                            ? "bg-primary text-primary-foreground font-bold shadow-xs" 
+                                    className={`h-7 w-7 p-0 text-xs font-semibold cursor-pointer ${isCurrent
+                                            ? "bg-primary text-primary-foreground font-bold shadow-xs"
                                             : "hover:bg-muted"
-                                    }`}
+                                        }`}
                                 >
                                     {p}
                                 </Button>
@@ -430,9 +385,8 @@ export function WipTableView({
                             size="sm"
                             disabled={page >= totalPages}
                             onClick={() => onPageChange(page + 1)}
-                            className={`h-7 px-2.5 text-xs gap-1 ${
-                                page >= totalPages ? "pointer-events-none opacity-40" : "cursor-pointer"
-                            }`}
+                            className={`h-7 px-2.5 text-xs gap-1 ${page >= totalPages ? "pointer-events-none opacity-40" : "cursor-pointer"
+                                }`}
                         >
                             <span>Next</span>
                             <ChevronRight className="h-3.5 w-3.5" />

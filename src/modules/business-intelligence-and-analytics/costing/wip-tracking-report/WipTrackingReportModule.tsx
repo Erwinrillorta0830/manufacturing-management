@@ -36,7 +36,8 @@ export default function WipTrackingReportModule() {
         setPageSize,
         setViewMode,
         refresh,
-        exportCsv
+        exportCsv,
+        exportExcel
     } = useWipTracking();
 
     return (
@@ -48,6 +49,7 @@ export default function WipTrackingReportModule() {
                 onViewModeChange={setViewMode}
                 onRefresh={refresh}
                 onExportCsv={exportCsv}
+                onExportExcel={exportExcel}
                 isRefreshing={isRefreshing}
                 lastUpdated={lastUpdated}
             />

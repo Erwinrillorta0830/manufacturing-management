@@ -23,7 +23,8 @@ import {
     ExternalLink,
     AlertTriangle,
     Building2,
-    Calendar
+    Calendar,
+    Clock
 } from "lucide-react";
 import { WipJobOrder } from "../types";
 
@@ -94,9 +95,30 @@ export function WipDetailModal({
                                 <span>•</span>
                                 <span>Target: <strong className="text-foreground">{job.target_quantity.toLocaleString()} {job.uom_name}</strong></span>
                                 {job.shift_option && (
-                                    <span className="text-[11px] text-muted-foreground font-mono">
-                                        ({job.shift_option})
-                                    </span>
+                                    <>
+                                        <span>•</span>
+                                        <span className="text-[11px] text-muted-foreground font-mono">
+                                            Shift Option: <strong className="text-foreground">{job.shift_option}</strong>
+                                        </span>
+                                    </>
+                                )}
+                                {job.start_date && (
+                                    <>
+                                        <span>•</span>
+                                        <span className="flex items-center gap-1 font-mono">
+                                            <Calendar className="h-3 w-3 text-muted-foreground" />
+                                            Start: <strong className="text-foreground">{job.start_date}</strong>
+                                        </span>
+                                    </>
+                                )}
+                                {job.end_date && (
+                                    <>
+                                        <span>•</span>
+                                        <span className="flex items-center gap-1 font-mono">
+                                            <Clock className="h-3 w-3 text-muted-foreground" />
+                                            Due: <strong className="text-foreground">{job.end_date}</strong>
+                                        </span>
+                                    </>
                                 )}
                             </DialogDescription>
                         </div>
@@ -119,6 +141,12 @@ export function WipDetailModal({
                                 <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Actual Hours</span>
                                 <span className={`font-bold text-sm ${job.total_actual_hours > job.total_planned_hours ? "text-rose-600 dark:text-rose-400" : "text-foreground"}`}>
                                     {job.total_actual_hours}h
+                                </span>
+                            </div>
+                            <div className="border-l border-border/70 pl-3">
+                                <span className="text-muted-foreground block text-[10px] uppercase font-sans font-semibold">Elapsed Time</span>
+                                <span className="font-bold text-foreground text-sm">
+                                    {job.elapsed_hours > 0 ? `${job.elapsed_hours}h` : "—"}
                                 </span>
                             </div>
                             <div className="border-l border-border/70 pl-3">
@@ -177,6 +205,11 @@ export function WipDetailModal({
                                 </p>
                             </div>
                             <div className="flex items-center gap-4 text-xs text-muted-foreground font-mono">
+                                {job.shift_option && (
+                                    <span>
+                                        Shift Option: <strong className="text-foreground">{job.shift_option}</strong>
+                                    </span>
+                                )}
                                 {job.start_date && (
                                     <span className="flex items-center gap-1">
                                         <Calendar className="h-3 w-3" />
