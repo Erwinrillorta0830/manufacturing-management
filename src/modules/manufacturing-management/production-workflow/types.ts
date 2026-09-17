@@ -408,10 +408,11 @@ export interface ShiftRunMaterialConsumption {
 }
 
 export interface ShiftRunLogPayload {
+    sessionScope: "ROUTE" | "JOB_ORDER";
     sessionKey: string;
-    taskId: number;
+    taskId: number | null;
     joId: string | number;
-    workCenterId: number;
+    workCenterId: number | null;
     shiftName: string;
     productionDate: string;
     yieldQty: number;

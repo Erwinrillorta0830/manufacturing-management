@@ -26,16 +26,12 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useProductionWorkflow } from "./hooks/useProductionWorkflow";
 import { ReleasedJobQueue } from "./components/ReleasedJobQueue";
-import { RoutingSequence } from "./components/RoutingSequence";
-import OperatorPanel from "./components/OperatorPanel";
-import { OperationStepTracker } from "./components/OperationStepTracker";
+import { RouteExecutionTable } from "./components/RouteExecutionTable";
 import { JobOrderProgressSummary } from "./components/JobOrderProgressSummary";
-import { QAChecklistModal } from "./components/QAChecklistModal";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { JobOrderShiftLogModal } from "./components/JobOrderShiftLogModal";
 import { DailyYieldAuditDialog } from "../manufacturing-job-order-inspection-qa/components/DailyYieldAuditDialog";
 import { useDailyYieldAudit } from "../manufacturing-job-order-inspection-qa/hooks/useDailyYieldAudit";
-import { fetchJobOrderDailyYieldDetails } from "../manufacturing-job-order-inspection-qa/services/job-order-inspection-qa-api";
 import { StationStartScanner } from "./components/StationStartScanner";
 import { RouteWorkstationAssignmentDialog } from "./components/RouteWorkstationAssignmentDialog";
 import { GenealogyAuditModal } from "./components/GenealogyAuditModal";
@@ -43,7 +39,6 @@ import { StatusHistoryModal } from "./components/StatusHistoryModal";
 import { JobOrderCancellationModal } from "./components/JobOrderCancellationModal";
 import { JobOrderWorkflowActionModal, type ProductionWorkflowAction } from "./components/JobOrderWorkflowActionModal";
 import { StationScanResponse } from "./types";
-import { toast } from "sonner";
 import { isCancellableJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../job-order-status";
 import { resolveJobOrderJourney } from "../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../shared/components/JobOrderJourneyBar";
@@ -60,7 +55,6 @@ export default function ProductionWorkflowModule() {
         selectedTaskId,
         setSelectedTaskId,
         routeOperators,
-        operatorsSummary,
         loadingJobs,
         loadingOperators,
         searchQuery,
@@ -72,31 +66,15 @@ export default function ProductionWorkflowModule() {
         setManualHours,
         activeManualUserId,
         setActiveManualUserId,
-        qaModalOpen,
-        setQaModalOpen,
-        qaTemplate,
-        qaParameters,
-        qaValues,
-        setQaValues,
-        qaInspectorId,
-        setQaInspectorId,
-        qaYieldQty,
-        setQaYieldQty,
-        qaComments,
-        setQaComments,
-        submittingQA,
         selectedJobOrder,
         sortedTasks,
-        activeStep,
-        selectedTask,
         fetchJobs,
         handleAddOperator,
         handleRemoveOperator,
         handleStartTimer,
         handleStopTimer,
         handleSaveManualHours,
-        handleCompleteStepClick,
-        handleSubmitQA,
+        completeRouteStep,
         filteredJobOrders,
         branches,
         selectedBranchFilter,
@@ -130,43 +108,36 @@ export default function ProductionWorkflowModule() {
     const [isGenealogyOpen, setIsGenealogyOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isKioskMode, setIsKioskMode] = useState(false);
-    const [viewMode, setViewMode] = useState<"queue" | "tracker">("queue");
     const [workflowAction, setWorkflowAction] = useState<ProductionWorkflowAction | null>(null);
-    const [openingAuditTaskId, setOpeningAuditTaskId] = useState<number | null>(null);
+    const [completionTaskId, setCompletionTaskId] = useState<number | null>(null);
+    const [completingStepId, setCompletingStepId] = useState<number | null>(null);
+
+    const completionTask = sortedTasks.find((task) => task.id === completionTaskId) || null;
+
+    const handleRequestCompleteStep = (taskId: number) => {
+        if (isProductionReadOnly) return;
+        const task = sortedTasks.find((item) => item.id === taskId);
+        if (!task || String(task.status || "").trim().toLowerCase() === "completed") return;
+        setSelectedTaskId(taskId);
+        setCompletionTaskId(taskId);
+    };
+
+    const handleConfirmCompleteStep = async () => {
+        if (completionTaskId === null) return;
+        setCompletingStepId(completionTaskId);
+        try {
+            const completed = await completeRouteStep(completionTaskId);
+            if (completed) setCompletionTaskId(null);
+        } finally {
+            setCompletingStepId(null);
+        }
+    };
 
     const handleAuditSaved = React.useCallback(async () => {
         await fetchJobs(selectedJobOrderId, true);
     }, [fetchJobs, selectedJobOrderId]);
 
     const dailyYieldAuditState = useDailyYieldAudit({ onSaved: handleAuditSaved });
-    const { openAudit: openDailyYieldAudit } = dailyYieldAuditState;
-
-    const handleOpenPendingAudit = React.useCallback(async (taskId: number) => {
-        if (openingAuditTaskId !== null) return;
-
-        const jobOrderId = Number(selectedJobOrder?.order_id || selectedJobOrder?.job_order_id || 0);
-        if (!Number.isSafeInteger(jobOrderId) || jobOrderId <= 0) {
-            toast.error("The selected Job Order has no valid identifier for QA audit.");
-            return;
-        }
-
-        setOpeningAuditTaskId(taskId);
-        try {
-            const details = await fetchJobOrderDailyYieldDetails(jobOrderId);
-            const pendingYield = details.dailyYields.find((yieldRecord) => yieldRecord.qaStatus === "Pending");
-
-            if (!pendingYield) {
-                toast.error("No pending daily-yield audit is available for this Job Order.");
-                return;
-            }
-
-            openDailyYieldAudit(pendingYield, details, taskId);
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to load the pending daily-yield audit.");
-        } finally {
-            setOpeningAuditTaskId(null);
-        }
-    }, [openingAuditTaskId, openDailyYieldAudit, selectedJobOrder]);
 
     const isMountedRef = React.useRef(true);
 
@@ -200,6 +171,8 @@ export default function ProductionWorkflowModule() {
 
     const totalRuns = inProductionJobOrders.length;
     const selectedJobOrderStatus = selectedJobOrder ? selectedJobOrder.status : null;
+    const allRoutesCompleted = sortedTasks.length > 0
+        && sortedTasks.every((task) => String(task.status || "").trim().toLowerCase() === "completed");
     const isSelectedJobOrderCancelled = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.CANCELLED);
     const isSelectedJobOrderCancellable = isCancellableJobOrderStatus(selectedJobOrderStatus);
     const isSelectedJobOrderHeld = isJobOrderStatus(selectedJobOrderStatus, JOB_ORDER_STATUS.ON_HOLD, JOB_ORDER_STATUS.QA_HOLD);
@@ -401,7 +374,7 @@ export default function ProductionWorkflowModule() {
                     }
                 }}
             >
-                <DialogContent className="w-[98vw] md:w-full md:max-w-[1200px] lg:max-w-[1400px] xl:max-w-[1600px] max-h-[96vh] md:max-h-[92vh] h-[95vh] md:h-[92vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
+                <DialogContent className="w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] max-h-[96vh] h-[95vh] flex flex-col bg-background border border-border/80 shadow-2xl rounded-2xl p-0 overflow-hidden">
                     {/* Header */}
                     <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-background p-4 sm:p-5 border-b border-border/50 shrink-0">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -512,13 +485,15 @@ export default function ProductionWorkflowModule() {
                                         >
                                             <PauseCircle className="mr-1.5 h-4 w-4" /> Place on Hold
                                         </Button>
-                                        <Button
-                                            size="sm"
-                                            onClick={() => setWorkflowAction("complete-production")}
-                                            className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
-                                        >
-                                            <CheckCircle className="mr-1.5 h-4 w-4" /> Complete Production
-                                        </Button>
+                                        {allRoutesCompleted && (
+                                            <Button
+                                                size="sm"
+                                                onClick={() => setWorkflowAction("complete-production")}
+                                                className="h-10 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white"
+                                            >
+                                                <CheckCircle className="mr-1.5 h-4 w-4" /> Complete Production
+                                            </Button>
+                                        )}
                                         <Button
                                             variant="outline"
                                             size="sm"
@@ -550,15 +525,6 @@ export default function ProductionWorkflowModule() {
                             </div>
                         </div>
 
-                        {/* Integrated Horizontal Step Navigator */}
-                        <div className="border-t border-border/40 pt-3 mt-3">
-                            <RoutingSequence
-                                sortedTasks={sortedTasks}
-                                selectedTaskId={selectedTaskId}
-                                setSelectedTaskId={setSelectedTaskId}
-                                routeOperators={routeOperators}
-                            />
-                        </div>
                     </div>
 
                     {/* Scrollable Workspace Body */}
@@ -617,51 +583,75 @@ export default function ProductionWorkflowModule() {
                             <JobOrderProgressSummary jobOrder={selectedJobOrder} />
                         )}
 
-                        {/* Operation Step Tracker Section */}
                         {selectedJobOrder && (
-                            <OperationStepTracker
+                            <RouteExecutionTable
                                 sortedTasks={sortedTasks}
                                 selectedTaskId={selectedTaskId}
                                 setSelectedTaskId={setSelectedTaskId}
                                 selectedJobOrder={selectedJobOrder}
                                 routeOperators={routeOperators}
                                 users={users}
-                                onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
-                                onOpenAudit={handleOpenPendingAudit}
-                                onOpenQAModal={(taskId) => handleCompleteStepClick(taskId)}
-                                openingAuditTaskId={openingAuditTaskId}
+                                loadingOperators={loadingOperators}
+                                handleAddOperator={handleAddOperator}
+                                handleRemoveOperator={handleRemoveOperator}
+                                handleStartTimer={handleStartTimer}
+                                handleStopTimer={handleStopTimer}
+                                handleSaveManualHours={handleSaveManualHours}
+                                onBreakdownSaved={() => {
+                                    void fetchJobs(selectedJobOrderId, true);
+                                }}
+                                onRequestCompleteStep={handleRequestCompleteStep}
                                 readOnly={isProductionReadOnly}
                             />
                         )}
-
-                        {/* Selected Workstation Operator Panel */}
-                        <div className="space-y-4">
-                            {(() => {
-                                const activeTask = sortedTasks.find((t) => t.id === selectedTaskId) || sortedTasks[0];
-                                if (!activeTask) return null;
-                                return (
-                                    <OperatorPanel
-                                        key={activeTask.id}
-                                        selectedTask={activeTask}
-                                        activeStep={activeStep}
-                                        selectedJobOrder={selectedJobOrder!}
-                                        sortedTasks={sortedTasks}
-                                        users={users}
-                                        routeOperators={routeOperators.filter((op) => op.task_id === activeTask.id)}
-                                        loadingOperators={loadingOperators}
-                                        handleAddOperator={handleAddOperator}
-                                        handleRemoveOperator={handleRemoveOperator}
-                                        handleStartTimer={handleStartTimer}
-                                        handleStopTimer={handleStopTimer}
-                                        handleSaveManualHours={handleSaveManualHours}
-                                        handleCompleteStepClick={handleCompleteStepClick}
-                                        onOpenShiftLogModal={() => setIsShiftLogOpen(true)}
-                                        readOnly={isProductionReadOnly}
-                                    />
-                                );
-                            })()}
-                        </div>
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={completionTask !== null}
+                onOpenChange={(open) => {
+                    if (!open && completingStepId === null) setCompletionTaskId(null);
+                }}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <CheckCircle className="h-5 w-5 text-emerald-600" />
+                            Complete route step?
+                        </DialogTitle>
+                        <DialogDescription>
+                            Confirm that this route is finished. QA-required routes use the same completion confirmation and do not open a separate QA Gate.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {completionTask && (
+                        <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                            <p className="font-semibold text-foreground">
+                                Route {completionTask.sequence_order}: {completionTask.name}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                {completionTask.work_center_name || "Workstation not assigned"}
+                            </p>
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setCompletionTaskId(null)}
+                            disabled={completingStepId !== null}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={() => void handleConfirmCompleteStep()}
+                            disabled={completingStepId !== null}
+                            className="bg-emerald-600 text-white hover:bg-emerald-500"
+                        >
+                            {completingStepId !== null ? "Completing..." : "Complete Step"}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
@@ -713,34 +703,11 @@ export default function ProductionWorkflowModule() {
                     onOpenChange={setIsShiftLogOpen}
                     selectedJobOrder={selectedJobOrder!}
                     sortedTasks={sortedTasks}
-                    activeStep={activeStep}
                     users={users}
                     allJobOperators={routeOperators}
                     onSuccess={() => fetchJobs(selectedJobOrderId)}
                 />
             )}
-
-            {/* --- QA GATE CHECKLIST MODAL DIALOG --- */}
-            <QAChecklistModal
-                qaModalOpen={qaModalOpen}
-                setQaModalOpen={setQaModalOpen}
-                selectedTask={selectedTask}
-                selectedJobOrder={selectedJobOrder!}
-                users={users}
-                routeOperators={routeOperators}
-                qaTemplate={qaTemplate}
-                qaParameters={qaParameters}
-                qaValues={qaValues}
-                setQaValues={setQaValues}
-                qaInspectorId={qaInspectorId}
-                setQaInspectorId={setQaInspectorId}
-                qaYieldQty={qaYieldQty}
-                setQaYieldQty={setQaYieldQty}
-                qaComments={qaComments}
-                setQaComments={setQaComments}
-                submittingQA={submittingQA}
-                handleSubmitQA={handleSubmitQA}
-            />
 
             {/* --- IN-PROCESS DAILY YIELD QA AUDIT MODAL --- */}
             <DailyYieldAuditDialog controller={dailyYieldAuditState} />
