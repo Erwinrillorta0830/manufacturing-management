@@ -45,6 +45,39 @@ export function calculateAggregateRunHours(
     return Math.max(0, Number(setupTimeHours) || 0) + (multiplier * standardRunHours);
 }
 
+/**
+ * Calculates the material quantity required for the requested output when a
+ * BOM quantity is configured for one recipe batch.
+ *
+ * The component UOM is intentionally not converted here. The target and
+ * recipe batch quantities must already be expressed in compatible output
+ * UOMs; component-UOM conversion belongs at the inventory boundary.
+ */
+export function calculateBatchScaledMaterialRequirement(
+    targetQuantity: number,
+    baseQuantity: number,
+    quantityRequiredPerBatch: number,
+    wastageFactorPercentage = 0
+): number {
+    const target = Number(targetQuantity);
+    if (!Number.isFinite(target) || target < 0) {
+        throw new Error("Target production quantity must be zero or greater.");
+    }
+
+    const base = requirePositiveProductionNumber(baseQuantity, "Recipe base quantity");
+    const quantity = Number(quantityRequiredPerBatch);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+        throw new Error("BOM quantity required must be zero or greater.");
+    }
+
+    const wastage = Number(wastageFactorPercentage);
+    if (!Number.isFinite(wastage) || wastage < 0) {
+        throw new Error("BOM wastage percentage must be zero or greater.");
+    }
+
+    return (target / base) * quantity * (1 + (wastage / 100));
+}
+
 export function readUomId(value: unknown): number | null {
     if (value && typeof value === "object") {
         const relation = value as Record<string, unknown>;

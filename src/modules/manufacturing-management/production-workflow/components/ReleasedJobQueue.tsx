@@ -9,6 +9,7 @@ import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 import { resolveJobOrderJourney } from "../../shared/job-order-journey";
 import { JobOrderJourneyBar } from "../../shared/components/JobOrderJourneyBar";
 import { JobOrderStatusBadge } from "../../shared/components/JobOrderStatusBadge";
+import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 
 interface ReleasedJobQueueProps {
     filteredJobOrders: JobOrder[];
@@ -21,8 +22,50 @@ interface ReleasedJobQueueProps {
     branches: any[];
     selectedBranchFilter: string;
     setSelectedBranchFilter: (b: string) => void;
+    productFilter: string;
+    setProductFilter: (productId: string) => void;
+    productOptions: { value: string; label: string }[];
+    customerFilter: string;
+    setCustomerFilter: (customerCode: string) => void;
+    customerOptions: { value: string; label: string }[];
+    statusFilter: string;
+    setStatusFilter: (status: string) => void;
+    statusOptions: { value: string; label: string }[];
+    hasActiveFilters: boolean;
     onClearFilters?: () => void;
     onAssignWorkstation?: (jo: JobOrder) => void;
+}
+
+function StepProgressBar({ completedSteps, totalSteps }: { completedSteps: number; totalSteps: number }) {
+    const segmentCount = Math.max(totalSteps, 1);
+    const progressLabel = `${completedSteps} of ${totalSteps} routing steps completed`;
+
+    return (
+        <div className="mt-2 flex items-center gap-2" aria-label={progressLabel}>
+            <div
+                className="flex min-w-0 flex-1 items-center gap-1"
+                role="progressbar"
+                aria-label={progressLabel}
+                aria-valuemin={0}
+                aria-valuemax={Math.max(totalSteps, 1)}
+                aria-valuenow={completedSteps}
+                aria-valuetext={progressLabel}
+            >
+                {Array.from({ length: segmentCount }, (_, index) => (
+                    <span
+                        key={index}
+                        aria-hidden="true"
+                        className={`h-1.5 min-w-0 flex-1 rounded-full transition-colors ${
+                            totalSteps > 0 && index < completedSteps ? "bg-primary" : "bg-muted"
+                        }`}
+                    />
+                ))}
+            </div>
+            <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-muted-foreground">
+                {completedSteps}/{totalSteps} Steps
+            </span>
+        </div>
+    );
 }
 
 export function ReleasedJobQueue({
@@ -36,6 +79,16 @@ export function ReleasedJobQueue({
     branches,
     selectedBranchFilter,
     setSelectedBranchFilter,
+    productFilter,
+    setProductFilter,
+    productOptions,
+    customerFilter,
+    setCustomerFilter,
+    customerOptions,
+    statusFilter,
+    setStatusFilter,
+    statusOptions,
+    hasActiveFilters,
     onClearFilters,
     onAssignWorkstation
 }: ReleasedJobQueueProps) {
@@ -48,7 +101,7 @@ export function ReleasedJobQueue({
     const openTerminal = (jo: JobOrder) => setSelectedJobOrderId(jo.jo_id);
 
     return (
-        <Card className="h-full overflow-hidden">
+        <Card className="h-full overflow-hidden font-sans">
             <CardHeader className="pb-3">
                 <CardTitle className="flex items-center justify-between gap-2 text-lg">
                     <span>Production Job Order Queue</span>
@@ -56,26 +109,61 @@ export function ReleasedJobQueue({
                         {filteredJobOrders.length}
                     </Badge>
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-sm">
                     Start production for Picked orders or open the terminal for Job Orders already In Production.
                 </CardDescription>
             </CardHeader>
 
             <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_220px_auto]">
-                    <div className="relative">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                    <div className="relative min-w-0 flex-1">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Search Job No or Product..."
-                            className="h-9 pl-8 text-xs"
+                            className="h-9 pl-8 text-sm"
                             value={searchQuery}
                             onChange={(event) => setSearchQuery(event.target.value)}
                         />
                     </div>
 
+                    <div className="w-full min-w-0 lg:w-[190px]">
+                        <SearchableSelect
+                            options={[{ value: "All", label: "All Products" }, ...productOptions]}
+                            value={productFilter}
+                            onValueChange={setProductFilter}
+                            placeholder="All Products"
+                            className="h-9 text-sm"
+                        />
+                    </div>
+
+                    <div className="w-full min-w-0 lg:w-[200px]">
+                        <SearchableSelect
+                            options={[{ value: "All", label: "All Customers" }, ...customerOptions]}
+                            value={customerFilter}
+                            onValueChange={setCustomerFilter}
+                            placeholder="All Customers"
+                            className="h-9 text-sm"
+                        />
+                    </div>
+
+                    <select
+                        aria-label="Status filter"
+                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm lg:w-[160px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value)}
+                    >
+                        <option value="All">All Statuses</option>
+                        {statusOptions.map((status) => (
+                            <option key={status.value} value={status.value}>
+                                {status.label}
+                            </option>
+                        ))}
+                    </select>
+
                     <select
                         id="branchFilter"
-                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
+                        aria-label="Branch filter"
+                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm lg:w-[170px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
                         value={selectedBranchFilter}
                         onChange={(event) => setSelectedBranchFilter(event.target.value)}
                     >
@@ -93,13 +181,13 @@ export function ReleasedJobQueue({
                     {onClearFilters && (
                         <Button
                             type="button"
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             onClick={onClearFilters}
-                            className="h-9 text-xs"
-                            disabled={!searchQuery && selectedBranchFilter === "All"}
+                            className="h-9 shrink-0 text-sm text-muted-foreground hover:text-foreground"
+                            disabled={!hasActiveFilters}
                         >
-                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Clear
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Reset Filters
                         </Button>
                     )}
                 </div>
@@ -112,7 +200,7 @@ export function ReleasedJobQueue({
                     <div className="border-2 border-dashed rounded-lg py-12 text-center text-sm text-muted-foreground">
                         <AlertCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
                         <p>No staged or In Production Job Orders found.</p>
-                        <p className="mt-1 text-xs">Try a different search or branch, or clear the filters.</p>
+                        <p className="mt-1 text-xs">Try different filters or reset them.</p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto rounded-xl border border-border/60">
@@ -142,7 +230,12 @@ export function ReleasedJobQueue({
                                         allMaterialsStaged: isJobOrderStatus(jo.status, JOB_ORDER_STATUS.RESERVED),
                                         jobOrderNo: jo.jo_id
                                     });
-                                    const totalHours = (jo.routing_tasks || []).reduce(
+                                    const routingTasks = jo.routing_tasks || jo.routingTasks || [];
+                                    const totalSteps = routingTasks.length;
+                                    const completedSteps = routingTasks.filter(
+                                        (task) => String(task.status || "").trim().toLowerCase() === "completed"
+                                    ).length;
+                                    const totalHours = routingTasks.reduce(
                                         (sum, task) => sum + Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0),
                                         0
                                     );
@@ -156,14 +249,14 @@ export function ReleasedJobQueue({
                                                 <div className="flex items-start gap-2">
                                                     {parent && <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
                                                     <div className="min-w-0">
-                                                        <div className="font-mono text-sm font-bold tracking-tight">{jo.jo_id}</div>
+                                                        <div className="font-sans text-sm font-bold tracking-tight">{jo.jo_id}</div>
                                                         {parent && (
-                                                            <div className="mt-1 text-[10px] font-semibold text-primary/80">
+                                                            <div className="mt-1 text-xs font-semibold text-primary/80">
                                                                 Sub-assembly of {parent.jo_id}
                                                             </div>
                                                         )}
                                                         <div className="mt-2">
-                                                            <JobOrderStatusBadge status={jo.status} />
+                                                            <JobOrderStatusBadge status={jo.status} className="font-sans text-xs" />
                                                         </div>
                                                     </div>
                                                 </div>
@@ -173,21 +266,22 @@ export function ReleasedJobQueue({
                                                     {jo.product_name}
                                                 </div>
                                                 {jo.version_name && (
-                                                    <div className="mt-1 font-mono text-[10px] font-bold text-primary">Recipe: {jo.version_name}</div>
+                                                    <div className="mt-1 font-sans text-xs font-bold text-primary">Recipe: {jo.version_name}</div>
                                                 )}
+                                                <StepProgressBar completedSteps={completedSteps} totalSteps={totalSteps} />
                                                 <JobOrderJourneyBar journey={journey} compact className="mt-2" />
                                             </td>
                                             <td className="px-3 py-3 text-right align-top">
-                                                <div className="font-mono text-sm font-bold text-foreground">{Number(jo.quantity || 0).toLocaleString()}</div>
-                                                <div className="mt-1 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                                <div className="font-sans text-sm font-bold text-foreground">{Number(jo.quantity || 0).toLocaleString()}</div>
+                                                <div className="mt-1 font-sans text-xs font-bold text-emerald-600 dark:text-emerald-400">
                                                     {Number(producedQty || 0).toLocaleString()}
                                                 </div>
-                                                <div className="mt-2 text-[10px] text-muted-foreground">
+                                                <div className="mt-2 text-xs text-muted-foreground">
                                                     {totalHours.toFixed(1)} planned hrs
                                                 </div>
                                             </td>
                                             <td className="px-3 py-3 align-top">
-                                                <div className={`flex items-center gap-1.5 text-xs font-semibold ${jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
+                                                <div className={`flex items-center gap-1.5 text-sm font-semibold ${jo.primary_work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
                                                     <Building2 className="h-3.5 w-3.5 shrink-0" />
                                                     <span>{workstationLabel}</span>
                                                 </div>
@@ -197,13 +291,13 @@ export function ReleasedJobQueue({
                                                         size="sm"
                                                         variant="outline"
                                                         onClick={() => onAssignWorkstation?.(jo)}
-                                                        className="mt-2 h-7 border-emerald-500/30 px-2 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 dark:text-emerald-400"
+                                                        className="mt-2 h-7 border-emerald-500/30 px-2 text-xs font-bold text-emerald-700 hover:text-emerald-800 dark:text-emerald-400"
                                                     >
                                                         <Building2 className="mr-1 h-3 w-3" /> Assign
                                                     </Button>
                                                 )}
                                             </td>
-                                            <td className="px-3 py-3 align-top text-xs font-semibold text-muted-foreground">
+                                            <td className="px-3 py-3 align-top text-sm font-semibold text-muted-foreground">
                                                 {jo.due_date ? new Date(jo.due_date).toLocaleDateString() : "—"}
                                             </td>
                                             <td className="px-3 py-3 text-right align-top">

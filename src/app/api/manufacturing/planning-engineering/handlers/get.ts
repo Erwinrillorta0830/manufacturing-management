@@ -18,7 +18,13 @@ import { getAvailableInventoryLots } from "../helpers/inventory-helper";
 import { paginate } from "../../_pagination";
 import { JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { manufacturingFileUrl } from "@/modules/manufacturing-management/production-workflow/services/production-yield-image";
-import { requirePositiveProductionNumber } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import {
+    assertCompatibleUoms,
+    calculateBatchScaledMaterialRequirement,
+    readUomId,
+    roundProductionValue,
+    requirePositiveProductionNumber
+} from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const WIZARD_STEP_TIMEOUT_MS = 20000;
 
@@ -906,12 +912,27 @@ export async function handleGET(request: Request) {
             let reservations: any[] = [];
             if (materialIds.length > 0) {
                 const reservationsRes = await fetch(
-                    `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,reserved_quantity,staged_quantity,issued_to_wip_quantity,actual_used_quantity,returned_quantity,remaining_wip_quantity&limit=-1`,
+                    `${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?filter[jo_material_id][_in]=${materialIds.join(",")}&fields=jo_materials_reservation_id,jo_material_id,batch_no,mm_lot_id,reservation_status,reserved_quantity,staged_quantity,issued_to_wip_quantity,actual_used_quantity,returned_quantity,remaining_wip_quantity&limit=-1`,
                     { headers, cache: "no-store" }
                 );
                 if (reservationsRes.ok) {
                     reservations = (await reservationsRes.json()).data || [];
                 }
+            }
+
+            // Storage-lot names for the per-lot reservation breakdown.
+            const reservationMmLotIds = [...new Set(
+                reservations
+                    .map((reservation: any) => Number(reservation.mm_lot_id?.lot_id || reservation.mm_lot_id || 0))
+                    .filter((lotId: number) => lotId > 0)
+            )];
+            const mmLotNameById = new Map<number, string>();
+            if (reservationMmLotIds.length > 0) {
+                const mmLots = await loadMmLots({ ids: reservationMmLotIds, onlyActive: false }).catch(() => []);
+                mmLots.forEach((lot: any) => {
+                    const lotId = Number(lot?.lot_id || lot?.id || 0);
+                    if (lotId > 0) mmLotNameById.set(lotId, String(lot?.lot_name || "").trim());
+                });
             }
 
             const productIds = [...new Set(
@@ -951,6 +972,50 @@ export async function handleGET(request: Request) {
                     : round6(Math.max(0, Number(material.actual_consumed_quantity || 0)));
                 const returned = sumReservations("returned_quantity");
 
+                // Collapse the per-reservation rows into one row per lot/batch. When any
+                // staged/issued rows exist, they supersede their SOFT originals so lot
+                // quantities are never double-counted.
+                const nonSoftReservations = materialReservations.filter(
+                    (reservation: any) => String(reservation.reservation_status || "").trim().toUpperCase() !== "SOFT"
+                );
+                const lotReservations = nonSoftReservations.length > 0 ? nonSoftReservations : materialReservations;
+
+                const lotGroups = new Map<string, any>();
+                lotReservations.forEach((reservation: any) => {
+                    const mmLotId = Number(reservation.mm_lot_id?.lot_id || reservation.mm_lot_id || 0) || null;
+                    const batchNo = String(reservation.batch_no || "").trim() || null;
+                    const status = String(reservation.reservation_status || "").trim().toUpperCase();
+                    const groupKey = `${mmLotId ?? "none"}:${batchNo ?? ""}`;
+                    const group = lotGroups.get(groupKey) || { mmLotId, batchNo, rows: [], statuses: [] };
+                    group.rows.push(reservation);
+                    if (status) group.statuses.push(status);
+                    lotGroups.set(groupKey, group);
+                });
+
+                const lotStatusRank = ["WIP", "CONSUMED", "HARD", "PARTIAL", "SOFT"];
+                const lots = [...lotGroups.values()].map((group: any) => {
+                    const sumLot = (key: string) => round6(group.rows.reduce(
+                        (total: number, row: any) => total + Math.max(0, Number(row[key] || 0)),
+                        0
+                    ));
+                    const issued = sumLot("issued_to_wip_quantity");
+                    const staged = sumLot("staged_quantity");
+                    const reservedForLot = sumLot("reserved_quantity");
+                    const allocated = issued > 0 ? issued : (staged > 0 ? staged : reservedForLot);
+                    const lotConsumed = sumLot("actual_used_quantity");
+                    const lotReturned = sumLot("returned_quantity");
+
+                    return {
+                        mmLotId: group.mmLotId,
+                        lotName: group.mmLotId ? (mmLotNameById.get(group.mmLotId) || null) : null,
+                        batchNo: group.batchNo,
+                        status: lotStatusRank.find((candidate) => group.statuses.includes(candidate)) || group.statuses[0] || null,
+                        allocated,
+                        consumed: lotConsumed,
+                        remaining: round6(Math.max(0, allocated - lotConsumed - lotReturned))
+                    };
+                });
+
                 const productId = Number(material.product_id?.product_id || material.product_id);
                 const product = productMap.get(productId);
 
@@ -960,7 +1025,8 @@ export async function handleGET(request: Request) {
                     unitShortcut: product?.unit_of_measurement?.unit_shortcut || "units",
                     reserved,
                     consumed,
-                    remaining: round6(Math.max(0, reserved - consumed - returned))
+                    remaining: round6(Math.max(0, reserved - consumed - returned)),
+                    lots
                 };
             });
 
@@ -1047,7 +1113,7 @@ export async function handleGET(request: Request) {
         if (action === "step-materials") {
             const joId = searchParams.get("joId");
             const joRouteId = searchParams.get("joRouteId");
-            const quantity = Number(searchParams.get("quantity") || 0);
+            const requestedQuantity = searchParams.get("quantity");
 
             // Fetch job order route step details
             const stepRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes/${joRouteId}?fields=jo_route_id,job_order_id,sequence_order,work_center_id,operation_id,planned_setup_hours,planned_run_hours,actual_setup_hours,actual_run_hours,step_batch_size,run_time_hours_factor`, { headers, cache: "no-store" });
@@ -1060,6 +1126,38 @@ export async function handleGET(request: Request) {
             if (!joRes.ok) return NextResponse.json([]);
             const jo = (await joRes.json()).data;
             if (!jo || !jo.version_id) return NextResponse.json([]);
+
+            const versionRes = await fetch(
+                `${DIRECTUS_URL}/items/product_manufacturing_version/${encodeURIComponent(String(jo.version_id))}?fields=version_id,base_quantity,uom_id`,
+                { headers, cache: "no-store" }
+            );
+            const version = versionRes.ok ? (await versionRes.json()).data : null;
+            const baseQuantity = Number(version?.base_quantity);
+            if (!version || !Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                return NextResponse.json(
+                    { error: `Recipe base quantity is required for Job Order '${jo.job_order_no || joId}'.` },
+                    { status: 422 }
+                );
+            }
+
+            try {
+                assertCompatibleUoms(readUomId(jo.uom_id), readUomId(version.uom_id));
+            } catch (error) {
+                return NextResponse.json(
+                    { error: error instanceof Error ? error.message : "Production quantity UOM is incompatible with the recipe base UOM." },
+                    { status: 422 }
+                );
+            }
+
+            const quantity = requestedQuantity === null
+                ? Number(jo.target_quantity ?? jo.quantity ?? 0)
+                : Number(requestedQuantity);
+            if (!Number.isFinite(quantity) || quantity < 0) {
+                return NextResponse.json(
+                    { error: "Step material quantity must be zero or greater." },
+                    { status: 422 }
+                );
+            }
 
             // Find master route matching version, sequence, and operation
             const masterRouteRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_routings?filter[version_id][_eq]=${jo.version_id}&filter[sequence_order][_eq]=${step.sequence_order}&filter[operation_id][_eq]=${step.operation_id}&limit=1`, { headers, cache: "no-store" });
@@ -1084,16 +1182,21 @@ export async function handleGET(request: Request) {
 
             const mapped = bomItems.map((b: any) => {
                 const prod = pMap.get(Number(b.product_id));
-                const qtyPerUnit = Number(b.quantity_required || 0);
-                const wastage = 1 + (Number(b.wastage_factor_percentage || 0) / 100);
-                const totalNeeded = qtyPerUnit * quantity * wastage;
+                const qtyPerBatch = Number(b.quantity_required || 0);
+                const wastagePercentage = Number(b.wastage_factor_percentage || 0);
+                const totalNeeded = roundProductionValue(calculateBatchScaledMaterialRequirement(
+                    quantity,
+                    baseQuantity,
+                    qtyPerBatch,
+                    wastagePercentage
+                ));
 
                 return {
                     product_id: b.product_id,
                     product_name: prod?.product_name || `Product #${b.product_id}`,
                     product_code: prod?.product_code || "",
                     unit_shortcut: prod?.unit_of_measurement?.unit_shortcut || "pcs",
-                    qty_per_unit: qtyPerUnit,
+                    qty_per_unit: qtyPerBatch,
                     total_needed: totalNeeded
                 };
             });

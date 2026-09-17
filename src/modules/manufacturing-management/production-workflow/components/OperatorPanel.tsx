@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { RoutingTask, JobOrder, User as UserType, RouteOperatorRecord } from "../types";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
+import { formatProductionValue } from "../../planning-engineering/utils/production-timing";
 import { toast } from "sonner";
 import { isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
 
@@ -409,7 +410,7 @@ export default function OperatorPanel({
                                         {item.product_name}
                                     </span>
                                     <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 text-[10px]">
-                                        {item.total_needed.toLocaleString(undefined, { maximumFractionDigits: 1 })} {item.unit_shortcut}
+                                        {formatProductionValue(item.total_needed)} {item.unit_shortcut}
                                     </span>
                                 </div>
                             ))}

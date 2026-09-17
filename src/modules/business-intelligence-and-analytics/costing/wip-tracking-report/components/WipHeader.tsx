@@ -7,10 +7,19 @@ import {
     Download, 
     LayoutGrid, 
     Table as TableIcon,
-    Clock
+    Clock,
+    FileSpreadsheet,
+    FileText,
+    ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+    DropdownMenu,
+    DropdownMenuTrigger,
+    DropdownMenuContent,
+    DropdownMenuItem
+} from "@/components/ui/dropdown-menu";
 
 interface WipHeaderProps {
     totalActiveJobs: number;
@@ -18,6 +27,7 @@ interface WipHeaderProps {
     onViewModeChange: (mode: "table" | "board") => void;
     onRefresh: () => void;
     onExportCsv: () => void;
+    onExportExcel?: () => void;
     isRefreshing: boolean;
     lastUpdated: string | null;
 }
@@ -28,6 +38,7 @@ export function WipHeader({
     onViewModeChange,
     onRefresh,
     onExportCsv,
+    onExportExcel,
     isRefreshing,
     lastUpdated
 }: WipHeaderProps) {
@@ -83,16 +94,42 @@ export function WipHeader({
                     </Button>
                 </div>
 
-                {/* Export CSV */}
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onExportCsv}
-                    className="h-8 gap-1.5 text-xs font-medium border-border/80 hover:bg-muted/60"
-                >
-                    <Download className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span>Export CSV</span>
-                </Button>
+                {/* Export Dropdown */}
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5 text-xs font-medium border-border/80 hover:bg-muted/60 shadow-xs"
+                        >
+                            <Download className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span>Export</span>
+                            <ChevronDown className="h-3 w-3 opacity-60 ml-0.5" />
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56 text-xs">
+                        <DropdownMenuItem 
+                            onClick={onExportExcel || onExportCsv} 
+                            className="gap-2.5 cursor-pointer py-2"
+                        >
+                            <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            <div className="flex flex-col">
+                                <span className="font-semibold text-foreground">Excel Workbook (.xlsx)</span>
+                                <span className="text-[10px] text-muted-foreground">Auto-fit column widths & layout</span>
+                            </div>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                            onClick={onExportCsv} 
+                            className="gap-2.5 cursor-pointer py-2"
+                        >
+                            <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                            <div className="flex flex-col">
+                                <span className="font-semibold text-foreground">CSV Spreadsheet (.csv)</span>
+                                <span className="text-[10px] text-muted-foreground">Clean RFC-4180 comma-separated</span>
+                            </div>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
 
                 {/* Refresh */}
                 <Button
