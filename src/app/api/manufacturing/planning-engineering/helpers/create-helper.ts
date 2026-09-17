@@ -10,7 +10,11 @@ import {
 } from "@/modules/manufacturing-management/job-order-status";
 import { deleteJobOrder } from "./delete-helper";
 import { calculateProductionMetrics } from "@/modules/manufacturing-management/planning-engineering/utils/production-metrics";
-import { readUomId, roundProductionValue } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import {
+    calculateBatchScaledMaterialRequirement,
+    readUomId,
+    roundProductionValue
+} from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
 
 const QUANTITY_EPSILON = 0.000001;
 
@@ -318,12 +322,16 @@ export async function createJobOrder(
             if (components.length > 0) {
                 for (const bItem of components) {
                     const compProductId = Number(bItem.product_id);
-                    const wastage = 1 + (Number(bItem.wastage_factor_percentage || 0) / 100);
                     const baseQuantity = Number(version?.base_quantity);
                     if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                         throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                     }
-                    const quantityRequired = (productionQty * Number(bItem.quantity_required || 0) * wastage) / baseQuantity;
+                    const quantityRequired = calculateBatchScaledMaterialRequirement(
+                        productionQty,
+                        baseQuantity,
+                        Number(bItem.quantity_required || 0),
+                        Number(bItem.wastage_factor_percentage || 0)
+                    );
 
                     // Verify if it has an active version (making it a sub-assembly)
                     const compActiveVer = await getActiveVersionForProduct(compProductId);
@@ -642,12 +650,16 @@ export async function createJobOrder(
                     if (r.bom_items && r.bom_items.length > 0) {
                         for (const bItem of r.bom_items) {
                             const compProductId = Number(bItem.product_id);
-                            const wastage = 1 + (Number(bItem.wastage_factor_percentage || 0) / 100);
                             const baseQuantity = Number(version?.base_quantity);
                             if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
                                 throw new Error(`Recipe base quantity is required for Product '${p.product_name}'.`);
                             }
-                            const quantityRequired = (productionQty * Number(bItem.quantity_required || 0) * wastage) / baseQuantity;
+                            const quantityRequired = calculateBatchScaledMaterialRequirement(
+                                productionQty,
+                                baseQuantity,
+                                Number(bItem.quantity_required || 0),
+                                Number(bItem.wastage_factor_percentage || 0)
+                            );
 
                              // Check if component is a sub-assembly
                              const activeVer = await getActiveVersionForProduct(compProductId);

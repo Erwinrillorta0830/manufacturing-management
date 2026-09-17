@@ -2,11 +2,21 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, ChevronRight, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JobOrder } from "../types";
+
+interface RawMaterialProgressLot {
+    mmLotId: number | null;
+    lotName: string | null;
+    batchNo: string | null;
+    status: string | null;
+    allocated: number;
+    consumed: number;
+    remaining: number;
+}
 
 interface RawMaterialProgressLine {
     materialId: number;
@@ -15,6 +25,7 @@ interface RawMaterialProgressLine {
     reserved: number;
     consumed: number;
     remaining: number;
+    lots?: RawMaterialProgressLot[];
 }
 
 interface RawMaterialProgressTotal {
@@ -41,6 +52,14 @@ function formatQuantity(value: number): string {
     return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
+const LOT_STATUS_STYLES: Record<string, string> = {
+    WIP: "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+    CONSUMED: "border-zinc-500/20 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+    HARD: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    PARTIAL: "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    SOFT: "border-border bg-muted text-muted-foreground"
+};
+
 function ProgressSkeleton() {
     return (
         <div className="grid gap-4 xl:grid-cols-2" role="status" aria-label="Loading Job Order progress">
@@ -63,6 +82,7 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [data, setData] = useState<JobOrderProgressResponse | null>(null);
+    const [expandedMaterialIds, setExpandedMaterialIds] = useState<Set<number>>(new Set());
 
     // Refetch whenever the Job Order changes or production activity updates its
     // output counters (the terminal refetches jobs after shift runs/starts).
@@ -93,6 +113,22 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
     useEffect(() => {
         void load();
     }, [load]);
+
+    useEffect(() => {
+        setExpandedMaterialIds(new Set());
+    }, [jobOrderId]);
+
+    const toggleMaterialLots = (materialId: number) => {
+        setExpandedMaterialIds((previous) => {
+            const next = new Set(previous);
+            if (next.has(materialId)) {
+                next.delete(materialId);
+            } else {
+                next.add(materialId);
+            }
+            return next;
+        });
+    };
 
     if (!jobOrderId) return null;
 
@@ -159,15 +195,76 @@ export function JobOrderProgressSummary({ jobOrder }: { jobOrder: JobOrder }) {
                                                     No raw materials are allocated to this Job Order.
                                                 </TableCell>
                                             </TableRow>
-                                        ) : rawMaterialLines.map((line) => (
-                                            <TableRow key={line.materialId}>
-                                                <TableCell className="px-3 py-2 text-xs font-semibold">{line.productName}</TableCell>
-                                                <TableCell className="px-3 py-2 text-xs text-muted-foreground">{line.unitShortcut}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.reserved)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.consumed)}</TableCell>
-                                                <TableCell className="px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
-                                            </TableRow>
-                                        ))}
+                                        ) : rawMaterialLines.map((line) => {
+                                            const lots = line.lots || [];
+                                            const isExpanded = expandedMaterialIds.has(line.materialId);
+                                            const detailId = `jo-progress-lots-${line.materialId}`;
+
+                                            return (
+                                                <React.Fragment key={line.materialId}>
+                                                    <TableRow>
+                                                        <TableCell className="px-3 py-2 text-xs font-semibold">
+                                                            {lots.length > 0 ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => toggleMaterialLots(line.materialId)}
+                                                                    aria-expanded={isExpanded}
+                                                                    aria-controls={detailId}
+                                                                    className="inline-flex items-center gap-1.5 text-left font-semibold transition-colors hover:text-primary"
+                                                                >
+                                                                    <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                                                                    {line.productName}
+                                                                </button>
+                                                            ) : (
+                                                                line.productName
+                                                            )}
+                                                        </TableCell>
+                                                        <TableCell className="px-3 py-2 text-xs text-muted-foreground">{line.unitShortcut}</TableCell>
+                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs font-bold tabular-nums">{formatQuantity(line.reserved)}</TableCell>
+                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(line.consumed)}</TableCell>
+                                                        <TableCell className="px-3 py-2 text-right font-mono text-xs font-black text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(line.remaining)}</TableCell>
+                                                    </TableRow>
+                                                    {isExpanded && lots.length > 0 && (
+                                                        <TableRow id={detailId} className="bg-muted/20 hover:bg-muted/20">
+                                                            <TableCell colSpan={5} className="px-3 py-2">
+                                                                <div className="overflow-x-auto rounded-md border bg-background">
+                                                                    <Table>
+                                                                        <TableHeader className="bg-muted/40">
+                                                                            <TableRow>
+                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Storage Lot</TableHead>
+                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Batch No.</TableHead>
+                                                                                <TableHead className="h-7 px-2 text-[10px] font-bold uppercase">Status</TableHead>
+                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Allocated</TableHead>
+                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Consumed</TableHead>
+                                                                                <TableHead className="h-7 px-2 text-right text-[10px] font-bold uppercase">Remaining</TableHead>
+                                                                            </TableRow>
+                                                                        </TableHeader>
+                                                                        <TableBody>
+                                                                            {lots.map((lot, lotIndex) => (
+                                                                                <TableRow key={`${line.materialId}-${lot.mmLotId ?? "none"}-${lot.batchNo ?? ""}-${lotIndex}`}>
+                                                                                    <TableCell className="px-2 py-1.5 text-[11px] font-semibold text-foreground">
+                                                                                        {lot.lotName || (lot.mmLotId ? `Lot #${lot.mmLotId}` : "—")}
+                                                                                    </TableCell>
+                                                                                    <TableCell className="px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{lot.batchNo || "—"}</TableCell>
+                                                                                    <TableCell className="px-2 py-1.5">
+                                                                                        <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${LOT_STATUS_STYLES[lot.status || ""] || LOT_STATUS_STYLES.SOFT}`}>
+                                                                                            {lot.status || "—"}
+                                                                                        </span>
+                                                                                    </TableCell>
+                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] font-bold tabular-nums">{formatQuantity(lot.allocated)}</TableCell>
+                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] text-amber-700 tabular-nums dark:text-amber-400">{formatQuantity(lot.consumed)}</TableCell>
+                                                                                    <TableCell className="px-2 py-1.5 text-right font-mono text-[11px] text-emerald-700 tabular-nums dark:text-emerald-400">{formatQuantity(lot.remaining)}</TableCell>
+                                                                                </TableRow>
+                                                                            ))}
+                                                                        </TableBody>
+                                                                    </Table>
+                                                                </div>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )}
+                                                </React.Fragment>
+                                            );
+                                        })}
                                         {rawMaterialTotal && (
                                             <TableRow className="bg-muted/30">
                                                 <TableCell colSpan={2} className="px-3 py-2 text-xs font-black">Total ({rawMaterialTotal.unitShortcut})</TableCell>

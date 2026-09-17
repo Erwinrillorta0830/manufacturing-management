@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import { calculateProductionMetrics } from "./production-metrics";
-import { formatProductionValue } from "./production-timing";
+import {
+    calculateBatchScaledMaterialRequirement,
+    formatProductionValue
+} from "./production-timing";
+
+const bisenteRequirement = calculateBatchScaledMaterialRequirement(
+    354.628,
+    354.6278,
+    5,
+    0.5
+);
+assert.equal(formatProductionValue(bisenteRequirement), "5.0250");
+assert.notEqual(formatProductionValue(bisenteRequirement), "1782.0000");
+assert.equal(
+    formatProductionValue(calculateBatchScaledMaterialRequirement(709.2556, 354.6278, 5, 0.5)),
+    "10.0500"
+);
+assert.throws(
+    () => calculateBatchScaledMaterialRequirement(354.628, 0, 5, 0.5),
+    /Recipe base quantity must be greater than zero/
+);
 
 const metrics = calculateProductionMetrics({
     targetQuantity: 354.6278,
