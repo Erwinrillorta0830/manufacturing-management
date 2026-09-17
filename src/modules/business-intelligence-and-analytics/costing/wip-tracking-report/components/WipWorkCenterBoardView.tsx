@@ -8,18 +8,14 @@ import {
     PlayCircle,
     Clock,
     AlertTriangle,
-    Boxes,
     ArrowUpRight,
-    CheckCircle2,
     Layers,
-    ChevronRight,
     PackageSearch
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { WorkCenterQueueSummary, WipJobOrder } from "../types";
-import { JOB_ORDER_STATUS } from "@/modules/manufacturing-management/job-order-status";
 
 interface WipWorkCenterBoardViewProps {
     queues: WorkCenterQueueSummary[];

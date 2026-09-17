@@ -19,6 +19,150 @@ interface DirectusResponse<T> {
     errors?: Array<{ message: string }>;
 }
 
+interface DirectusJobOrder {
+    job_order_id?: number | string;
+    id?: number | string;
+    job_order_no?: string;
+    product_id?: number | string;
+    branch_id?: number | string;
+    status?: string;
+    quantity?: number | string;
+    planned_quantity?: number | string;
+    target_quantity?: number | string;
+    target_completion_date?: string;
+    target_date?: string;
+    end_date?: string;
+    start_date?: string;
+    remarks?: string;
+    notes?: string;
+    work_center_id?: number | string;
+    primary_work_center_id?: number | string;
+    priority?: number | string;
+    shift_option?: string;
+    planned_hours?: number | string;
+    production_started_at?: string | null;
+    production_completed_at?: string | null;
+    actual_quantity_produced?: number | string;
+    actual_quantity?: number | string;
+    completed_quantity?: number | string;
+    rejected_quantity?: number | string;
+}
+
+interface DirectusRoute {
+    job_order_id?: number | string;
+    jo_route_id?: number | string;
+    id?: number | string;
+    work_center_id?: number | string;
+    operation_id?: number | string;
+    operation_name?: string;
+    planned_setup_hours?: number | string;
+    planned_run_hours?: number | string;
+    actual_setup_hours?: number | string;
+    actual_run_hours?: number | string;
+    status?: string;
+    routing_id?: number | string;
+    task_id?: number | string;
+    sequence_order?: number | string;
+    completed_at?: string | null;
+    requires_qa?: boolean | number;
+}
+
+interface DirectusWorkCenter {
+    work_center_id?: number | string;
+    id?: number | string;
+    work_center_name?: string;
+    work_center_code?: string;
+    capacity_per_hour?: number | string;
+}
+
+interface DirectusOperation {
+    id?: number | string;
+    operation_id?: number | string;
+    operation_name?: string;
+}
+
+interface DirectusMaterial {
+    job_order_id?: number | string;
+    jo_material_id?: number | string;
+    id?: number | string;
+    product_id?: number | string;
+    planned_quantity?: number | string;
+    required_quantity?: number | string;
+    actual_quantity?: number | string;
+}
+
+interface DirectusReservation {
+    jo_material_id?: number | string;
+    jo_materials_reservation_id?: number | string;
+    id?: number | string;
+    batch_no?: string | null;
+    lot_no?: string | null;
+    mm_lot_id?: number | string | null;
+    staging_bin?: string | null;
+    bin_location?: string | null;
+    reserved_quantity?: number | string;
+    staged_quantity?: number | string;
+    issued_to_wip_quantity?: number | string;
+    issued_quantity?: number | string;
+    actual_used_quantity?: number | string;
+    used_quantity?: number | string;
+    returned_quantity?: number | string;
+    remaining_wip_quantity?: number | string;
+    status?: string | null;
+    wip_started_at?: string | null;
+}
+
+interface DirectusOperator {
+    jo_route_id?: number | string;
+    task_id?: number | string;
+    routing_id?: number | string;
+    jo_route_operator_id?: number | string;
+    id?: number | string;
+    operator_id?: number | string | { user_id?: number | string; id?: number | string };
+    user_id?: number | string | { user_id?: number | string; id?: number | string };
+    logged_hours?: number | string;
+    actual_hours?: number | string;
+    hourly_rate?: number | string;
+    started_at?: string | null;
+    stopped_at?: string | null;
+}
+
+interface DirectusProduct {
+    product_id?: number | string;
+    product_name?: string;
+    product_code?: string;
+    unit_of_measurement?: number | string;
+    standard_cost?: number | string;
+    cost_per_unit?: number | string;
+}
+
+interface DirectusBranch {
+    id?: number | string;
+    branch_name?: string;
+    branch_code?: string;
+}
+
+interface DirectusUnit {
+    unit_id?: number | string;
+    unit_symbol?: string;
+    unit_name?: string;
+    name?: string;
+}
+
+interface DirectusUser {
+    user_id?: number | string;
+    id?: number | string;
+    user_fname?: string;
+    first_name?: string;
+    user_lname?: string;
+    last_name?: string;
+    nickname?: string;
+    user_email?: string;
+    email?: string;
+    user_position?: string;
+    position?: string;
+}
+
 function roundHours(val: unknown): number {
     const num = Number(val);
     if (!Number.isFinite(num)) return 0;
@@ -64,71 +208,61 @@ export async function GET(req: NextRequest) {
             unitsRes,
             usersRes
         ] = await Promise.all([
-            fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&sort=-job_order_id`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/manufacturing_job_orders?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_routes?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/work_centers?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/manufacturing_operations?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/operations?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+                headers: headersNoCache
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_materials_reservations?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+                headers: headersNoCache
             }),
             fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?limit=-1&fields=*`, {
-                headers: headersNoCache,
-                cache: "no-store"
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=product_id,product_name,product_code,unit_of_measurement`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/products?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=id,branch_name,branch_code`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/branches?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=unit_id,unit_name,unit_symbol,name`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/items/units?limit=-1&fields=*`, {
+                headers: headersNoCache
             }),
-            fetch(`${DIRECTUS_URL}/items/user?limit=-1`, {
-                headers: headersNoCache,
-                cache: "no-store"
+            fetch(`${DIRECTUS_URL}/users?limit=-1&fields=*`, {
+                headers: headersNoCache
             })
         ]);
 
         if (!joRes.ok) {
-            const errText = await joRes.text().catch(() => "");
+            const errText = await joRes.text().catch(() => "Unknown error");
+            console.error(`Directus JO Fetch Error (${joRes.status}):`, errText);
             return NextResponse.json(
                 { success: false, message: `Failed to fetch Job Orders from Directus (${joRes.status}): ${errText}` },
                 { status: joRes.status }
             );
         }
 
-        const joData: DirectusResponse<any> = await joRes.json();
-        const routesData: DirectusResponse<any> = routesRes.ok ? await routesRes.json() : { data: [] };
-        const workCentersData: DirectusResponse<any> = workCentersRes.ok ? await workCentersRes.json() : { data: [] };
-        const operationsData: DirectusResponse<any> = operationsRes.ok ? await operationsRes.json() : { data: [] };
-        const materialsData: DirectusResponse<any> = materialsRes.ok ? await materialsRes.json() : { data: [] };
-        const reservationsData: DirectusResponse<any> = reservationsRes.ok ? await reservationsRes.json() : { data: [] };
-        const operatorsData: DirectusResponse<any> = operatorsRes.ok ? await operatorsRes.json() : { data: [] };
-        const productsData: DirectusResponse<any> = productsRes.ok ? await productsRes.json() : { data: [] };
-        const branchesData: DirectusResponse<any> = branchesRes.ok ? await branchesRes.json() : { data: [] };
-        const unitsData: DirectusResponse<any> = unitsRes.ok ? await unitsRes.json() : { data: [] };
-        const usersData: DirectusResponse<any> = usersRes.ok ? await usersRes.json() : { data: [] };
+        const joData: DirectusResponse<DirectusJobOrder> = await joRes.json();
+        const routesData: DirectusResponse<DirectusRoute> = routesRes.ok ? await routesRes.json() : { data: [] };
+        const workCentersData: DirectusResponse<DirectusWorkCenter> = workCentersRes.ok ? await workCentersRes.json() : { data: [] };
+        const operationsData: DirectusResponse<DirectusOperation> = operationsRes.ok ? await operationsRes.json() : { data: [] };
+        const materialsData: DirectusResponse<DirectusMaterial> = materialsRes.ok ? await materialsRes.json() : { data: [] };
+        const reservationsData: DirectusResponse<DirectusReservation> = reservationsRes.ok ? await reservationsRes.json() : { data: [] };
+        const operatorsData: DirectusResponse<DirectusOperator> = operatorsRes.ok ? await operatorsRes.json() : { data: [] };
+        const productsData: DirectusResponse<DirectusProduct> = productsRes.ok ? await productsRes.json() : { data: [] };
+        const branchesData: DirectusResponse<DirectusBranch> = branchesRes.ok ? await branchesRes.json() : { data: [] };
+        const unitsData: DirectusResponse<DirectusUnit> = unitsRes.ok ? await unitsRes.json() : { data: [] };
+        const usersData: DirectusResponse<DirectusUser> = usersRes.ok ? await usersRes.json() : { data: [] };
 
         const allJobOrders = joData.data || [];
         const allRoutes = routesData.data || [];
@@ -143,16 +277,16 @@ export async function GET(req: NextRequest) {
         const allUsers = usersData.data || [];
 
         // Build Master Lookups
-        const workCenterMap = new Map<number, any>();
+        const workCenterMap = new Map<number, DirectusWorkCenter>();
         allWorkCenters.forEach((wc) => workCenterMap.set(Number(wc.work_center_id || wc.id), wc));
 
         const operationMap = new Map<number, string>();
         allOperations.forEach((op) => operationMap.set(Number(op.id || op.operation_id), op.operation_name || "Unknown Operation"));
 
-        const productMap = new Map<number, any>();
+        const productMap = new Map<number, DirectusProduct>();
         allProducts.forEach((p) => productMap.set(Number(p.product_id), p));
 
-        const branchMap = new Map<number, any>();
+        const branchMap = new Map<number, DirectusBranch>();
         allBranches.forEach((b) => branchMap.set(Number(b.id), b));
 
         const unitMap = new Map<number, string>();
@@ -160,7 +294,7 @@ export async function GET(req: NextRequest) {
 
         // User / Operator Map: Map by user_id and id with first and last name
         const userMap = new Map<number, { name: string; position?: string }>();
-        allUsers.forEach((u: any) => {
+        allUsers.forEach((u) => {
             const uId = Number(u.user_id ?? u.id);
             if (!uId) return;
             const fname = String(u.user_fname ?? u.first_name ?? "").trim();
@@ -172,10 +306,12 @@ export async function GET(req: NextRequest) {
 
         // Group route operators by jo_route_id / task_id / routing_id
         const operatorsByRouteId = new Map<number, WipOperatorAssignment[]>();
-        allOperators.forEach((op: any) => {
+        allOperators.forEach((op) => {
             const routeId = Number(op.jo_route_id || op.task_id || op.routing_id);
             if (!routeId) return;
-            const rawOpId = op.operator_id?.user_id ?? op.operator_id?.id ?? op.operator_id ?? op.user_id?.user_id ?? op.user_id;
+            const rawOpId = (typeof op.operator_id === "object" && op.operator_id !== null)
+                ? op.operator_id.user_id ?? op.operator_id.id
+                : op.operator_id ?? ((typeof op.user_id === "object" && op.user_id !== null) ? op.user_id.user_id : op.user_id);
             const opId = Number(rawOpId);
             const userMeta = userMap.get(opId);
             const entry: WipOperatorAssignment = {
@@ -195,7 +331,7 @@ export async function GET(req: NextRequest) {
 
         // Group routes by job_order_id
         const routesByJobId = new Map<number, WipRouteStage[]>();
-        allRoutes.forEach((r: any) => {
+        allRoutes.forEach((r) => {
             const joId = Number(r.job_order_id);
             if (!joId) return;
             const routeId = Number(r.jo_route_id || r.id);
@@ -243,7 +379,7 @@ export async function GET(req: NextRequest) {
         });
 
         // Group materials by job_order_id
-        const materialsByJoId = new Map<number, any[]>();
+        const materialsByJoId = new Map<number, DirectusMaterial[]>();
         allMaterials.forEach((m) => {
             const joId = Number(m.job_order_id);
             if (!joId) return;
@@ -253,7 +389,7 @@ export async function GET(req: NextRequest) {
         });
 
         // Group reservations by jo_material_id
-        const reservationsByMaterialId = new Map<number, any[]>();
+        const reservationsByMaterialId = new Map<number, DirectusReservation[]>();
         allReservations.forEach((res) => {
             const matId = Number(res.jo_material_id);
             if (!matId) return;
@@ -265,8 +401,8 @@ export async function GET(req: NextRequest) {
         const nowTime = new Date().getTime();
 
         // Assemble WIP Job Orders
-        const processedJobs: WipJobOrder[] = allJobOrders.map((jo: any) => {
-            const joId = Number(jo.job_order_id);
+        const processedJobs: WipJobOrder[] = allJobOrders.map((jo) => {
+            const joId = Number(jo.job_order_id || jo.id);
             const pId = Number(jo.product_id);
             const bId = Number(jo.branch_id);
             const prod = productMap.get(pId);
@@ -597,10 +733,11 @@ export async function GET(req: NextRequest) {
                 serverTimestamp: new Date().toISOString()
             }
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[BIA WIP Tracking Report API Error]:", error);
+        const message = error instanceof Error ? error.message : "Failed to load WIP tracking report";
         return NextResponse.json(
-            { success: false, message: error.message || "Failed to load WIP tracking report" },
+            { success: false, message },
             { status: 500 }
         );
     }

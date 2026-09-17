@@ -86,8 +86,8 @@ export function useWipTracking() {
                 setError(msg);
                 toast.error(msg);
             }
-        } catch (err: any) {
-            const msg = err.message || "Failed to connect to WIP Tracking service.";
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to connect to WIP Tracking service.";
             setError(msg);
             toast.error(msg);
         } finally {
@@ -175,8 +175,9 @@ export function useWipTracking() {
             document.body.removeChild(link);
 
             toast.success("WIP Tracking CSV report exported successfully.");
-        } catch (e: any) {
-            toast.error("Failed to generate CSV export: " + (e.message || "Unknown error"));
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Unknown error";
+            toast.error("Failed to generate CSV export: " + msg);
         }
     }, [jobs]);
 

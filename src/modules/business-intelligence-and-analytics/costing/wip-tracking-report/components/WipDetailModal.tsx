@@ -18,7 +18,6 @@ import {
     Layers, 
     PackageSearch, 
     CheckCircle2, 
-    Clock, 
     ShieldCheck, 
     User, 
     ExternalLink,
