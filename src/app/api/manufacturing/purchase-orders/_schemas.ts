@@ -34,14 +34,14 @@ const purchaseOrderCategoryType = z.enum(["RAW_MATERIAL", "PACKAGING", "FINISHED
 
 export const purchaseOrderStatusSchema = z.enum([
     "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
-    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Rejected"
+    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Revision", "Rejected"
 ]);
 
 const initialPurchaseOrderStatusSchema = z.enum(["Ordered"]);
 
 export const purchaseOrderListStatusSchema = z.enum([
     "For Approval", "Requested", "Ordered", "Approved", "Awaiting Payment", "Cancelled", "For Pickup",
-    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Rejected"
+    "Warehouse Receiving", "Receiving (QA)", "Partially Received", "Received", "Revision", "Rejected"
 ]);
 
 const receivingQueueStatusSchema = z.enum([
@@ -71,6 +71,7 @@ export const legacyPurchaseOrderCreateSchema = z.object({
         total_php_value: nonNegativeMoney,
         status: initialPurchaseOrderStatusSchema.default("Ordered"),
         date_received: dateOnly.nullable().optional(),
+        lead_time_receiving: dateOnly.nullable().optional(),
         branch_id: positiveId,
         payment_type: positiveId,
         payment_mode: positiveId,
@@ -167,13 +168,13 @@ export const purchaseOrderStatusUpdateSchema = z.object({
 });
 
 export const purchaseOrderApprovalSchema = z.object({
-    action: z.enum(["approve", "reject", "cancel"]),
+    action: z.enum(["approve", "revision", "cancel"]),
     workflowRevision: z.coerce.number().int().nonnegative(),
     expectedRuleId: positiveId.optional(),
     remarks: z.string().trim().min(1).max(1000).optional()
 }).superRefine((value, context) => {
-    if ((value.action === "reject" || value.action === "cancel") && !value.remarks) {
-        context.addIssue({ code: "custom", path: ["remarks"], message: "Remarks are required for rejection or cancellation." });
+    if ((value.action === "revision" || value.action === "cancel") && !value.remarks) {
+        context.addIssue({ code: "custom", path: ["remarks"], message: "Remarks are required for revision or cancellation." });
     }
 });
 
@@ -220,7 +221,7 @@ export type PurchaseOrderListQuery = z.infer<typeof purchaseOrderListQuerySchema
 
 export function modulesForStatus(status: z.infer<typeof purchaseOrderStatusSchema>) {
     if (status === "Warehouse Receiving") return [MODULE_PATHS.warehouseReceiving];
-    return status === "For Pickup" || status === "Receiving (QA)" || status === "Partially Received" || status === "Received" || status === "Rejected"
+    return status === "For Pickup" || status === "Receiving (QA)" || status === "Partially Received" || status === "Received"
         ? [MODULE_PATHS.receiving]
         : [MODULE_PATHS.procurement, MODULE_PATHS.financeApproval];
 }

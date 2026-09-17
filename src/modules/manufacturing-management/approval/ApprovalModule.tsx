@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
     Ban,
@@ -11,9 +11,9 @@ import {
     History,
     Loader2,
     Printer,
+    RotateCcw,
     Search,
     ShieldCheck,
-    X
 } from "lucide-react";
 import { toast } from "sonner";
 import { usePurchaseOrderApproval, type PurchaseOrderApprovalMode } from "../purchase-order-approval/hooks/usePurchaseOrderApproval";
@@ -24,21 +24,20 @@ import { downloadPurchaseOrderPrintable } from "../purchase-order/services/purch
 import { calculatePercentageDiscount } from "../procurement/discount-calculation";
 import { EXCHANGE_RATE_DECIMAL_SCALE, PROCUREMENT_MONEY_DECIMAL_SCALE } from "../decimal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { CancelPurchaseOrderDialog } from "../procurement/components/incoming-shipments/CancelPurchaseOrderDialog";
+import { formatPhtDateTime } from "./pht-date-time";
 
-type QueueTab = "For Approval" | "Approved" | "Rejected";
+type QueueTab = "For Approval" | "Approved" | "Revision" | "Cancelled";
 
 const queueTabs: Array<{ value: QueueTab; label: string; icon: typeof Clock3; activeClass: string }> = [
     { value: "For Approval", label: "For Approval", icon: Clock3, activeClass: "border-amber-300 bg-amber-50 text-amber-700 shadow-sm" },
     { value: "Approved", label: "Approved", icon: CheckCircle2, activeClass: "border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm" },
-    { value: "Rejected", label: "Rejected", icon: X, activeClass: "border-red-300 bg-red-50 text-red-700 shadow-sm" }
+    { value: "Revision", label: "Revision", icon: RotateCcw, activeClass: "border-orange-300 bg-orange-50 text-orange-700 shadow-sm" },
+    { value: "Cancelled", label: "Cancelled", icon: Ban, activeClass: "border-zinc-300 bg-zinc-50 text-zinc-700 shadow-sm" }
 ];
 
 function money(value: unknown, currency = "PHP") {
     return new Intl.NumberFormat("en-PH", { style: "currency", currency, minimumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE, maximumFractionDigits: PROCUREMENT_MONEY_DECIMAL_SCALE }).format(Number(value || 0));
-}
-
-function dateTime(value?: string | null) {
-    return value ? new Date(value).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "-";
 }
 
 function statusBadge(status: string) {
@@ -50,7 +49,8 @@ function statusBadge(status: string) {
         "Awaiting Payment": "border-orange-300 bg-orange-50 text-orange-700",
         "Receiving (QA)": "border-blue-300 bg-blue-50 text-blue-700",
         Cancelled: "border-zinc-300 bg-zinc-50 text-zinc-700",
-        Rejected: "border-red-300 bg-red-50 text-red-700"
+        Rejected: "border-red-300 bg-red-50 text-red-700",
+        Revision: "border-orange-300 bg-orange-50 text-orange-700"
     };
     return <span className={`inline-flex max-w-full rounded border px-2 py-1 text-[10px] font-bold uppercase ${styles[status] || "border-border bg-muted text-muted-foreground"}`}>{status}</span>;
 }
@@ -83,9 +83,11 @@ function supplierLabel(
 interface FinanceDecisionControlsProps {
     stage: PurchaseOrderDecisionStage;
     shipment: IncomingShipment;
+    supplierName: string;
+    branchName?: string | null;
     detail: PurchaseOrderApprovalDetail;
     approve: (id: number) => Promise<void>;
-    reject: (id: number, remarks: string) => Promise<void>;
+    requestRevision: (id: number, remarks: string) => Promise<void>;
     cancel: (id: number, remarks: string) => Promise<void>;
     onReload: () => Promise<void>;
 }
@@ -93,14 +95,19 @@ interface FinanceDecisionControlsProps {
 function FinanceDecisionControls({
     stage,
     shipment,
+    supplierName,
+    branchName = null,
     detail,
     approve,
-    reject,
+    requestRevision,
     cancel,
     onReload
 }: FinanceDecisionControlsProps) {
     const [remarks, setRemarks] = useState("");
-    const [submitting, setSubmitting] = useState<"approve" | "reject" | "cancel" | null>(null);
+    const [submitting, setSubmitting] = useState<"approve" | "revision" | "cancel" | null>(null);
+    const [remarksError, setRemarksError] = useState<string | null>(null);
+    const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+    const remarksRef = useRef<HTMLTextAreaElement | null>(null);
     const actionable = detail.stage === stage;
 
     if (!actionable) return null;
@@ -109,6 +116,15 @@ function FinanceDecisionControls({
         const message = (error as Error).message || "Finance approval action failed.";
         toast.error(message);
         if (/changed|reload|pending approval/i.test(message)) await onReload();
+    };
+
+    const flagRemarksError = (message: string) => {
+        setRemarksError(message);
+        toast.error(message);
+        window.requestAnimationFrame(() => {
+            remarksRef.current?.focus();
+            remarksRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
     };
 
     const handleApprove = async () => {
@@ -123,34 +139,41 @@ function FinanceDecisionControls({
         }
     };
 
-    const handleReject = async () => {
+    const handleRevision = async () => {
         if (!remarks.trim()) {
-            toast.error("Enter a rejection reason.");
+            flagRemarksError("Enter a reason for revision.");
             return;
         }
         try {
-            setSubmitting("reject");
-            await reject(shipment.shipment_id, remarks.trim());
-            toast.success("Purchase order rejected by Finance.");
+            setSubmitting("revision");
+            await requestRevision(shipment.shipment_id, remarks.trim());
+            toast.success("Purchase order sent for revision.");
         } catch (error) {
-            await handleActionError(error);
+            const message = (error as Error).message || "";
+            if (/remark|reason/i.test(message)) flagRemarksError(message);
+            else await handleActionError(error);
         } finally {
             setSubmitting(null);
         }
     };
 
-    const handleCancel = async () => {
+    const openCancelDialog = () => {
         if (!remarks.trim()) {
-            toast.error("Enter a cancellation reason.");
+            flagRemarksError("Enter a cancellation reason.");
             return;
         }
-        if (!window.confirm("Cancel this purchase order from Finance approval? This action cannot be undone.")) return;
+        setIsCancelDialogOpen(true);
+    };
+
+    const handleCancelConfirm = async (reason: string) => {
         try {
             setSubmitting("cancel");
-            await cancel(shipment.shipment_id, remarks.trim());
+            await cancel(shipment.shipment_id, reason);
             toast.success("Purchase order cancelled by Finance.");
+            return true;
         } catch (error) {
             await handleActionError(error);
+            return false;
         } finally {
             setSubmitting(null);
         }
@@ -161,24 +184,48 @@ function FinanceDecisionControls({
             <label className="block">
                 <span className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">Decision remarks</span>
                 <textarea
+                    ref={remarksRef}
                     value={remarks}
-                    onChange={event => setRemarks(event.target.value)}
+                    onChange={event => {
+                        setRemarks(event.target.value);
+                        if (remarksError) setRemarksError(null);
+                    }}
                     maxLength={1000}
-                    placeholder="Required when rejecting or cancelling"
-                    className="min-h-20 w-full resize-y rounded-md border bg-background p-3 text-xs outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="Required when sending for revision or cancelling"
+                    aria-invalid={Boolean(remarksError)}
+                    className={`min-h-20 w-full resize-y rounded-md border bg-background p-3 text-xs outline-none focus:ring-2 ${remarksError ? "border-destructive focus:ring-destructive" : "focus:ring-ring"}`}
                 />
+                {remarksError && (
+                    <p className="mt-1.5 text-[11px] font-semibold text-destructive" role="alert">{remarksError}</p>
+                )}
             </label>
             <div className="flex flex-col justify-end gap-2 sm:flex-row sm:flex-wrap">
-                <button type="button" onClick={handleCancel} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-zinc-700 px-3 text-xs font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={openCancelDialog} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-zinc-700 px-3 text-xs font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
                     {submitting === "cancel" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} Cancel PO
                 </button>
-                <button type="button" onClick={handleReject} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
-                    {submitting === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Reject PO
+                <button type="button" onClick={handleRevision} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-orange-600 px-3 text-xs font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {submitting === "revision" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Revision
                 </button>
                 <button type="button" onClick={handleApprove} disabled={submitting !== null} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
                     {submitting === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve PO
                 </button>
             </div>
+
+            <CancelPurchaseOrderDialog
+                open={isCancelDialogOpen}
+                onOpenChange={(open) => {
+                    if (submitting === null) setIsCancelDialogOpen(open);
+                }}
+                purchaseOrderNo={shipment.purchase_order_no || shipment.reference_number || `#${shipment.shipment_id}`}
+                supplierName={supplierName}
+                branchName={branchName}
+                totalLabel={money(detail.order.total_amount)}
+                stageLabel={stage}
+                reasonMode="summary"
+                reasonText={remarks.trim()}
+                loading={submitting === "cancel"}
+                onConfirm={handleCancelConfirm}
+            />
         </div>
     );
 }
@@ -204,7 +251,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
         selectedShipmentLines,
         approvalDetail,
         approve,
-        reject,
+        requestRevision,
         cancel,
         load
     } = usePurchaseOrderApproval(stage, { mode, purchaseOrderId });
@@ -260,7 +307,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
         () => approvalDetail?.history
             .filter(entry =>
                 entry.approval_stage === "Finance"
-                && (entry.action === "Rejected" || entry.action === "Cancelled")
+                && (entry.action === "Revision" || entry.action === "Rejected" || entry.action === "Cancelled")
                 && Boolean(entry.remarks?.trim())
             )
             .slice()
@@ -273,7 +320,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
         const decision = approvalDetail.history
             .slice()
             .reverse()
-            .find(entry => entry.approval_stage === "Finance" && ["FinanceApproved", "Rejected", "Cancelled"].includes(entry.action));
+            .find(entry => entry.approval_stage === "Finance" && ["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(entry.action));
         if (!decision) {
             toast.error("No Finance decision is available to print.");
             return;
@@ -378,12 +425,34 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                             </div>
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
                             <div><div className="text-[10px] uppercase text-muted-foreground">PHP total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_amount)}</div></div>
                             <div><div className="text-[10px] uppercase text-muted-foreground">Foreign total</div><div className="mt-1 text-sm font-bold">{money(approvalDetail.order.total_foreign_currency, approvalDetail.order.currency_code || "PHP")}</div></div>
                             <div><div className="text-[10px] uppercase text-muted-foreground">Exchange rate</div><div className="mt-1 text-sm font-bold">{approvalDetail.order.currency_code === "PHP" ? "1.000000" : Number(approvalDetail.order.exchange_rate) > 0 ? Number(approvalDetail.order.exchange_rate).toFixed(EXCHANGE_RATE_DECIMAL_SCALE) : "Unavailable"}</div></div>
                             <div><div className="text-[10px] uppercase text-muted-foreground">Revision Count</div><div className="mt-1 text-sm font-bold">{approvalDetail.revisionCount}</div></div>
+                            <div><div className="text-[10px] uppercase text-muted-foreground">Created at (PHT)</div><div className="mt-1 text-sm font-bold">{formatPhtDateTime(approvalDetail.order.date_encoded)}</div></div>
+                            <div><div className="text-[10px] uppercase text-muted-foreground">Approved at (PHT)</div><div className="mt-1 text-sm font-bold">{formatPhtDateTime(approvalDetail.order.date_approved)}</div></div>
+                            <div><div className="text-[10px] uppercase text-muted-foreground">Sent for revision</div><div className="mt-1 text-sm font-bold">{formatPhtDateTime(approvalDetail.order.for_revision_at)}</div></div>
                         </div>
+
+                        {statusForApprovalStage(selectedShipment.status) === "Cancelled" && (selectedShipment.cancelled_at || selectedShipment.cancelled_by) && (
+                            <div className="rounded-md border border-zinc-300 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
+                                <div className="text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">Cancellation audit</div>
+                                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                                    <span>
+                                        Cancelled by:{" "}
+                                        <strong className="font-bold text-foreground">
+                                            {selectedShipment.cancelled_by_name
+                                                || (selectedShipment.cancelled_by ? `User #${selectedShipment.cancelled_by}` : "Not recorded")}
+                                        </strong>
+                                    </span>
+                                    <span>
+                                        Cancelled at:{" "}
+                                        <strong className="font-bold text-foreground">{formatPhtDateTime(selectedShipment.cancelled_at)}</strong>
+                                    </span>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="grid gap-3 lg:grid-cols-2">
                             <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3">
@@ -400,7 +469,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                             <div key={entry.history_id} className="border-t border-amber-200/70 pt-2 first:border-t-0 first:pt-0">
                                                 <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-amber-800">
                                                     <span className="break-words">{entry.action} · {entry.actor_name}</span>
-                                                    <span className="shrink-0">{dateTime(entry.created_at)}</span>
+                                                    <span className="shrink-0">{formatPhtDateTime(entry.created_at)}</span>
                                                 </div>
                                                 <p className="mt-1 whitespace-pre-wrap break-words text-xs text-foreground">{entry.remarks}</p>
                                             </div>
@@ -429,9 +498,10 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                             key={`${selectedShipment.shipment_id}-${approvalDetail.order.workflow_revision || 0}-${approvalDetail.stage}`}
                             stage={stage}
                             shipment={selectedShipment}
+                            supplierName={supplierName}
                             detail={approvalDetail}
                             approve={approve}
-                            reject={reject}
+                            requestRevision={requestRevision}
                             cancel={cancel}
                             onReload={retryDetail}
                         />
@@ -503,7 +573,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                                 </div>
                                                 <div className="mt-1 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{entry.actor_name}{entry.remarks ? ` | ${entry.remarks}` : ""}</div>
                                             </div>
-                                            <div className="shrink-0 text-left text-[10px] text-muted-foreground sm:text-right"><div>{dateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
+                                            <div className="shrink-0 text-left text-[10px] text-muted-foreground sm:text-right"><div>{formatPhtDateTime(entry.created_at)}</div><div className="mt-1">Revision {entry.revision_before} to {entry.revision_after}</div></div>
                                         </div>
                                     ))}
                                 </div>
@@ -649,7 +719,7 @@ export default function ApprovalModule({ stage, mode = "queue", purchaseOrderId 
                                             <span className="mt-1 block truncate text-[11px] text-muted-foreground" title={order.reference_number || "No reference"}>{order.reference_number || "No reference"}</span>
                                         </span>
                                         <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={supplier || "Unknown supplier"}>{supplier || "Unknown supplier"}</span>
-                                        <span>{statusBadge(tab)}</span>
+                                        <span>{statusBadge(order.status)}</span>
                                         <span className="text-[11px] font-semibold text-muted-foreground">{workflowStage}</span>
                                         <span className="font-mono text-xs font-bold text-foreground">{money(order.total_php_value)}</span>
                                         <span className="text-xs font-bold text-primary md:text-right">Review PO <span aria-hidden="true">→</span></span>

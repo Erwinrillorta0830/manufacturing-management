@@ -118,7 +118,7 @@ export interface IncomingShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "For Approval" | "Requested" | "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
     is_posted?: number | boolean | null;
@@ -136,6 +136,9 @@ export interface IncomingShipment {
     currency_code?: "PHP" | "USD";
     workflow_revision?: number;
     revision_count?: number;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
+    cancelled_by_name?: string | null;
     approver_id?: number | null;
     finance_id?: number | null;
     date_approved?: string | null;
@@ -143,6 +146,9 @@ export interface IncomingShipment {
     approval_rule_id?: number | null;
     approval_requires_finance?: boolean | null;
     approval_allow_self_approval?: boolean | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
+    for_revision_at?: string | null;
     isForceReceived?: boolean;
     forceReceivedAt?: string | null;
     forceReceivedBy?: number | null;
@@ -511,9 +517,11 @@ export interface DirectusShipment {
     total_foreign_currency: number | string;
     exchange_rate: number | string;
     total_php_value: number | string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
+    revised_at?: string | null;
+    revised_by?: number | null;
     payment_type?: number | null;
     payment_mode?: number | null;
     delivery_terms?: string | null;
@@ -603,7 +611,7 @@ export interface ShipmentData {
     exchange_rate: string;
     total_foreign_currency: string;
     total_php_value: string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
     inventory_status?: number | null;
     payment_status?: number | null;
     date_received: string;

@@ -166,11 +166,11 @@ function normalizeProductImage(value: unknown, defaultNull: boolean): string | n
     return normalized || null;
 }
 
-function normalizeSafetyStock(value: unknown, defaultZero: boolean): number | undefined {
+function normalizeMaintainingQuantity(value: unknown, defaultZero: boolean): number | undefined {
     if (value === undefined || value === null || value === "") return defaultZero ? 0 : undefined;
     const parsed = Number(value);
     if (!Number.isSafeInteger(parsed) || parsed < 0) {
-        throw new RawMaterialQaError(400, "Safety Stock must be a whole number greater than or equal to 0.");
+        throw new RawMaterialQaError(400, "Maintaining Quantity must be a whole number greater than or equal to 0.");
     }
     return parsed;
 }
@@ -413,7 +413,7 @@ export async function POST(request: Request) {
         const purchaseQa = await normalizePurchaseQaConfig(productDetails.purchaseQa);
         const normalizedProductBarcode = normalizeBarcode(productDetails.barcode, true);
         const normalizedProductImage = normalizeProductImage(productDetails.product_image, true);
-        const normalizedSafetyStock = normalizeSafetyStock(productDetails.maintaining_quantity, true);
+        const normalizedMaintainingQuantity = normalizeMaintainingQuantity(productDetails.maintaining_quantity, true);
         const submittedVariants = Array.isArray(packagingVariants) ? packagingVariants : [];
         const normalizedVariants = await Promise.all(submittedVariants.map(async (rawVariant) => {
             if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
@@ -421,7 +421,7 @@ export async function POST(request: Request) {
             return {
                 ...variant,
                 barcode: normalizeBarcode(variant.barcode, true),
-                maintaining_quantity: normalizeSafetyStock(variant.maintaining_quantity, true),
+                maintaining_quantity: normalizeMaintainingQuantity(variant.maintaining_quantity, true),
                 product_image: normalizeProductImage(variant.product_image, true),
                 purchaseQa: await normalizePurchaseQaConfig(variant.purchaseQa)
             };
@@ -526,7 +526,7 @@ export async function POST(request: Request) {
             density_factor: normalizedDensity,
             weight_unit_id: verifiedWeightUnitId,
             barcode: normalizedProductBarcode,
-            maintaining_quantity: normalizedSafetyStock,
+            maintaining_quantity: normalizedMaintainingQuantity,
             product_image: normalizedProductImage,
             description: baseDescription,
             short_description: baseDescription,
@@ -677,7 +677,7 @@ export async function PATCH(request: Request) {
         }
 
         const hasBarcodeField = Object.prototype.hasOwnProperty.call(productDetails, "barcode");
-        const hasSafetyStockField = Object.prototype.hasOwnProperty.call(productDetails, "maintaining_quantity");
+        const hasMaintainingQuantityField = Object.prototype.hasOwnProperty.call(productDetails, "maintaining_quantity");
         const hasProductImageField = Object.prototype.hasOwnProperty.call(productDetails, "product_image");
         const hasPurchaseQaField = Object.prototype.hasOwnProperty.call(productDetails, "purchaseQa");
         const normalizedProductBarcode = hasBarcodeField
@@ -686,8 +686,8 @@ export async function PATCH(request: Request) {
         const normalizedProductImage = hasProductImageField
             ? normalizeProductImage(productDetails.product_image, false)
             : undefined;
-        const normalizedSafetyStock = hasSafetyStockField
-            ? normalizeSafetyStock(productDetails.maintaining_quantity, false)
+        const normalizedMaintainingQuantity = hasMaintainingQuantityField
+            ? normalizeMaintainingQuantity(productDetails.maintaining_quantity, false)
             : undefined;
         const purchaseQa = hasPurchaseQaField
             ? await normalizePurchaseQaConfig(productDetails.purchaseQa, Number(productId))
@@ -697,13 +697,13 @@ export async function PATCH(request: Request) {
             if (!rawVariant || typeof rawVariant !== "object") return rawVariant;
             const variant = rawVariant as Record<string, unknown>;
             const hasVariantBarcode = Object.prototype.hasOwnProperty.call(variant, "barcode");
-            const hasVariantSafetyStock = Object.prototype.hasOwnProperty.call(variant, "maintaining_quantity");
+            const hasVariantMaintainingQuantity = Object.prototype.hasOwnProperty.call(variant, "maintaining_quantity");
             const hasVariantImage = Object.prototype.hasOwnProperty.call(variant, "product_image");
             const hasVariantQa = Object.prototype.hasOwnProperty.call(variant, "purchaseQa");
             return {
                 ...variant,
                 ...(hasVariantBarcode ? { barcode: normalizeBarcode(variant.barcode, false) } : {}),
-                ...(hasVariantSafetyStock ? { maintaining_quantity: normalizeSafetyStock(variant.maintaining_quantity, false) } : {}),
+                ...(hasVariantMaintainingQuantity ? { maintaining_quantity: normalizeMaintainingQuantity(variant.maintaining_quantity, false) } : {}),
                 ...(hasVariantImage ? { product_image: normalizeProductImage(variant.product_image, false) } : {}),
                 ...(hasVariantQa ? { purchaseQa: await normalizePurchaseQaConfig(variant.purchaseQa, Number(variant.product_id || 0)) } : {})
             };
@@ -858,7 +858,7 @@ export async function PATCH(request: Request) {
             density_factor: normalizedDensity,
             ...(hasWeightUnitField ? { weight_unit_id: verifiedWeightUnitId ?? null } : {}),
             ...(hasBarcodeField ? { barcode: normalizedProductBarcode } : {}),
-            ...(hasSafetyStockField ? { maintaining_quantity: normalizedSafetyStock } : {}),
+            ...(hasMaintainingQuantityField ? { maintaining_quantity: normalizedMaintainingQuantity } : {}),
             ...(hasProductImageField ? { product_image: normalizedProductImage } : {}),
             description: baseDescription,
             short_description: baseDescription,

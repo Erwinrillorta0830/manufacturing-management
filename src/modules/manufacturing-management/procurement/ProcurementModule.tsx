@@ -58,7 +58,6 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
         handleCreateShipment,
         handleEditShipment,
         handleAllocateExpenses,
-        handleUpdateShipmentStatus,
         handleRegisterRawMaterial,
         handleUpdateRawMaterial
     } = useProcurement(initialTab);
@@ -156,7 +155,6 @@ export default function ProcurementModule({ initialTab = "suppliers", hideNavTab
                         onCreateShipment={handleCreateShipment}
                         onEditShipment={handleEditShipment}
                         onTriggerAllocation={handleTriggerExpenseAllocation}
-                        onUpdateShipmentStatus={handleUpdateShipmentStatus}
                         loading={loading}
                         paymentModes={paymentModes}
                     />

@@ -1,5 +1,6 @@
 import { paymentStatusLabel, inventoryStatusToPurchaseOrderStatus } from "../../procurement/_domain";
 import { DIRECTUS_URL, procurementDirectusFetch, procurementDirectusHeaders } from "../../procurement/_directus";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { fetchShipmentLineItems } from "../../procurement/shipments/shipments-helper";
 import { loadMmLots } from "../../services/mm-lots.service";
 import {
@@ -98,8 +99,10 @@ function relationText(value: unknown, keys: readonly string[], fallback = "N/A")
 function dateText(value: unknown): string {
     const raw = text(value, "");
     if (!raw) return "N/A";
+    const phtWallClock = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.\d+)?$/.exec(raw);
+    if (phtWallClock) return `${phtWallClock[1]} ${phtWallClock[2]}`;
     const date = new Date(raw);
-    return Number.isNaN(date.getTime()) ? raw : date.toISOString();
+    return Number.isNaN(date.getTime()) ? raw : formatPhtDateTime(date);
 }
 
 async function directusRows(path: string, message: string, optional = false): Promise<DirectusRow[]> {
@@ -620,12 +623,12 @@ export async function loadPurchaseOrderPrintableData(input: {
     ]);
     const selectedApproval = input.historyId
         ? approvals.find(entry => entry.historyId === input.historyId) || null
-        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["FinanceApproved", "Rejected", "Cancelled"].includes(entry.action)) || null;
-    if (input.historyId && selectedApproval && !["FinanceApproved", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
+        : approvals.slice().reverse().find(entry => entry.stage === "Finance" && ["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(entry.action)) || null;
+    if (input.historyId && selectedApproval && !["FinanceApproved", "Revision", "Rejected", "Cancelled"].includes(selectedApproval.action)) {
         throw new PurchaseOrderPrintDataError(409, "The selected approval-history record is not a Finance decision.");
     }
     if (input.documentType === "FINANCE_DECISION" && !selectedApproval) {
-        throw new PurchaseOrderPrintDataError(409, "No Finance approval or rejection record is available for this purchase order.");
+        throw new PurchaseOrderPrintDataError(409, "No Finance approval or Revision record is available for this purchase order.");
     }
     const needsReceivingData = input.documentType === "QA_GOODS_RECEIPT" || input.documentType === "STORAGE_LOT_ALLOCATION";
     const receiving = needsReceivingData

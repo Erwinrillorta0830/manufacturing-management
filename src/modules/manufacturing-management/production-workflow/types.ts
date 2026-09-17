@@ -88,6 +88,8 @@ export interface JobOrder {
     remarks?: string | null;
     cancellation_image_id?: string | null;
     cancellation_image_url?: string | null;
+    termination_image_id?: string | null;
+    termination_image_url?: string | null;
     created_by?: number | null;
     created_at?: string | null;
     yield_logs?: any[];
