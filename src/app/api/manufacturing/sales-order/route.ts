@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { getISOStringInConfiguredTimezone, formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import {
     addSalesOrderFilters,
     detailRemainingQuantity,
@@ -367,7 +367,12 @@ async function createSalesOrderWithDetails(
         if (!headerResponse.ok) {
             const errorText = await headerResponse.text();
             console.error(`Failed to create the sales-order header: ${headerResponse.status} - ${errorText}`);
-            throw new ApiError(503, "Failed to create the sales-order header.");
+            let parsedError = errorText;
+            try {
+                const jsonErr = JSON.parse(errorText);
+                parsedError = jsonErr.errors?.[0]?.message || errorText;
+            } catch {}
+            throw new ApiError(503, `Failed to create the sales-order header: ${parsedError}`);
         }
         headerCreated = true;
 
@@ -868,7 +873,9 @@ export async function POST(request: Request) {
             const missingVersionProductNames: string[] = [];
             for (const productId of productIds) {
                 const p = productMap.get(productId);
-                const isFinishedGood = p && Number(p.product_type) === 388;
+                const rawPt = p?.product_type;
+                const ptId = typeof rawPt === "object" && rawPt !== null ? Number(rawPt.id) : Number(rawPt);
+                const isFinishedGood = ptId === 388 || String(rawPt?.name || "").toLowerCase().includes("finished");
                 if (isFinishedGood && !versionMap.has(productId)) {
                     missingVersionProductNames.push(p ? p.product_name : `Product #${productId}`);
                 }
@@ -928,11 +935,13 @@ export async function POST(request: Request) {
                 due_date: dueDate || null,
                 payment_terms: paymentTerms ? Number(paymentTerms) : null,
                 salesman_id: salesmanId ? Number(salesmanId) : null,
-                branch_id: branchId ? Number(branchId) : null
+                branch_id: branchId ? Number(branchId) : null,
+                currency: "PHP",
+                exchange_rate: 1
             };
             const detailPayloads = directItems.map((item) => ({
                 product_id: item.product_id,
-                bom_version_id: item.bom_version_id || versionMap.get(item.product_id),
+                bom_version_id: item.bom_version_id || versionMap.get(item.product_id) || null,
                 unit_price: item.unit_price,
                 ordered_quantity: item.quantity,
                 allocated_quantity: 0,
@@ -997,7 +1006,7 @@ export async function POST(request: Request) {
         const quoteParentIds = quoteItems.map((item: any) => Number(item.parent_id || item.product_id));
         const quoteProductParams = new URLSearchParams({
             "filter[product_id][_in]": quoteParentIds.join(","),
-            fields: "product_id,product_name",
+            fields: "product_id,product_name,product_type",
             limit: "-1"
         });
         const quoteProductRes = await fetch(`${DIRECTUS_URL}/items/products?${quoteProductParams.toString()}`, { headers, cache: "no-store" });
@@ -1008,13 +1017,14 @@ export async function POST(request: Request) {
 
         const missingQuoteVersionProductNames: string[] = [];
         for (const parentId of quoteParentIds) {
-            if (!quoteVersionMap.has(parentId)) {
-                const p = quoteProductMap.get(parentId);
+            const p = quoteProductMap.get(parentId);
+            const isFinishedGood = p && (Number(p.product_type) === 388 || String(p.product_type?.name || "").toLowerCase().includes("finished"));
+            if (isFinishedGood && !quoteVersionMap.has(parentId)) {
                 missingQuoteVersionProductNames.push(p ? p.product_name : `Product #${parentId}`);
             }
         }
         if (missingQuoteVersionProductNames.length > 0) {
-            throw new ApiError(400, `No active BOM version is available for: ${missingQuoteVersionProductNames.join(", ")}. Configure Standard BOM Version 1 or another active version before ordering.`);
+            throw new ApiError(400, `No active BOM version is available for finished goods: ${missingQuoteVersionProductNames.join(", ")}. Configure Standard BOM Version 1 or another active version before ordering.`);
         }
 
         // 4. Create Sales Order
@@ -1051,7 +1061,9 @@ export async function POST(request: Request) {
             due_date: dueDate || null,
             payment_terms: paymentTerms ? Number(paymentTerms) : null,
             salesman_id: salesmanId ? Number(salesmanId) : null,
-            branch_id: branchId ? Number(branchId) : null
+            branch_id: branchId ? Number(branchId) : null,
+            currency: "PHP",
+            exchange_rate: 1
         };
         const detailPayloads = quoteItems.map((item: any) => {
             const unitPrice = Number(item.frozen_total_cost_php);
@@ -1080,7 +1092,9 @@ export async function POST(request: Request) {
                 headers,
                 body: JSON.stringify({
                     status: "Converted to SO",
-                    remarks: `${quote.remarks || ""}\n[System: Converted to Sales Order ${orderNo}]`
+                    remarks: `${quote.remarks || ""}\n[System: Converted to Sales Order ${orderNo}]`,
+                    modified_by: encoderId,
+                    modified_at: formatPhtDateTime()
                 })
             });
             if (!quoteUpdateRes.ok) {
@@ -1091,7 +1105,7 @@ export async function POST(request: Request) {
                 const projectUpdateRes = await fetch(`${DIRECTUS_URL}/items/projects/${quote.project_id}`, {
                     method: "PATCH",
                     headers,
-                    body: JSON.stringify({ status: "Executed", modified_by: encoderId })
+                    body: JSON.stringify({ status: "Executed", modified_by: encoderId, modified_at: formatPhtDateTime() })
                 });
                 if (!projectUpdateRes.ok) {
                     console.warn(`Failed to mark project ${quote.project_id} as Executed. Status: ${projectUpdateRes.status}`);
@@ -1105,7 +1119,9 @@ export async function POST(request: Request) {
                     headers,
                     body: JSON.stringify({
                         status: quote.status ?? null,
-                        remarks: quote.remarks ?? null
+                        remarks: quote.remarks ?? null,
+                        modified_by: encoderId,
+                        modified_at: formatPhtDateTime()
                     })
                 });
                 if (!restoreRes.ok) cleanupFailures.push(`quotation restore returned ${restoreRes.status}`);

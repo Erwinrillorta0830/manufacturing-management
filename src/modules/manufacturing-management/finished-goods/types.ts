@@ -259,6 +259,13 @@ export interface RoutePosition {
     hourly_rate: number | string;
     daily_rate?: number | string;
     daily_wage?: number | string;
+    category?: 'direct_labor' | 'maintenance';
+    hours_required?: number | string;
+    ot_hours?: number | string;
+    include_mandates?: boolean;
+    sss_amount?: number | string;
+    phic_amount?: number | string;
+    hdmf_amount?: number | string;
 }
 
 export interface RouteStep {

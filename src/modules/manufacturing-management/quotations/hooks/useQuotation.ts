@@ -184,8 +184,28 @@ export function useQuotation() {
         try {
             const res = await fetch(`/api/manufacturing/finished-goods/quotes/snapshots?quoteId=${quote.id}`);
             if (!res.ok) throw new Error("Failed to load snapshot details");
-            const data = await res.json();
-            setSnapshots(data);
+            const data = (await res.json()) as QuotationSnapshotNode[];
+            const enrichedSnapshots = (data || []).map(snap => {
+                const prodMatch = allProducts.find(p => String(p.product_id) === String(snap.product_id)) || catalogProducts.find(p => String(p.product_id) === String(snap.product_id));
+                let typeName = snap.product_type_name;
+                if (!typeName && prodMatch) {
+                    let pTypeId = prodMatch.product_type ? Number(prodMatch.product_type) : undefined;
+                    if (!pTypeId && prodMatch.parent_product_id) {
+                        const parentProd = allProducts.find(p => String(p.product_id) === String(prodMatch.parent_product_id));
+                        if (parentProd && parentProd.product_type) {
+                            pTypeId = Number(parentProd.product_type);
+                        }
+                    }
+                    const ptMatch = productTypes.find(pt => pt.id === pTypeId);
+                    if (ptMatch) typeName = String(ptMatch.name);
+                }
+                return {
+                    ...snap,
+                    product_type_name: typeName || "Finished Goods",
+                    version_name: snap.version_name || (snap.version_id ? `v${snap.version_id}.0` : "v1.0")
+                };
+            });
+            setSnapshots(enrichedSnapshots);
         } catch (e) {
             console.error("Error fetching snapshots:", e);
             toast.error(e instanceof Error ? e.message : "Failed to fetch snapshot details");
@@ -270,7 +290,7 @@ export function useQuotation() {
     const registerNewProject = async (name: string, customerId: number, customerName: string) => {
         const cleanedName = name.trim().toUpperCase();
         const matchedCust = customers.find(c => Number(c.id) === customerId);
-        const customerCode = matchedCust ? matchedCust.customer_code : "GEN-CUST";
+        const customerCode = matchedCust ? matchedCust.customer_code.replace(/-+/g, "-") : "GEN-CUST";
 
         try {
             const res = await fetch("/api/manufacturing/finished-goods/projects", {
@@ -642,7 +662,7 @@ export function useQuotation() {
                 frozen_price_type_name: selectedPriceTypeId ? priceTypes.find(pt => String(pt.price_type_id) === selectedPriceTypeId)?.price_type_name || null : null,
                 total_selling_price: totalSelling,
                 total_simulated_cost: totalCost,
-                forex_rate_used: 61.39,
+                forex_rate_used: 0,
                 remarks: remarks || "",
                 quote_date: quoteDateStr
             };
@@ -665,8 +685,9 @@ export function useQuotation() {
                     parent_id: item.parent_product_id || null,
                     parent_product_name: pName || null,
                     product_type_id: item.product_type_id || null,
-                    product_type_name: pType || null,
+                    product_type_name: pType || "Finished Goods",
                     version_id: item.versionId || 1, // Store the selected version ID
+                    version_name: item.versionName || "v1.0",
                     node_name: item.product.product_name,
                     node_type: "product_quota",
                     quantity: 1,
@@ -729,7 +750,7 @@ export function useQuotation() {
         }
         if (!createdByStr) createdByStr = "System Admin";
 
-        // Map snapshots to include accurate type and version strings from catalog
+        // Map snapshots to include accurate type and version strings from catalog and pricing details
         const resolvedSnapshots = snapshots.map(snap => {
             const prodMatch = allProducts.find(p => String(p.product_id) === String(snap.product_id)) || catalogProducts.find(p => String(p.product_id) === String(snap.product_id));
             
@@ -746,17 +767,22 @@ export function useQuotation() {
                 if (ptMatch) typeName = String(ptMatch.name);
             }
 
-            const versionName = snap.version_name || "v1.0";
-            if (prodMatch && (prodMatch as unknown as Record<string, unknown>).has_versions) {
-                // If the product has versions, and the snapshot has a version_id but no version_name, try to find it
-                // (Though usually the snapshot will have version_name saved, we fallback just in case)
-            }
+            const versionName = snap.version_name || (snap.version_id ? `v${snap.version_id}.0` : "v1.0");
+
+            const stdPrice = priceTypeRatesMap[snap.product_id] !== undefined
+                ? priceTypeRatesMap[snap.product_id]
+                : (prodMatch?.price_per_unit !== undefined ? Number(prodMatch.price_per_unit) : Number(snap.frozen_total_cost_php || 0));
+            const agreedPrice = Number(snap.frozen_total_cost_php || 0);
+            const variance = agreedPrice - stdPrice;
 
             return {
                 node_name: snap.node_name,
                 type_name: typeName,
                 version_name: versionName,
                 uom: snap.uom,
+                standard_unit_price: stdPrice,
+                agreed_unit_price: agreedPrice,
+                variance_php: variance,
                 frozen_unit_cost_php: snap.frozen_unit_cost_php,
                 frozen_total_cost_php: snap.frozen_total_cost_php
             };
@@ -858,7 +884,7 @@ export function useQuotation() {
                         customer_id: lp.customer_id,
                         total_selling_price: 0,
                         total_simulated_cost: 0,
-                        forex_rate_used: 61.39,
+                        forex_rate_used: 0,
                         status: "Draft",
                         project_id: {
                             id: lp.id,

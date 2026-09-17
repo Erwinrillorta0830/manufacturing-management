@@ -123,9 +123,12 @@ export function calculatePositionBatchCost(pos: VersionPosition): number {
     // Statutory Benefits Allowance (SSS 9.54%, PHIC 200/26 = ~7.69, HDMF 100/26 = ~3.85)
     let benefitsCost = 0;
     if (pos.include_mandates !== false) {
-        const sss = Number(pos.sss_amount) || (dailyRate * 0.0954);
-        const phic = Number(pos.phic_amount) || (200 / 26);
-        const hdmf = Number(pos.hdmf_amount) || (100 / 26);
+        const configuredSss = Number(pos.sss_amount);
+        const configuredPhic = Number(pos.phic_amount);
+        const configuredHdmf = Number(pos.hdmf_amount);
+        const sss = Number.isFinite(configuredSss) && configuredSss > 0 ? configuredSss : (dailyRate * 0.0954);
+        const phic = Number.isFinite(configuredPhic) && configuredPhic > 0 ? configuredPhic : (200 / 26);
+        const hdmf = Number.isFinite(configuredHdmf) && configuredHdmf > 0 ? configuredHdmf : (100 / 26);
         benefitsCost = (sss + phic + hdmf) * headcount;
     }
 

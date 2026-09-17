@@ -24,7 +24,7 @@ export interface QuotationHeader {
     customer_id: number | Customer | null;
     total_selling_price: number;
     total_simulated_cost: number;
-    forex_rate_used: number;
+    forex_rate_used?: number | null;
     remarks?: string;
     quote_date?: string;
     status?: string;

@@ -112,6 +112,8 @@ export interface Product {
   priceC?: number;
   priceD?: number;
   priceE?: number;
+  cost_per_unit?: number;
+  price_per_unit?: number;
   
   parent_id?: number | { product_id?: number; id?: number } | null;
 }
@@ -175,6 +177,7 @@ export interface PriceTypeOption {
   price_type_id: number;
   price_type_name: string;
   sort?: number;
+  description?: string;
 }
 
 export interface API_SalesReturnDetail {

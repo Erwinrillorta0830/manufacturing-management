@@ -16,6 +16,8 @@ import {
   ChevronsUpDown,
   Layers,
   AlertCircle,
+  Building2,
+  Tag,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,7 +25,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
@@ -365,32 +366,72 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   const [customerSearch, setCustomerSearch] = useState("");
   const customerWrapperRef = useRef<HTMLDivElement>(null);
 
+  const [isBranchOpen, setIsBranchOpen] = useState(false);
+  const [branchSearch, setBranchSearch] = useState("");
+  const branchWrapperRef = useRef<HTMLDivElement>(null);
+
+  const [isPriceTypeOpen, setIsPriceTypeOpen] = useState(false);
+  const [priceTypeSearch, setPriceTypeSearch] = useState("Type A");
+  const priceTypeWrapperRef = useRef<HTMLDivElement>(null);
+
   /**
-   * Resolves the correct unit price based on the selected salesman's priceType.
-   * Falls back to priceA if the specific price type is not available.
+   * Resolves the unit price according to 3-tier priority hierarchy:
+   * 1. Priority 1: Linked Invoice Line Item (exact historical price)
+   * 2. Priority 2: Price Type Fallback (customer/salesman price type)
+   * 3. Priority 3: Base Product Price Fallback (cost_per_unit / priceA / price_per_unit)
    */
-  const resolvePrice = useCallback((item: SalesReturnItem | Product, currentPriceType: string, catalogPrices?: ProductPerPriceType[]): number => {
-    const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
+  const resolvePrice = useCallback((
+    item: Partial<SalesReturnItem> | Product,
+    currentPriceType?: string,
+    catalogPrices?: ProductPerPriceType[],
+    invoiceItems?: InvoiceLineItem[]
+  ): number => {
+    const pId = ("productId" in item && item.productId !== undefined) ? item.productId : ("product_id" in item ? (item as Product).product_id : undefined);
 
-    // For SalesReturnItem mapped structure
-    if (pt && "availablePrices" in item && Array.isArray(item.availablePrices)) {
-      const priceRecord = item.availablePrices.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
-      if (priceRecord && priceRecord.price !== undefined) {
-        return Math.round(Number(priceRecord.price) * 100) / 100;
+    // Priority 1: Linked Invoice Line Item
+    const targetInvoiceItems = invoiceItems || invoiceLineItems;
+    if (targetInvoiceItems && targetInvoiceItems.length > 0 && pId !== undefined) {
+      const invItem = targetInvoiceItems.find(i => Number(i.product_id) === Number(pId));
+      if (invItem && invItem.unit_price !== undefined && invItem.unit_price !== null) {
+        return Math.round(Number(invItem.unit_price) * 100) / 100;
       }
     }
 
-    // For raw Product data during updateDiscounts
-    if (pt && Array.isArray(catalogPrices) && "product_id" in item && item.product_id !== undefined) {
-      const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number(item.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
-      if (priceRecord && priceRecord.price !== undefined) {
-        return Math.round(Number(priceRecord.price) * 100) / 100;
+    // Priority 2: Price Type Fallback
+    if (currentPriceType) {
+      const pt = priceTypeOptions.find(p => p.price_type_name === currentPriceType || p.price_type_id.toString() === currentPriceType);
+
+      if (pt && "availablePrices" in item && Array.isArray(item.availablePrices)) {
+        const priceRecord = item.availablePrices.find(p => Number(p.price_type_id) === Number(pt.price_type_id));
+        if (priceRecord && priceRecord.price !== undefined && priceRecord.price !== null && Number(priceRecord.price) > 0) {
+          return Math.round(Number(priceRecord.price) * 100) / 100;
+        }
+      }
+
+      if (pt && Array.isArray(catalogPrices) && "product_id" in item && item.product_id !== undefined) {
+        const priceRecord = catalogPrices.find((p: ProductPerPriceType) => Number(p.product_id) === Number(item.product_id) && Number(p.price_type_id) === Number(pt.price_type_id));
+        if (priceRecord && priceRecord.price !== undefined && priceRecord.price !== null && Number(priceRecord.price) > 0) {
+          return Math.round(Number(priceRecord.price) * 100) / 100;
+        }
+      }
+
+      if (pt) {
+        const key = `price${pt.price_type_name}` as keyof typeof item;
+        if (key in item && item[key] !== undefined && item[key] !== null && Number(item[key]) > 0) {
+          return Math.round(Number(item[key]) * 100) / 100;
+        }
       }
     }
 
-    const price = "unitPrice" in item && typeof item.unitPrice === "number" ? item.unitPrice : 0;
-    return Math.round(price * 100) / 100;
-  }, [priceTypeOptions]);
+    // Priority 3: Base Product Price Fallback (cost_per_unit)
+    const basePrice = ("cost_per_unit" in item && item.cost_per_unit !== undefined && Number(item.cost_per_unit) > 0)
+      ? Number(item.cost_per_unit)
+      : ("unitPrice" in item && typeof item.unitPrice === "number")
+      ? item.unitPrice
+      : 0;
+
+    return Math.round(basePrice * 100) / 100;
+  }, [priceTypeOptions, invoiceLineItems]);
 
   // --- 5. INITIAL LOAD ---
   useEffect(() => {
@@ -468,12 +509,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     if (items.length > 0) {
       setItems((prevItems) =>
         prevItems.map((item) => {
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === Number(item.productId));
-          const basePrice = invoiceItem ? Number(invoiceItem.unit_price) : resolvePrice(item, priceType);
-          const newUnitPrice = basePrice;
+          const newUnitPrice = resolvePrice(item, priceType, undefined, invoiceLineItems);
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
 
-          const newGross = Math.round(item.quantity * agPrice * 100) / 100;
+          const newGross = Math.round(item.quantity * newUnitPrice * 100) / 100;
           let newDiscountAmt = 0;
 
           if (item.discountType) {
@@ -514,9 +553,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               const productInfo = catalog.products?.find((p: Product) => Number(p.product_id) === Number(item.productId));
               if (!productInfo) return item;
 
-              const newUnitPrice = resolvePrice(productInfo, priceType, catalog.productPrices);
+              const newUnitPrice = resolvePrice(productInfo, priceType, catalog.productPrices, invoiceLineItems);
               const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : newUnitPrice;
-              const newGross = Math.round(item.quantity * agPrice * 100) / 100;
+              const newGross = Math.round(item.quantity * newUnitPrice * 100) / 100;
 
               const newDiscountType = resolveFinalDiscount(
                 productInfo,
@@ -556,7 +595,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       };
       updateDiscounts();
     }
-  }, [customerCode, customers, lineDiscountOptions, items.length, priceType, resolvePrice]);
+  }, [customerCode, customers, lineDiscountOptions, items.length, priceType, resolvePrice, invoiceLineItems]);
 
   const handleSelectSalesman = useCallback((salesman: SalesmanOption) => {
     setSelectedSalesmanId(salesman.id.toString());
@@ -567,11 +606,15 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       const pt = priceTypeOptions.find(p => p.price_type_id.toString() === salesman.priceType.toString());
       if (pt) {
         setPriceType(pt.price_type_name);
+        setPriceTypeSearch(`Type ${pt.price_type_name}`);
       } else {
-        setPriceType(salesman.priceType.toString());
+        const ptStr = salesman.priceType.toString();
+        setPriceType(ptStr);
+        setPriceTypeSearch(ptStr.startsWith("Type ") ? ptStr : `Type ${ptStr}`);
       }
     } else {
       setPriceType("A");
+      setPriceTypeSearch("Type A");
     }
 
     const linkedBranch = branches.find((b) => 
@@ -579,7 +622,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       (b.branch_code && salesman.branchId && String(b.branch_code).trim().toLowerCase() === String(salesman.branchId).trim().toLowerCase()) ||
       (b.name && salesman.branchId && String(b.name).trim().toLowerCase() === String(salesman.branchId).trim().toLowerCase())
     );
-    setBranchName(linkedBranch ? linkedBranch.name : "");
+    const bName = linkedBranch ? (linkedBranch.name || linkedBranch.branch_name || "") : "";
+    setBranchName(bName);
+    setBranchSearch(bName);
     setBranchId(linkedBranch ? Number(linkedBranch.id) : (salesman.branchId && !isNaN(Number(salesman.branchId)) ? Number(salesman.branchId) : null));
     setIsSalesmanOpen(false);
     setOrderNo("");
@@ -596,9 +641,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       const pt = priceTypeOptions.find(p => p.price_type_id.toString() === customer.price_type_id?.toString());
       if (pt) {
         setPriceType(pt.price_type_name);
+        setPriceTypeSearch(`Type ${pt.price_type_name}`);
       } else {
         // Fallback if priceTypeOptions is not yet loaded or doesn't match
-        setPriceType(customer.price_type_id.toString());
+        const ptStr = customer.price_type_id.toString();
+        setPriceType(ptStr);
+        setPriceTypeSearch(ptStr.startsWith("Type ") ? ptStr : `Type ${ptStr}`);
       }
     }
     setIsCustomerOpen(false);
@@ -707,7 +755,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         const pt = priceTypeOptions.find(
           (p) => p.price_type_id.toString() === foundCustomer.price_type_id?.toString()
         );
-        setPriceType(pt ? pt.price_type_name : foundCustomer.price_type_id.toString());
+        const resolvedPt = pt ? pt.price_type_name : foundCustomer.price_type_id.toString();
+        setPriceType(resolvedPt);
+        setPriceTypeSearch(resolvedPt.startsWith("Type ") ? resolvedPt : `Type ${resolvedPt}`);
       }
     } else if (targetCustomerCode) {
       setCustomerCode(targetCustomerCode);
@@ -762,7 +812,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 const pt = priceTypeOptions.find(
                   (p) => p.price_type_id.toString() === foundSalesman.priceType.toString()
                 );
-                setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
+                const resolvedPt = pt ? pt.price_type_name : foundSalesman.priceType.toString();
+                setPriceType(resolvedPt);
+                setPriceTypeSearch(resolvedPt.startsWith("Type ") ? resolvedPt : `Type ${resolvedPt}`);
               }
 
               const linkedBranch = branches.find((b) => 
@@ -771,7 +823,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
               );
               if (linkedBranch) {
-                setBranchName(linkedBranch.name);
+                const bName = linkedBranch.name || linkedBranch.branch_name || "";
+                setBranchName(bName);
+                setBranchSearch(bName);
                 setBranchId(Number(linkedBranch.id));
               }
             }
@@ -799,7 +853,9 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         const pt = priceTypeOptions.find(
           (p) => p.price_type_id.toString() === foundSalesman.priceType.toString()
         );
-        setPriceType(pt ? pt.price_type_name : foundSalesman.priceType.toString());
+        const resolvedPt = pt ? pt.price_type_name : foundSalesman.priceType.toString();
+        setPriceType(resolvedPt);
+        setPriceTypeSearch(resolvedPt.startsWith("Type ") ? resolvedPt : `Type ${resolvedPt}`);
       }
       const linkedBranch = branches.find((b) => 
         Number(b.id) === Number(foundSalesman.branchId) ||
@@ -807,11 +863,14 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         (b.name && foundSalesman.branchId && String(b.name).trim().toLowerCase() === String(foundSalesman.branchId).trim().toLowerCase())
       );
       if (linkedBranch) {
-        setBranchName(linkedBranch.name);
+        const bName = linkedBranch.name || linkedBranch.branch_name || "";
+        setBranchName(bName);
+        setBranchSearch(bName);
         setBranchId(Number(linkedBranch.id));
       }
     } else if (targetBranchName) {
       setBranchName(targetBranchName);
+      setBranchSearch(targetBranchName);
       const matchedBranch = branches.find((b) => 
         b.name.trim().toLowerCase() === targetBranchName.trim().toLowerCase() ||
         (b.branch_code && b.branch_code.trim().toLowerCase() === targetBranchName.trim().toLowerCase())
@@ -895,6 +954,34 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       }
 
       if (
+        branchWrapperRef.current &&
+        !branchWrapperRef.current.contains(target)
+      ) {
+        setIsBranchOpen(false);
+        const found = branches.find((b) => Number(b.id) === branchId);
+        if (found) {
+          setBranchSearch(found.name || found.branch_name || "");
+        } else if (branchName) {
+          setBranchSearch(branchName);
+        }
+      }
+
+      if (
+        priceTypeWrapperRef.current &&
+        !priceTypeWrapperRef.current.contains(target)
+      ) {
+        setIsPriceTypeOpen(false);
+        const pt = priceTypeOptions.find(
+          (p) => p.price_type_name === priceType || p.price_type_id.toString() === priceType
+        );
+        if (pt) {
+          setPriceTypeSearch(`Type ${pt.price_type_name}`);
+        } else if (priceType) {
+          setPriceTypeSearch(priceType.startsWith("Type ") ? priceType : `Type ${priceType}`);
+        }
+      }
+
+      if (
         invoiceWrapperRef.current &&
         !invoiceWrapperRef.current.contains(target)
       ) {
@@ -907,12 +994,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       ) {
         setIsOrderOpen(false);
       }
-
-
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [selectedSalesmanId, salesmen, selectedCustomerId, customers]);
+  }, [selectedSalesmanId, salesmen, selectedCustomerId, customers, branchId, branchName, branches, priceType, priceTypeOptions]);
 
   // --- RESET FUNCTION ---
   const resetForm = () => {
@@ -930,8 +1015,10 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     setCustomerSearch("");
     setCustomerCode("");
     setBranchName("");
+    setBranchId(null);
+    setBranchSearch("");
     setPriceType("A");
-    setCustomerCode("");
+    setPriceTypeSearch("Type A");
     setOrderNo("");
     setOrderSearch("");
     setInvoiceNo("");
@@ -953,6 +1040,44 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
   const filteredCustomers = customers.filter((c) =>
     c.name.toLowerCase().includes(customerSearch.toLowerCase()),
   );
+  const filteredBranches = branches.filter((b) => {
+    const search = branchSearch.toLowerCase();
+    const name = (b.name || b.branch_name || "").toLowerCase();
+    const code = (b.branch_code || "").toLowerCase();
+    return name.includes(search) || code.includes(search);
+  });
+
+  const availablePriceTypes = priceTypeOptions.length > 0
+    ? priceTypeOptions
+    : [
+        { price_type_id: 1, price_type_name: "A", description: "Type A" },
+        { price_type_id: 2, price_type_name: "B", description: "Type B" },
+        { price_type_id: 3, price_type_name: "C", description: "Type C" },
+        { price_type_id: 4, price_type_name: "D", description: "Type D" },
+        { price_type_id: 5, price_type_name: "E", description: "Type E" },
+      ];
+
+  const filteredPriceTypes = availablePriceTypes.filter((pt) => {
+    const search = priceTypeSearch.toLowerCase();
+    const name = pt.price_type_name.toLowerCase();
+    const withType = `type ${name}`;
+    const desc = (pt.description || "").toLowerCase();
+    return name.includes(search) || withType.includes(search) || desc.includes(search);
+  });
+
+  const handleSelectBranch = useCallback((branch: BranchOption) => {
+    const bName = branch.name || branch.branch_name || "";
+    setBranchId(Number(branch.id));
+    setBranchName(bName);
+    setBranchSearch(bName);
+    setIsBranchOpen(false);
+  }, []);
+
+  const handleSelectPriceType = useCallback((pt: PriceTypeOption | { price_type_id: number; price_type_name: string; description?: string }) => {
+    setPriceType(pt.price_type_name);
+    setPriceTypeSearch(`Type ${pt.price_type_name}`);
+    setIsPriceTypeOpen(false);
+  }, []);
 
   const handleOpenProductLookup = () => {
     if (!returnDate) {
@@ -1023,9 +1148,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
       const selectedSalesmanObj = salesmen.find(
         (s) => s.id.toString() === selectedSalesmanId,
       );
-      const branchId = selectedSalesmanObj
-        ? selectedSalesmanObj.branchId
-        : null;
+      const payloadBranchId = branchId !== null ? branchId : (selectedSalesmanObj ? selectedSalesmanObj.branchId : null);
 
       const selectedPt = priceTypeOptions.find(pt => pt.price_type_name === priceType);
       const payloadPriceTypeId = selectedPt ? selectedPt.price_type_id : null;
@@ -1036,7 +1159,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         customer: customerCode,
         salesmanId: selectedSalesmanId,
         salesmanCode: salesmanCode,
-        branchId: branchId,
+        branchId: payloadBranchId,
         isThirdParty,
         totalAmount: totalNet,
         returnDate,
@@ -1113,15 +1236,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           }
           updated[existingIndex] = existing;
         } else {
-          const invoiceItem = invoiceLineItems.find(i => Number(i.product_id) === productId);
-
-          let unitPrice = 0;
-          if (invoiceItem) {
-             unitPrice = Number(invoiceItem.unit_price);
-          } else {
-             const priceKey = `price${priceType}` as keyof SalesReturnItem;
-             unitPrice = Math.round((Number(item[priceKey]) || Number(item.unitPrice) || 0) * 100) / 100;
-          }
+          const unitPrice = resolvePrice(item, priceType, undefined, invoiceLineItems);
 
           const incomingDiscountType = item.discountType || "";
           let initialDiscountAmt = 0;
@@ -1189,7 +1304,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
       if (field === "quantity" || field === "unitPrice" || field === "agreedPrice") {
         const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? Number(item.agreedPrice) : Number(item.unitPrice || 0);
-        item.grossAmount = Math.round(Number(item.quantity || 0) * agPrice * 100) / 100;
+        item.grossAmount = Math.round(Number(item.quantity || 0) * Number(item.unitPrice || 0) * 100) / 100;
         item.priceVariance = Math.round(((Number(item.unitPrice) || 0) - agPrice) * Number(item.quantity || 0) * 100) / 100;
         if (item.discountType) {
           const selectedOption = lineDiscountOptions.find(
@@ -1230,7 +1345,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
           
           // Recalculate based on clamped quantity
           const agPrice = item.agreedPrice !== undefined && item.agreedPrice !== null ? item.agreedPrice : item.unitPrice;
-          item.grossAmount = Math.round(item.quantity * agPrice * 100) / 100;
+          item.grossAmount = Math.round(item.quantity * Number(item.unitPrice || 0) * 100) / 100;
           item.priceVariance = Math.round(((item.unitPrice || 0) - agPrice) * item.quantity * 100) / 100;
           
           if (item.discountType) {
@@ -1266,7 +1381,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
     (sum, item) => sum + (item.discountAmount || 0),
     0,
   ) * 100) / 100;
-  const totalNet = Math.round(items.reduce((sum, item) => sum + (item.totalAmount || 0), 0) * 100) / 100;
+  const totalNet = Math.round((totalGross - totalDiscount) * 100) / 100;
 
   const filteredInvoices = invoiceOptions.filter((inv) =>
     !inv.isPosted && inv.invoice_no.toLowerCase().includes(invoiceSearch.toLowerCase()),
@@ -1306,7 +1421,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-          <div className="bg-background p-5 rounded-lg border border-border shadow-sm relative">
+          <div className="bg-background p-5 rounded-lg border border-border shadow-sm relative z-30">
             <div className="absolute top-0 left-0 w-1 h-full bg-primary rounded-l-lg"></div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-4">
 
@@ -1336,7 +1451,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                   <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
                 {isSalesmanOpen && (
-                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-20 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
+                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-50 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
                     {filteredSalesmen.map((s) => (
                       <div
                         key={s.id}
@@ -1382,7 +1497,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                   <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
                 {isCustomerOpen && (
-                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-20 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
+                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-50 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
                     {filteredCustomers.map((c) => (
                       <div
                         key={c.id}
@@ -1413,13 +1528,56 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
 
               {/* ROW 2 */}
               {/* Branch */}
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 relative" ref={branchWrapperRef}>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide truncate block">
-                  Branch
+                  Branch <span className="text-destructive">*</span>
                 </label>
-                <div className="h-9 w-full bg-muted/20 border border-border rounded-md px-3 flex items-center text-sm font-medium text-foreground italic shadow-sm">
-                  {branchName || "-"}
+                <div className="relative group">
+                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary" />
+                  <input
+                    type="text"
+                    className="w-full h-9 border border-border rounded-md text-sm pl-9 pr-8 bg-background outline-none focus:ring-2 focus:border-primary shadow-sm"
+                    placeholder="Search Branch..."
+                    value={branchSearch}
+                    onChange={(e) => {
+                      setBranchSearch(e.target.value);
+                      setIsBranchOpen(true);
+                      setBranchId(null);
+                      setBranchName("");
+                    }}
+                    onFocus={() => {
+                      setIsBranchOpen(true);
+                      setBranchSearch("");
+                    }}
+                  />
+                  <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
+                {isBranchOpen && (
+                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-50 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
+                    {filteredBranches.length > 0 ? (
+                      filteredBranches.map((b) => (
+                        <div
+                          key={b.id}
+                          className="px-4 py-2.5 text-sm cursor-pointer hover:bg-primary/10 text-foreground"
+                          onClick={() => handleSelectBranch(b)}
+                        >
+                          <div className="flex flex-col">
+                            <span>{b.name || b.branch_name}</span>
+                            {b.branch_code && (
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {b.branch_code}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-4 py-2.5 text-sm text-muted-foreground italic">
+                        No branches found
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Return Date */}
@@ -1446,32 +1604,54 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
               </div>
 
               {/* Price Type */}
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 relative" ref={priceTypeWrapperRef}>
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide truncate block">
                   Price Type <span className="text-destructive">*</span>
                 </label>
-                <Select value={priceType} onValueChange={setPriceType}>
-                  <SelectTrigger className="w-full h-9 bg-background border-border focus:ring-2 focus:ring-primary shadow-sm text-sm">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background border border-border shadow-xl z-50">
-                    {priceTypeOptions.length > 0 ? (
-                      priceTypeOptions.map((pt) => (
-                        <SelectItem key={pt.price_type_id} value={pt.price_type_name}>
-                          Type {pt.price_type_name}
-                        </SelectItem>
+                <div className="relative group">
+                  <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary" />
+                  <input
+                    type="text"
+                    className="w-full h-9 border border-border rounded-md text-sm pl-9 pr-8 bg-background outline-none focus:ring-2 focus:border-primary shadow-sm"
+                    placeholder="Search Price Type..."
+                    value={priceTypeSearch}
+                    onChange={(e) => {
+                      setPriceTypeSearch(e.target.value);
+                      setIsPriceTypeOpen(true);
+                    }}
+                    onFocus={() => {
+                      setIsPriceTypeOpen(true);
+                      setPriceTypeSearch("");
+                    }}
+                  />
+                  <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                {isPriceTypeOpen && (
+                  <div className="absolute top-[calc(100%+4px)] left-0 w-full z-50 bg-background border border-border rounded-md shadow-xl max-h-60 overflow-y-auto font-medium">
+                    {filteredPriceTypes.length > 0 ? (
+                      filteredPriceTypes.map((pt) => (
+                        <div
+                          key={pt.price_type_id}
+                          className="px-4 py-2.5 text-sm cursor-pointer hover:bg-primary/10 text-foreground"
+                          onClick={() => handleSelectPriceType(pt)}
+                        >
+                          <div className="flex flex-col">
+                            <span>Type {pt.price_type_name}</span>
+                            {pt.description && pt.description !== `Type ${pt.price_type_name}` && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {pt.description}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       ))
                     ) : (
-                      <>
-                        <SelectItem value="A">Type A</SelectItem>
-                        <SelectItem value="B">Type B</SelectItem>
-                        <SelectItem value="C">Type C</SelectItem>
-                        <SelectItem value="D">Type D</SelectItem>
-                        <SelectItem value="E">Type E</SelectItem>
-                      </>
+                      <div className="px-4 py-2.5 text-sm text-muted-foreground italic">
+                        No price types found
+                      </div>
                     )}
-                  </SelectContent>
-                </Select>
+                  </div>
+                )}
               </div>
 
               {/* Third Party Checkbox */}
@@ -1551,6 +1731,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                     <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                       Disc. Type
                     </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                      Disc. Amount
+                    </TableHead>
+                    <TableHead className="text-white font-semibold h-11 text-right min-w-[110px] uppercase text-xs">
+                      Net Amount
+                    </TableHead>
                     <TableHead className="text-white font-semibold h-11 w-[160px] uppercase text-xs">
                       Return Type
                     </TableHead>
@@ -1563,7 +1749,7 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                   {items.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={13}
+                        colSpan={15}
                         className="h-24 text-center text-muted-foreground text-sm"
                       >
                         No products found.
@@ -1740,6 +1926,16 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                               })()}
                             </TableCell>
 
+                            {/* Disc. Amount */}
+                            <TableCell className="text-right text-sm text-foreground align-middle font-mono whitespace-nowrap bg-muted/10">
+                              {(Number(item.discountAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+
+                            {/* Net Amount */}
+                            <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono whitespace-nowrap bg-primary/5">
+                              {(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+
                             {/* Return Type */}
                             <TableCell className="align-middle p-2">
                               <LocalSearchableSelect
@@ -1879,6 +2075,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                             <TableCell className="align-middle p-2 text-center text-muted-foreground">
                               -
                             </TableCell>
+                            <TableCell className="text-right text-sm text-amber-600 dark:text-amber-500 font-semibold align-middle font-mono">
+                              - ₱{(Number(group.totalDiscount)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono">
+                              ₱{(Number(group.totalNet)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </TableCell>
                             <TableCell className="align-middle p-2 text-center text-muted-foreground">
                               <Badge variant="outline" className="font-normal text-[11px]">
                                 {group.returnType || "-"}
@@ -1975,6 +2177,12 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                                   <span className="text-xs text-muted-foreground">
                                     {lineDiscountOptions.find((d) => d.id.toString() == item.discountType)?.discount_type || "None"}
                                   </span>
+                                </TableCell>
+                                <TableCell className="text-right text-sm text-foreground align-middle font-mono bg-muted/10">
+                                  {(Number(item.discountAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="text-right text-sm font-bold text-primary align-middle font-mono bg-primary/5">
+                                  {(Number(item.totalAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </TableCell>
                                 <TableCell className="align-middle p-2">
                                   <LocalSearchableSelect
@@ -2200,21 +2408,22 @@ export function CreateSalesReturnModal({ isOpen, onClose, onSuccess }: Props) {
                 <h4 className="font-bold text-foreground">Financial Summary</h4>
               </div>
               <div className="p-6 space-y-4">
+                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500 font-semibold" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500 font-semibold" : "text-muted-foreground"}`}>
+                  <span>Total Price Variance</span>
+                  <span className="font-medium tabular-nums font-mono">
+                    {totalVariance > 0 ? "+" : ""}
+                    ₱
+                    {totalVariance.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="my-2 border-t border-dashed border-border"></div>
                 <div className="flex justify-between items-center text-sm text-muted-foreground">
                   <span>Total Gross Amount</span>
                   <span className="font-medium text-foreground tabular-nums">
                     ₱
                     {totalGross.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-                <div className={`flex justify-between items-center text-sm ${totalVariance > 0 ? "text-emerald-600 dark:text-emerald-500 font-semibold" : totalVariance < 0 ? "text-rose-600 dark:text-rose-500 font-semibold" : "text-muted-foreground"}`}>
-                  <span>Price Variance</span>
-                  <span className="font-medium tabular-nums font-mono">
-                    {totalVariance > 0 ? "+" : ""}
-                    ₱
-                    {totalVariance.toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                     })}
                   </span>

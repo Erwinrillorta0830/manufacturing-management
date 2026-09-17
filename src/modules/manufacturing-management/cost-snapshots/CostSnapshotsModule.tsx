@@ -34,7 +34,7 @@ interface QuotationHeader {
     customer_id: Customer | null;
     total_selling_price: number;
     total_simulated_cost: number;
-    forex_rate_used: number;
+    forex_rate_used?: number | null;
     remarks?: string;
     project_name?: string;
 }
@@ -99,8 +99,9 @@ export default function CostSnapshotsModule() {
             const audited = await Promise.all(snapshots.map(async (snap) => {
                 let liveCost = 0;
                 try {
+                    const forexQuery = quote.forex_rate_used ? `&forexRate=${Number(quote.forex_rate_used)}` : "";
                     const costRes = await fetch(
-                        `/api/manufacturing/finished-goods/bom-cost?productId=${snap.product_id}&versionId=${snap.version_id}&forexRate=${Number(quote.forex_rate_used || 58.00)}`
+                        `/api/manufacturing/finished-goods/bom-cost?productId=${snap.product_id}&versionId=${snap.version_id}${forexQuery}`
                     );
                     if (costRes.ok) {
                         const costData = await costRes.json();
@@ -278,7 +279,7 @@ export default function CostSnapshotsModule() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-muted-foreground font-mono">
                                     <span className="bg-background border px-2 py-1 rounded">
-                                        Forex: ₱{Number(selectedQuote.forex_rate_used || 0).toFixed(2)}
+                                        Forex: {selectedQuote.forex_rate_used ? `₱${Number(selectedQuote.forex_rate_used).toFixed(2)}` : "None (PHP)"}
                                     </span>
                                     <span className="bg-background border px-2 py-1 rounded">
                                         Quote Date: {new Date(selectedQuote.quote_date).toLocaleDateString()}

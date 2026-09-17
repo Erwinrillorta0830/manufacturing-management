@@ -635,8 +635,10 @@ export function CreateSalesOrderModal({
                 seenProductIds.add(item.product_id);
                 
                 const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
+                const typeObj = item.product_type_id 
+                    ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                    : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
+                const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
 
                 if (isFinishedGood) {
                     const versionState = versionStates[item.product_id] || versionStates[item.parent_product_id];
@@ -714,8 +716,10 @@ export function CreateSalesOrderModal({
                 payload.customerId = Number(customerId);
                 payload.items = items.map(item => {
                     const prod = products.find(p => Number(p.product_id) === Number(item.parent_product_id));
-                    const typeObj = prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null;
-                    const isFinishedGood = typeObj && typeObj.name === 'Finished Goods';
+                    const typeObj = item.product_type_id 
+                        ? productTypes.find(t => Number(t.id) === Number(item.product_type_id)) 
+                        : (prod ? productTypes.find(t => String(t.id) === String(prod.product_type)) : null);
+                    const isFinishedGood = Boolean(typeObj?.name?.toLowerCase().includes("finished"));
                     return {
                         parent_product_id: item.parent_product_id,
                         product_id: item.product_id,
@@ -987,28 +991,31 @@ export function CreateSalesOrderModal({
                                     />
                                 </div>
                             </div>
-                            {formErrors.items?.[0]?.product && <p id="direct-so-items-error" className="text-xs text-destructive">{formErrors.items[0].product}</p>}
-
-                            <div className="overflow-visible rounded-md border bg-card">
-                                <table className="block w-full text-left text-xs md:table">
+                            {formErrors.items?.[0]?.product && (
+                                <p id="direct-so-items-error" className="text-xs text-destructive">
+                                    {formErrors.items[0].product}
+                                </p>
+                            )}
+                            <div className="overflow-x-auto overflow-y-visible rounded-md border bg-card">
+                                <table className="block w-full min-w-[1080px] text-left text-xs md:table">
                                     <thead className="hidden md:table-header-group">
                                         <tr className="border-b bg-muted/40 text-xs font-semibold text-muted-foreground">
-                                            <th className="py-2.5 px-4 w-[15%]">Product Type</th>
-                                            <th className="py-2.5 px-4 w-[18%]">Product</th>
-                                            <th className="py-2.5 px-4 w-24">UOM</th>
-                                            <th className="py-2.5 px-4 w-[13%]">Version</th>
-                                            <th className="py-2.5 px-4 text-right w-20">Qty</th>
-                                            <th className="py-2.5 px-4 text-right w-24">Unit Price</th>
-                                            <th className="py-2.5 px-4 text-left w-24">Discount Type</th>
-                                            <th className="py-2.5 px-4 text-right w-24">Discount Amount</th>
-                                            <th className="py-2.5 px-4 text-right">Total Net</th>
-                                            <th className="py-2.5 px-4 text-center">Action</th>
+                                            <th className="py-2.5 px-3 w-32 min-w-[120px]">Product Type</th>
+                                            <th className="py-2.5 px-3 w-48 min-w-[180px]">Product</th>
+                                            <th className="py-2.5 px-3 w-36 min-w-[130px]">Unit of Measure</th>
+                                            <th className="py-2.5 px-3 w-32 min-w-[120px]">Version</th>
+                                            <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Qty</th>
+                                            <th className="py-2.5 px-3 text-right w-28 min-w-[110px]">Unit Price</th>
+                                            <th className="py-2.5 px-3 text-left w-28 min-w-[100px]">Discount Type</th>
+                                            <th className="py-2.5 px-3 text-right w-28 min-w-[100px]">Discount Amount</th>
+                                            <th className="py-2.5 px-3 text-right w-32 min-w-[110px]">Total Net</th>
+                                            <th className="py-2.5 px-3 text-center w-14">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody className="block divide-y md:table-row-group">
                                         {items.length === 0 ? (
                                             <tr className="block md:table-row">
-                                                <td colSpan={8} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
                                                     No products added.
                                                 </td>
                                             </tr>
@@ -1027,7 +1034,7 @@ export function CreateSalesOrderModal({
                                                 if (filteredItems.length === 0) {
                                                     return (
                                                         <tr className="block md:table-row">
-                                                            <td colSpan={8} className="py-8 text-center text-muted-foreground italic font-semibold">
+                                                            <td colSpan={10} className="py-8 text-center text-muted-foreground italic font-semibold">
                                                                 No products match your search.
                                                             </td>
                                                         </tr>
@@ -1093,7 +1100,7 @@ export function CreateSalesOrderModal({
 
                                                 return (
                                                     <tr key={item.line_id} className="grid grid-cols-1 gap-3 p-3 font-semibold text-foreground hover:bg-muted/5 md:table-row md:p-0">
-                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                        <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Product Type</span>
                                                             <CreatableSelect
                                                                 options={productTypes.map(t => ({ value: String(t.id), label: t.name }))}
@@ -1108,7 +1115,7 @@ export function CreateSalesOrderModal({
                                                             />
                                                             {formErrors.items?.[item.line_id]?.product_type && <p id={`line-${item.line_id}-product-type-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product_type}</p>}
                                                         </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                        <td className="block overflow-visible p-0 md:table-cell md:px-3 md:py-2.5">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Product</span>
                                                             <CreatableSelect
                                                                 options={parentOptions}
@@ -1123,7 +1130,7 @@ export function CreateSalesOrderModal({
                                                             />
                                                             {formErrors.items?.[item.line_id]?.product && <p id={`line-${item.line_id}-product-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].product}</p>}
                                                         </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:w-44 md:min-w-44 md:p-3">
+                                                        <td className="block overflow-visible p-0 md:table-cell md:w-36 md:min-w-[130px] md:px-3 md:py-2.5">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Unit of Measure</span>
                                                             <CreatableSelect
                                                                 options={uomOptions}
@@ -1139,29 +1146,33 @@ export function CreateSalesOrderModal({
                                                             {formErrors.items?.[item.line_id]?.uom && <p id={`line-${item.line_id}-uom-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].uom}</p>}
                                                             {item.parent_product_id > 0 && uomOptions.length === 0 && <p className="mt-1 text-xs text-muted-foreground">No additional UOM is available.</p>}
                                                         </td>
-                                                        <td className="block overflow-visible p-0 md:table-cell md:p-3">
+                                                        <td className="block overflow-visible p-0 md:table-cell md:w-32 md:min-w-[120px] md:px-3 md:py-2.5">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Version</span>
-                                                            {activeVerState?.versions && activeVerState.versions.length > 0 ? (
-                                                                activeVerState.status === "loading" ? (
-                                                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
-                                                                ) : activeVerState.status === "resolved" ? (
-                                                                    <select
-                                                                        value={item.bom_version_id || activeVerState.defaultVersionId || ""}
-                                                                        onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
-                                                                        className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
-                                                                    >
-                                                                        {activeVerState.versions.map((v: any) => (
-                                                                            <option key={v.version_id} value={v.version_id}>
-                                                                                {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
-                                                                ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                            {isFinishedGoods ? (
+                                                                activeVerState?.versions && activeVerState.versions.length > 0 ? (
+                                                                    activeVerState.status === "loading" ? (
+                                                                        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Resolving...</span>
+                                                                    ) : activeVerState.status === "resolved" ? (
+                                                                        <select
+                                                                            value={item.bom_version_id || activeVerState.defaultVersionId || ""}
+                                                                            onChange={e => handleItemChange(trueIndex, "bom_version_id", Number(e.target.value))}
+                                                                            className="h-8 w-full text-xs font-semibold bg-background border rounded px-1.5 outline-none focus:ring-1 focus:ring-primary focus:border-primary text-primary truncate max-w-[150px]"
+                                                                        >
+                                                                            {activeVerState.versions.map((v: any) => (
+                                                                                <option key={v.version_id} value={v.version_id}>
+                                                                                    {v.version_name} {v.is_primary ? "(Primary)" : Number(v.version_id) === activeVerState.defaultVersionId ? "(Default)" : ""}
+                                                                                </option>
+                                                                            ))}
+                                                                        </select>
+                                                                    ) : <span className="text-[10px] text-muted-foreground">Unavailable</span>
+                                                                ) : (
+                                                                    <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                                )
                                                             ) : (
-                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">-</span>
+                                                                <span className="text-muted-foreground text-xs font-semibold text-center block">N/A</span>
                                                             )}
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-20 md:p-3 md:text-right">
+                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
                                                             <label htmlFor={`line-${item.line_id}-quantity`} className="mb-1 block text-xs font-semibold md:sr-only">Qty</label>
                                                             <input
                                                                 id={`line-${item.line_id}-quantity`}
@@ -1171,13 +1182,13 @@ export function CreateSalesOrderModal({
                                                                 onChange={e => handleItemChange(trueIndex, "quantity", Number(e.target.value))}
                                                                 aria-invalid={Boolean(formErrors.items?.[item.line_id]?.quantity)}
                                                                 aria-describedby={formErrors.items?.[item.line_id]?.quantity ? `line-${item.line_id}-quantity-error` : undefined}
-                                                                className="w-full bg-background border rounded-lg px-2 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
+                                                                className="w-full bg-background border rounded-lg px-2.5 py-1 h-8 text-xs text-right outline-none focus:ring-1 focus:ring-primary focus:border-primary font-semibold"
                                                             />
                                                             {formErrors.items?.[item.line_id]?.quantity && <p id={`line-${item.line_id}-quantity-error`} className="mt-1 text-xs text-destructive">{formErrors.items[item.line_id].quantity}</p>}
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[110px] md:px-3 md:py-2.5 md:text-right">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Unit Price</span>
-                                                            <div className={`h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono border rounded-lg ${
+                                                            <div className={`h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono border rounded-lg ${
                                                                 formErrors.items?.[item.line_id]?.unit_price 
                                                                     ? "border-destructive bg-destructive/10 text-destructive" 
                                                                     : "text-muted-foreground bg-muted/50 border-input"
@@ -1188,7 +1199,7 @@ export function CreateSalesOrderModal({
                                                                 <p className="mt-1 text-[10px] text-destructive font-normal text-right">Price is ₱0.00</p>
                                                             )}
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-left">
+                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-left">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Discount Type</span>
                                                             <div className="h-8 flex items-center justify-start px-2 text-xs font-semibold text-muted-foreground truncate" title={(() => {
                                                                 const matchedDiscount = discountTypes.find(d => Number(d.id) === Number(item.discount_type));
@@ -1200,17 +1211,17 @@ export function CreateSalesOrderModal({
                                                                 })()}
                                                             </div>
                                                         </td>
-                                                        <td className="block p-0 md:table-cell md:w-24 md:p-3 md:text-right">
+                                                        <td className="block p-0 md:table-cell md:w-28 md:min-w-[100px] md:px-3 md:py-2.5 md:text-right">
                                                             <span className="mb-1 block text-xs font-semibold md:hidden">Discount Amount</span>
-                                                            <div className="h-8 flex items-center justify-end px-2 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
+                                                            <div className="h-8 flex items-center justify-end px-2.5 text-xs font-semibold font-mono text-destructive bg-muted/50 border rounded-lg">
                                                                 {item.discount_amount ? `-${item.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "-"}
                                                             </div>
                                                         </td>
-                                                        <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:p-3">
+                                                        <td className="flex items-center justify-between p-0 text-right font-bold text-foreground md:table-cell md:w-32 md:min-w-[110px] md:px-3 md:py-2.5 whitespace-nowrap">
                                                             <span className="text-xs md:hidden">Total Net</span>
                                                             ₱{((item.unit_price - (item.discount_amount || 0)) * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                         </td>
-                                                        <td className="block p-0 text-right md:table-cell md:p-3 md:text-center">
+                                                        <td className="block p-0 text-right md:table-cell md:w-14 md:px-3 md:py-2.5 md:text-center">
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleRemoveItem(trueIndex)}
@@ -1246,23 +1257,23 @@ export function CreateSalesOrderModal({
 
                         </div>
                         <div className="shrink-0 border-t bg-background px-4 py-3 sm:px-6">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="grid grid-cols-3 gap-x-5 text-xs">
-                                <div className="flex justify-between text-xs text-muted-foreground font-bold">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                                <div className="flex items-center gap-2 font-bold text-muted-foreground whitespace-nowrap">
                                     <span>Subtotal:</span>
-                                    <span>₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="font-mono text-foreground">₱{subTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
-                                <div className="flex justify-between text-xs text-rose-500 font-bold">
+                                <div className="flex items-center gap-2 font-bold text-rose-500 whitespace-nowrap">
                                     <span>Total Discount:</span>
-                                    <span>-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="font-mono">-₱{totalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
-                                <div className="flex justify-between text-xs text-foreground font-black">
+                                <div className="flex items-center gap-2 font-black text-foreground whitespace-nowrap">
                                     <span>Grand Total:</span>
-                                    <span className="text-primary">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="font-mono text-primary text-sm font-extrabold">₱{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                             </div>
 
-                            <div className="flex gap-3 items-center">
+                            <div className="flex gap-3 items-center shrink-0">
                                 <button
                                     type="button"
                                     onClick={requestClose}

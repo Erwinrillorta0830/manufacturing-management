@@ -433,10 +433,10 @@ export function useClients() {
         setFormData(prev => {
             const next = { ...prev, customer_name: name };
             if (!editingCustomer && name.trim()) {
-                const words = name.trim().toUpperCase().split(/\s+/).slice(0, 3);
-                const prefix = words.map(w => w.replace(/[^A-Z0-9]/g, "").slice(0, 3)).join("-");
+                const words = name.trim().toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).slice(0, 3);
+                const prefix = words.map(w => w.slice(0, 3)).filter(Boolean).join("-") || "GEN";
                 const random = Math.floor(100 + Math.random() * 900);
-                next.customer_code = `CUST-${prefix}-${random}`;
+                next.customer_code = `CUST-${prefix}-${random}`.replace(/[^A-Za-z0-9-]+/g, "").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
             }
             return next;
         });

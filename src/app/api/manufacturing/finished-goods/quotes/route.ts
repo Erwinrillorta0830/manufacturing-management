@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserIdFromToken } from "@/app/api/manufacturing/item-management/auth-helper";
-import { getISOStringInConfiguredTimezone } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
 import { 
     fetchQuotations, 
     saveQuotation 
@@ -46,10 +46,12 @@ export async function POST(request: Request) {
         }
 
         const userId = await getUserIdFromToken().catch(() => null);
-        const serverTime = await getISOStringInConfiguredTimezone();
+        const serverTime = formatPhtDateTime();
 
         header.created_by = userId;
-        header.created_at = serverTime.substring(0, 19).replace('T', ' ');
+        header.created_at = serverTime;
+        header.modified_by = null;
+        header.modified_at = null;
 
         const result = await saveQuotation(header, snapshots);
         return NextResponse.json(result);
@@ -82,13 +84,14 @@ export async function PATCH(request: Request) {
         }
         
         const userId = await getUserIdFromToken().catch(() => null);
+        const serverTime = formatPhtDateTime();
 
         // Update the quotation header status if quoteId is provided
         if (quoteId) {
             const res = await fetch(`${DIRECTUS_URL}/items/quotation_header/${quoteId}`, {
                 method: "PATCH",
                 headers: reqHeaders,
-                body: JSON.stringify({ status, modified_by: userId })
+                body: JSON.stringify({ status, modified_by: userId, modified_at: serverTime })
             });
 
             if (!res.ok) {
@@ -102,7 +105,7 @@ export async function PATCH(request: Request) {
             const projectRes = await fetch(`${DIRECTUS_URL}/items/projects/${projectId}`, {
                 method: "PATCH",
                 headers: reqHeaders,
-                body: JSON.stringify({ status, modified_by: userId })
+                body: JSON.stringify({ status, modified_by: userId, modified_at: serverTime })
             });
 
             if (!projectRes.ok) {
