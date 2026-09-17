@@ -4,7 +4,7 @@ export type PurchaseIntent = typeof PURCHASE_INTENTS[number];
 export const APPROVAL_STAGES = ["Finance"] as const;
 export type ApprovalStage = typeof APPROVAL_STAGES[number];
 
-export const APPROVAL_ACTIONS = ["Submitted", "FinanceApproved", "Rejected", "Resubmitted", "Cancelled"] as const;
+export const APPROVAL_ACTIONS = ["Submitted", "FinanceApproved", "Revision", "Rejected", "Resubmitted", "Cancelled"] as const;
 export type ApprovalAction = typeof APPROVAL_ACTIONS[number];
 export const PURCHASE_ORDER_REVISION_ACTION: ApprovalAction = "Resubmitted";
 
@@ -259,7 +259,7 @@ export interface PurchaseOrderApprovalContext {
     businessDate: string;
 }
 
-export type PurchaseOrderWorkflowStage = "Finance" | "Complete" | "Rejected";
+export type PurchaseOrderWorkflowStage = "Finance" | "Complete" | "Rejected" | "Revision";
 
 export interface PurchaseOrderWorkflowState {
     inventoryStatus: number;
@@ -277,6 +277,7 @@ export function pendingPurchaseOrderApprovalStages(state: PurchaseOrderWorkflowS
 }
 
 export function derivePurchaseOrderWorkflowStage(state: PurchaseOrderWorkflowState): PurchaseOrderWorkflowStage {
+    if (state.inventoryStatus === 15) return "Revision";
     if (state.inventoryStatus === 13) return "Rejected";
     const pendingStages = pendingPurchaseOrderApprovalStages(state);
     return pendingStages[0] || "Complete";

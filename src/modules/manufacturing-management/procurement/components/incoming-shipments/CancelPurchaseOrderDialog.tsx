@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-export const DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS = "Purchase order cancelled after rejection.";
+export const DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS = "Purchase order cancelled from Revision.";
 
 export interface CancelPurchaseOrderDialogProps {
     open: boolean;
@@ -23,6 +23,9 @@ export interface CancelPurchaseOrderDialogProps {
     supplierName: string;
     branchName?: string | null;
     totalLabel?: string | null;
+    stageLabel?: string | null;
+    reasonMode?: "input" | "summary";
+    reasonText?: string | null;
     loading?: boolean;
     onConfirm: (remarks: string) => Promise<boolean>;
 }
@@ -41,6 +44,9 @@ function CancelPurchaseOrderDialogBody({
     supplierName,
     branchName = null,
     totalLabel = null,
+    stageLabel = "Finance",
+    reasonMode = "input",
+    reasonText = null,
     loading = false,
     onConfirm,
     onOpenChange
@@ -52,7 +58,8 @@ function CancelPurchaseOrderDialogBody({
         event.preventDefault();
         if (loading) return;
         setSubmitError(null);
-        const remarks = reason.trim() || DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS;
+        const suppliedReason = reasonMode === "summary" ? (reasonText || "") : reason;
+        const remarks = suppliedReason.trim() || DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS;
         const succeeded = await onConfirm(remarks);
         if (succeeded) {
             onOpenChange(false);
@@ -71,7 +78,7 @@ function CancelPurchaseOrderDialogBody({
                     </DialogTitle>
                 </div>
                 <DialogDescription className="text-xs">
-                    This marks the rejected purchase order as Cancelled. This action cannot be undone.
+                    This marks the purchase order as Cancelled. This action cannot be undone.
                 </DialogDescription>
             </DialogHeader>
 
@@ -79,26 +86,35 @@ function CancelPurchaseOrderDialogBody({
                 <SummaryRow label="Supplier" value={supplierName} />
                 {branchName && <SummaryRow label="Branch" value={branchName} />}
                 {totalLabel && <SummaryRow label="Total (PHP)" value={totalLabel} />}
-                <SummaryRow label="Rejection stage" value="Finance" />
+                {stageLabel && <SummaryRow label="Decision stage" value={stageLabel} />}
             </div>
 
-            <div className="mt-4 space-y-2">
-                <Label htmlFor="purchase-order-cancellation-reason" className="text-xs font-semibold">
-                    Cancellation reason (optional)
-                </Label>
-                <Textarea
-                    id="purchase-order-cancellation-reason"
-                    value={reason}
-                    onChange={(event) => setReason(event.target.value)}
-                    placeholder={DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS}
-                    maxLength={2000}
-                    className="min-h-20 resize-y bg-background text-xs"
-                    disabled={loading}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                    Leave blank to use the default cancellation note.
-                </p>
-            </div>
+            {reasonMode === "input" ? (
+                <div className="mt-4 space-y-2">
+                    <Label htmlFor="purchase-order-cancellation-reason" className="text-xs font-semibold">
+                        Cancellation reason (optional)
+                    </Label>
+                    <Textarea
+                        id="purchase-order-cancellation-reason"
+                        value={reason}
+                        onChange={(event) => setReason(event.target.value)}
+                        placeholder={DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS}
+                        maxLength={2000}
+                        className="min-h-20 resize-y bg-background text-xs"
+                        disabled={loading}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                        Leave blank to use the default cancellation note.
+                    </p>
+                </div>
+            ) : (
+                <div className="mt-4 space-y-1.5">
+                    <Label className="text-xs font-semibold">Cancellation reason</Label>
+                    <div className="min-h-16 whitespace-pre-wrap break-words rounded-md border bg-background p-3 text-xs text-foreground">
+                        {reasonText?.trim() || DEFAULT_PURCHASE_ORDER_CANCELLATION_REMARKS}
+                    </div>
+                </div>
+            )}
 
             {submitError && (
                 <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] font-semibold text-destructive" role="alert">

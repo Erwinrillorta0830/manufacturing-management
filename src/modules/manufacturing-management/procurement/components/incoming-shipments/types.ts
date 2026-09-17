@@ -92,7 +92,7 @@ export interface ShipmentFormState {
     exchange_rate: string;
     total_foreign_currency: string;
     total_php_value: string;
-    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected";
+    status: "Ordered" | "Approved" | "Awaiting Payment" | "Cancelled" | "For Pickup" | "Warehouse Receiving" | "Receiving (QA)" | "Partially Received" | "Received" | "Rejected" | "Revision";
     date_received: string;
     branch_id: number | null;
     payment_type: number | null;

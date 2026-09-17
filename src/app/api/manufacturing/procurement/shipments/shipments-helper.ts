@@ -3,6 +3,7 @@ import { productUpdateAuditFields } from "@/app/api/manufacturing/product-audit"
 import { dateOnlyInManila, FINANCE_APPROVED_HISTORY_INVENTORY_STATUS_IDS, INVENTORY_STATUS, inventoryStatusToPurchaseOrderStatus, inventoryStatusToShipmentStatus, isPurchaseOrderApprovalStatus, PAYMENT_STATUS, RECEIVING_QUEUE_INVENTORY_STATUS_IDS, shipmentStatusToInventoryStatus, type ShipmentStatusLabel } from "../_domain";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
 import { getPurchaseOrderCreationTimestamps } from "../_purchase-order-timestamps";
+import { formatPhtDateTime } from "@/app/api/manufacturing/services/core-api.service";
 import { calculateLandedCostAllocations, normalizeAllocationMethod } from "../expenses/expenses-helper";
 import {
     ProductWeightValidationError,
@@ -123,6 +124,9 @@ interface DirectusPO {
     approval_allow_self_approval?: boolean | null;
     revised_at?: string | null;
     revised_by?: number | null;
+    for_revision_at?: string | null;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
     is_posted?: number | boolean | null;
     is_posted_amounts?: number | boolean | null;
     force_received_at?: string | null;
@@ -459,7 +463,8 @@ function mapPurchaseOrder(
     paymentModes: ReadonlyMap<number, DirectusPaymentMode>,
     canonicalStatus = false,
     rejectionStage: PurchaseOrderRejectionStage | null = null,
-    revisionCount = 0
+    revisionCount = 0,
+    userNames: ReadonlyMap<number, string> = new Map()
 ) {
     const poLabel = `purchase_order/${po.purchase_order_id}`;
     const currencyCode = String(po.currency_code || "PHP").trim().toUpperCase();
@@ -526,6 +531,10 @@ function mapPurchaseOrder(
         approval_allow_self_approval: po.approval_allow_self_approval == null ? null : Number(po.approval_allow_self_approval) === 1,
         revised_at: po.revised_at || null,
         revised_by: po.revised_by || null,
+        for_revision_at: po.for_revision_at || null,
+        cancelled_at: po.cancelled_at || null,
+        cancelled_by: po.cancelled_by || null,
+        cancelled_by_name: po.cancelled_by ? userNames.get(Number(po.cancelled_by)) || `User #${po.cancelled_by}` : null,
         is_posted: po.is_posted === true || Number(po.is_posted) === 1 ? 1 : 0,
         is_posted_amounts: po.is_posted_amounts === true || Number(po.is_posted_amounts) === 1 ? 1 : 0,
         isForceReceived: isForceReceived(po.force_received_at),
@@ -608,8 +617,31 @@ async function fetchSupplierMap(ids: readonly number[]): Promise<Map<number, Dir
     return new Map(rows.map(row => [Number(row.id), row]));
 }
 
-async function findSupplierIds(search: string): Promise<number[]> {
+interface DirectusUserRow {
+    user_id?: number | string | null;
+    user_fname?: string | null;
+    user_lname?: string | null;
+}
+
+async function fetchUserNameMap(ids: readonly number[]): Promise<Map<number, string>> {
+    const uniqueIds = [...new Set(ids.filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (uniqueIds.length === 0) return new Map();
     const params = new URLSearchParams({
+        fields: "user_id,user_fname,user_lname",
+        limit: String(uniqueIds.length),
+        filter: JSON.stringify({ user_id: { _in: uniqueIds } })
+    });
+    const response = await fetch(`${DIRECTUS_URL}/items/user?${params.toString()}`, { headers, cache: "no-store" });
+    if (!response.ok) return new Map();
+    const rows = ((await response.json()).data || []) as DirectusUserRow[];
+    return new Map(rows.flatMap(row => {
+        const id = Number(row.user_id);
+        const name = [row.user_fname, row.user_lname].filter(Boolean).join(" ").trim();
+        return Number.isSafeInteger(id) && id > 0 && name ? [[id, name] as const] : [];
+    }));
+}
+
+async function findSupplierIds(search: string): Promise<number[]> {    const params = new URLSearchParams({
         fields: "id",
         limit: "100",
         filter: JSON.stringify({ supplier_name: { _icontains: search } })
@@ -624,10 +656,10 @@ async function findCurrentRejectionPurchaseOrderIds(stage: PurchaseOrderRejectio
     const params = new URLSearchParams({
         fields: "purchase_order_id,inventory_status,workflow_revision",
         limit: "-1",
-        "filter[inventory_status][_eq]": String(INVENTORY_STATUS.REJECTED)
+        "filter[inventory_status][_in]": `${INVENTORY_STATUS.REVISION},${INVENTORY_STATUS.REJECTED}`
     });
     const response = await fetch(`${DIRECTUS_URL}/items/purchase_order?${params.toString()}`, { headers, cache: "no-store" });
-    if (!response.ok) throw new Error(`Failed to load rejected purchase orders (${response.status}).`);
+    if (!response.ok) throw new Error(`Failed to load purchase orders for revision (${response.status}).`);
     const rows = ((await response.json()).data || []) as Array<{
         purchase_order_id?: number;
         inventory_status?: number | null;
@@ -672,17 +704,22 @@ async function addApprovalStageFilter(clauses: Record<string, unknown>[], query:
         return;
     }
 
-    if (query.status === "Rejected") {
+    if (query.status === "Revision" || query.status === "Rejected") {
         const rejectedIds = await findCurrentRejectionPurchaseOrderIds(query.approvalStage);
-        clauses.push({ inventory_status: { _eq: INVENTORY_STATUS.REJECTED } });
+        clauses.push({ inventory_status: { _in: [INVENTORY_STATUS.REVISION, INVENTORY_STATUS.REJECTED] } });
         clauses.push({ purchase_order_id: { _in: rejectedIds.length ? rejectedIds : [-1] } });
+        return;
+    }
+
+    if (query.status === "Cancelled") {
+        clauses.push({ inventory_status: { _eq: INVENTORY_STATUS.CANCELLED } });
         return;
     }
 
     clauses.push({ purchase_order_id: { _in: [-1] } });
 }
 
-const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,revised_at,revised_by,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
+const PURCHASE_ORDER_LIST_FIELDS = "purchase_order_id,purchase_order_no,reference,supplier_name,date_received,lead_time_receiving,total_amount,gross_amount,inventory_status,payment_status,date_encoded,branch_id,payment_type,payment_mode,payment_terms,delivery_terms,price_type,exchange_rate,total_foreign_currency,currency_code,workflow_revision,remark,approver_id,finance_id,date_approved,date_financed,approval_rule_id,approval_requires_finance,approval_allow_self_approval,revised_at,revised_by,for_revision_at,cancelled_at,cancelled_by,is_posted,is_posted_amounts,force_received_at,force_received_by,force_received_reason";
 
 async function mapPurchaseOrderRows(rows: DirectusPO[]) {
     const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
@@ -693,6 +730,7 @@ async function mapPurchaseOrderRows(rows: DirectusPO[]) {
         inventoryStatus: row.inventory_status ?? null,
         workflowRevision: Number(row.workflow_revision || 0)
     })));
+    const userNames = await fetchUserNameMap(rows.map(row => Number(row.cancelled_by)));
 
     return rows.map(row => mapPurchaseOrder(
         row,
@@ -700,7 +738,8 @@ async function mapPurchaseOrderRows(rows: DirectusPO[]) {
         paymentModes,
         true,
         rejectionStages.get(Number(row.purchase_order_id)) || null,
-        revisionCounts.get(Number(row.purchase_order_id)) || 0
+        revisionCounts.get(Number(row.purchase_order_id)) || 0,
+        userNames
     ));
 }
 
@@ -1472,7 +1511,7 @@ export async function updateIncomingShipmentStatus(
         }
         if (status === "Approved") {
             updatePayload.approver_id = userId || null;
-            updatePayload.date_approved = new Date().toISOString();
+            updatePayload.date_approved = formatPhtDateTime();
         }
         if (leadTimeReceiving !== undefined) {
             updatePayload.lead_time_receiving = leadTimeReceiving;

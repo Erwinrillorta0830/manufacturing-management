@@ -95,6 +95,8 @@ export async function requirePurchaseOrderModuleAccess(options: {
     modulePath?: PurchaseOrderModulePath;
     modulePaths?: readonly PurchaseOrderModulePath[];
     approvalStage?: ApprovalStage;
+    requireDecision?: boolean;
+    /** @deprecated Use requireDecision. Retained for callers outside this route family. */
     requireReject?: boolean;
 }): Promise<AuthorizedPurchaseOrderUser> {
     const token = (await cookies()).get(ACCESS_TOKEN_COOKIE)?.value;
@@ -186,8 +188,8 @@ export async function requirePurchaseOrderModuleAccess(options: {
         throw new PurchaseOrderAuthorizationError(403, `You are not configured for ${options.approvalStage} approval.`);
     }
     const canReject = permission.can_reject === true || Number(permission.can_reject) === 1;
-    if (options.requireReject && !canReject) {
-        throw new PurchaseOrderAuthorizationError(403, "Your role cannot reject purchase orders.");
+    if ((options.requireDecision ?? options.requireReject) && !canReject) {
+        throw new PurchaseOrderAuthorizationError(403, "Your role cannot submit Finance decisions.");
     }
 
     return {

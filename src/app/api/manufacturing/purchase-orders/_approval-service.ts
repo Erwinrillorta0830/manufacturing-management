@@ -1,5 +1,6 @@
 import { procurementDirectusFetch } from "../procurement/_directus";
 import { getTodayDateString } from "@/app/api/manufacturing/directus-api";
+import { formatPhtDateTime } from "@/app/api/manufacturing/services/core-api.service";
 
 import {
     derivePurchaseOrderWorkflowStage,
@@ -33,6 +34,7 @@ export class PurchaseOrderApprovalError extends Error {
 interface ApprovalOrder {
     purchase_order_id: number;
     purchase_order_no?: string | null;
+    date_encoded?: string | null;
     reference?: string | null;
     supplier_name?: number | string | { id?: number | string } | null;
     branch_id?: number | null;
@@ -62,6 +64,9 @@ interface ApprovalOrder {
     approval_allow_self_approval?: boolean | number | null;
     revised_at?: string | null;
     revised_by?: number | null;
+    for_revision_at?: string | null;
+    cancelled_at?: string | null;
+    cancelled_by?: number | null;
 }
 
 interface ApprovalHistoryRow {
@@ -125,10 +130,10 @@ const PAYMENT_ARRANGEMENT_LABELS: ApprovalReferenceLabel[] = [
 ];
 
 const ORDER_FIELDS = [
-    "purchase_order_id", "purchase_order_no", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
+    "purchase_order_id", "purchase_order_no", "date_encoded", "reference", "supplier_name", "branch_id", "payment_type", "payment_mode", "payment_terms", "delivery_terms", "price_type", "remark", "encoder_id", "approver_id", "finance_id",
     "date_approved", "date_financed", "lead_time_receiving", "inventory_status", "payment_status", "total_amount", "gross_amount",
     "currency_code", "exchange_rate", "total_foreign_currency", "is_import",
-    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "revised_at", "revised_by"
+    "workflow_revision", "approval_rule_id", "approval_requires_finance", "approval_allow_self_approval", "revised_at", "revised_by", "for_revision_at"
 ].join(",");
 
 const approvalLocks = new Map<number, Promise<void>>();
@@ -422,6 +427,9 @@ function rollbackPayload(order: ApprovalOrder) {
         approval_requires_finance: order.approval_requires_finance ?? null,
         approval_allow_self_approval: order.approval_allow_self_approval ?? null,
         remark: order.remark || null,
+        for_revision_at: order.for_revision_at || null,
+        cancelled_at: order.cancelled_at || null,
+        cancelled_by: order.cancelled_by ?? null,
         workflow_revision: Number(order.workflow_revision || 0)
     };
 }
@@ -451,14 +459,14 @@ async function submitPurchaseOrderApprovalUnlocked(
         );
     }
     const stage = requestedStage;
-    if (command.action !== "approve" && command.action !== "reject" && command.action !== "cancel") {
-        throw new PurchaseOrderApprovalError("Finance approval accepts only approve, reject, or cancel.", 400);
+    if (command.action !== "approve" && command.action !== "revision" && command.action !== "cancel") {
+        throw new PurchaseOrderApprovalError("Finance approval accepts only approve, revision, or cancel.", 400);
     }
 
-    const now = new Date().toISOString();
+    const nowPht = formatPhtDateTime();
     const nextRevision = revision + 1;
-    const targetStatus = command.action === "reject"
-        ? INVENTORY_STATUS.REJECTED
+    const targetStatus = command.action === "revision"
+        ? INVENTORY_STATUS.REVISION
         : command.action === "cancel"
             ? INVENTORY_STATUS.CANCELLED
             : INVENTORY_STATUS.APPROVED;
@@ -469,12 +477,17 @@ async function submitPurchaseOrderApprovalUnlocked(
         approval_requires_finance: 1,
         approval_allow_self_approval: 1
     };
+    if (command.action === "revision") update.for_revision_at = formatPhtDateTime();
+    if (command.action === "cancel") {
+        update.cancelled_at = formatPhtDateTime();
+        update.cancelled_by = actor.userId;
+    }
     if (command.action === "approve") {
         update.approver_id = actor.userId;
-        update.date_approved = now;
+        update.date_approved = nowPht;
         update.lead_time_receiving = null;
         update.finance_id = actor.userId;
-        update.date_financed = now;
+        update.date_financed = nowPht;
         update.payment_status = PAYMENT_STATUS.PENDING;
     }
 
@@ -501,8 +514,8 @@ async function submitPurchaseOrderApprovalUnlocked(
         throw new PurchaseOrderApprovalError("Another approval action changed this purchase order. Reload and try again.", 409);
     }
 
-    const action = command.action === "reject"
-        ? "Rejected"
+    const action = command.action === "revision"
+        ? "Revision"
         : command.action === "cancel"
             ? "Cancelled"
             : "FinanceApproved";
@@ -519,7 +532,7 @@ async function submitPurchaseOrderApprovalUnlocked(
             to_inventory_status: targetStatus,
             revision_before: revision,
             revision_after: nextRevision,
-            created_at: now
+            created_at: nowPht
         })
     });
     if (!historyResponse.ok) {
@@ -547,7 +560,7 @@ async function submitPurchaseOrderApprovalUnlocked(
             ? "Approved"
             : targetStatus === INVENTORY_STATUS.CANCELLED
                 ? "Cancelled"
-                : "Rejected",
+                : "Revision",
         workflowRevision: nextRevision
     };
 }

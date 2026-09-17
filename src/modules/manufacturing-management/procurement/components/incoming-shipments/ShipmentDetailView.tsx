@@ -61,12 +61,12 @@ export function ShipmentDetailView({
     const queuedForPurchaseAmountPosting = activeShipment
         ? isLandedCostPostingEligible(activeShipment)
         : false;
-    const isFinanceRejected = canonicalDrafting
-        && effectiveStatus === "Rejected"
+    const isFinanceRevision = canonicalDrafting
+        && (effectiveStatus === "Revision" || effectiveStatus === "Rejected")
         && activeShipment?.rejection_stage === "Finance";
-    const lockedWorkflowMessage = effectiveStatus === "Rejected"
-        ? "Revision and cancellation require a formal Finance rejection."
-        : "Edit and cancellation are locked after PO creation until Finance formally rejects this PO.";
+    const lockedWorkflowMessage = effectiveStatus === "Revision" || effectiveStatus === "Rejected"
+        ? "Revision and cancellation require a Finance Revision decision."
+        : "Edit and cancellation are locked after PO creation until Finance sends this PO for Revision.";
     const storedRemark = activeShipment?.remark || "";
     const legacyRemarkMatch = storedRemark.match(/^(REJECTED|CANCELLED):\s*/i);
     const poRemark = legacyRemarkMatch ? "" : storedRemark;
@@ -193,6 +193,28 @@ export function ShipmentDetailView({
                                     <span className="mt-1 block whitespace-pre-wrap">{legacyFinanceFeedback}</span>
                                 </div>
                             )}
+                            {effectiveStatus === "Cancelled" && (activeShipment.cancelled_at || activeShipment.cancelled_by) && (
+                                <div className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-300">
+                                    <strong className="block text-[10px] uppercase tracking-wide">Cancellation Audit</strong>
+                                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                                        <span>
+                                            Cancelled by:{" "}
+                                            <strong className="font-bold text-foreground">
+                                                {activeShipment.cancelled_by_name
+                                                    || (activeShipment.cancelled_by ? `User #${activeShipment.cancelled_by}` : "Not recorded")}
+                                            </strong>
+                                        </span>
+                                        <span>
+                                            Cancelled at:{" "}
+                                            <strong className="font-bold text-foreground">
+                                                {activeShipment.cancelled_at
+                                                    ? new Date(activeShipment.cancelled_at).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })
+                                                    : "Not recorded"}
+                                            </strong>
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex max-w-full flex-wrap gap-x-4 gap-y-1.5 text-xs mt-2.5 text-muted-foreground bg-muted/40 border p-3 rounded-lg font-sans">
                                 <span>
                                     Destination Branch:{" "}
@@ -300,7 +322,9 @@ export function ShipmentDetailView({
                                 <div className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">{canonicalDrafting ? "Purchase Order Workflow Progress" : "Shipment Life Cycle Progress"}</div>
                                 <div className="w-full overflow-x-auto">
                                     <div className="relative flex min-w-[760px] items-center overflow-visible py-3">
-                                    {(effectiveStatus === "Rejected"
+                                    {(effectiveStatus === "Revision"
+                                        ? [initialWorkflowStatus, "Approved", "Revision"]
+                                        : effectiveStatus === "Rejected"
                                         ? [initialWorkflowStatus, "Approved", "Rejected"]
                                         : [initialWorkflowStatus, "Approved", "Warehouse Receiving", "Receiving (QA)", "Received"]
                                     ).map((st, idx, arr) => {
@@ -379,11 +403,11 @@ export function ShipmentDetailView({
                                     </div>
                                 )}
 
-                                {effectiveStatus === "Rejected" && onCancelRejectedPurchaseOrder && (
+                                {(effectiveStatus === "Revision" || effectiveStatus === "Rejected") && onCancelRejectedPurchaseOrder && (
                                     <div className="grid grid-cols-2 gap-2 mt-3">
                                         <button
                                             type="button"
-                                            disabled={loading || !isFinanceRejected}
+                                            disabled={loading || !isFinanceRevision}
                                             onClick={handleStartEdit}
                                             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-all shadow-sm cursor-pointer inline-flex items-center justify-center gap-1.5"
                                         >
@@ -391,13 +415,13 @@ export function ShipmentDetailView({
                                         </button>
                                         <button
                                             type="button"
-                                            disabled={loading || !isFinanceRejected}
+                                            disabled={loading || !isFinanceRevision}
                                             onClick={() => setIsCancelDialogOpen(true)}
                                             className="w-full border border-border bg-muted text-muted-foreground hover:bg-muted disabled:cursor-not-allowed font-bold py-2.5 px-3 rounded-lg text-xs transition-all inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Trash2 className="h-3.5 w-3.5" /> Cancel PO
                                         </button>
-                                        {!isFinanceRejected && (
+                                        {!isFinanceRevision && (
                                             <p className="col-span-2 text-[10px] font-semibold text-muted-foreground">
                                                 {lockedWorkflowMessage}
                                             </p>

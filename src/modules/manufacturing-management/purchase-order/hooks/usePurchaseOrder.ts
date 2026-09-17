@@ -451,14 +451,14 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
     };
 
     const handleEditShipment = async (id: number, data: ShipmentFormState, lines: ManifestLineFormItem[]) => {
-        if (selectedShipment?.status !== "Rejected" || selectedShipment.rejection_stage !== "Finance") {
-            toast.error("Purchase orders can only be edited after a formal Finance rejection.");
+        if ((selectedShipment?.status !== "Revision" && selectedShipment?.status !== "Rejected") || selectedShipment.rejection_stage !== "Finance") {
+            toast.error("Purchase orders can only be edited after a Finance Revision decision.");
             return false;
         }
         setLoading(true);
         try {
             await reviseRejectedPurchaseOrder(id, data, lines, Number(data.workflow_revision || 0));
-            toast.success("Finance-rejected purchase order revised and resubmitted for approval.");
+            toast.success("Purchase order revised and resubmitted for approval.");
             if (isDetailMode) {
                 await loadDetail(id);
             } else {
@@ -475,14 +475,14 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
     };
 
     const handleCancelRejectedShipment = async (id: number, workflowRevision: number, remarks?: string) => {
-        if (selectedShipment?.status !== "Rejected" || selectedShipment.rejection_stage !== "Finance") {
-            toast.error("Purchase orders can only be cancelled after a formal Finance rejection.");
+        if ((selectedShipment?.status !== "Revision" && selectedShipment?.status !== "Rejected") || selectedShipment.rejection_stage !== "Finance") {
+            toast.error("Purchase orders can only be cancelled after a Finance Revision decision.");
             return false;
         }
         setLoading(true);
         try {
             await cancelRejectedPurchaseOrder(id, workflowRevision, remarks);
-            toast.success("Rejected purchase order cancelled.");
+            toast.success("Revision purchase order cancelled.");
             if (isDetailMode) {
                 await loadDetail(id);
             } else {
@@ -500,7 +500,7 @@ export function usePurchaseOrder({ mode = "queue", shipmentId, onCreated }: UseP
 
     const handleUpdateShipmentStatus = async (id: number, status: IncomingShipment["status"]) => {
         if (status === "Cancelled") {
-            toast.error("Purchase orders can only be cancelled after a formal Finance rejection.");
+            toast.error("Purchase orders can only be cancelled after a Finance Revision decision.");
             return;
         }
         setLoading(true);
