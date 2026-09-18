@@ -178,7 +178,7 @@ export function RouteWorkstationAssignmentDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent
                 data-testid="route-workstation-assignment-dialog"
-                className="w-[96vw] max-w-4xl max-h-[92vh] flex flex-col overflow-hidden p-0"
+                className="w-[96vw] max-w-6xl sm:max-w-6xl max-h-[92vh] flex flex-col overflow-hidden p-0"
             >
                 <DialogHeader className="shrink-0 border-b bg-gradient-to-r from-primary/10 via-primary/5 to-background p-5">
                     <div className="flex items-start gap-3">
