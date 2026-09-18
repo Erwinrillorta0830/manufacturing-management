@@ -139,6 +139,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
     const [branches, setBranches] = useState<BranchOption[]>([]);
     const [users, setUsers] = useState<UserOption[]>([]);
     const [batchesByLot, setBatchesByLot] = useState<Record<number, BatchOption[]>>({});
+    const [batchesLoadingLotId, setBatchesLoadingLotId] = useState<number | null>(null);
     const [reportFilters, setReportFilters] = useState<LotTransferReportFilters>(() => ({
         ...DEFAULT_LOT_TRANSFER_REPORT_FILTERS,
         statuses: [...DEFAULT_LOT_TRANSFER_REPORT_FILTERS.statuses]
@@ -275,15 +276,20 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         };
     }, [mode, userBranchId]);
 
-    const loadBatchesForLot = useCallback(async (lotId: number) => {
-        if (!lotId || batchesByLot[lotId]) return batchesByLot[lotId] || [];
+    const loadBatchesForLot = useCallback(async (lotId: number, opts?: { silent?: boolean }): Promise<BatchOption[] | null> => {
+        if (!lotId) return [];
+        const cached = batchesByLot[lotId];
+        if (cached) return cached;
+        setBatchesLoadingLotId(lotId);
         try {
             const rows = await fetchBatches(lotId);
             setBatchesByLot((current) => ({ ...current, [lotId]: rows }));
             return rows;
         } catch (loadError) {
-            setError(loadError instanceof Error ? loadError.message : "Unable to load lot batches.");
-            return [];
+            if (!opts?.silent) setError(loadError instanceof Error ? loadError.message : "Unable to load lot batches.");
+            return null;
+        } finally {
+            setBatchesLoadingLotId((current) => (current === lotId ? null : current));
         }
     }, [batchesByLot]);
 
@@ -388,7 +394,22 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
             }))
         }));
         if (form.targetLotId === lotId) setError("Source and destination lot IDs must be different.");
-        void loadBatchesForLot(Number(lotId));
+        void loadBatchesForLot(Number(lotId)).then((rows) => {
+            if (!rows) return;
+            const availableProductIds = new Set(
+                rows.filter((row) => row.quantity > 0 && row.status.toUpperCase() === "ACTIVE").map((row) => Number(row.productId))
+            );
+            updateForm((current) => ({
+                ...current,
+                details: current.details.map((detail) => {
+                    const selectedProductId = Number(detail.productId) || 0;
+                    if (selectedProductId > 0 && !availableProductIds.has(selectedProductId)) {
+                        return { ...detail, productId: "", sourceInventoryLotId: "", sourceBatchNo: "", targetInventoryLotId: "", targetBatchNo: "" };
+                    }
+                    return detail;
+                })
+            }));
+        });
     }, [form.targetLotId, loadBatchesForLot, updateForm]);
 
     const handleTargetLotChange = useCallback((lotId: string) => {
@@ -698,6 +719,7 @@ export function useLotTransfer({ mode, userBranchId }: UseLotTransferOptions) {
         branches,
         users,
         batchesByLot,
+        batchesLoadingLotId,
         loadBatchesForLot,
         sourceBatches,
         targetBatches,
