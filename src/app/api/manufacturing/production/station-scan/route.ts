@@ -41,7 +41,10 @@ const STATUS_HISTORY_FIELDS = [
     "changed_at",
     "remarks",
     "workflow_action",
-    "work_center_id"
+    "work_center_id",
+    "jo_route_id",
+    "reported_yield_quantity",
+    "evidence_image_id"
 ].join(",");
 
 const LEGACY_STATUS_HISTORY_FIELDS = [

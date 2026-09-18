@@ -5,6 +5,12 @@ import { updateJobOrder } from "../planning-helper";
 import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
+import {
+    deleteJobOrderWorkflowEvidence,
+    JobOrderWorkflowEvidenceError,
+    uploadJobOrderWorkflowEvidence,
+    validateJobOrderWorkflowEvidence
+} from "../../job-orders/_workflow-evidence";
 import { resolveApplicableRouteWorkCenters } from "../../production/station-scan/_applicable-work-centers";
 import {
     JobOrderOperatorAssignmentError,
@@ -240,8 +246,30 @@ async function handleRouteWorkCenterAssignment(body: any): Promise<NextResponse>
 }
 
 export async function handlePATCH(request: Request) {
+    let uploadedBreakdownEvidenceImageId: string | null = null;
     try {
-        const body = await request.json();
+        const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+        let body: any;
+        let breakdownEvidenceImage: File | null = null;
+        if (contentType.includes("multipart/form-data")) {
+            const formData = await request.formData();
+            const payloadValue = formData.get("payload");
+            if (typeof payloadValue !== "string") {
+                return NextResponse.json({ error: "The planning-engineering payload is required." }, { status: 400 });
+            }
+            try {
+                body = JSON.parse(payloadValue);
+            } catch {
+                return NextResponse.json({ error: "The planning-engineering payload is not valid JSON." }, { status: 400 });
+            }
+            const imageValue = formData.get("image");
+            if (imageValue !== null && (typeof File === "undefined" || !(imageValue instanceof File))) {
+                return NextResponse.json({ error: "The breakdown evidence image is invalid." }, { status: 422 });
+            }
+            breakdownEvidenceImage = typeof File !== "undefined" && imageValue instanceof File ? imageValue : null;
+        } else {
+            body = await request.json();
+        }
 
         if (body.action === "assign-route-workcenters") {
             return handleRouteWorkCenterAssignment(body);
@@ -249,8 +277,10 @@ export async function handlePATCH(request: Request) {
 
         // 0. Workstation breakdown handler
         if (body.action === "breakdown") {
-            const { jobOrderId, haltedStepId, yieldQty, haltReason } = body;
+            const { jobOrderId, joRouteId, haltedStepId, yieldQty, reportedYieldQuantity, haltReason } = body;
             const parsedJobOrderId = Number(jobOrderId);
+            const parsedRouteId = Number(joRouteId);
+            const parsedReportedYield = Number(reportedYieldQuantity ?? yieldQty);
             const trimmedHaltReason = typeof haltReason === "string" ? haltReason.trim() : "";
 
             if (!Number.isInteger(parsedJobOrderId) || parsedJobOrderId <= 0) {
@@ -260,16 +290,43 @@ export async function handlePATCH(request: Request) {
             if (!trimmedHaltReason) {
                 return NextResponse.json({ error: "A meaningful halt reason is required." }, { status: 400 });
             }
+            if (!Number.isSafeInteger(parsedRouteId) || parsedRouteId <= 0) {
+                return NextResponse.json({ error: "A valid route is required to report a breakdown." }, { status: 400 });
+            }
+            if (!Number.isFinite(parsedReportedYield) || parsedReportedYield < 0) {
+                return NextResponse.json({ error: "Reported yield must be a non-negative number." }, { status: 400 });
+            }
+            if (!breakdownEvidenceImage) {
+                return NextResponse.json({ error: "A breakdown evidence image is required.", code: "WORKFLOW_EVIDENCE_REQUIRED" }, { status: 422 });
+            }
+            const imageError = validateJobOrderWorkflowEvidence(breakdownEvidenceImage);
+            if (imageError) {
+                return NextResponse.json({ error: imageError, code: "WORKFLOW_EVIDENCE_INVALID" }, { status: 422 });
+            }
 
             const productionResponse = await productionMutationResponse(parsedJobOrderId);
             if (productionResponse) return productionResponse;
 
-            await executeJobOrderWorkflow(parsedJobOrderId, {
+            uploadedBreakdownEvidenceImageId = await uploadJobOrderWorkflowEvidence(
+                breakdownEvidenceImage,
+                String(parsedJobOrderId),
+                "breakdown"
+            );
+
+            const result = await executeJobOrderWorkflow(parsedJobOrderId, {
                 action: "place-on-hold",
                 actorUserId: await patchActorId(),
                 idempotencyKey: String(body.idempotencyKey || `breakdown:${parsedJobOrderId}:${haltedStepId}:${Number(yieldQty || 0)}`).trim(),
-                remarks: `Halted at step ${haltedStepId}. Reported yield: ${Number(yieldQty || 0)}. Reason: ${trimmedHaltReason}`
+                remarks: `Halted at step ${haltedStepId}. Reported yield: ${parsedReportedYield}. Reason: ${trimmedHaltReason}`,
+                evidenceImageId: uploadedBreakdownEvidenceImageId,
+                joRouteId: parsedRouteId,
+                reportedYieldQuantity: parsedReportedYield
             });
+
+            if (result.idempotent && uploadedBreakdownEvidenceImageId) {
+                await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
+                uploadedBreakdownEvidenceImageId = null;
+            }
 
             return NextResponse.json({ success: true, message: "Workstation breakdown reported successfully." });
         }
@@ -632,11 +689,17 @@ export async function handlePATCH(request: Request) {
         const result = await updateJobOrder(joId, dbPatch);
         return NextResponse.json({ success: true, data: result });
     } catch (e) {
+        if (uploadedBreakdownEvidenceImageId) {
+            await deleteJobOrderWorkflowEvidence(uploadedBreakdownEvidenceImageId);
+        }
         console.error("API Error in planning-engineering PATCH:", e);
         const message = (e as { message?: string }).message || "Failed to update Job Order";
-        const status = e instanceof JobOrderOperatorAssignmentError
+        const status = e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError
             ? e.status
             : message.startsWith("Unknown Job Order status:") ? 400 : 500;
-        return NextResponse.json({ error: message, ...(e instanceof JobOrderOperatorAssignmentError ? { code: e.code } : {}) }, { status });
+        return NextResponse.json({
+            error: message,
+            ...(e instanceof JobOrderOperatorAssignmentError || e instanceof JobOrderWorkflowEvidenceError ? { code: e.code } : {})
+        }, { status });
     }
 }

@@ -38,6 +38,9 @@ export interface JobOrderWorkflowCommand {
     remarks?: string;
     resolutionRemarks?: string;
     terminationImageId?: string | null;
+    evidenceImageId?: string | null;
+    joRouteId?: number | null;
+    reportedYieldQuantity?: number | null;
     workCenterId?: number | null;
     overrideReason?: string;
     force?: boolean;
@@ -103,6 +106,13 @@ function workflowRequestHash(command: JobOrderWorkflowCommand): string {
         resolutionRemarks: text(command.resolutionRemarks),
         ...(command.action === "terminate-production"
             ? { terminationImageAttached: Boolean(text(command.terminationImageId)) }
+            : {}),
+        ...(command.action === "place-on-hold"
+            ? {
+                evidenceImageAttached: Boolean(text(command.evidenceImageId)),
+                joRouteId: command.joRouteId ?? null,
+                reportedYieldQuantity: command.reportedYieldQuantity ?? null
+            }
             : {}),
         workCenterId: command.workCenterId ?? null,
         overrideReason: text(command.overrideReason),
@@ -736,6 +746,13 @@ async function writeTransition(
                     changed_by: command.actorUserId,
                     changed_at: now,
                     remarks: transitionRemarks || `Workflow action: ${command.action}`,
+                    ...(command.action === "place-on-hold"
+                        ? {
+                            jo_route_id: command.joRouteId ?? null,
+                            reported_yield_quantity: command.reportedYieldQuantity ?? null,
+                            evidence_image_id: command.evidenceImageId ?? null
+                        }
+                        : {}),
                     ...(command.workCenterId ? { work_center_id: command.workCenterId } : {})
                 })
             }
@@ -879,6 +896,13 @@ export async function executeJobOrderWorkflow(
 
     if (["place-on-hold", "cancel", "terminate-production"].includes(command.action) && !text(command.remarks)) {
         throw new JobOrderWorkflowError("A reason is required for this workflow action.", 400, "WORKFLOW_REASON_REQUIRED");
+    }
+    if (command.action === "place-on-hold" && !text(command.evidenceImageId)) {
+        throw new JobOrderWorkflowError(
+            "A breakdown or hold evidence image is required.",
+            422,
+            "WORKFLOW_EVIDENCE_REQUIRED"
+        );
     }
     if (command.action === "terminate-production" && !text(command.terminationImageId)) {
         throw new JobOrderWorkflowError(

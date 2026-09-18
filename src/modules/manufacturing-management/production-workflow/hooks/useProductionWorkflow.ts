@@ -812,7 +812,12 @@ const selectedTask = useMemo(() => {
 
     const handleWorkflowAction = useCallback(async (
         action: Extract<JobOrderWorkflowAction, "place-on-hold" | "resume-production" | "complete-production" | "terminate-production">,
-        input: { remarks?: string; resolutionRemarks?: string; terminationImage?: File | null } = {}
+        input: {
+            remarks?: string;
+            resolutionRemarks?: string;
+            terminationImage?: File | null;
+            workflowEvidenceImage?: File | null;
+        } = {}
     ): Promise<boolean> => {
         if (!selectedJobOrder) return false;
         const jobOrderId = selectedJobOrder.order_id || selectedJobOrder.job_order_id;

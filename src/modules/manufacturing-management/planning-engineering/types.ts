@@ -316,6 +316,9 @@ export interface JobOrderStatusHistory {
     history_id?: number;
     id?: number;
     job_order_id: number;
+    jo_route_id?: number | null;
+    reported_yield_quantity?: number | null;
+    evidence_image_id?: string | null;
     previous_status?: string;
     old_status?: string;
     new_status: string;

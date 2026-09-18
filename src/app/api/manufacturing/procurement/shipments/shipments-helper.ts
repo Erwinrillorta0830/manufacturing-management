@@ -20,7 +20,9 @@ import { resolvePurchaseOrderBranchId } from "../../qa-receiving/_purchase-order
 import type { QaReceiptSelection } from "../../qa-receiving/_receipt-options";
 import { assertMrpProductJobOrderPairs } from "../../purchase-orders/_mrp-validation";
 import {
+    fetchCurrentPurchaseOrderRejectionDecisions,
     fetchCurrentPurchaseOrderRejectionStages,
+    type PurchaseOrderRejectionDecision,
     type PurchaseOrderRejectionStage
 } from "../../purchase-orders/_rejection-guard";
 import {
@@ -464,7 +466,7 @@ function mapPurchaseOrder(
     suppliers: ReadonlyMap<number, DirectusSupplier>,
     paymentModes: ReadonlyMap<number, DirectusPaymentMode>,
     canonicalStatus = false,
-    rejectionStage: PurchaseOrderRejectionStage | null = null,
+    rejectionDecision: PurchaseOrderRejectionDecision | null = null,
     revisionCount = 0,
     userNames: ReadonlyMap<number, string> = new Map()
 ) {
@@ -511,7 +513,8 @@ function mapPurchaseOrder(
         inventory_status: po.inventory_status || null,
         payment_status: po.payment_status || null,
         status,
-        rejection_stage: rejectionStage,
+        rejection_stage: rejectionDecision?.stage || null,
+        finance_revision_remarks: rejectionDecision?.remarks || null,
         remark: po.remark || "",
         created_at: po.date_encoded || "",
         branch_id: branchId,
@@ -729,7 +732,7 @@ async function mapPurchaseOrderRows(rows: DirectusPO[]) {
     const revisionCounts = await fetchPurchaseOrderRevisionCounts(rows.map(row => Number(row.purchase_order_id)));
     const suppliers = await fetchSupplierMap(rows.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
     const paymentModes = await fetchPaymentModeMap(rows.map(row => Number(row.payment_mode)));
-    const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(rows.map(row => ({
+    const rejectionDecisions = await fetchCurrentPurchaseOrderRejectionDecisions(rows.map(row => ({
         purchaseOrderId: Number(row.purchase_order_id),
         inventoryStatus: row.inventory_status ?? null,
         workflowRevision: Number(row.workflow_revision || 0)
@@ -741,7 +744,7 @@ async function mapPurchaseOrderRows(rows: DirectusPO[]) {
         suppliers,
         paymentModes,
         true,
-        rejectionStages.get(Number(row.purchase_order_id)) || null,
+        rejectionDecisions.get(Number(row.purchase_order_id)) || null,
         revisionCounts.get(Number(row.purchase_order_id)) || 0,
         userNames
     ));
@@ -890,7 +893,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
         const revisionCounts = await fetchPurchaseOrderRevisionCounts(poList.map(row => Number(row.purchase_order_id)));
         const suppliers = await fetchSupplierMap(poList.map(row => supplierId(row.supplier_name)).filter((id): id is number => id !== null));
         const paymentModes = await fetchPaymentModeMap(poList.map(row => Number(row.payment_mode)));
-        const rejectionStages = await fetchCurrentPurchaseOrderRejectionStages(poList.map(row => ({
+        const rejectionDecisions = await fetchCurrentPurchaseOrderRejectionDecisions(poList.map(row => ({
             purchaseOrderId: Number(row.purchase_order_id),
             inventoryStatus: row.inventory_status ?? null,
             workflowRevision: Number(row.workflow_revision || 0)
@@ -901,7 +904,7 @@ export async function fetchIncomingShipments(options: { landedCostOnly?: boolean
             suppliers,
             paymentModes,
             false,
-            rejectionStages.get(Number(row.purchase_order_id)) || null,
+            rejectionDecisions.get(Number(row.purchase_order_id)) || null,
             revisionCounts.get(Number(row.purchase_order_id)) || 0
         ));
         const finalizedRates = options.includePosted

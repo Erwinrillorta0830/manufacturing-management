@@ -7,13 +7,15 @@ import {
     Building2,
     CheckCircle2,
     ArrowRight,
-    Loader2
+    Loader2,
+    Image as ImageIcon
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOrder, JobOrderStatusHistoryRecord } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/production-api";
+import { manufacturingFileUrl } from "../services/production-yield-image";
 import { toast } from "sonner";
 
 function formatWorkflowAction(action: string): string {
@@ -115,6 +117,29 @@ export function StatusHistoryModal({
                                             <p className="text-xs font-medium text-foreground bg-muted/20 p-2 rounded-lg border border-border/40">
                                                 {rec.remarks}
                                             </p>
+                                        )}
+
+                                        {(rec.jo_route_id || rec.reported_yield_quantity !== null && rec.reported_yield_quantity !== undefined) && (
+                                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                                                {rec.jo_route_id && (
+                                                    <span>Breakdown route: <strong className="text-foreground">#{rec.jo_route_id}</strong></span>
+                                                )}
+                                                {rec.reported_yield_quantity !== null && rec.reported_yield_quantity !== undefined && (
+                                                    <span>Reported yield: <strong className="text-foreground">{Number(rec.reported_yield_quantity).toLocaleString()}</strong></span>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {rec.evidence_image_id && (
+                                            <a
+                                                href={manufacturingFileUrl(String(rec.evidence_image_id))}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-xs font-semibold text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                                            >
+                                                <ImageIcon className="h-4 w-4" />
+                                                View workflow evidence image
+                                            </a>
                                         )}
 
                                         <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground pt-1 border-t border-border/30 font-medium">
