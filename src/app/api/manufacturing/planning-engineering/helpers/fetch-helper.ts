@@ -69,7 +69,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             { headers: headersNoCache }
         ).catch(() => null);
         const workCentersPromise = fetch(
-            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name`,
+            `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&fields=work_center_id,work_center_name,is_active,asset_id.id,asset_id.item_image,asset_id.barcode,asset_id.rfid_code,asset_id.serial,asset_id.condition,asset_id.item_id.id,asset_id.item_id.item_name,department_id.department_id,department_id.department_name,asset_id.department.department_id,asset_id.department.department_name`,
             { headers: headersNoCache }
         ).catch(() => null);
         const usersPromise = fetch(
@@ -307,10 +307,48 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
         });
 
         const workCenterNameById = new Map<number, string>();
+        const workCenterById = new Map<number, any>();
         workCenterRows.forEach((workCenter: any) => {
             const workCenterId = getRelationId(workCenter.work_center_id, ["work_center_id"]);
             if (workCenterId > 0) {
-                workCenterNameById.set(workCenterId, String(workCenter.work_center_name || ""));
+                const asset = workCenter.asset_id && typeof workCenter.asset_id === "object"
+                    ? workCenter.asset_id
+                    : null;
+                const department = asset?.department && typeof asset.department === "object"
+                    ? asset.department
+                    : workCenter.department_id && typeof workCenter.department_id === "object"
+                        ? workCenter.department_id
+                        : null;
+                const normalizedWorkCenter = {
+                    work_center_id: workCenterId,
+                    work_center_name: String(workCenter.work_center_name || ""),
+                    asset_id: asset ? Number(asset.id) || null : null,
+                    department_id: department?.department_id || null,
+                    is_active: workCenter.is_active === undefined || workCenter.is_active === null
+                        ? true
+                        : Boolean(Number(workCenter.is_active)),
+                    barcode: asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(workCenterId).padStart(3, "0")}`,
+                    rfid_code: asset?.rfid_code || null,
+                    serial: asset?.serial || null,
+                    asset: asset
+                        ? {
+                            id: Number(asset.id) || undefined,
+                            item_image: asset.item_image || null,
+                            barcode: asset.barcode || null,
+                            rfid_code: asset.rfid_code || null,
+                            serial: asset.serial || null,
+                            item_name: asset.item_id?.item_name || null,
+                            item_id: asset.item_id || null,
+                            condition: asset.condition || null,
+                            is_active: asset.is_active === undefined || asset.is_active === null
+                                ? true
+                                : Boolean(Number(asset.is_active))
+                        }
+                        : null,
+                    department
+                };
+                workCenterNameById.set(workCenterId, normalizedWorkCenter.work_center_name);
+                workCenterById.set(workCenterId, normalizedWorkCenter);
             }
         });
 
@@ -521,6 +559,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         run_time_hours_factor: Number(task.run_time_hours_factor || 0),
                         work_center_id: workCenterId,
                         work_center_name: workCenterId ? workCenterNameById.get(workCenterId) || null : null,
+                        work_center: workCenterId ? workCenterById.get(workCenterId) || null : null,
                         completed_at: task.completed_at,
                          requires_qa: reqQA ? 1 : 0,
                         qa_record_exists: taskQAs.length > 0,

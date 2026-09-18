@@ -15,7 +15,8 @@ import {
     JobOrderCancellationResponse,
     WipTopUpPayload,
     WipTopUpResponse,
-    WorkCenterJobOrderAvailability
+    WorkCenterJobOrderAvailability,
+    JobOrderMaterialLine
 } from "../types";
 import type { JobOrderWorkflowAction } from "../../job-order-workflow";
 
@@ -25,6 +26,35 @@ export async function fetchJobOrders(): Promise<JobOrder[]> {
     const res = await fetch("/api/manufacturing/planning-engineering", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load job orders");
     return res.json();
+}
+
+export async function fetchJobOrderMaterials(jobOrderId: number | string): Promise<JobOrderMaterialLine[]> {
+    const res = await fetch(
+        `/api/manufacturing/planning-engineering?action=job-materials&joId=${encodeURIComponent(String(jobOrderId))}`,
+        { cache: "no-store" }
+    );
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+        throw new Error(data?.error || "Failed to load Job Order material batches.");
+    }
+    return Array.isArray(data)
+        ? data.map((line: any) => ({
+            jo_material_id: Number(line.jo_material_id || line.id || 0) || undefined,
+            product_id: Number(line.product_id?.product_id || line.product_id || 0),
+            product_name: String(line.product_name || `Product #${line.product_id || ""}`),
+            reservations: Array.isArray(line.reservations)
+                ? line.reservations.map((reservation: any) => ({
+                    reservation_id: Number(reservation.reservation_id || reservation.jo_materials_reservation_id || reservation.id || 0) || null,
+                    batch_no: reservation.batch_no ? String(reservation.batch_no) : null,
+                    reservation_status: reservation.reservation_status || null,
+                    reserved_quantity: Number(reservation.reserved_quantity || 0),
+                    staged_quantity: Number(reservation.staged_quantity || 0),
+                    issued_to_wip_quantity: Number(reservation.issued_to_wip_quantity || 0),
+                    remaining_wip_quantity: Number(reservation.remaining_wip_quantity || 0)
+                }))
+                : []
+        }))
+        : [];
 }
 
 export interface JobOrderWorkflowPayload {
@@ -97,14 +127,17 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
 }
 
 export interface RouteOperatorPayload {
-    action: "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | string;
+    action: "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | "edit-times" | string;
     taskId: number;
     userId: number;
     joId: string;
+    routeOperatorId?: number;
     routingId?: number;
     actualHours?: number;
     hourlyRate?: number;
     replacementUserId?: number;
+    startedAt?: string;
+    stoppedAt?: string;
     changeReason?: string;
     requestId?: string;
 }
