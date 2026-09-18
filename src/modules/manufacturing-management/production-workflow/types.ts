@@ -9,6 +9,7 @@ export interface OperatorAssignment {
     is_team_lead?: boolean;
     started_at?: string | null;
     stopped_at?: string | null;
+    is_active?: boolean;
     user_name?: string;
     user_position?: string;
 }
@@ -37,6 +38,7 @@ export interface RoutingTask {
     shift_progress_exists: boolean;
     qa_status?: "Pending" | "Passed" | "QA Hold" | null;
     assignments: OperatorAssignment[];
+    assigned_personnel?: number[];
     qa_logs: any[];
     good_quantity?: number;
     scrap_quantity?: number;
@@ -105,6 +107,8 @@ export interface JobOrder {
     yield_logs?: any[];
     sales_orders?: SalesOrderLink[];
     salesOrders?: SalesOrderLink[];
+    assigned_personnel?: Record<string, number[]> | null;
+    assignedPersonnel?: Record<string, number[]> | null;
 }
 
 export interface JobOrderMaterialReturnLine {
@@ -189,6 +193,8 @@ export interface RouteOperatorRecord {
     actual_hours: number;
     hourly_rate: number;
     labor_cost: number;
+    is_active?: boolean;
+    is_placeholder?: boolean;
     user_name?: string;
     user_position?: string;
 }

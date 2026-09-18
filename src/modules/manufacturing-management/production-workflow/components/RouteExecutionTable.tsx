@@ -78,6 +78,10 @@ function getUserLabel(users: UserType[], userId: number): string {
     return `${firstName} ${lastName}`.trim() || `User #${userId}`;
 }
 
+function getOperatorLabel(users: UserType[], operator: OperatorGroup): string {
+    return operator.latestSession.user_name?.trim() || getUserLabel(users, operator.userId);
+}
+
 function formatDateTime(value: string | null | undefined): string {
     if (!value) return "—";
     const date = new Date(value);
@@ -249,57 +253,69 @@ function RouteExecutionRow({
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
-                    {!readOnly && (
-                        <div className="flex min-w-[210px] gap-1.5">
-                            <SearchableSelect
-                                options={operatorOptions}
-                                value={assigneeId}
-                                onValueChange={setAssigneeId}
-                                placeholder="Assign personnel..."
-                                disabled={loadingOperators}
-                                className="h-8 min-w-0 flex-1 text-[10px]"
-                            />
-                            <div className="flex shrink-0 gap-1">
-                                <Button
-                                    type="button"
-                                    size="xs"
-                                    variant="outline"
-                                    disabled={!assigneeId}
-                                    onClick={() => {
-                                        handleAddOperator(false, task.id, assigneeId);
-                                        setAssigneeId("");
-                                    }}
-                                    className="h-8 px-2 text-[10px] font-bold"
-                                    title="Log personnel without starting a timer"
-                                >
-                                    Log
-                                </Button>
-                                <Button
-                                    type="button"
-                                    size="xs"
-                                    disabled={!assigneeId}
-                                    onClick={() => {
-                                        handleAddOperator(true, task.id, assigneeId);
-                                        setAssigneeId("");
-                                    }}
-                                    className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
-                                    title="Assign personnel and start timer"
-                                >
-                                    <Play className="h-3 w-3" />
-                                </Button>
+                    <div className="min-w-[210px] space-y-2">
+                        <div>
+                            <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                Assigned Personnel
+                            </div>
+                            <div className="space-y-1">
+                                {groupedOperators.length === 0 ? (
+                                    <span className="text-[10px] italic text-muted-foreground">No personnel assigned</span>
+                                ) : groupedOperators.map((operator) => (
+                                    <div key={operator.userId} className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">
+                                        <User className="h-3 w-3 text-primary" />
+                                        <span className="truncate" title={getOperatorLabel(users, operator)}>{getOperatorLabel(users, operator)}</span>
+                                        {operator.activeSession && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" title="Timer running" />}
+                                    </div>
+                                ))}
                             </div>
                         </div>
-                    )}
-                    <div className="mt-2 space-y-1">
-                        {groupedOperators.length === 0 ? (
-                            <span className="text-[10px] italic text-muted-foreground">No personnel assigned</span>
-                        ) : groupedOperators.map((operator) => (
-                            <div key={operator.userId} className="flex items-center gap-1.5 text-[10px] font-semibold text-foreground">
-                                <User className="h-3 w-3 text-primary" />
-                                <span className="truncate" title={getUserLabel(users, operator.userId)}>{getUserLabel(users, operator.userId)}</span>
-                                {operator.activeSession && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" title="Timer running" />}
+                        {!readOnly && (
+                            <div className="border-t border-dashed border-border/70 pt-2">
+                                <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                                    Assign Additional Personnel
+                                </div>
+                                <div className="flex gap-1.5">
+                                    <SearchableSelect
+                                        options={operatorOptions}
+                                        value={assigneeId}
+                                        onValueChange={setAssigneeId}
+                                        placeholder="Select additional personnel..."
+                                        disabled={loadingOperators}
+                                        className="h-8 min-w-0 flex-1 text-[10px]"
+                                    />
+                                    <div className="flex shrink-0 gap-1">
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            variant="outline"
+                                            disabled={!assigneeId}
+                                            onClick={() => {
+                                                handleAddOperator(false, task.id, assigneeId);
+                                                setAssigneeId("");
+                                            }}
+                                            className="h-8 px-2 text-[10px] font-bold"
+                                            title="Log additional personnel without starting a timer"
+                                        >
+                                            Log
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            size="xs"
+                                            disabled={!assigneeId}
+                                            onClick={() => {
+                                                handleAddOperator(true, task.id, assigneeId);
+                                                setAssigneeId("");
+                                            }}
+                                            className="h-8 bg-primary px-2 text-[10px] font-bold text-primary-foreground"
+                                            title="Assign additional personnel and start timer"
+                                        >
+                                            <Play className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
-                        ))}
+                        )}
                     </div>
                 </td>
                 <td className="px-3 py-3 align-top" onClick={(event) => event.stopPropagation()}>
@@ -343,14 +359,18 @@ function RouteExecutionRow({
                             {groupedOperators.map((operator) => {
                                 const isRunning = Boolean(operator.activeSession);
                                 const isEditing = manualUserId === operator.userId;
+                                const hasRecordedSession = operator.totalHours > 0
+                                    || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
                                 return (
                                     <div key={operator.userId} className="rounded-lg border border-border/60 bg-background/60 p-2">
                                         <div className="flex items-center justify-between gap-2">
-                                            <span className="truncate text-[10px] font-bold text-foreground">{getUserLabel(users, operator.userId)}</span>
+                                            <span className="truncate text-[10px] font-bold text-foreground">{getOperatorLabel(users, operator)}</span>
                                             {isRunning ? (
                                                 <RunningTimer startedAt={operator.activeSession!.started_at!} durationHours={shiftDurationHours} />
                                             ) : (
-                                                <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">Stopped</span>
+                                                <span className="rounded bg-muted/50 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                                                    {hasRecordedSession ? "Stopped" : "Not started"}
+                                                </span>
                                             )}
                                         </div>
                                         <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-muted-foreground">

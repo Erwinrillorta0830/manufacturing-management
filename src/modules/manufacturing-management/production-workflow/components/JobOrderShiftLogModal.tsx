@@ -87,7 +87,7 @@ export function JobOrderShiftLogModal({
         return `${fname} ${lname}`.trim() || `User #${uId}`;
     };
 
-    const activeOperator = allJobOperators.find((operator) => operator.stopped_at === null);
+    const activeOperator = allJobOperators.find((operator) => operator.started_at !== null && operator.stopped_at === null);
     const operatorLabel = activeOperator ? getUserLabel(activeOperator.user_id) : "Authenticated operator";
 
     useEffect(() => {

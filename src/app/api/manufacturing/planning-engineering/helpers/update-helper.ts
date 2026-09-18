@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { DIRECTUS_URL, headers, getJobOrderIdByNo } from "./shared";
 import { formatPhtDateTime } from "@/app/api/manufacturing/directus-api";
+import { synchronizeJobOrderOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
 
 export async function updateJobOrder(joId: string, patchData: Record<string, any>): Promise<{ success: boolean }> {
@@ -33,6 +34,15 @@ export async function modifyJobOrder(joId: string, patchData: Record<string, any
         if (patchData.remarks !== undefined) headerPatch.remarks = patchData.remarks;
         if (patchData.product_id !== undefined) headerPatch.product_id = Number(patchData.product_id);
         if (patchData.created_by !== undefined) headerPatch.created_by = Number(patchData.created_by);
+
+        if (patchData.assigned_personnel !== undefined) {
+            const assignmentState = await synchronizeJobOrderOperatorAssignments(
+                joIdInt,
+                patchData.assigned_personnel,
+                { persistMaster: false }
+            );
+            headerPatch.assigned_personnel = assignmentState.assignments;
+        }
 
         if (patchData.quantity !== undefined && Number(patchData.quantity) > 0) {
             const newQty = Number(patchData.quantity);

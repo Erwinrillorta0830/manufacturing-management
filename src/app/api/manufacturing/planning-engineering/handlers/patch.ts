@@ -6,6 +6,12 @@ import { DIRECTUS_URL, headers } from "@/app/api/manufacturing/directus-api";
 import { isCancelledJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS, normalizeJobOrderStatus } from "@/modules/manufacturing-management/job-order-status";
 import { executeJobOrderWorkflow } from "../../job-orders/_workflow-service";
 import { resolveApplicableRouteWorkCenters } from "../../production/station-scan/_applicable-work-centers";
+import {
+    JobOrderOperatorAssignmentError,
+    normalizeOperatorAssignments,
+    readProjectedOperatorAssignments,
+    synchronizeJobOrderOperatorAssignments
+} from "../../job-orders/_operator-assignment-service";
 
 async function patchActorId(): Promise<number> {
     try {
@@ -377,78 +383,51 @@ export async function handlePATCH(request: Request) {
 
         // 2. Task personnel assignment update
         if (body.taskId !== undefined && body.assignments !== undefined) {
-            const { taskId, assignments } = body as { taskId: number; assignments: { user_id: number; is_team_lead: boolean }[] };
-            const cancelledResponse = await cancelledJobOrderResponseForTask(Number(taskId));
+            const taskId = positiveInteger(body.taskId);
+            const assignments = body.assignments as Array<{ user_id?: number | string; userId?: number | string }>;
+            if (!taskId || !Array.isArray(assignments)) {
+                return NextResponse.json({ error: "taskId and assignments are required." }, { status: 400 });
+            }
+            const cancelledResponse = await cancelledJobOrderResponseForTask(taskId);
             if (cancelledResponse) return cancelledResponse;
-            
-            // Delete existing assignments for this task in both old and new tables
-            const existingRes = await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators?filter[jo_route_id][_eq]=${taskId}&limit=-1`, { headers });
-            if (existingRes.ok) {
-                const existingData = (await existingRes.json()).data || [];
-                for (const item of existingData) {
-                    await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators/${item.jo_route_operator_id}`, { method: "DELETE", headers }).catch(() => {});
-                }
+
+            const routeResponse = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_order_routes/${taskId}?fields=jo_route_id,job_order_id,sequence_order`,
+                { headers, cache: "no-store" }
+            );
+            if (!routeResponse.ok) {
+                return NextResponse.json({ error: "Routing task was not found." }, { status: 404 });
             }
-            try {
-                const oldExistingRes = await fetch(`${DIRECTUS_URL}/items/job_order_task_assignments?filter[task_id][_eq]=${taskId}&limit=-1`, { headers });
-                if (oldExistingRes.ok) {
-                    const oldExistingData = (await oldExistingRes.json()).data || [];
-                    for (const item of oldExistingData) {
-                        await fetch(`${DIRECTUS_URL}/items/job_order_task_assignments/${item.id}`, { method: "DELETE", headers }).catch(() => {});
-                    }
-                }
-            } catch (err) {
-                console.warn("Failed to delete from legacy job_order_task_assignments (ignoring):", err);
+            const route = (await routeResponse.json().catch(() => ({}))).data;
+            const routeJobOrderId = Number(
+                typeof route?.job_order_id === "object"
+                    ? route.job_order_id?.job_order_id ?? route.job_order_id?.id
+                    : route?.job_order_id
+            );
+            const sequenceOrder = Number(route?.sequence_order);
+            if (!Number.isSafeInteger(routeJobOrderId) || routeJobOrderId <= 0 || !Number.isSafeInteger(sequenceOrder) || sequenceOrder <= 0) {
+                return NextResponse.json({ error: "Routing task is missing its Job Order or sequence assignment." }, { status: 409 });
             }
 
-            // Create new assignments in both old and new tables for compatibility
-            const results = [];
-            for (const ass of assignments) {
-                // Fetch the operator's hourly rate if needed
-                let hourlyRate = 0;
-                try {
-                    const userRes = await fetch(`${DIRECTUS_URL}/items/user/${ass.user_id}`, { headers });
-                    if (userRes.ok) {
-                        const userData = (await userRes.json()).data;
-                        hourlyRate = Number(userData?.hourly_rate || 0);
-                    }
-                } catch (e) {
-                    console.error("Error fetching operator hourly rate:", e);
-                }
-
-                const newPayload = {
-                    jo_route_id: taskId,
-                    operator_id: ass.user_id,
-                    logged_hours: 0,
-                    hourly_rate: hourlyRate,
-                    logged_at: new Date().toISOString()
-                };
-
-                await fetch(`${DIRECTUS_URL}/items/manufacturing_job_order_route_operators`, {
-                    method: "POST",
-                    headers,
-                    body: JSON.stringify(newPayload)
-                });
-
-                // Keep old compatibility
-                try {
-                    const addRes = await fetch(`${DIRECTUS_URL}/items/job_order_task_assignments`, {
-                        method: "POST",
-                        headers,
-                        body: JSON.stringify({
-                            task_id: taskId,
-                            user_id: ass.user_id,
-                            is_team_lead: !!ass.is_team_lead
-                        })
-                    });
-                    if (addRes.ok) {
-                        results.push((await addRes.json()).data);
-                    }
-                } catch (err) {
-                    console.warn("Failed to write to legacy job_order_task_assignments (ignoring):", err);
-                }
+            const jobOrderResponse = await fetch(
+                `${DIRECTUS_URL}/items/manufacturing_job_orders/${routeJobOrderId}?fields=job_order_id,assigned_personnel`,
+                { headers, cache: "no-store" }
+            );
+            if (!jobOrderResponse.ok) {
+                return NextResponse.json({ error: "Job Order personnel data is temporarily unavailable." }, { status: 502 });
             }
-            return NextResponse.json({ success: true, data: results });
+            const jobOrder = (await jobOrderResponse.json().catch(() => ({}))).data;
+            const currentAssignments = normalizeOperatorAssignments(jobOrder?.assigned_personnel);
+            const projectedAssignments = Object.keys(currentAssignments).length > 0
+                ? {}
+                : await readProjectedOperatorAssignments(routeJobOrderId);
+            const nextAssignments = { ...projectedAssignments, ...currentAssignments };
+            const taskAssignments = normalizeOperatorAssignments({
+                [String(sequenceOrder)]: assignments.map((assignment) => assignment.user_id ?? assignment.userId)
+            })[String(sequenceOrder)] || [];
+            nextAssignments[String(sequenceOrder)] = taskAssignments;
+            const result = await synchronizeJobOrderOperatorAssignments(routeJobOrderId, nextAssignments);
+            return NextResponse.json({ success: true, data: result.assignments });
         }
 
         // 3. QA Log logging
@@ -644,6 +623,7 @@ export async function handlePATCH(request: Request) {
         if (patch.quantity !== undefined) dbPatch.quantity = patch.quantity;
         if (patch.dueDate !== undefined) dbPatch.due_date = patch.dueDate;
         if (patch.assignedPersonnel !== undefined) dbPatch.assigned_personnel = patch.assignedPersonnel;
+        if (patch.assigned_personnel !== undefined) dbPatch.assigned_personnel = patch.assigned_personnel;
         if (patch.products !== undefined) dbPatch.products = patch.products;
         if (patch.shiftOption !== undefined) dbPatch.shift_option = patch.shiftOption;
         if (patch.dailyBreakdown !== undefined) dbPatch.daily_breakdown = patch.dailyBreakdown;
@@ -654,6 +634,9 @@ export async function handlePATCH(request: Request) {
     } catch (e) {
         console.error("API Error in planning-engineering PATCH:", e);
         const message = (e as { message?: string }).message || "Failed to update Job Order";
-        return NextResponse.json({ error: message }, { status: message.startsWith("Unknown Job Order status:") ? 400 : 500 });
+        const status = e instanceof JobOrderOperatorAssignmentError
+            ? e.status
+            : message.startsWith("Unknown Job Order status:") ? 400 : 500;
+        return NextResponse.json({ error: message, ...(e instanceof JobOrderOperatorAssignmentError ? { code: e.code } : {}) }, { status });
     }
 }

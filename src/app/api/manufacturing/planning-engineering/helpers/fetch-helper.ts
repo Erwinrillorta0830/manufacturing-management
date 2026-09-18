@@ -7,6 +7,7 @@ import {
     calculateBatchScaledMaterialRequirement,
     roundProductionValue
 } from "@/modules/manufacturing-management/planning-engineering/utils/production-timing";
+import { normalizeOperatorAssignments } from "../../job-orders/_operator-assignment-service";
 
 interface DirectusMfgRouting {
     routing_id?: string | number;
@@ -262,6 +263,36 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
             return normalized === "1" || normalized === "true" || normalized === "yes";
         };
 
+        const isActiveRouteOperator = (assignment: any): boolean => {
+            if (assignment?.is_active === undefined || assignment?.is_active === null || assignment?.is_active === "") return true;
+            return !["0", "false", "no", "inactive"].includes(String(assignment.is_active).trim().toLowerCase());
+        };
+
+        const activeAssignmentsByJobOrder = new Map<number, Record<string, number[]>>();
+        for (const task of tasks) {
+            const jobOrderId = getObjId(task.job_order_id);
+            const sequence = Number(task.sequence_order);
+            const routeId = Number(task.jo_route_id || task.id || 0);
+            if (!jobOrderId || !Number.isSafeInteger(sequence) || sequence <= 0 || !routeId) continue;
+            const operatorIds = assigns
+                .filter((assignment: any) => Number(assignment.jo_route_id) === routeId && isActiveRouteOperator(assignment))
+                .map((assignment: any) => Number(assignment.operator_id))
+                .filter((operatorId: number) => Number.isSafeInteger(operatorId) && operatorId > 0);
+            if (operatorIds.length === 0) continue;
+            const current = activeAssignmentsByJobOrder.get(jobOrderId) || {};
+            current[String(sequence)] = [...new Set([...(current[String(sequence)] || []), ...operatorIds])].sort((left, right) => left - right);
+            activeAssignmentsByJobOrder.set(jobOrderId, current);
+        }
+
+        const safeOperatorAssignments = (value: unknown): Record<string, number[]> => {
+            try {
+                return normalizeOperatorAssignments(value);
+            } catch (error) {
+                console.warn("[Manufacturing Directus API] Ignoring malformed Job Order personnel assignment state:", error);
+                return {};
+            }
+        };
+
         const versionMap = new Map<number, string>();
         const versionById = new Map<number, any>();
         mfgVersions.forEach((v: any) => {
@@ -353,6 +384,11 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
 
             const joIdInt = Number(jo.job_order_id || jo.id || 0);
             const cancelledBy = getRelationId(jo.cancelled_by, ["user_id"]);
+            const persistedAssignments = safeOperatorAssignments(jo.assigned_personnel);
+            const projectedAssignments = activeAssignmentsByJobOrder.get(joIdInt) || {};
+            const assignedPersonnel = Object.keys(persistedAssignments).length > 0
+                ? persistedAssignments
+                : projectedAssignments;
 
             const canonicalStatus = normalizeJobOrderStatus(jo.status);
             const mappedStatus = canonicalStatus || jo.status;
@@ -397,7 +433,7 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 .filter((t: any) => getObjId(t.job_order_id) === joIdInt)
                 .map((task: any) => {
                     const taskAssigns = assigns
-                        .filter((a: any) => Number(a.jo_route_id) === Number(task.jo_route_id))
+                        .filter((a: any) => Number(a.jo_route_id) === Number(task.jo_route_id) && isActiveRouteOperator(a))
                         .map((a: any) => ({
                             id: a.jo_route_operator_id || a.id,
                             task_id: a.jo_route_id,
@@ -406,7 +442,8 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                             logged_hours: Number(a.logged_hours || 0),
                             started_at: a.started_at || null,
                             stopped_at: a.stopped_at || null,
-                            is_team_lead: false
+                            is_team_lead: false,
+                            is_active: true
                         }));
                     
                     const taskQAs = qaLogs.filter((q: any) =>
@@ -485,12 +522,13 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                         work_center_id: workCenterId,
                         work_center_name: workCenterId ? workCenterNameById.get(workCenterId) || null : null,
                         completed_at: task.completed_at,
-                        requires_qa: reqQA ? 1 : 0,
+                         requires_qa: reqQA ? 1 : 0,
                         qa_record_exists: taskQAs.length > 0,
                         shift_progress_exists: shiftProgressExists,
                         qa_status: qaStatus,
-                        assignments: taskAssigns,
-                        qa_logs: taskQAs,
+                         assignments: taskAssigns,
+                         assigned_personnel: assignedPersonnel[String(task.sequence_order)] || [],
+                         qa_logs: taskQAs,
                         bom_items: stepBomItems
                     };
                 });
@@ -616,9 +654,11 @@ export async function fetchJobOrders(): Promise<DirectusJobOrder[]> {
                 routings: simulatedRoutings,
                 allocation_results: null,
                 products: simulatedProducts,
-                sales_orders: salesOrders,
-                routing_tasks: routingTasks,
-                parent_job_order_id: resolvedParentId,
+                 sales_orders: salesOrders,
+                 routing_tasks: routingTasks,
+                 assigned_personnel: assignedPersonnel,
+                 assignedPersonnel,
+                 parent_job_order_id: resolvedParentId,
                 completed_quantity: completedQuantity,
                 produced_quantity: totalProduced,
                 production_output_quantity: productionOutputQuantity,

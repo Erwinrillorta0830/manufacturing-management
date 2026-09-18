@@ -78,6 +78,12 @@ export async function fetchUsersList(): Promise<User[]> {
 
 export interface RouteOperatorsResponse {
     data: RouteOperatorRecord[];
+    assignedPersonnel?: Record<string, number[]> | null;
+    assignmentState?: {
+        jobOrderId: number;
+        jobOrderNo: string;
+        assignedPersonnel: Record<string, number[]>;
+    } | null;
     summary: {
         total_hours: number;
         total_labor_cost: number;
@@ -94,7 +100,7 @@ export interface RouteOperatorPayload {
     action: string;
     taskId: number;
     userId: number;
-    joId?: string;
+    joId: string;
     routingId?: number;
     actualHours?: number;
     hourlyRate?: number;
