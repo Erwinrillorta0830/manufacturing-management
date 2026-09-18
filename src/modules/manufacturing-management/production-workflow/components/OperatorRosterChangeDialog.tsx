@@ -79,6 +79,7 @@ export function OperatorRosterChangeDialog({
     if (!change) return null;
 
     const isBusy = saving || submitting;
+    const isRunningSession = Boolean(change.startedAt && !change.stoppedAt);
     const calculatedHours = elapsedHours(startedAt, stoppedAt);
     const title = change.kind === "remove"
         ? "Confirm Operator Removal"
@@ -99,11 +100,15 @@ export function OperatorRosterChangeDialog({
             setFormError("Select a replacement operator before confirming the roster change.");
             return;
         }
-        if (change.kind === "edit" && (!startedAt || !stoppedAt)) {
-            setFormError("Enter both Time In and Time Out in Philippine time.");
+        if (change.kind === "edit" && !startedAt) {
+            setFormError("Enter Time In in Philippine time.");
             return;
         }
-        if (change.kind === "edit" && calculatedHours === null) {
+        if (change.kind === "edit" && !stoppedAt && !isRunningSession) {
+            setFormError("A completed session requires Time Out.");
+            return;
+        }
+        if (change.kind === "edit" && stoppedAt && calculatedHours === null) {
             setFormError("Time Out must be later than Time In.");
             return;
         }
@@ -169,7 +174,7 @@ export function OperatorRosterChangeDialog({
 
                     {change.kind === "edit" && (
                         <div className="space-y-2">
-                            <Label htmlFor="operator-hours">Logged hours</Label>
+                            <Label>Operator timestamps</Label>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
                                     <Label htmlFor="operator-time-in">Time In (PHT)</Label>
@@ -193,9 +198,13 @@ export function OperatorRosterChangeDialog({
                                 </div>
                             </div>
                             <p className="text-[11px] text-muted-foreground">
-                                Calculated logged hours: <span className="font-mono font-semibold text-foreground">
-                                    {calculatedHours === null ? "—" : `${calculatedHours.toFixed(2)}h`}
-                                </span>. Logged hours will be recalculated from the edited timestamps.
+                                {isRunningSession && !stoppedAt ? (
+                                    "Leave Time Out blank to keep this timer running."
+                                ) : (
+                                    <>Calculated logged hours: <span className="font-mono font-semibold text-foreground">
+                                        {calculatedHours === null ? "—" : `${calculatedHours.toFixed(2)}h`}
+                                    </span>. Logged hours will be recalculated from the edited timestamps.</>
+                                )}
                             </p>
                         </div>
                     )}

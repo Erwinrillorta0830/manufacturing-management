@@ -200,10 +200,10 @@ async function findDirectusRecordById(routeOperatorId: number): Promise<Directus
     return payload?.data || null;
 }
 
-async function findLatestCompletedRecord(taskId: number, userId: number): Promise<DirectusRouteOperator | null> {
+async function findLatestEditableRecord(taskId: number, userId: number): Promise<DirectusRouteOperator | null> {
     const records = await fetchDirectusRecords(taskId, userId);
     return records
-        .filter((record) => isActiveValue(record.is_active) && record.started_at && record.stopped_at)
+        .filter((record) => isActiveValue(record.is_active) && record.started_at)
         .sort((left, right) => Number(right.jo_route_operator_id) - Number(left.jo_route_operator_id))[0] || null;
 }
 
@@ -393,14 +393,14 @@ function auditRemarks(
     replacementUserId: number | null,
     actualHours: number | null,
     reason: string,
-    timeChange: { startedAt: string; stoppedAt: string } | null = null
+    timeChange: { startedAt: string; stoppedAt: string | null } | null = null
 ): string {
     const detail = action === "swap-operator"
         ? `replacement operator ${replacementUserId}`
         : action === "edit-hours"
             ? `hours set to ${actualHours}`
             : action === "edit-times" && timeChange
-                ? `Time In set to ${timeChange.startedAt}; Time Out set to ${timeChange.stoppedAt}`
+                ? `Time In set to ${timeChange.startedAt}; Time Out ${timeChange.stoppedAt ? `set to ${timeChange.stoppedAt}` : "left running"}`
             : "removed from the active roster";
     const reasonDetail = reason ? ` Reason: ${reason}` : "";
     return `Operator ${userId} ${detail} on Route ${context.sequenceOrder} of ${context.jobOrderNo}.${reasonDetail}`;
@@ -521,7 +521,7 @@ export async function POST(request: Request) {
             assignmentState: ReturnType<typeof normalizeOperatorAssignments> | null,
             actualHours: number | null = null,
             replacementUserId: number | null = null,
-            timeChange: { startedAt: string; stoppedAt: string } | null = null
+            timeChange: { startedAt: string; stoppedAt: string | null } | null = null
         ) => {
             const audit = await recordOperatorRosterAudit({
                 jobOrderId: context.jobOrderId,
@@ -739,35 +739,37 @@ export async function POST(request: Request) {
                 || !isActiveValue(existingRecord.is_active)) {
                 throw new DirectusRouteOperatorError(409, "The selected operator session is not assigned to this route.", "OPERATOR_SESSION_NOT_FOUND");
             }
-            if (!existingRecord.started_at || !existingRecord.stopped_at) {
-                throw new DirectusRouteOperatorError(409, "Only a completed operator session can have its Time In or Time Out edited.", "OPERATOR_SESSION_ACTIVE");
+            if (!existingRecord.started_at) {
+                throw new DirectusRouteOperatorError(409, "The selected operator session has no Time In and cannot be edited.", "OPERATOR_SESSION_INVALID");
             }
 
-            const latestCompletedRecord = await findLatestCompletedRecord(taskId, userId);
-            if (!latestCompletedRecord || Number(latestCompletedRecord.jo_route_operator_id) !== routeOperatorId) {
-                throw new DirectusRouteOperatorError(409, "Only the latest completed operator session can be edited.", "OPERATOR_SESSION_NOT_LATEST");
+            const latestEditableRecord = await findLatestEditableRecord(taskId, userId);
+            if (!latestEditableRecord || Number(latestEditableRecord.jo_route_operator_id) !== routeOperatorId) {
+                throw new DirectusRouteOperatorError(409, "Only the latest active or completed operator session can be edited.", "OPERATOR_SESSION_NOT_LATEST");
             }
 
             const startedAt = normalizePhtInput(body.startedAt, "Time In");
-            const stoppedAt = normalizePhtInput(body.stoppedAt, "Time Out");
-            if (startedAt.timestamp > Date.now() || stoppedAt.timestamp > Date.now()) {
-                throw new DirectusRouteOperatorError(400, "Time In and Time Out cannot be in the future.", "OPERATOR_TIME_FUTURE");
+            const stoppedAtInput = textValue(body.stoppedAt);
+            const stoppedAt = stoppedAtInput ? normalizePhtInput(stoppedAtInput, "Time Out") : null;
+            if (existingRecord.stopped_at && !stoppedAt) {
+                throw new DirectusRouteOperatorError(400, "A completed session requires Time Out.", "OPERATOR_TIME_REQUIRED");
             }
-            if (stoppedAt.timestamp <= startedAt.timestamp) {
+            if (stoppedAt && stoppedAt.timestamp <= startedAt.timestamp) {
                 throw new DirectusRouteOperatorError(400, "Time Out must be later than Time In.", "OPERATOR_TIME_ORDER_INVALID");
             }
 
-            const elapsedHours = Math.max(
-                0.01,
-                Math.round(((stoppedAt.timestamp - startedAt.timestamp) / (1000 * 60 * 60)) * 100) / 100
-            );
+            const elapsedHours = stoppedAt
+                ? Math.max(
+                    0.01,
+                    Math.round(((stoppedAt.timestamp - startedAt.timestamp) / (1000 * 60 * 60)) * 100) / 100
+                )
+                : Number(existingRecord.logged_hours || 0);
             const loggedAt = formatPhtDateTime();
             const saved = await directusRequest<{ data?: DirectusRouteOperator }>(`/items/${COLLECTION}/${routeOperatorId}`, {
                 method: "PATCH",
                 body: JSON.stringify({
                     started_at: startedAt.value,
-                    stopped_at: stoppedAt.value,
-                    logged_hours: elapsedHours,
+                    ...(stoppedAt ? { stopped_at: stoppedAt.value, logged_hours: elapsedHours } : { stopped_at: null }),
                     logged_at: loggedAt
                 })
             });
@@ -776,7 +778,7 @@ export async function POST(request: Request) {
                 null,
                 elapsedHours,
                 null,
-                { startedAt: startedAt.value, stoppedAt: stoppedAt.value }
+                { startedAt: startedAt.value, stoppedAt: stoppedAt?.value || null }
             );
             return NextResponse.json({
                 success: true,

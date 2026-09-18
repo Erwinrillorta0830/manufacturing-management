@@ -389,12 +389,12 @@ function RouteExecutionRow({
                                 const displayedSession = operator.activeSession || operator.latestCompletedSession || operator.latestSession;
                                 const hasRecordedSession = operator.totalHours > 0
                                     || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
-                                const hasCompletedSession = Boolean(operator.latestCompletedSession);
+                                const hasEditableSession = Boolean(operator.activeSession || operator.latestCompletedSession);
                                 const hasProtectedLabor = isRunning || operator.totalHours > 0;
                                 const guardrailMessage = "Cannot remove or swap an operator with an active or logged timer. Pause or complete the tracking session first.";
-                                const editTimeMessage = isRunning
-                                    ? "Stop the running timer before editing Time In or Time Out."
-                                    : "A completed timer session is required before editing Time In or Time Out.";
+                                const editTimeMessage = hasEditableSession
+                                    ? "Edit Time In and Time Out in Philippine time. Leave Time Out blank to keep a running timer active."
+                                    : "Start a timer session before editing Time In or Time Out.";
                                 return (
                                     <div key={operator.userId} className="rounded-lg border border-border/60 bg-background/60 p-2">
                                         <div className="flex items-center justify-between gap-2">
@@ -424,21 +424,21 @@ function RouteExecutionRow({
                                             )}
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span tabIndex={!readOnly && !hasCompletedSession ? 0 : -1}>
+                                                    <span tabIndex={!readOnly && !hasEditableSession ? 0 : -1}>
                                                         <Button
                                                             type="button"
                                                             size="xs"
                                                             variant="ghost"
-                                                            disabled={readOnly || isRunning || !hasCompletedSession}
+                                                            disabled={readOnly || !hasEditableSession}
                                                             className="h-6 px-1.5 text-[9px]"
                                                             onClick={() => onRequestEditOperator(task, operator)}
-                                                            title={!hasCompletedSession || isRunning ? editTimeMessage : "Edit Time In and Time Out"}
+                                                            title={editTimeMessage}
                                                         >
                                                             <Pencil className="mr-1 h-3 w-3" /> Edit
                                                         </Button>
                                                     </span>
                                                 </TooltipTrigger>
-                                                {!readOnly && !hasCompletedSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
+                                                {!readOnly && !hasEditableSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
@@ -563,7 +563,7 @@ export function RouteExecutionTable({
         operator: OperatorGroup,
         replacementOptions: { value: string; label: string }[] = []
     ) => {
-        const editableSession = operator.latestCompletedSession || operator.latestSession;
+        const editableSession = operator.activeSession || operator.latestCompletedSession || operator.latestSession;
         setPendingRosterChange({
             kind,
             taskId: task.id,
@@ -600,13 +600,13 @@ export function RouteExecutionTable({
                 if (!payload.replacementUserId) return false;
                 return await handleSwapOperator(pendingRosterChange.taskId, currentOperator.user_id, payload.replacementUserId, payload.changeReason, payload.requestId);
             }
-            if (!payload.startedAt || !payload.stoppedAt) return false;
+            if (!payload.startedAt) return false;
             return await handleSaveOperatorTimes(
                 pendingRosterChange.taskId,
                 currentOperator.user_id,
                 currentOperator.id,
                 payload.startedAt,
-                payload.stoppedAt,
+                payload.stoppedAt || "",
                 payload.changeReason,
                 payload.requestId
             );

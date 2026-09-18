@@ -645,7 +645,7 @@ const selectedTask = useMemo(() => {
         changeReason = "",
         requestId = createOperatorRequestId("edit-times", taskId, opUserId)
     ): Promise<boolean> => {
-        if (!selectedJobOrder || !startedAt || !stoppedAt || routeOperatorId <= 0) return false;
+        if (!selectedJobOrder || !startedAt || routeOperatorId <= 0) return false;
         if (!isJobOrderStatus(selectedJobOrder.status, JOB_ORDER_STATUS.IN_PRODUCTION)) {
             toast.error("Operator times can only be edited while the Job Order is In Production.");
             return false;
