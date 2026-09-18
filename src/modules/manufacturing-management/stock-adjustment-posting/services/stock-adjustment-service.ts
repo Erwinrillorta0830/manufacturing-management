@@ -825,10 +825,16 @@ export const stockAdjustmentService = {
 
     const nowPHT = getPhDbTimestamp();
 
+    const expectedPrefix = header.type === "OUT" ? "SAOUT" : "SAIN";
+    let effectiveDocNo = (header.doc_no as string) || "";
+    if (!effectiveDocNo || !effectiveDocNo.startsWith(`${expectedPrefix}-`)) {
+      effectiveDocNo = await this.fetchNextDocNo((header.type as "IN" | "OUT") || "IN");
+    }
+
     const headerRes = await directusFetch<{ data: { id: number } }>(`${DIRECTUS_URL}/items/mm_stock_adjustment_header`, {
       method: "POST",
       body: JSON.stringify({
-        doc_no: header.doc_no,
+        doc_no: effectiveDocNo,
         branch_id: header.branch_id,
         supplier_id: header.supplier_id,
         type: header.type,
@@ -959,7 +965,7 @@ export const stockAdjustmentService = {
         }
 
         return {
-          doc_no: header.doc_no,
+          doc_no: effectiveDocNo,
           stock_adjustment_id: headerId,
           product_id: Number(item.product_id),
           inventory_lot_id: resolvedInventoryLotId || null,

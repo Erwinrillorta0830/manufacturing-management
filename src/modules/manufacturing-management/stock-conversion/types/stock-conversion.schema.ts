@@ -27,6 +27,17 @@ export const stockConversionProductSchema = z.object({
   pricePerUnit: z.number(),
   inventoryLoaded: z.boolean().optional(),
   inventoryError: z.boolean().optional(),
+  parentId: z.number().nullable().optional(),
+  isParent: z.boolean().optional(),
+  productType: z.union([
+    z.number(),
+    z.string(),
+    z.object({
+      id: z.number().optional(),
+      name: z.string().optional(),
+      type_name: z.string().optional(),
+    }),
+  ]).nullable().optional(),
   availableUnits: z.array(z.object({
     unitId: z.number(),
     name: z.string(),

@@ -267,6 +267,10 @@ export function BatchCombobox({
         className="w-[--radix-popover-trigger-width] min-w-[280px] max-w-[360px] p-0 shadow-xl border-border bg-popover z-[9999] overscroll-contain"
         align="start"
         sideOffset={4}
+        data-radix-scroll-lock-ignore="true"
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onWheelCapture={(e) => e.stopPropagation()}
+        onTouchMoveCapture={(e) => e.stopPropagation()}
       >
         <Command shouldFilter={false} className="w-full">
           {/* SEARCH INPUT */}
@@ -286,7 +290,12 @@ export function BatchCombobox({
             />
           </div>
 
-          <CommandList className="max-h-64 overflow-y-auto overscroll-contain p-1">
+          <CommandList
+            className="max-h-64 overflow-y-auto overscroll-contain p-1 touch-pan-y"
+            data-radix-scroll-lock-ignore="true"
+            onWheelCapture={(e) => e.stopPropagation()}
+            onTouchMoveCapture={(e) => e.stopPropagation()}
+          >
             {/* EXISTING BATCHES GROUP */}
             {filteredBatches.length > 0 && (
               <CommandGroup heading={<span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Existing Batches</span>}>
