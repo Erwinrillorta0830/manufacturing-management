@@ -97,13 +97,16 @@ export async function fetchRouteOperators(taskId: number): Promise<RouteOperator
 }
 
 export interface RouteOperatorPayload {
-    action: string;
+    action: "start-timer" | "stop-timer" | "log-hours" | "remove-operator" | "swap-operator" | "edit-hours" | string;
     taskId: number;
     userId: number;
     joId: string;
     routingId?: number;
     actualHours?: number;
     hourlyRate?: number;
+    replacementUserId?: number;
+    changeReason?: string;
+    requestId?: string;
 }
 
 export async function manageRouteOperator(payload: RouteOperatorPayload): Promise<any> {

@@ -258,6 +258,7 @@ export interface JobOrderStatusHistoryRecord {
     changed_by?: number | null;
     changed_by_name?: string | null;
     changed_at: string;
+    workflow_action?: string | null;
     remarks?: string | null;
 }
 

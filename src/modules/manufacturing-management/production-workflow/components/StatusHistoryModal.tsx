@@ -16,6 +16,12 @@ import { JobOrder, JobOrderStatusHistoryRecord } from "../types";
 import { fetchJobOrderStatusHistory } from "../services/production-api";
 import { toast } from "sonner";
 
+function formatWorkflowAction(action: string): string {
+    return action
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 interface StatusHistoryModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -94,6 +100,11 @@ export function StatusHistoryModal({
                                                 <Badge className="bg-primary text-primary-foreground text-[10px] font-bold">
                                                     {rec.status}
                                                 </Badge>
+                                                {rec.workflow_action && (
+                                                    <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                                                        {formatWorkflowAction(rec.workflow_action)}
+                                                    </Badge>
+                                                )}
                                             </div>
                                             <span className="text-[11px] font-mono text-muted-foreground font-semibold">
                                                 {new Date(rec.changed_at).toLocaleString()}
