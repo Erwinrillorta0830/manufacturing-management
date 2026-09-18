@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DateRange } from "react-day-picker";
 import { toast } from "sonner";
 import {
     closeJobOrder,
@@ -9,6 +10,18 @@ import type {
     JobOrderDailyYieldDetails,
     JobOrderDailyYieldSummary,
 } from "../types";
+import { phtDateBoundaryToEpoch, phtTimestampToEpoch } from "../../shared/pht-date";
+
+function phtDateKey(value: Date): string {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
 
 export function useJobOrderInspectionQA() {
     const [jobOrders, setJobOrders] = useState<JobOrderDailyYieldSummary[]>([]);
@@ -20,18 +33,119 @@ export function useJobOrderInspectionQA() {
     const [detailsError, setDetailsError] = useState<string | null>(null);
     const [closingJobOrderId, setClosingJobOrderId] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilterState] = useState("");
+    const [productFilter, setProductFilterState] = useState("");
+    const [dateRange, setDateRangeState] = useState<DateRange | undefined>(undefined);
+    const [flaggedOnly, setFlaggedOnlyState] = useState(false);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSizeState] = useState(8);
     const closeIdempotencyKeys = useRef(new Map<number, string>());
     const handledDeepLink = useRef<string | null>(null);
 
+    const statusOptions = useMemo(() => (
+        [...new Set(jobOrders.map((jobOrder) => jobOrder.status).filter(Boolean))]
+            .sort((left, right) => left.localeCompare(right))
+    ), [jobOrders]);
+
+    const productOptions = useMemo(() => {
+        const options = new Map<string, string>();
+        jobOrders.forEach((jobOrder) => {
+            const value = jobOrder.productId ? String(jobOrder.productId) : `name:${jobOrder.productName}`;
+            options.set(value, jobOrder.productName);
+        });
+        return [...options.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((left, right) => left.label.localeCompare(right.label));
+    }, [jobOrders]);
+
     const filteredJobOrders = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
-        if (!query) return jobOrders;
+        const startEpoch = dateRange?.from
+            ? phtDateBoundaryToEpoch(phtDateKey(dateRange.from))
+            : null;
+        const endEpoch = dateRange?.to
+            ? phtDateBoundaryToEpoch(phtDateKey(dateRange.to), true)
+            : null;
 
-        return jobOrders.filter((jobOrder) => (
-            jobOrder.jobOrderNo.toLowerCase().includes(query)
-            || jobOrder.productName.toLowerCase().includes(query)
-        ));
-    }, [jobOrders, searchQuery]);
+        return jobOrders.filter((jobOrder) => {
+            const matchesSearch = !query
+                || jobOrder.jobOrderNo.toLowerCase().includes(query)
+                || jobOrder.productName.toLowerCase().includes(query)
+                || Boolean(jobOrder.productCode?.toLowerCase().includes(query));
+            const matchesStatus = !statusFilter || jobOrder.status === statusFilter;
+            const productKey = jobOrder.productId ? String(jobOrder.productId) : `name:${jobOrder.productName}`;
+            const matchesProduct = !productFilter || productKey === productFilter;
+            const latestYieldEpoch = phtTimestampToEpoch(jobOrder.latestYieldAt);
+            const matchesDate = (!startEpoch || latestYieldEpoch >= startEpoch)
+                && (!endEpoch || latestYieldEpoch <= endEpoch);
+            const matchesFlagged = !flaggedOnly || jobOrder.unresolvedYieldCount > 0;
+
+            return matchesSearch && matchesStatus && matchesProduct && matchesDate && matchesFlagged;
+        });
+    }, [dateRange, flaggedOnly, jobOrders, productFilter, searchQuery, statusFilter]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredJobOrders.length / pageSize));
+    const visibleJobOrders = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredJobOrders.slice(start, start + pageSize);
+    }, [filteredJobOrders, page, pageSize]);
+
+    useEffect(() => {
+        setPage((current) => Math.min(current, totalPages));
+    }, [totalPages]);
+
+    const updateSearchQuery = useCallback((value: string) => {
+        setSearchQuery(value);
+        setPage(1);
+    }, []);
+
+    const setStatusFilter = useCallback((value: string) => {
+        setStatusFilterState(value);
+        setPage(1);
+    }, []);
+
+    const setProductFilter = useCallback((value: string) => {
+        setProductFilterState(value);
+        setPage(1);
+    }, []);
+
+    const setDateRange = useCallback((value: DateRange | undefined) => {
+        setDateRangeState(value);
+        setPage(1);
+    }, []);
+
+    const setFlaggedOnly = useCallback((value: boolean) => {
+        setFlaggedOnlyState(value);
+        setPage(1);
+    }, []);
+
+    const setPageSize = useCallback((value: number) => {
+        setPageSizeState(value);
+        setPage(1);
+    }, []);
+
+    const clearFilters = useCallback(() => {
+        setSearchQuery("");
+        setStatusFilterState("");
+        setProductFilterState("");
+        setDateRangeState(undefined);
+        setFlaggedOnlyState(false);
+        setPage(1);
+    }, []);
+
+    const hasActiveFilters = Boolean(
+        searchQuery.trim()
+        || statusFilter
+        || productFilter
+        || dateRange?.from
+        || dateRange?.to
+        || flaggedOnly
+    );
+
+    const unresolvedJobOrderCount = useMemo(
+        () => jobOrders.filter((jobOrder) => jobOrder.unresolvedYieldCount > 0).length,
+        [jobOrders]
+    );
 
     const loadJobOrders = useCallback(async (signal?: AbortSignal) => {
         setLoading(true);
@@ -149,8 +263,27 @@ export function useJobOrderInspectionQA() {
     return {
         jobOrders,
         filteredJobOrders,
+        visibleJobOrders,
+        statusOptions,
+        productOptions,
+        statusFilter,
+        setStatusFilter,
+        productFilter,
+        setProductFilter,
+        dateRange,
+        setDateRange,
+        flaggedOnly,
+        setFlaggedOnly,
+        unresolvedJobOrderCount,
+        hasActiveFilters,
+        clearFilters,
+        page,
+        setPage,
+        pageSize,
+        setPageSize,
+        totalPages,
         searchQuery,
-        setSearchQuery,
+        setSearchQuery: updateSearchQuery,
         loading,
         error,
         selectedJobOrder,

@@ -11,6 +11,7 @@ export interface JobOrderDailyYieldSummary {
     targetQuantity: number;
     producedQuantity: number;
     yieldCount: number;
+    unresolvedYieldCount: number;
     latestYieldAt: string | null;
     createdAt: string | null;
     modifiedAt: string | null;

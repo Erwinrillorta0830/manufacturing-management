@@ -54,9 +54,9 @@ export function GenealogyAuditModal({
     const filteredGenealogy = genealogy.filter((g) => {
         const query = searchFilter.toLowerCase();
         return (
-            g.finished_batch_no.toLowerCase().includes(query) ||
-            g.raw_product_name.toLowerCase().includes(query) ||
-            g.raw_batch_no.toLowerCase().includes(query)
+            String(g.finished_batch_no ?? "").toLowerCase().includes(query) ||
+            String(g.raw_product_name ?? "").toLowerCase().includes(query) ||
+            String(g.raw_batch_no ?? "").toLowerCase().includes(query)
         );
     });
 
