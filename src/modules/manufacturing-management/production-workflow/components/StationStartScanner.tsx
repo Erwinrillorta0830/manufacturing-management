@@ -27,6 +27,7 @@ import { JobOrder, WorkCenter, StationScanResponse, type StationJobOrderSummary,
 import { scanStationStart, fetchWorkCenters, fetchWorkCenterAvailability, type RouteWorkCenterOption, type WorkCenterApplicabilitySource } from "../services/production-api";
 import { toast } from "sonner";
 import { displayJobOrderStatus, isJobOrderStatus, JOB_ORDER_STATUS } from "../../job-order-status";
+import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
 
 interface StationStartScannerProps {
     open: boolean;
@@ -498,11 +499,9 @@ export function StationStartScanner({
                                 </form>
 
                                 {selectedWc ? (
-                                    <div className="p-3 bg-muted/30 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+                                    <div className="p-3 bg-muted/30 border border-emerald-500/30 rounded-xl flex items-center justify-between gap-2">
+                                        <WorkstationAssetSummary workCenter={selectedWc} compact />
                                         <div>
-                                            <span className="font-extrabold text-xs text-foreground block">
-                                                {selectedWc.work_center_name}
-                                            </span>
                                             <span className="text-[10px] text-muted-foreground font-mono">
                                                 Code: {selectedWc.barcode || `WC-${selectedWc.work_center_id}`} • Dept: {selectedWc.department?.department_name || "Manufacturing"}
                                             </span>
@@ -541,12 +540,7 @@ export function StationStartScanner({
                                                     onClick={() => handleWorkCenterSelect(wc)}
                                                     className="p-2 text-left bg-background border border-border/80 hover:border-primary hover:bg-primary/5 rounded-xl transition-all text-xs flex flex-col justify-between"
                                                 >
-                                                    <div className="flex items-start justify-between gap-1.5">
-                                                        <span className="font-bold text-[11px] truncate block text-foreground">
-                                                            {wc.work_center_name}
-                                                        </span>
-                                                        <Building2 className="h-3 w-3 shrink-0 text-primary/70" />
-                                                    </div>
+                                                    <WorkstationAssetSummary workCenter={wc} compact />
                                                     <span className="font-mono text-[9px] text-muted-foreground">
                                                         {wc.barcode || `WC-${wc.work_center_id}`}
                                                     </span>

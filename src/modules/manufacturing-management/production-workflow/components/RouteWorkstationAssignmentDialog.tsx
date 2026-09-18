@@ -28,6 +28,7 @@ import {
     type RouteWorkCenterOption
 } from "../services/production-api";
 import { toast } from "sonner";
+import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
 
 interface RouteWorkstationAssignmentDialogProps {
     open: boolean;
@@ -241,6 +242,12 @@ export function RouteWorkstationAssignmentDialog({
                                     const hasCurrentFallback = currentValue && !routeWorkCenters.some(
                                         (workCenter) => String(workCenter.work_center_id) === currentValue
                                     );
+                                    const selectedWorkCenter = routeWorkCenters.find(
+                                        (workCenter) => String(workCenter.work_center_id) === currentValue
+                                    ) || null;
+                                    const existingWorkCenter = workCenters.find(
+                                        (workCenter) => Number(workCenter.work_center_id) === Number(task.work_center_id)
+                                    ) || null;
 
                                     return (
                                         <div
@@ -260,6 +267,7 @@ export function RouteWorkstationAssignmentDialog({
                                             </Badge>
                                             {pending ? (
                                                 <>
+                                                <div className="min-w-0 space-y-1.5">
                                                 <Select
                                                     value={currentValue}
                                                     onValueChange={(value) => setAssignments((previous) => ({ ...previous, [id]: value }))}
@@ -275,10 +283,17 @@ export function RouteWorkstationAssignmentDialog({
                                                         {routeWorkCenters.map((workCenter) => (
                                                             <SelectItem key={workCenter.work_center_id} value={String(workCenter.work_center_id)}>
                                                                 {workCenter.work_center_name} · WC-{workCenter.work_center_id}
+                                                                {workCenter.asset?.condition && (
+                                                                    <Badge variant="outline" className="ml-2 text-[9px]">
+                                                                        {workCenter.asset.condition}
+                                                                    </Badge>
+                                                                )}
                                                             </SelectItem>
                                                         ))}
                                                     </SelectContent>
                                                 </Select>
+                                                {selectedWorkCenter && <WorkstationAssetSummary workCenter={selectedWorkCenter} compact />}
+                                                </div>
                                                 {routeWorkCenters.some((workCenter) => availabilityByWorkCenter.has(Number(workCenter.work_center_id))) && (
                                                     <div className="col-start-4 text-[9px] font-semibold text-muted-foreground">
                                                         {routeWorkCenters.map((workCenter) => {
@@ -294,9 +309,13 @@ export function RouteWorkstationAssignmentDialog({
                                                 )}
                                                 </>
                                             ) : (
-                                                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                                                <div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                                                     <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                                                    {task.work_center_name || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Locked")}
+                                                    <WorkstationAssetSummary
+                                                        workCenter={existingWorkCenter}
+                                                        fallbackName={task.work_center_name || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Locked")}
+                                                        compact
+                                                    />
                                                 </div>
                                             )}
                                             {pending && routeWorkCenters.length === 0 && (

@@ -19,11 +19,17 @@ const STATION_WORK_CENTER_FIELDS = [
     "work_center_name",
     "is_active",
     "asset_id.id",
+    "asset_id.item_image",
     "asset_id.barcode",
     "asset_id.rfid_code",
     "asset_id.serial",
+    "asset_id.condition",
+    "asset_id.item_id.id",
+    "asset_id.item_id.item_name",
     "department_id.department_id",
-    "department_id.department_name"
+    "department_id.department_name",
+    "asset_id.department.department_id",
+    "asset_id.department.department_name"
 ].join(",");
 
 const STATUS_HISTORY_FIELDS = [
@@ -242,6 +248,40 @@ async function getUserIdFromSession(): Promise<number> {
 }
 
 // GET: Fetch work centers, status history, and active stations
+function normalizeWorkCenterRecord(wc: any) {
+    const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
+    const barcode = asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(wc.work_center_id).padStart(3, "0")}`;
+    const department = asset?.department && typeof asset.department === "object"
+        ? asset.department
+        : wc.department_id && typeof wc.department_id === "object"
+            ? wc.department_id
+            : null;
+
+    return {
+        ...wc,
+        barcode,
+        rfid_code: asset?.rfid_code || null,
+        serial: asset?.serial || null,
+        is_active: wc.is_active === undefined || wc.is_active === null ? true : Boolean(Number(wc.is_active)),
+        asset: asset
+            ? {
+                id: Number(asset.id) || undefined,
+                item_image: asset.item_image || null,
+                barcode: asset.barcode || null,
+                rfid_code: asset.rfid_code || null,
+                serial: asset.serial || null,
+                item_name: asset.item_id?.item_name || null,
+                item_id: asset.item_id || null,
+                condition: asset.condition || null,
+                is_active: asset.is_active === undefined || asset.is_active === null
+                    ? true
+                    : Boolean(Number(asset.is_active))
+            }
+            : null,
+        department
+    };
+}
+
 async function fetchMappedWorkCenters(extraFilter = ""): Promise<any[]> {
     const wcData = await directusData<any[]>(
         `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}${extraFilter}`,
@@ -252,18 +292,7 @@ async function fetchMappedWorkCenters(extraFilter = ""): Promise<any[]> {
         throw new Error("Station work-center lookup returned an invalid data set.");
     }
 
-    return wcData.map((wc: any) => {
-        const asset = wc.asset_id && typeof wc.asset_id === "object" ? wc.asset_id : null;
-        const barcode = asset?.barcode || asset?.rfid_code || asset?.serial || `WC-${String(wc.work_center_id).padStart(3, "0")}`;
-
-        return {
-            ...wc,
-            barcode,
-            rfid_code: asset?.rfid_code || null,
-            serial: asset?.serial || null,
-            is_active: wc.is_active === undefined || wc.is_active === null ? true : Boolean(Number(wc.is_active))
-        };
-    });
+    return wcData.map(normalizeWorkCenterRecord);
 }
 
 export async function GET(request: Request) {
@@ -378,10 +407,10 @@ export async function POST(request: Request) {
         const manilaTimestamp = await getISOStringInConfiguredTimezone();
 
         // 1. Fetch work centers using only fields supported by the Directus schema.
-        const allWorkCenters = await directusData<any[]>(
+        const allWorkCenters = (await directusData<any[]>(
             `${DIRECTUS_URL}/items/manufacturing_work_centers?limit=-1&sort=work_center_name&fields=${STATION_WORK_CENTER_FIELDS}`,
             "Station work-center lookup"
-        );
+        )).map(normalizeWorkCenterRecord);
 
         if (!Array.isArray(allWorkCenters)) {
             throw new Error("Station work-center lookup returned an invalid data set.");

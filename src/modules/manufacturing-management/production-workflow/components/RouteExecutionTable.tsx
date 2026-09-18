@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
     AlertTriangle,
     ArrowLeftRight,
-    Building2,
     CheckCircle2,
     Layers,
     Loader2,
@@ -19,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "../../planning-engineering/components/SearchableSelect";
 import { formatProductionValue } from "../../planning-engineering/utils/production-timing";
-import { JobOrder, RouteOperatorRecord, RoutingTask, User as UserType } from "../types";
+import { JobOrder, JobOrderMaterialBatch, JobOrderMaterialLine, RouteOperatorRecord, RoutingTask, User as UserType } from "../types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
     OperatorRosterChange,
@@ -27,12 +26,16 @@ import {
     OperatorRosterChangePayload
 } from "./OperatorRosterChangeDialog";
 import { WorkstationBreakdownDialog } from "./WorkstationBreakdownDialog";
+import { WorkstationAssetSummary } from "./WorkstationAssetSummary";
+import { elapsedSecondsSince, formatPhtDateTime } from "../operator-time";
 
 interface RouteExecutionTableProps {
     sortedTasks: RoutingTask[];
     selectedTaskId: number | null;
     setSelectedTaskId: (id: number) => void;
     selectedJobOrder: JobOrder;
+    jobOrderMaterials: JobOrderMaterialLine[];
+    loadingJobOrderMaterials: boolean;
     routeOperators: RouteOperatorRecord[];
     users: UserType[];
     loadingOperators: boolean;
@@ -41,7 +44,7 @@ interface RouteExecutionTableProps {
     handleSwapOperator: (taskId: number, opUserId: number, replacementUserId: number, changeReason?: string, requestId?: string) => Promise<boolean>;
     handleStartTimer: (taskId: number, opUserId: number) => void;
     handleStopTimer: (taskId: number, opUserId: number) => void;
-    handleSaveManualHours: (taskId: number, opUserId: number, hours: string, changeReason?: string, requestId?: string) => Promise<boolean>;
+    handleSaveOperatorTimes: (taskId: number, opUserId: number, routeOperatorId: number, startedAt: string, stoppedAt: string, changeReason?: string, requestId?: string) => Promise<boolean>;
     onRequestCompleteStep: (taskId: number) => void;
     onBreakdownSaved?: () => void;
     readOnly?: boolean;
@@ -51,6 +54,8 @@ interface RouteExecutionRowProps {
     task: RoutingTask;
     isSelected: boolean;
     selectedJobOrder: JobOrder;
+    jobOrderMaterials: JobOrderMaterialLine[];
+    loadingJobOrderMaterials: boolean;
     routeOperators: RouteOperatorRecord[];
     users: UserType[];
     loadingOperators: boolean;
@@ -72,6 +77,7 @@ interface OperatorGroup {
     totalHours: number;
     activeSession: RouteOperatorRecord | null;
     latestSession: RouteOperatorRecord;
+    latestCompletedSession: RouteOperatorRecord | null;
 }
 
 function positiveId(value: unknown): number | null {
@@ -91,21 +97,27 @@ function getOperatorLabel(users: UserType[], operator: OperatorGroup): string {
     return operator.latestSession.user_name?.trim() || getUserLabel(users, operator.userId);
 }
 
+function getSourceBatches(materials: JobOrderMaterialLine[], productId: number): JobOrderMaterialBatch[] {
+    const seen = new Set<string>();
+    return materials
+        .filter((material) => Number(material.product_id) === Number(productId))
+        .flatMap((material) => material.reservations || [])
+        .filter((reservation) => {
+            const batchNo = String(reservation.batch_no || "").trim();
+            if (!batchNo) return false;
+            const key = `${reservation.reservation_id || "batch"}:${batchNo}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+}
+
 function formatDateTime(value: string | null | undefined): string {
-    if (!value) return "—";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+    return formatPhtDateTime(value);
 }
 
 function getRemainingSeconds(startedAt: string, durationHours: number): number {
-    const normalizedStartedAt = startedAt.trim().includes("T")
-        ? startedAt.trim()
-        : startedAt.trim().replace(" ", "T");
-    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalizedStartedAt);
-    const startedAtMs = Date.parse(hasTimezone ? normalizedStartedAt : `${normalizedStartedAt}Z`);
-    const elapsedSeconds = Number.isFinite(startedAtMs)
-        ? Math.max(0, (Date.now() - startedAtMs) / 1000)
-        : 0;
+    const elapsedSeconds = elapsedSecondsSince(startedAt);
     return Math.max(0, Math.ceil(durationHours * 60 * 60 - elapsedSeconds));
 }
 
@@ -145,6 +157,8 @@ function RouteExecutionRow({
     task,
     isSelected,
     selectedJobOrder,
+    jobOrderMaterials,
+    loadingJobOrderMaterials,
     routeOperators,
     users,
     loadingOperators,
@@ -176,11 +190,16 @@ function RouteExecutionRow({
                 position: operator.user_position || "Operator",
                 totalHours: 0,
                 activeSession: null,
-                latestSession: operator
+                latestSession: operator,
+                latestCompletedSession: operator.started_at && operator.stopped_at ? operator : null
             };
             current.totalHours += Number(operator.actual_hours || 0);
             if (operator.started_at && !operator.stopped_at) current.activeSession = operator;
             if (Number(operator.id || 0) >= Number(current.latestSession.id || 0)) current.latestSession = operator;
+            if (operator.started_at && operator.stopped_at
+                && (!current.latestCompletedSession || Number(operator.id || 0) >= Number(current.latestCompletedSession.id || 0))) {
+                current.latestCompletedSession = operator;
+            }
             groups.set(userId, current);
         });
         return [...groups.values()];
@@ -251,11 +270,12 @@ function RouteExecutionRow({
                         </div>
                     </div>
                 </td>
-                <td className="px-3 py-3 align-top">
-                    <div className={`flex items-center gap-1.5 text-xs font-semibold ${task.work_center_id ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
-                        <Building2 className="h-3.5 w-3.5 shrink-0" />
-                        <span>{task.work_center_name || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")}</span>
-                    </div>
+                            <td className="px-3 py-3 align-top">
+                    <WorkstationAssetSummary
+                        workCenter={task.work_center}
+                        fallbackName={task.work_center_name || (task.work_center_id ? `Work Center #${task.work_center_id}` : "Unassigned")}
+                        compact
+                    />
                     <div className="mt-2 text-[10px] text-muted-foreground">
                         Planned: <span className="font-mono font-bold text-foreground">{(Number(task.planned_setup_hours || 0) + Number(task.planned_run_hours || 0)).toFixed(1)} hrs</span>
                     </div>
@@ -366,10 +386,15 @@ function RouteExecutionRow({
                         <div className="min-w-[280px] space-y-2">
                             {groupedOperators.map((operator) => {
                                 const isRunning = Boolean(operator.activeSession);
+                                const displayedSession = operator.activeSession || operator.latestCompletedSession || operator.latestSession;
                                 const hasRecordedSession = operator.totalHours > 0
                                     || Boolean(operator.latestSession.started_at || operator.latestSession.stopped_at);
+                                const hasCompletedSession = Boolean(operator.latestCompletedSession);
                                 const hasProtectedLabor = isRunning || operator.totalHours > 0;
                                 const guardrailMessage = "Cannot remove or swap an operator with an active or logged timer. Pause or complete the tracking session first.";
+                                const editTimeMessage = isRunning
+                                    ? "Stop the running timer before editing Time In or Time Out."
+                                    : "A completed timer session is required before editing Time In or Time Out.";
                                 return (
                                     <div key={operator.userId} className="rounded-lg border border-border/60 bg-background/60 p-2">
                                         <div className="flex items-center justify-between gap-2">
@@ -383,8 +408,8 @@ function RouteExecutionRow({
                                             )}
                                         </div>
                                         <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-muted-foreground">
-                                            <span>In: <strong className="block truncate text-foreground">{formatDateTime(operator.latestSession.started_at)}</strong></span>
-                                            <span>Out: <strong className="block truncate text-foreground">{formatDateTime(operator.latestSession.stopped_at)}</strong></span>
+                                            <span>In (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.started_at)}</strong></span>
+                                            <span>Out (PHT): <strong className="block truncate text-foreground">{formatDateTime(displayedSession.stopped_at)}</strong></span>
                                             <span>Consumed: <strong className="block font-mono text-foreground">{operator.totalHours.toFixed(2)}h</strong></span>
                                         </div>
                                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -397,9 +422,24 @@ function RouteExecutionRow({
                                                     <Play className="mr-1 h-2.5 w-2.5 fill-current" /> Start
                                                 </Button>
                                             )}
-                                            <Button type="button" size="xs" variant="ghost" disabled={readOnly} className="h-6 px-1.5 text-[9px]" onClick={() => onRequestEditOperator(task, operator)}>
-                                                <Pencil className="mr-1 h-3 w-3" /> Edit
-                                            </Button>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span tabIndex={!readOnly && !hasCompletedSession ? 0 : -1}>
+                                                        <Button
+                                                            type="button"
+                                                            size="xs"
+                                                            variant="ghost"
+                                                            disabled={readOnly || isRunning || !hasCompletedSession}
+                                                            className="h-6 px-1.5 text-[9px]"
+                                                            onClick={() => onRequestEditOperator(task, operator)}
+                                                            title={!hasCompletedSession || isRunning ? editTimeMessage : "Edit Time In and Time Out"}
+                                                        >
+                                                            <Pencil className="mr-1 h-3 w-3" /> Edit
+                                                        </Button>
+                                                    </span>
+                                                </TooltipTrigger>
+                                                {!readOnly && !hasCompletedSession && <TooltipContent>{editTimeMessage}</TooltipContent>}
+                                            </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
                                                     <span tabIndex={hasProtectedLabor && !readOnly ? 0 : -1}>
@@ -454,14 +494,33 @@ function RouteExecutionRow({
                                 <Layers className="h-3.5 w-3.5" /> Raw Materials for Route {task.sequence_order}
                             </div>
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-                                {(task.bom_items || []).map((item, index) => (
-                                    <div key={`${item.product_id}_${index}`} className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2 text-xs">
-                                        <span className="truncate font-semibold text-foreground" title={item.product_name}>{item.product_name}</span>
-                                        <span className="shrink-0 font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                            {formatProductionValue(item.total_needed)} {item.unit_shortcut || "units"}
-                                        </span>
+                                {(task.bom_items || []).map((item, index) => {
+                                    const sourceBatches = getSourceBatches(jobOrderMaterials, item.product_id);
+                                    return (
+                                    <div key={`${item.product_id}_${index}`} className="rounded-md border border-border/60 bg-background px-3 py-2 text-xs">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span className="truncate font-semibold text-foreground" title={item.product_name}>{item.product_name}</span>
+                                            <span className="shrink-0 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                                {formatProductionValue(item.total_needed)} {item.unit_shortcut || "units"}
+                                            </span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                                            <span className="font-semibold">Source batch:</span>
+                                            {loadingJobOrderMaterials ? (
+                                                <span>Loading...</span>
+                                            ) : sourceBatches.length > 0 ? (
+                                                sourceBatches.map((batch, batchIndex) => (
+                                                    <Badge key={`${batch.reservation_id || item.product_id}_${batchIndex}`} variant="secondary" className="font-mono text-[9px]">
+                                                        {batch.batch_no}
+                                                    </Badge>
+                                                ))
+                                            ) : (
+                                                <span className="italic">No staged batch assigned</span>
+                                            )}
+                                        </div>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                             <p className="mt-2 text-[9px] text-muted-foreground">Viewing route materials does not change inventory. Consumption is recorded once in the job-order-wide End-of-Shift / Step Progress submission.</p>
                         </div>
@@ -477,6 +536,8 @@ export function RouteExecutionTable({
     selectedTaskId,
     setSelectedTaskId,
     selectedJobOrder,
+    jobOrderMaterials,
+    loadingJobOrderMaterials,
     routeOperators,
     users,
     loadingOperators,
@@ -485,7 +546,7 @@ export function RouteExecutionTable({
     handleSwapOperator,
     handleStartTimer,
     handleStopTimer,
-    handleSaveManualHours,
+    handleSaveOperatorTimes,
     onRequestCompleteStep,
     onBreakdownSaved,
     readOnly = false
@@ -502,14 +563,18 @@ export function RouteExecutionTable({
         operator: OperatorGroup,
         replacementOptions: { value: string; label: string }[] = []
     ) => {
+        const editableSession = operator.latestCompletedSession || operator.latestSession;
         setPendingRosterChange({
             kind,
             taskId: task.id,
             operatorId: operator.userId,
+            routeOperatorId: editableSession.id,
             jobOrderNo: selectedJobOrder.jo_id,
             routeLabel: `Route ${task.sequence_order} · ${task.name}`,
             operatorName: getOperatorLabel(users, operator),
             currentHours: operator.totalHours,
+            startedAt: editableSession.started_at,
+            stoppedAt: editableSession.stopped_at,
             replacementOptions
         });
     };
@@ -518,10 +583,14 @@ export function RouteExecutionTable({
         if (!pendingRosterChange) return false;
         setSavingRosterChange(true);
         try {
-            const currentOperator = routeOperators
-                .find((candidate) => Number(candidate.task_id) === pendingRosterChange.taskId
-                    && Number(candidate.user_id) === pendingRosterChange.operatorId
-                    && candidate.is_active !== false);
+            const currentOperator = routeOperators.find((candidate) => {
+                if (candidate.is_active === false) return false;
+                if (pendingRosterChange.kind === "edit") {
+                    return Number(candidate.id) === Number(pendingRosterChange.routeOperatorId);
+                }
+                return Number(candidate.task_id) === pendingRosterChange.taskId
+                    && Number(candidate.user_id) === pendingRosterChange.operatorId;
+            });
             if (!currentOperator) return false;
 
             if (pendingRosterChange.kind === "remove") {
@@ -531,10 +600,13 @@ export function RouteExecutionTable({
                 if (!payload.replacementUserId) return false;
                 return await handleSwapOperator(pendingRosterChange.taskId, currentOperator.user_id, payload.replacementUserId, payload.changeReason, payload.requestId);
             }
-            return await handleSaveManualHours(
+            if (!payload.startedAt || !payload.stoppedAt) return false;
+            return await handleSaveOperatorTimes(
                 pendingRosterChange.taskId,
                 currentOperator.user_id,
-                payload.actualHours || "",
+                currentOperator.id,
+                payload.startedAt,
+                payload.stoppedAt,
                 payload.changeReason,
                 payload.requestId
             );
@@ -571,7 +643,7 @@ export function RouteExecutionTable({
                                 <th className="px-3 py-3 font-bold">Workstation</th>
                                 <th className="px-3 py-3 font-bold">Assign Personnel</th>
                                 <th className="px-3 py-3 font-bold">Actions</th>
-                                <th className="px-3 py-3 font-bold">Timer · Time In · Time Out · Consumed Hours</th>
+                                <th className="px-3 py-3 font-bold">Timer · Time In (PHT) · Time Out (PHT) · Consumed Hours</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/50">
@@ -581,6 +653,8 @@ export function RouteExecutionTable({
                                     task={task}
                                     isSelected={selectedTaskId === task.id}
                                     selectedJobOrder={selectedJobOrder}
+                                    jobOrderMaterials={jobOrderMaterials}
+                                    loadingJobOrderMaterials={loadingJobOrderMaterials}
                                     routeOperators={routeOperators}
                                     users={users}
                                     loadingOperators={loadingOperators}
