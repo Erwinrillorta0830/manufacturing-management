@@ -62,6 +62,9 @@ export interface JobOrderWorkflowPayload {
     remarks?: string;
     resolutionRemarks?: string;
     terminationImage?: File | null;
+    workflowEvidenceImage?: File | null;
+    joRouteId?: number | null;
+    reportedYieldQuantity?: number | null;
     workCenterId?: number | null;
     force?: boolean;
     overrideReason?: string;
@@ -72,7 +75,7 @@ export async function executeJobOrderWorkflow(
     joId: string | number,
     payload: JobOrderWorkflowPayload
 ): Promise<any> {
-    const { terminationImage, ...jsonPayload } = payload;
+    const { terminationImage, workflowEvidenceImage, ...jsonPayload } = payload;
     const body = {
         ...jsonPayload,
         idempotencyKey: payload.idempotencyKey || (
@@ -82,10 +85,11 @@ export async function executeJobOrderWorkflow(
         )
     };
     const request: RequestInit = { method: "POST" };
-    if (payload.action === "terminate-production") {
+    if (payload.action === "terminate-production" || payload.action === "place-on-hold") {
         const formData = new FormData();
         formData.set("payload", JSON.stringify(body));
-        if (terminationImage) formData.set("image", terminationImage, terminationImage.name);
+        const image = payload.action === "terminate-production" ? terminationImage : workflowEvidenceImage;
+        if (image) formData.set("image", image, image.name);
         request.body = formData;
     } else {
         request.headers = { "Content-Type": "application/json" };

@@ -4,6 +4,14 @@ import { parsePhtDateTime } from "@/app/api/manufacturing/services/core-api.serv
 
 export type PurchaseOrderRejectionStage = "Finance";
 
+export type PurchaseOrderRejectionAction = "Revision" | "Rejected";
+
+export interface PurchaseOrderRejectionDecision {
+    stage: PurchaseOrderRejectionStage;
+    action: PurchaseOrderRejectionAction;
+    remarks: string | null;
+}
+
 interface PurchaseOrderRejectionCandidate {
     purchaseOrderId: number;
     inventoryStatus: number | null;
@@ -15,6 +23,7 @@ interface ApprovalHistoryRow {
     purchase_order_id?: number | string | { purchase_order_id?: number | string; id?: number | string } | null;
     action?: string | null;
     approval_stage?: string | null;
+    remarks?: string | null;
     revision_after?: number | string | null;
     created_at?: string | null;
 }
@@ -44,21 +53,21 @@ function compareHistory(left: ApprovalHistoryRow, right: ApprovalHistoryRow): nu
     return 0;
 }
 
-export async function fetchCurrentPurchaseOrderRejectionStages(
+export async function fetchCurrentPurchaseOrderRejectionDecisions(
     candidates: readonly PurchaseOrderRejectionCandidate[]
-): Promise<Map<number, PurchaseOrderRejectionStage>> {
+): Promise<Map<number, PurchaseOrderRejectionDecision>> {
     const eligible = candidates.filter(candidate =>
         (Number(candidate.inventoryStatus) === INVENTORY_STATUS.REVISION
             || Number(candidate.inventoryStatus) === INVENTORY_STATUS.REJECTED)
         && Number.isSafeInteger(candidate.purchaseOrderId)
         && candidate.purchaseOrderId > 0
     );
-    const result = new Map<number, PurchaseOrderRejectionStage>();
+    const result = new Map<number, PurchaseOrderRejectionDecision>();
     if (eligible.length === 0) return result;
 
     const ids = [...new Set(eligible.map(candidate => candidate.purchaseOrderId))];
     const params = new URLSearchParams({
-        fields: "history_id,purchase_order_id,action,approval_stage,revision_after,created_at",
+        fields: "history_id,purchase_order_id,action,approval_stage,remarks,revision_after,created_at",
         limit: "-1",
         sort: "revision_after,created_at,history_id"
     });
@@ -82,12 +91,26 @@ export async function fetchCurrentPurchaseOrderRejectionStages(
         const candidate = candidateById.get(purchaseOrderId);
         const revision = Number(row.revision_after || 0);
         if (!candidate || revision !== candidate.workflowRevision) continue;
-        if (row.approval_stage === "Finance") {
-            result.set(purchaseOrderId, row.approval_stage);
+        if (
+            row.approval_stage === "Finance"
+            && (row.action === "Revision" || row.action === "Rejected")
+        ) {
+            result.set(purchaseOrderId, {
+                stage: row.approval_stage,
+                action: row.action,
+                remarks: row.remarks?.trim() || null
+            });
         }
     }
 
     return result;
+}
+
+export async function fetchCurrentPurchaseOrderRejectionStages(
+    candidates: readonly PurchaseOrderRejectionCandidate[]
+): Promise<Map<number, PurchaseOrderRejectionStage>> {
+    const decisions = await fetchCurrentPurchaseOrderRejectionDecisions(candidates);
+    return new Map([...decisions].map(([purchaseOrderId, decision]) => [purchaseOrderId, decision.stage]));
 }
 
 export async function fetchCurrentPurchaseOrderRejectionStage(
